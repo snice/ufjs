@@ -50,6 +50,7 @@ fjs 用 HTML 风格的语义标签构建 UI，由 Dart 侧映射为 Flutter Widg
 | `picker-view` | ListWheelScrollView 行 | 内嵌滚轮；`value` 是每列选中下标数组；`item-height` 默认 44；`indicator-style` 覆盖选中框；`onValueChanged` 载荷是下标数组 JSON 串 |
 | `picker-view-column` | picker-view 的一列 | 只在 `picker-view` 内有滚轮语义；子节点即选项 |
 | `modal` | BottomSheet | `visible` 驱动：true 打开、置回 false 关闭；原生手势关闭回派 `onModalClosed`；打开期间内容保持响应式更新（事件仍回派）|
+| `page-container` | 原生标签：route 级透明路由（遮罩 + 面板），返回手势关闭的是容器 | `show` / `duration`(300) / `z-index`(100) / `overlay`(true) / `position`(bottom/top/right/center) / `round` / `close-on-slide-down`；生命周期 `@before-enter` → `@enter` → `@after-enter`，离场链 `@before-leave` → `@leave` → `@after-leave`（**所有**关闭路径都走完），点遮罩派 `@clickoverlay`（不自动关）。详见下表 |
 | 自定义标签 | `engine.registerComponent` 注册的 Dart 组件（platform view 也经此接入）| 任意 props；未注册回落 `view` |
 
 `<button>` 的默认描边、`type` 的配色、`radio` 的圆圈都是**宿主的默认值**
@@ -437,6 +438,49 @@ element API、render 函数或 slot 塞进来的非 `swiper-item` 子节点编�
 </swiper>
 ```
 
+### page-container（页面容器，specs/065）
+
+对齐微信 2.16.0 的"假页"容器：遮罩 + 四向弹出面板，**返回操作（右滑手势 /
+安卓物理返回）关闭的是容器而不是页面**。三端实现不同、契约一致：
+
+```vue
+<page-container :show="show" position="bottom" round
+                :close-on-slide-down="true"
+                @after-leave="show = false" @clickoverlay="show = false">
+  <view class="panel">…</view>
+</page-container>
+```
+
+| prop | 默认 | 说明 |
+|---|---|---|
+| `show` | false | 显隐由页面状态驱动；被返回手势/下滑关掉后，页面在 `@after-leave` 里把它归位 false |
+| `duration` | 300 | 进出场动画时长 ms |
+| `z-index` | 100 | 层级。Flutter 端只按路由顺序（每页一个容器的约束同 wx）|
+| `overlay` | true | 是否显示遮罩。开着时容器本身挡住页面交互，同 wx 的页面语义 |
+| `position` | bottom | `top` / `bottom` / `right` / `center`；未知值告警并按 bottom |
+| `round` | false | 面板圆角 24（WeUI 半屏弹窗，两端同值）|
+| `close-on-slide-down` | false | 下滑（right 为右滑、top 为上滑）过 80px 或快甩关闭 |
+| `overlay-style` / `custom-style` | — | 遮罩 / 面板的 css 文本。mp 原生全量支持；web 照单全收；**Flutter 只认 background(-color)、border-radius、opacity**，其余键告警一次 |
+
+事件全部无载荷，按 wx 命名：进场 `@before-enter` → `@enter` → `@after-enter`；
+离场 `@before-leave` → `@leave` → `@after-leave`；点遮罩 `@clickoverlay`。
+点遮罩**不会自动关**，页面在自己的 handler 里改 `show`（wx 语义）。
+
+离场链在**所有**关闭路径上恰好各派一次——包括页面自己置 `show = false`、
+遮罩 handler、返回手势和下滑关闭——因为动画时钟在宿主手里，页面要靠
+`@after-leave` 把 `show` 归位（这是它和 `modal` 的一个刻意差异：modalClosed
+遵循「JS 发起的关闭不回报」，这里不行）。
+
+三端差异：
+
+| | Flutter | web | 小程序 |
+|---|---|---|---|
+| 实现 | route 级透明路由（`widgets/page_container.dart`）| Teleport to body + fixed + CSS transition（`web/components/page-container.ts`）| 编译透传 wx 原生 `<page-container>`（基础库 ≥ 2.16.0）|
+| 返回手势关闭 | ✅ 路由 pop | ❌ 不拦浏览器返回 | ✅ wx 原生 |
+| `close-on-slide-down` | 面板拖拽手势 | touch 拖拽 | wx 原生 |
+| `overlay-style` / `custom-style` | 只认 background / border-radius / opacity | cssText 全量 | wx 原生 |
+| center 位置 | 居中 fade | 居中 fade | **skyline 下 wx 原生容器不渲染面板**：内容在布局树（有尺寸、事件链正常）但 wx 自身的容器底和内容都不绘制，`custom-style` 等属性救不回（specs/065 automator 实测）；bottom/top/right 正常。mp 端需要居中弹层时暂用 `modal`，或向微信反馈 |
+
 ### picker 的四种 mode
 
 | mode | `value` | `@change` 载荷 | 其它 props |
@@ -498,6 +542,9 @@ Web 两端取同一组数值。新增或改默认样式时先看：
 | `onLoad` / `onError` | FJS_EVENT_LOAD / FJS_EVENT_ERROR | **载荷形状由标签决定**：`image` 是 `{width,height}` / `{errMsg}`，`web-view` 是 `{src}` / `{src,errMsg}` |
 | `onMessage`（`web-view`）| FJS_EVENT_MESSAGE | `{"data":"…"}` JSON 串 |
 | `onModalClosed` | FJS_EVENT_MODAL_CLOSED | — |
+| `onBeforeEnter` / `onEnter` / `onAfterEnter`（`page-container`）| FJS_EVENT_BEFORE_ENTER / ENTER / AFTER_ENTER | — |
+| `onBeforeLeave` / `onLeave` / `onAfterLeave`（`page-container`）| FJS_EVENT_BEFORE_LEAVE / LEAVE / AFTER_LEAVE | 所有关闭路径（含返回手势/下滑）都走完整条离场链 |
+| `onClickoverlay`（`page-container`）| FJS_EVENT_CLICK_OVERLAY | — |
 | `onRefresh` | FJS_EVENT_REFRESH | — |
 | `onFocus` / `onBlur` | FJS_EVENT_FOCUS / FJS_EVENT_BLUR | 输入框当前文本 |
 | `onSubmit` / `onReset`（在 `form` 上）| — | 不过桥：`form` 是 JS 组件，事件在 JS 侧就地 emit（号段 22/23 仍登记在契约表里备用）|

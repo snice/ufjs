@@ -174,6 +174,24 @@ describe('genWxml', () => {
     expect(r.usingComponents.get('fjs-modal')).toBe('fjs-modal');
   });
 
+  it('passes page-container through as the wx native tag (specs/065)', () => {
+    const r = compile(
+      '<page-container :show="wifi" position="bottom" round :close-on-slide-down="true" ' +
+        '@before-enter="toggle" @after-leave="toggle" @clickoverlay="toggle" />',
+    );
+    // Not in any rewrite table, so the wx built-in reaches the WXML as-is;
+    // its dashed events fall through the native alias to the all-lower
+    // spelling wx accepts (bindbeforeenter ≙ bind:beforeenter).
+    expect(r.wxml).toMatch(/<page-container class="[^"]*data-v-test" show="{{ wifi }}"/);
+    expect(r.wxml).toContain('position="bottom"');
+    expect(r.wxml).toContain('round="{{ true }}"');
+    expect(r.wxml).toContain('close-on-slide-down="{{ true }}"');
+    expect(r.wxml).toContain('bindbeforeenter="__fjsCall"');
+    expect(r.wxml).toContain('bindafterleave="__fjsCall"');
+    expect(r.wxml).toContain('bindclickoverlay="__fjsCall"');
+    expect([...r.usingComponents.keys()]).not.toContain('page-container');
+  });
+
   it('extracts function-call interpolations into computeds', () => {
     const r = compile('<view>{{ Math.round(count) }}</view>');
     expect(r.wxml).toContain('{{ __d0 }}');

@@ -373,6 +373,42 @@ interface FjsModalProps extends FjsBaseProps, FjsTouchEvents {
   onModalClosed?: () => void;
 }
 
+/** 页面容器（specs/065）：遮罩 + 四向弹出面板的"假页"容器，返回操作
+ * （右滑/物理返回）关闭容器而非页面。三端实现不同、契约一致，差异表见
+ * docs/ui-api.md。 */
+interface FjsPageContainerProps extends FjsBaseProps, FjsTouchEvents {
+  /** 是否显示容器。显隐由页面状态驱动；返回手势/下滑关闭后，页面靠
+   * @after-leave 把它归位 false。 */
+  show?: FjsBooleanish;
+  /** 进出场动画时长 ms，默认 300。 */
+  duration?: FjsNumberish;
+  /** 层级，默认 100。Flutter 端只按路由顺序；wx 同样限定每页一个容器。 */
+  zIndex?: FjsNumberish;
+  /** 是否显示遮罩，默认 true。 */
+  overlay?: FjsBooleanish;
+  /** 弹出位置：top / bottom（默认）/ right / center。未知值告警并按 bottom。 */
+  position?: 'top' | 'bottom' | 'right' | 'center' | (string & {});
+  /** 面板圆角。 */
+  round?: FjsBooleanish;
+  /** 下滑（position=right 时为右滑）一段距离后关闭，默认 false。 */
+  closeOnSlideDown?: FjsBooleanish;
+  /** 遮罩自定义样式（css 文本，同小程序的 overlay-style）。 */
+  overlayStyle?: string;
+  /** 面板自定义样式（css 文本，同小程序的 custom-style）。 */
+  customStyle?: string;
+  /** 下面七个都是无载荷的生命周期/遮罩事件（模板写 @before-enter、
+   * @clickoverlay）；所有关闭路径都会走完离场链，@after-leave 是页面把
+   * show 归位的挂点。 */
+  onBeforeEnter?: () => void;
+  onEnter?: () => void;
+  onAfterEnter?: () => void;
+  onBeforeLeave?: () => void;
+  onLeave?: () => void;
+  onAfterLeave?: () => void;
+  onClickoverlay?: () => void;
+  onClickOverlay?: () => void;
+}
+
 interface FjsRefreshProps extends FjsBaseProps, FjsTouchEvents {
   onRefresh?: () => void;
 }
@@ -468,6 +504,8 @@ interface FjsGlobalComponents {
   Picker: FjsComponent<FjsPickerProps>;
   modal: FjsComponent<FjsModalProps>;
   Modal: FjsComponent<FjsModalProps>;
+  'page-container': FjsComponent<FjsPageContainerProps>;
+  PageContainer: FjsComponent<FjsPageContainerProps>;
   refresh: FjsComponent<FjsRefreshProps>;
   Refresh: FjsComponent<FjsRefreshProps>;
 }
@@ -533,6 +571,8 @@ declare module 'vue' {
     Picker: FjsGlobalComponents['Picker'];
     modal: FjsGlobalComponents['modal'];
     Modal: FjsGlobalComponents['Modal'];
+    'page-container': FjsGlobalComponents['page-container'];
+    PageContainer: FjsGlobalComponents['PageContainer'];
     refresh: FjsGlobalComponents['refresh'];
     Refresh: FjsGlobalComponents['Refresh'];
   }
@@ -577,6 +617,8 @@ declare module '@vue/runtime-core' {
     Slider: FjsGlobalComponents['Slider'];
     modal: FjsGlobalComponents['modal'];
     Modal: FjsGlobalComponents['Modal'];
+    'page-container': FjsGlobalComponents['page-container'];
+    PageContainer: FjsGlobalComponents['PageContainer'];
     refresh: FjsGlobalComponents['refresh'];
     Refresh: FjsGlobalComponents['Refresh'];
   }

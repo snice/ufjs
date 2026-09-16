@@ -334,4 +334,16 @@ abstract final class FjsEvent {
   // sticky-header's pin state flipped (specs/052); payload is the JSON
   // string {"isStickOnTop":boolean} widgets/sticky.dart writes.
   static const stickOnTopChange = 34;
+  // page-container's transition lifecycle (specs/065), no payloads. The
+  // leave chain deliberately fires on EVERY close path — including a
+  // JS-driven show=false — because the native side owns the animation
+  // clock; this is the one place the "JS already knows" rule from
+  // modalClosed does not apply. See widgets/page_container.dart.
+  static const beforeEnter = 35;
+  static const enter = 36;
+  static const afterEnter = 37;
+  static const beforeLeave = 38;
+  static const leave = 39;
+  static const afterLeave = 40;
+  static const clickOverlay = 41;
 }

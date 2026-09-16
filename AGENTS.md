@@ -125,6 +125,10 @@ cd packages/flutter_fjs && flutter test        # 需要先编好 native，否则
    [WeUI 组件列表](https://wechat.design/tool/weui-mobile)，两端取同一组数值。
 6. **自编 fjsc 优先于 npm 包**：改过 `native/` 就重新
    `cmake --build build-native`，否则字节码还是旧引擎编的。
+   同理：`tags.json` / `component-tags.json` 被 `@ufjs/cli` 的 dist
+   **内联**，改了要重新 `pnpm --filter @ufjs/cli run build`，否则
+   `fjs dev` 按旧清单判定标签——新标签被当成 Vue 组件、页面递归
+   自引用直到爆栈（specs/065 踩过，表现为 setup 无限重跑）。
 7. **JS 能包就不要下 Dart**：新增标签/能力先问能不能在 JS 侧用组件包出来
    （`fjs-runtime/src/components/` + `FLUTTER_COMPONENT_TAGS` 排除，账记在
    `ui/element.ts` 这层）。只有需要原生控件、Flutter 渲染能力或有实测性能理由

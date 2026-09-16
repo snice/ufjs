@@ -58,4 +58,13 @@ describe('isNativeTagFor', () => {
     expect(isNativeTagFor('map-view', { moduleTags })).toBe(true);
     expect(isNativeTagFor('textarea', { moduleTags })).toBe(false);
   });
+
+  it('page-container is a native tag on Flutter, a component on web (specs/065)', () => {
+    // Same split as `modal`: the Dart side renders the route-level widget
+    // itself; on web the compiler hands the tag to the registered adapter,
+    // and the mp compiler passes the wx built-in through untouched.
+    expect(isNativeTagFor('page-container')).toBe(true);
+    expect(isNativeTagFor('page-container', { web: true })).toBe(false);
+    expect(webIsNativeTag('page-container')).toBe(false);
+  });
 });

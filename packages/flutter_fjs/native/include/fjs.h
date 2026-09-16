@@ -99,6 +99,16 @@ enum {
     /* sticky-header's pin state flipped (specs/052). Payload is the JSON
        {"isStickOnTop":boolean} — a string, like every event payload. */
     FJS_EVENT_STICK_ON_TOP_CHANGE = 34,
+    /* page-container's transition lifecycle (specs/065). No params. The
+       leave chain fires on every close path, including a JS-driven
+       show=false, because the native side owns the animation clock. */
+    FJS_EVENT_BEFORE_ENTER     = 35,
+    FJS_EVENT_ENTER            = 36,
+    FJS_EVENT_AFTER_ENTER      = 37,
+    FJS_EVENT_BEFORE_LEAVE     = 38,
+    FJS_EVENT_LEAVE            = 39,
+    FJS_EVENT_AFTER_LEAVE      = 40,
+    FJS_EVENT_CLICK_OVERLAY    = 41,
 };
 
 /* Tagged value tags for the FJSValue C ABI struct. */

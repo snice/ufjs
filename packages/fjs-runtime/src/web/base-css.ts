@@ -587,6 +587,68 @@ swiper-item > * { flex: 1 1 0%; min-height: 0; }
 }
 @keyframes fjs-sheet-in { from { transform: translateY(100%); } }
 
+/* page-container (specs/065): the fake-page overlay. --fjs-pc-dur carries
+   the "duration" prop; the round prop sets border-radius inline, so the
+   classes only do positioning and the transition. Mask and radius match
+   widgets/page_container.dart (constitution IV). */
+.fjs-page-container {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.fjs-page-container--top { justify-content: flex-start; }
+.fjs-page-container--right {
+  flex-direction: row;
+  justify-content: flex-end;
+  align-items: stretch;
+}
+.fjs-page-container--center {
+  align-items: center;
+  justify-content: center;
+}
+.fjs-page-container-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transition: opacity var(--fjs-pc-dur, 300ms) ease;
+}
+.fjs-page-container.is-open .fjs-page-container-mask { opacity: 1; }
+.fjs-page-container-panel {
+  position: relative;
+  background: #ffffff;
+  overflow: auto;
+  transition:
+    transform var(--fjs-pc-dur, 300ms) ease,
+    opacity var(--fjs-pc-dur, 300ms) ease;
+}
+.fjs-page-container-panel--bottom {
+  width: 100%;
+  max-height: 90%;
+  transform: translateY(100%);
+}
+.fjs-page-container-panel--top {
+  width: 100%;
+  max-height: 90%;
+  transform: translateY(-100%);
+}
+.fjs-page-container-panel--right {
+  height: 100%;
+  max-width: 85%;
+  transform: translateX(100%);
+}
+.fjs-page-container-panel--center {
+  max-width: 80%;
+  max-height: 80%;
+  opacity: 0;
+}
+.fjs-page-container.is-open .fjs-page-container-panel--bottom { transform: none; }
+.fjs-page-container.is-open .fjs-page-container-panel--top { transform: none; }
+.fjs-page-container.is-open .fjs-page-container-panel--right { transform: none; }
+.fjs-page-container.is-open .fjs-page-container-panel--center { opacity: 1; }
+
 /* page transition (web mirror of the native push animation). The host
    gives the leaving page something to be absolutely positioned against, so
    the two pages overlap for the length of the crossfade instead of

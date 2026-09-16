@@ -13,6 +13,7 @@ import '../widgets/input.dart';
 import '../widgets/label.dart';
 import '../widgets/list_view.dart';
 import '../widgets/modal.dart';
+import '../widgets/page_container.dart';
 import '../widgets/picker_view.dart';
 import '../widgets/progress.dart';
 import '../widgets/radio.dart';
@@ -52,6 +53,7 @@ const builtInNodeAdapters = <FjsNodeAdapter>[
   _SwiperNodeAdapter(),
   _SwiperItemNodeAdapter(),
   _ModalNodeAdapter(),
+  _PageContainerNodeAdapter(),
   _StickyHeaderNodeAdapter(),
   _StickySectionNodeAdapter(),
 ];
@@ -568,6 +570,23 @@ class _ModalNodeAdapter extends FjsNodeAdapter {
   @override
   Widget build(FjsNodeAdapterContext context) {
     return FjsModal(
+      node: context.node,
+      tree: context.tree,
+      dispatch: context.dispatch,
+      registry: context.registry,
+    );
+  }
+}
+
+class _PageContainerNodeAdapter extends FjsNodeAdapter {
+  const _PageContainerNodeAdapter();
+
+  @override
+  String get tag => 'page-container';
+
+  @override
+  Widget build(FjsNodeAdapterContext context) {
+    return FjsPageContainer(
       node: context.node,
       tree: context.tree,
       dispatch: context.dispatch,

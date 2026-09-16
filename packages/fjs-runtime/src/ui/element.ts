@@ -77,6 +77,22 @@ export const EventType: Record<string, number> = {
   // Payload is the JSON string {"isStickOnTop":boolean}.
   onStickontopchange: 34,
   onStickOnTopChange: 34,
+  // page-container's transition lifecycle (specs/065), no payloads. The
+  // camelCase spellings are canonical — `@before-enter` in a template
+  // becomes the prop `onBeforeEnter` — with the all-lower aliases for
+  // hand-written h() calls, mirroring the wx event names.
+  onBeforeEnter: 35,
+  onBeforeenter: 35,
+  onEnter: 36,
+  onAfterEnter: 37,
+  onAfterenter: 37,
+  onBeforeLeave: 38,
+  onBeforeleave: 38,
+  onLeave: 39,
+  onAfterLeave: 40,
+  onAfterleave: 40,
+  onClickoverlay: 41,
+  onClickOverlay: 41,
 };
 
 /** Handler props with more than one spelling: the native side is told the
@@ -89,6 +105,11 @@ const CANONICAL_EVENT_PROP: Record<string, string> = {
   onTouchMove: 'onTouchmove',
   onTouchEnd: 'onTouchend',
   onTouchCancel: 'onTouchcancel',
+  onBeforeenter: 'onBeforeEnter',
+  onAfterenter: 'onAfterEnter',
+  onBeforeleave: 'onBeforeLeave',
+  onAfterleave: 'onAfterLeave',
+  onClickOverlay: 'onClickoverlay',
 };
 
 let nextId = 1;

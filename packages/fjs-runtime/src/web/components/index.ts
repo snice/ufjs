@@ -46,6 +46,7 @@ import {
   FjsSwitch,
 } from './form';
 import { FjsModal, FjsRefresh } from './overlay';
+import { FjsPageContainer } from './page-container';
 import { FjsPickerView, FjsPickerViewColumn } from './picker-view';
 import { FjsStickyHeader, FjsStickySection } from './sticky';
 import { createFjsCanvas } from '../../components/canvas';
@@ -105,6 +106,7 @@ export const fjsComponents: Record<string, unknown> = {
   // sheet is pure orchestration, so there is only one implementation.
   picker: FjsPicker,
   modal: FjsModal,
+  'page-container': FjsPageContainer,
   refresh: FjsRefresh,
   // specs/052: the sticky pair. The section is a plain block (CSS sticky
   // takes its bounds from the parent box); the header carries the pin line

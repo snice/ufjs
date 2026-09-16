@@ -189,6 +189,7 @@ echarts/zrender、three 及其 addons）；不在 package.json 里的包名直�
 | sticky-header / sticky-section | **按渲染器分流**（specs/052）。**skyline**：原生组件原样直出，`offset-top` / `push-pinned-header` / `bindstickontopchange` 都交给 skyline；必须是 `type="custom"` scroll-view 的直接子节点。注意 skyline 原生组件在首帧会对每个 header 先派一次 `isStickOnTop:false`（web / Flutter 端首帧静默），页面若以「收到事件」为吸顶依据需自行忽略首次。**webview**：编译为 runtime 自定义组件 `fjs-sticky-header` / `fjs-sticky-section`（specs/053，skyline 构建不拷贝这两个四件套）。组件用 `virtualHost`——sticky 必须长在页面流真实节点上，真实宿主会把吸顶边界缩到自身高度；事件由 IntersectionObserver（relativeToViewport 按 offset-top 平移）测量，`offset-top` 支持绑定值，`allow-overlapping` / `padding` / `push-pinned-header` 接受但不生效 |
 | stack / divider / safe-area / position | `view` + 内置 class（`fjs-stack` 等，取值同 web 的 base-css） |
 | modal | `fjs-modal` 自定义组件（runtime 提供，`@modal-closed` 同名；底部 sheet，数值同 base-css） |
+| page-container | **同名透传 wx 原生标签**（基础库 ≥ 2.16.0，specs/065）：不进任何映射表，`show` / `duration` / `round` / `close-on-slide-down` 等属性原样直出，虚线事件走兜底命名（`@before-enter` → `bindbeforeenter`，与 wx 的 `bind:beforeenter` 等价）。web / Flutter 端是各自的实现（见 ui-api.md 三端差异表），返回手势关闭在小程序端由 wx 原生提供 |
 | **模块 widget 标签**（如 icon-mind） | **由模块包提供**：`fjs.widgets.<tag>.mp` 指向包内四件套，构建拷贝到 `fjs/modules/<包名>/<tag>/` 并写入 usingComponents。构建同样跑模块的 prepare 钩子，生成的每个 `.json` 转成 `fjs/modules/<包名>/data/<file>.js`（CommonJS，组件 `require('../data/icons.json.js')`）。编译器给 widget 补 `fjs-color`：从本 SFC 静态 class / style 推出的继承色（自身优先，再找祖先），可能是 `var(--x)` |
 
 ## 事件映射
