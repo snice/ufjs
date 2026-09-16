@@ -18,7 +18,7 @@
 // 动画：页面内 tween + requestAnimationFrame，只在有 tween 时跑；Leafer 自己
 // 在属性变化后的下一帧重画，不需要常驻 ticker。
 import { onActivated, onDeactivated, onUnmounted, ref } from 'vue';
-import { Ellipse, Group, Path, Polygon, Rect, Star } from '@leafer-ui/miniapp';
+import { Group, Path, Rect, Star } from '@leafer-ui/miniapp';
 import type { Leafer } from '@leafer-ui/miniapp';
 import type { FjsCanvasApi, FjsTouchEvent } from 'fjs';
 import { mountLeafer } from '@/adapters/leafer/platform';
@@ -32,14 +32,13 @@ import {
   swapCells,
 } from '@/match3/model';
 import type { Grid, Swap } from '@/match3/model';
+import { RAIN, TILE_FILL, TILES, planRain, rgba } from '@/match3/tile';
 
 defineOptions({ name: 'Match3LeaferPage' });
 
 const ROWS = 8;
 const COLS = 8;
 const COLORS = 6;
-
-const GEM_COLORS = ['#ff5a5f', '#ff9f43', '#feca57', '#1dd1a1', '#54a0ff', '#a55eea'];
 
 const SWAP_MS = 140;
 const POP_MS = 150;
@@ -87,6 +86,7 @@ interface Tween {
   left: number;
   dur: number;
   step: (k: number) => void;
+  ease: (x: number) => number;
   done: () => void;
 }
 
@@ -95,10 +95,18 @@ let raf = 0;
 let last = 0;
 
 const easeOutCubic = (x: number): number => 1 - (1 - x) ** 3;
+// 雨落下落用：匀速快落、到点急停（参考视频的手感）
+const easeLinear = (x: number): number => x;
+// 盘外补充下落用：起步慢、落地快的重力感
+const easeInQuad = (x: number): number => x * x;
 
-function animate(dur: number, step: (k: number) => void): Promise<void> {
+function animate(
+  dur: number,
+  step: (k: number) => void,
+  ease: (x: number) => number = easeOutCubic,
+): Promise<void> {
   return new Promise((resolve) => {
-    tweens.push({ left: dur, dur, step, done: resolve });
+    tweens.push({ left: dur, dur, step, ease, done: resolve });
     kick();
   });
 }
@@ -118,7 +126,7 @@ function frame(now: number): void {
     const tw = tweens[i];
     tw.left -= dt;
     const k = 1 - Math.max(tw.left, 0) / tw.dur;
-    tw.step(easeOutCubic(Math.min(k, 1)));
+    tw.step(tw.ease(Math.min(k, 1)));
     if (tw.left <= 0) {
       tweens.splice(i, 1);
       tw.done();
@@ -142,51 +150,59 @@ function glideTo(node: Group, r: number, c: number, dur: number, fromY?: number)
 
 // ── 宝石绘制 ───────────────────────────────────────────────────────────
 
-/** 一颗宝石：Group 原点在格子中心，子图形围着原点画，缩放就是绕中心缩放。 */
+// 参考图的糖果贴片（spec 064）：深色外圈 → 本色内面 → 顶部光带 →
+// 左上白高光 → 居中浅色五角星。六色同一剪影，靠色相区分；
+// 浅/深/星三色由 @/match3/tile 从本色派生，与 pixi 版同源。
+// 透明度全部写进 fill 字符串，不设 Group/形状的 opacity —— Group 的
+// opacity < 1 会借离屏画布合成，App 端没有（文件顶部与 spec 059 §4）。
 function makeGem(color: number): Group {
-  const s = cell * 0.78;
+  const s = cell * TILE_FILL;
   const half = s / 2;
-  const fill = GEM_COLORS[color];
-  let shape;
-  // 六种颜色配六个剪影，颜色弱视也能分
-  switch (color) {
-    case 0:
-      shape = new Ellipse({ x: -half, y: -half, width: s, height: s, fill });
-      break;
-    case 1:
-      shape = new Polygon({ points: [0, -half, half, 0, 0, half, -half, 0], fill });
-      break;
-    case 2:
-      shape = new Star({ x: -half, y: -half, width: s, height: s, corners: 5, innerRadius: 0.52, fill });
-      break;
-    case 3:
-      shape = new Rect({
-        x: -half * 0.9,
-        y: -half * 0.9,
-        width: s * 0.9,
-        height: s * 0.9,
-        cornerRadius: s * 0.24,
-        fill,
-      });
-      break;
-    case 4:
-      shape = new Polygon({ points: [0, -half, half * 0.95, half * 0.72, -half * 0.95, half * 0.72], fill });
-      break;
-    default:
-      shape = new Polygon({
-        points: [half, 0, half * 0.5, -half * 0.87, -half * 0.5, -half * 0.87, -half, 0, -half * 0.5, half * 0.87, half * 0.5, half * 0.87],
-        fill,
-      });
-  }
-  // 左上一笔高光，纯色块才有"糖"的质感（透明度写在颜色里，不设 opacity）
-  const shine = new Ellipse({
-    x: -half * 0.62,
-    y: -half * 0.58,
-    width: half * 0.6,
-    height: half * 0.36,
-    fill: 'rgba(255,255,255,0.32)',
+  const tile = TILES[color];
+  const radius = s * 0.22;
+  const inset = s * 0.055;
+  // 外圈 bevel：内面上移收边，露出下缘一道暗边
+  const rim = new Rect({ x: -half, y: -half, width: s, height: s, cornerRadius: radius, fill: tile.dark });
+  const faceX = -half + inset;
+  const faceY = -half + inset * 0.6;
+  const faceW = s - inset * 2;
+  const face = new Rect({
+    x: faceX,
+    y: faceY,
+    width: faceW,
+    height: s - inset * 1.6,
+    cornerRadius: radius * 0.85,
+    fill: tile.base,
   });
-  return new Group({ children: [shape, shine] });
+  const gloss = new Rect({
+    x: faceX,
+    y: faceY,
+    width: faceW,
+    height: s * 0.42,
+    cornerRadius: radius * 0.85,
+    fill: rgba(tile.light, 0.5),
+  });
+  const sparkle = new Rect({
+    x: -half + s * 0.14,
+    y: -half + s * 0.12,
+    width: s * 0.16,
+    height: s * 0.1,
+    cornerRadius: s * 0.05,
+    fill: 'rgba(255,255,255,0.9)',
+  });
+  // 星星带一圈淡描边：浅色星压在浅色光带上仍保得住轮廓
+  const star = new Star({
+    x: -half * 0.62,
+    y: -half * 0.62,
+    width: half * 1.24,
+    height: half * 1.24,
+    corners: 5,
+    innerRadius: 0.5,
+    fill: tile.star,
+    stroke: rgba(tile.dark, 0.25),
+    strokeWidth: 1.5,
+  });
+  return new Group({ children: [rim, face, gloss, sparkle, star] });
 }
 
 function placeGem(node: Group, r: number, c: number): void {
@@ -205,6 +221,40 @@ function rebuildViews(): void {
       gems.add(node);
     }
   }
+}
+
+// 开局雨落（spec 064）：整盘宝石按 planRain 的走位一行接一行落定。
+// 下落是匀速直线，每颗宝石一条 tween 跑全程，按已流逝时间算进度。
+// 与 pixi 版的差异只在半透明 —— Leafer 不下沉 alpha（离屏合成限制），
+// 落定挤压照做，用 scale 的 {x,y} 形状做纵向压扁。
+async function playIntro(): Promise<void> {
+  busy = true;
+  setSelected(null);
+  const plan = planRain(ROWS, COLS, Math.random);
+  const runs: Promise<void>[] = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const node = views[r][c];
+      if (!node) continue;
+      const step = plan[r][c];
+      const y1 = r * cell + cell / 2;
+      const y0 = step.fromCellY * cell + cell / 2;
+      const total = step.startMs + step.durMs;
+      node.y = y0;
+      runs.push((async () => {
+        await animate(total, (k) => {
+          const p = Math.min(1, Math.max(0, (k * total - step.startMs) / step.durMs));
+          node.y = y0 + (y1 - y0) * p;
+        }, easeLinear);
+        await animate(RAIN.squashMs, (k) => {
+          node.scale = { x: 1 + 0.12 * (1 - k), y: 1 - 0.14 * (1 - k) };
+        });
+        node.scale = 1;
+      })());
+    }
+  }
+  await Promise.all(runs);
+  busy = false;
 }
 
 // ── 回合流程 ───────────────────────────────────────────────────────────
@@ -268,9 +318,15 @@ async function resolveBoard(): Promise<void> {
       const node = makeGem(s.color);
       views[s.r][s.c] = node;
       node.x = s.c * cell + cell / 2;
-      node.y = (s.from + 0.5) * cell;
+      // 盘外补充沿用雨落语言：重力加速入场；盘内已有的坍缩仍走
+      // glideTo 的 easeOut —— 一个是"从天上进来"，一个是"原地归位"
+      const y0 = (s.from + 0.5) * cell;
+      const y1 = s.r * cell + cell / 2;
+      node.y = y0;
       gems!.add(node);
-      moving.push(glideTo(node, s.r, s.c, FALL_MS));
+      moving.push(animate(FALL_MS, (k) => {
+        node.y = y0 + (y1 - y0) * k;
+      }, easeInQuad));
     }
     await Promise.all(moving);
   }
@@ -329,6 +385,7 @@ function restart(): void {
   setSelected(null);
   shuffleBoard(grid, Math.random);
   rebuildViews();
+  void playIntro();
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -445,6 +502,7 @@ function build(width: number, height: number): void {
 
   rebuildViews();
   setSelected(selected);
+  void playIntro();
 }
 
 function teardown(): void {
