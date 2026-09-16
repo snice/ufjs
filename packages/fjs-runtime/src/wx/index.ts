@@ -7,13 +7,15 @@ export * from './instance';
 export { registerRoutes, useRouter, useRoute, createRouter, setActiveRoute, onPageSettled } from './router';
 export type { MpRouteRecord } from './router';
 export { adaptEvent } from './events';
-export { stringifyClass, stringifyStyle, resolveCssColor, onCssVarsChange } from './style';
+export { stringifyClass, stringifyStyle, project, resolveCssColor, onCssVarsChange } from './style';
+export { motion, motionEach } from './motion';
+export type { MotionHost, MotionInstance, UseMotion } from './motion';
 export { installFetchPolyfill, registerPublicData } from './fetch';
 // not here: buildWxRichText (rich-text.ts) is bundled on its own as
 // fjs/rich-text.js, only when a page uses <rich-text> under skyline (spec 050)
 import { installFetchPolyfill } from './fetch';
 import { installAnimationFramePolyfill } from './raf';
-export { requestAnimationFrame, cancelAnimationFrame } from './raf';
+export { requestAnimationFrame, cancelAnimationFrame, setImmediate, clearImmediate } from './raf';
 
 installFetchPolyfill();
 installAnimationFramePolyfill();

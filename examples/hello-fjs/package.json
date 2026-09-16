@@ -52,7 +52,6 @@
         "example/canvas/webgl-instanced",
         "example/canvas/gltf-viewer",
         "example/canvas/three-gltf",
-        "example/animation/",
         "example/interaction/theme",
         "example/game/jump",
         "example/game/shooter",

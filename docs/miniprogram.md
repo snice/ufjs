@@ -164,6 +164,7 @@ form `@submit` 是 `{name: value}` JSON 串。
 | :style 对象/标识符 | 内联展开（数字值经 wxs `unit()` 补 px）；含展开运算符/函数调用的走 `stringifyStyle` computed，v-for 内为按下标取值的 computed 表 |
 | 内联事件 handler | 提取为 setup 内生成函数，经 `__fjsCall` 分发；v-for 内经 `data-args` 传**各层下标**，handler 里从响应式列表取回原对象（按值传的是 setData 快照副本，改它不会更新） |
 | `requestAnimationFrame` / `cancelAnimationFrame` | 小程序模块包装里这两个名字是 undefined 的遮蔽绑定，编译器给用到的模块补 import，运行时以 16ms 定时器实现 |
+| `setImmediate` / `clearImmediate` | 宿主里根本没有：库用 `typeof window !== 'undefined'` 探测浏览器时会走 Node 分支读这个裸全局（Anime.js 在模块求值期就这么挑主循环）。与上一行同一套注入，映射到同一个帧定时器——不用「尽快执行」的宏任务，那样的自我重排循环会把线程占满 |
 | 模板中的函数调用 `{{ f(x) }}` | 提取为 computed |
 | v-model（input/textarea） | value + bindinput |
 | 默认/具名 slot | slot 直译 |
@@ -205,7 +206,10 @@ base-css）。两个 skyline 硬约束决定了它的形态：
 - **rich-text（skyline）**：嵌套 text 不支持 `vertical-align`（`sub` / `sup` 只变小不抬升）与 `position`/`top`；含图片的段落是「文字段 + 图片」的换行横排，图片旁的长文字在自己的盒子里换行、不绕排；非 scoped 的页面样式经 page-styles.wxss 会作用到**所有页**的 rich-text 内部节点（scoped 的带 data-v class，只命中来源页）；`<img>` 不给宽高时 load 后按原图宽度、不超过容器。
 - **rich-text（webview，原生）**：默认样式（标题字号、段落边距、列表缩进）来自原生 / 浏览器 UA，而不是 `rich-text/defaults.ts`，数值接近但不保证一致；页面 `<style scoped>` 规则**命不中**内部节点（原生节点不带 data-v class），要样式化内部节点请用非 scoped 样式；白名单外标签（script / iframe 等）被原生静默丢弃、**没有**控制台告警（加告警需要在 wx 侧解析 HTML，与「webview 不打包管线」冲突，spec 050 Q2）。
 - **picker-view**：上下渐隐用原生遮罩（不是 web 的 mask-image）；v-for 内的 picker-view 选项列表整体替换后不会重交 value。
-- **hello-fjs 示例页的开放情况**：组件页开放 rich-text、picker-view、form、position（spec 048），仍排除 canvas、web-view、refresh；示例页开放 percent-spacing、pseudo、responsive、transition、page-settled、async-host、drag、dnd、2048；排除 echarts / f2 / shooter / three-gltf / gltf-viewer / webgl / webgl-instanced（npm 渲染库或 WebGL）、motion / anime（依赖 @vueuse/motion、animejs）、theme（Flutter 管线压测：styleEngine / op sink）、gomoku / tetris（canvas 桥）。
+- **hello-fjs 示例页的开放情况**：组件页开放 rich-text、picker-view、form、position（spec 048），仍排除 canvas、web-view、refresh；示例页开放 percent-spacing、pseudo、responsive、transition、page-settled、async-host、drag、dnd、2048；排除 echarts / f2 / shooter / three-gltf / gltf-viewer / webgl / webgl-instanced（npm 渲染库或 WebGL）、motion / anime（依赖 @vueuse/motion、animejs）、theme（Flutter 管线压测：styleEngine / op sink）、gomoku / tetris（canvas 桥）；animation 组（anime / motion）自 spec 061 起开放。
+- **v-motion / @vueuse/motion**（specs/061）：小程序端没有元素可写，指令的 `el.style[key] = v` 落不下去。编译器把 `v-motion` 元素的 `:initial` / `:enter` / `:variants`（外加 `:delay` / `:duration`）收进 setup 里的一次 `motion()` / `motionEach()` 调用，运行时交给 `useMotion` 一个**DOM 形状的替身**（一个带 reactive `style` 的普通对象——motion 只碰 `el.style[key]` 与 `el.style.transform`），再把替身的 style 串回绑到元素上（`style="{{ __m0 }}"`，v-for 里是 `__m0[index]`）；元素自己的 `:style` / 静态 `style` 仍在前面，motion 写在后面生效。`@vueuse/motion` 不进运行时包：`useMotion` 由编译出的页面模块 import 后传进去。元素上的 `:ref` 拿到的就是这个替身，`el.motionInstance.apply('right')` 照常可用。帧循环与 App 端同路：没有 `window`，framesync 退到 16.7ms 的 setTimeout。
+  不支持：`hovered` / `tapped` / `focused`（要 DOM 事件）、`visible` / `visibleOnce`（要 IntersectionObserver）、`leave`（要 vdom 卸载钩子）——编译期告警后丢弃；嵌套 v-for 里的 `v-motion` 同样丢弃并告警。`:key` 变化在另外两端是重挂载重播入场，这里由运行时重建实例等效实现（key 表达式编译进 `motionEach`）。
+- **setData 的时机与内容**（specs/062）：同一批响应式写入合并成**一次** setData，排在一个微任务上（`nextTick()` 仍在它之后）——`@vue/reactivity` 自己没有任务队列（队列在 runtime-core，这个目标不装），没有 scheduler 的 `watch` 是同步的，一帧写 25 个对象 × 3 个属性会过桥 75 次。另外 `v-for` 的列表按**模板真正读到的字段**投影后再下发（`__fjsProject`）：`wx:for="{{ dots }}"` 只为走一遍列表，模板读 `dot.id`，那么 `scale` 每帧在变也不会让整个数组重发；整项被读（`{{ chip }}`、`dot[key]`、事件 `data-args`）、`wx:key="*this"`、嵌套 v-for 的内层列表、运行时才知道是否为数字的列表都原样放过。`__fjsData` 因此就是「模板读到的名字」集合。
 - **fetch**：`@ufjs/runtime/wx` 安装基于 `wx.request` 的 polyfill，文本/
   JSON 响应可用；流式与 blob 不可用。
 - **toast / invokeHostAsync**：`fjs` 模块在 wx 端的 `toast` 走 `wx.showToast`。

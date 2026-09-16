@@ -25,14 +25,26 @@ export interface ScriptGenOptions {
 const RUNTIME_IMPORT =
   "import { createWevuComponent as __fjsCreate } from '@ufjs/runtime/wx';";
 const HELPER_IMPORT =
-  "import { computed as __fjsComputed, stringifyClass as __fjsStringifyClass, stringifyStyle as __fjsStringifyStyle, pickerSync as __fjsPickerSync } from '@ufjs/runtime/wx';";
+  "import { computed as __fjsComputed, stringifyClass as __fjsStringifyClass, stringifyStyle as __fjsStringifyStyle, project as __fjsProject, pickerSync as __fjsPickerSync } from '@ufjs/runtime/wx';";
+// v-motion: the helpers live in the runtime, `useMotion` comes from the
+// library itself — the runtime bundle stays free of @vueuse/motion
+const MOTION_IMPORT =
+  "import { motion as __fjsMotion, motionEach as __fjsMotionEach } from '@ufjs/runtime/wx';\nimport { useMotion as __fjsUseMotion } from '@vueuse/motion';";
 const PAGE_IMPORT =
   "import { reactive as __fjsReactive, onShow as __fjsOnShow, pageQuery as __fjsPageQuery, setActiveRoute as __fjsSetPageRoute } from '@ufjs/runtime/wx';";
 
 /** Browser globals the mini-program module wrapper shadows with its own
  * undefined bindings, so assigning them on globalThis does not help: a
  * module that names one gets it imported from the wx runtime instead. */
-export const SHADOWED_GLOBALS = ['requestAnimationFrame', 'cancelAnimationFrame'];
+export const SHADOWED_GLOBALS = [
+  'requestAnimationFrame',
+  'cancelAnimationFrame',
+  // not shadowed but missing outright: a library probing for a browser takes
+  // its Node branch and reads this bare global (Anime.js picks its main loop
+  // that way, while its module evaluates)
+  'setImmediate',
+  'clearImmediate',
+];
 
 /** Comments blanked and string bodies emptied, so the tests below see code
  * and only code. A prose "…the build imports requestAnimationFrame…" in a
@@ -198,6 +210,7 @@ export function genScriptCode(options: ScriptGenOptions): string {
   if (options.media?.length) code += `\n__sfc__.__fjsMedia = ${JSON.stringify(options.media)};`;
   if (wxml.canvasRefs?.length) code += `\n__sfc__.__fjsCanvas = ${JSON.stringify(wxml.canvasRefs)};`;
   code += `\n${HELPER_IMPORT}`;
+  if (wxml.usesMotion) code += `\n${MOTION_IMPORT}`;
   for (const extra of extraImports) code += `\n${extra}`;
   const shadowed = shadowedGlobalsImport(compiled.content);
   if (shadowed) code += `\n${shadowed.trimEnd()}`;

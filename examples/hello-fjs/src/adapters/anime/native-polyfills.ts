@@ -8,6 +8,12 @@
 // takes the Node branch and reads the bare `setImmediate` global — which
 // does not exist there, and the import would throw.
 //
+// The mini program has the same gap but not the same fix: there Anime.js is
+// inside the npm vendor bundle, whose top level evaluates the moment ANY page
+// requires it — before this module could run. `setImmediate` is one of the
+// build's injected globals there (SHADOWED_GLOBALS in fjs/src/mp/script.ts),
+// so nothing is needed from the page side.
+//
 // Why map it onto requestAnimationFrame instead of a macrotask: JS runs on
 // the UI thread here (docs/threading-model.md). A Node-style "as soon as
 // possible" loop re-arms itself forever and starves frame production; the

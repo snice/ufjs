@@ -63,11 +63,34 @@ describe('genWxml', () => {
     const r = compile(
       '<view v-for="(item, i) in items" :key="item.id" :class="{ on: i === 0 }">{{ item.name }}</view>',
     );
-    expect(r.wxml).toContain('wx:for="{{ items }}"');
+    // the list is projected to the properties the template reads (see the
+    // "v-for list projection" block below)
+    expect(r.wxml).toContain('wx:for="{{ __l0 }}"');
+    expect(r.setupCode.join('\n')).toContain('__fjsProject(items.value, ["name", "id"])');
     expect(r.wxml).toContain('wx:for-item="item"');
     expect(r.wxml).toContain('wx:key="id"');
     expect(r.wxml).toContain('(i === 0 ? \'on \' : \'\')');
     expect(r.wxml).toContain('{{ item.name }}');
+  });
+
+  it('flattens a multi-line object literal and drops its trailing comma', () => {
+    // wxml attribute values are one line and its parser has no trailing
+    // commas, but both are ordinary in a Vue template
+    const r = compile(`<view v-for="(s, i) in rows" :key="s.name" :variants="{
+        initial: { x: 0 },
+        right: { x: 100, transition: { stiffness: s.stiffness } },
+      }" />`);
+    expect(r.wxml).toContain(
+      `variants="{{ { initial: { x: 0 }, right: { x: 100, transition: { stiffness: s.stiffness } } } }}"`,
+    );
+    expect(r.wxml).not.toContain('\n      ');
+  });
+
+  it('keeps whitespace inside strings when flattening', () => {
+    const r = compile(`<view :data-a="{
+        label: 'a  b',
+      }" />`);
+    expect(r.wxml).toContain(`data-a="{{ { label: 'a  b' } }}"`);
   });
 
   it('converts template literals in :class to concatenation', () => {
@@ -446,6 +469,123 @@ describe('genWxml', () => {
     expect(r.usingComponents.get('fjs-safe-area')).toBe('fjs-safe-area');
     const r2 = compile('<divider />');
     expect(r2.wxml).toContain('class="fjs-box fjs-divider data-v-test"');
+  });
+});
+
+describe('v-for list projection (spec 061)', () => {
+  const B = { dots: 'setup-const', rows: 'setup-const', names: 'setup-const', pick: 'setup-const' };
+
+  it('projects to the properties the wxml reads, plus the wx:key one', () => {
+    const r = compile(
+      '<view v-for="dot in dots" :key="dot.id" :style="{ opacity: dot.o }">{{ dot.label }}</view>',
+      B,
+    );
+    expect(r.wxml).toContain('wx:for="{{ __l0 }}"');
+    expect(r.setupCode.join('\n')).toContain('__fjsProject(dots, ["o", "label", "id"])');
+    // the source list itself no longer crosses setData
+    expect(r.dataNames).not.toContain('dots');
+    expect(r.dataNames).toContain('__l0');
+  });
+
+  it('projects to nothing but the key when the item is never read', () => {
+    const r = compile('<view v-for="(dot, i) in dots" :key="dot.id" :style="dotStyle(dot)" />', {
+      ...B,
+      dotStyle: 'setup-const',
+    });
+    // dotStyle(dot) is a call: it becomes a per-item table in setup, so the
+    // wxml itself reads nothing off the item
+    expect(r.setupCode.join('\n')).toContain('__fjsProject(dots, ["id"])');
+  });
+
+  it('leaves the list alone when an expression reads the whole item', () => {
+    const r = compile('<view v-for="name in names">{{ name }}</view>', B);
+    expect(r.wxml).toContain('wx:for="{{ names }}"');
+    expect(r.dataNames).toContain('names');
+  });
+
+  it('leaves the list alone for a computed member read', () => {
+    const r = compile('<view v-for="dot in dots">{{ dot[pick] }}</view>', B);
+    expect(r.wxml).toContain('wx:for="{{ dots }}"');
+  });
+
+  it('does not take the item name from a class or a wx:for-item', () => {
+    const r = compile('<view v-for="dot in dots" :key="dot.id" class="dot" />', B);
+    expect(r.setupCode.join('\n')).toContain('__fjsProject(dots, ["id"])');
+  });
+
+  it('leaves a nested v-for alone (an inner list is not setup scope)', () => {
+    const r = compile(
+      '<view v-for="row in rows"><view v-for="c in row">{{ c.x }}</view></view>',
+      B,
+    );
+    expect(r.wxml).toContain('wx:for="{{ row }}"');
+    expect(r.setupCode.join('\n')).not.toContain('__fjsProject(row');
+  });
+});
+
+describe('v-motion (spec 061)', () => {
+  const B = { CHIPS: 'setup-const', SPRINGS: 'setup-const', LANE: 'setup-const', setBall: 'setup-const' };
+
+  it('binds the stand-in style and drops the variant attributes', () => {
+    const r = compile(
+      `<view v-motion :initial="{ opacity: 0 }" :enter="{ opacity: 1 }" class="chip" />`,
+      B,
+    );
+    expect(r.wxml).toContain('style="{{ __m0 }}"');
+    expect(r.wxml).not.toContain('initial=');
+    expect(r.wxml).not.toContain('enter=');
+    expect(r.setupCode.join('\n')).toContain(
+      'const __m0 = __fjsMotion(__fjsUseMotion, () => ({ initial: { opacity: 0 }, enter: { opacity: 1 } }));',
+    );
+    expect(r.usesMotion).toBe(true);
+    expect(r.dataNames).toContain('__m0');
+  });
+
+  it('makes one instance per v-for item and wires the :ref handle', () => {
+    const r = compile(
+      `<view v-for="(spring, i) in SPRINGS" :key="spring.name" v-motion :ref="setBall(i)"
+         :variants="{ right: { x: LANE, transition: { stiffness: spring.stiffness } } }"
+         :style="{ backgroundColor: 'red' }" />`,
+      B,
+    );
+    const setup = r.setupCode.join('\n');
+    expect(setup).toContain('const __m0 = __fjsMotionEach(__fjsUseMotion, () => SPRINGS,');
+    expect(setup).toContain('(spring, i) => ({ ...({ right: { x: LANE, transition: { stiffness: spring.stiffness } } }) })');
+    expect(setup).toContain('(__el, spring, i) => { (setBall(i))(__el); }');
+    // the element's own :style stays, motion writes after it
+    expect(r.wxml).toMatch(/style="\{\{ \('background-color:' \+ .*\) \+ ';' \+ __m0\[i\] \}\}"/);
+    expect(r.wxml).not.toContain('ref=');
+  });
+
+  it('keeps a static style in front of the motion style', () => {
+    const r = compile(`<view v-motion :enter="{ opacity: 1 }" style="width:10px" />`, B);
+    expect(r.wxml).toContain('style="width:10px; {{ __m0 }}"');
+  });
+
+  it('passes the :key so a changed key replays the entrance', () => {
+    const r = compile(
+      `<view v-for="(chip, i) in CHIPS" :key="\`${'${run}'}-${'${chip}'}\`" v-motion :enter="{ opacity: 1 }" />`,
+      { ...B, run: 'setup-ref' },
+    );
+    const setup = r.setupCode.join('\n');
+    expect(setup).toContain('undefined, (chip, i) => (');
+    // setup code is TS: the template literal stays one, only refs are unwrapped
+    expect(setup).toContain('(chip, i) => (`${run.value}-${chip}`)');
+  });
+
+  it('warns for variants that need DOM events or an observer', () => {
+    const r = compile(`<view v-motion :enter="{ opacity: 1 }" :hovered="{ scale: 1.1 }" />`, B);
+    expect(warn.join('\n')).toContain('v-motion :hovered needs DOM events');
+    expect(r.wxml).not.toContain('hovered=');
+  });
+
+  it('drops v-motion inside a nested v-for', () => {
+    const r = compile(
+      `<view v-for="row in items"><view v-for="(c, j) in row" v-motion :enter="{ opacity: 1 }" /></view>`,
+      { ...B, items: 'setup-const' },
+    );
+    expect(warn.join('\n')).toContain('nested v-for is not supported');
+    expect(r.usesMotion).toBe(false);
   });
 });
 

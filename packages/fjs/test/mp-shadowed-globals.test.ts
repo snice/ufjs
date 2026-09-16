@@ -22,6 +22,14 @@ describe('shadowedGlobalsImport', () => {
     expect(out).toContain('requestAnimationFrame, cancelAnimationFrame');
   });
 
+  it('injects setImmediate — the Node branch of a browser probe (spec 061)', () => {
+    // Anime.js picks its main loop with `isBrowser ? requestAnimationFrame :
+    // setImmediate` while its module evaluates; on this host that bare read
+    // threw `setImmediate is not defined` before any page code could run
+    const out = shadowedGlobalsImport('const loop = isBrowser ? requestAnimationFrame : setImmediate;');
+    expect(out).toContain('requestAnimationFrame, setImmediate');
+  });
+
   it('injects nothing when neither name appears', () => {
     expect(shadowedGlobalsImport('const a = setTimeout(f, 16);')).toBe('');
   });

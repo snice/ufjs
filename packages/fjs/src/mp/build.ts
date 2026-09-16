@@ -439,7 +439,7 @@ class SfcCompiler {
           filename,
           scopeId,
         })
-      : { wxml: '', setupCode: [], returnedNames: [], dataNames: [], usesWxs: false, usingComponents: new Map(), fjsClasses: [] };
+      : { wxml: '', setupCode: [], returnedNames: [], dataNames: [], usesWxs: false, usesMotion: false, usingComponents: new Map(), fjsClasses: [] };
 
     const moduleCode = genScriptCode({
       compiled: { content, bindings },

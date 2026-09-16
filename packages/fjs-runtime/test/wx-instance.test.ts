@@ -54,6 +54,51 @@ beforeEach(() => {
 });
 
 describe('createWevuComponent', () => {
+  it('coalesces a tick of writes into one setData', async () => {
+    // @vue/reactivity has no job queue of its own: unscheduled, the snapshot
+    // and setData ran on every single property write — one animation tick
+    // touching 25 objects crossed the bridge 75 times
+    createWevuComponent({
+      __name: 'dots',
+      __fjsData: ['dots'],
+      setup() {
+        const dots = ref([{ scale: 1 }, { scale: 1 }, { scale: 1 }]);
+        return { dots, bump: () => dots.value.forEach((d, i) => (d.scale = i + 2)) };
+      },
+    });
+    const inst = instanceOf();
+    (registered!.lifetimes.attached as () => void).call(inst);
+    const first = inst.setData.mock.calls.length;
+    (inst.__fjs_fns.bump as () => void)();
+    expect(inst.setData.mock.calls.length).toBe(first); // nothing yet
+    await flush();
+    expect(inst.setData.mock.calls.length).toBe(first + 1);
+    expect(inst.data.dots).toEqual([{ scale: 2 }, { scale: 3 }, { scale: 4 }]);
+  });
+
+  it('drops nested functions so setData stays serializable', () => {
+    // an anime.js easing is a class instance carrying `ease` / `onComplete`;
+    // a function reaching the bridge throws on the whole payload
+    class Easing {
+      stiffness = 120;
+      ease = (t: number) => t;
+    }
+    createWevuComponent({
+      __name: 'lanes',
+      __fjsData: ['lanes'],
+      setup() {
+        const lanes = ref([{ name: 'spring', ease: new Easing(), cbs: [() => 1, 2] }]);
+        return { lanes };
+      },
+    });
+    const inst = instanceOf();
+    (registered!.lifetimes.attached as () => void).call(inst);
+    expect(inst.data.lanes).toEqual([
+      { name: 'spring', ease: { stiffness: 120 }, cbs: [null, 2] },
+    ]);
+    expect(() => JSON.stringify(inst.data)).not.toThrow();
+  });
+
   it('runs setup on attached and lands the first snapshot in data', () => {
     createWevuComponent({
       __name: 'counter',

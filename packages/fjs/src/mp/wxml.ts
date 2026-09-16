@@ -343,6 +343,9 @@ export interface WxmlResult {
   returnedNames: string[];
   /** The template calls the fjs wxs helpers (FJS_WXS in project.ts). */
   usesWxs: boolean;
+  /** The template has a `v-motion` element — the module needs the motion
+   * helpers and @vueuse/motion's `useMotion` (script.ts MOTION_IMPORT). */
+  usesMotion: boolean;
   /** Setup bindings referenced from template expressions — the runtime
    * narrows setData to exactly these keys. */
   dataNames: string[];
@@ -357,7 +360,7 @@ export interface WxmlResult {
 
 interface Ctx extends WxmlOptions, WxmlResult {
   canvasRefs: Array<{ ref: string; resize: boolean }>;
-  counters: { ev: number; cls: number; sty: number; d: number };
+  counters: { ev: number; cls: number; sty: number; d: number; m: number; l: number };
   /** cross-axis alignment of each open element, innermost last */
   alignStack: Array<'center' | 'end' | null>;
   /** static `color` of each open element (null = not set there) */
@@ -389,10 +392,11 @@ export function genWxml(template: string, options: WxmlOptions): WxmlResult {
     returnedNames: [],
     dataNames: [],
     usesWxs: false,
+    usesMotion: false,
     usingComponents: new Map(),
     fjsClasses: [],
     canvasRefs: [],
-    counters: { ev: 0, cls: 0, sty: 0, d: 0 },
+    counters: { ev: 0, cls: 0, sty: 0, d: 0, m: 0, l: 0 },
     alignStack: [],
     colorStack: [],
     pickerRowStack: [],
@@ -407,6 +411,7 @@ export function genWxml(template: string, options: WxmlOptions): WxmlResult {
     returnedNames: ctx.returnedNames,
     dataNames: ctx.dataNames,
     usesWxs: ctx.usesWxs,
+    usesMotion: ctx.usesMotion,
     usingComponents: ctx.usingComponents,
     fjsClasses: ctx.fjsClasses,
     canvasRefs: ctx.canvasRefs,
@@ -808,7 +813,6 @@ function genFor(
   // per-item table by every level's index
   const indexVar = vars[1] ?? (scope.forStack.length ? `__i${scope.forStack.length}` : 'index');
   const listExpr = m[2].trim();
-  trackData(ctx, listExpr);
 
   const innerScope: Scope = {
     forVars: new Set([...scope.forVars, itemVar, indexVar]),
@@ -850,8 +854,11 @@ function genFor(
   // literal range becomes the array Vue would walk.
   const range = /^\d+$/.test(listExpr) ? Number(listExpr) : null;
   let wxList: string;
+  const projected = range === null ? projectedList(listExpr, inner, itemVar, wxKey, ctx, scope) : null;
   if (range !== null && range <= 1000) {
     wxList = `[${Array.from({ length: range }, (_, i) => i + 1).join(', ')}]`;
+  } else if (projected) {
+    wxList = projected;
   } else if (!ctx.numericBindings?.has(listExpr)) {
     wxList = inlineExpr(listExpr, ctx, innerScope);
   } else {
@@ -868,6 +875,58 @@ function genFor(
     ifDir ? ifAttrOf(ifDir.exp, ctx, innerScope, 'wx:if') : opts.ifAttr ?? '',
   ].filter(Boolean);
   return `${pad(depth)}<block ${attrs.join(' ')}>\n${inner}\n${pad(depth)}</block>\n`;
+}
+
+/** A v-for list crosses the setData bridge only so wx:for can walk it, and
+ * the template usually reads two or three properties off each item. The rest
+ * is not just dead weight: it also counts as a CHANGE, so a page that writes
+ * `dot.scale` 60 times a second re-sends all 25 dots every frame even though
+ * the wxml reads nothing but `dot.id`. So the list is PROJECTED down to the
+ * properties the emitted template actually reads — usually a constant array,
+ * which then diffs equal and is never sent again.
+ *
+ * Returns null (list passes through as is) when the item is read as a whole
+ * somewhere — `{{ chip }}`, `dot[key]`, an event's data-args — or the list
+ * cannot be projected from setup scope (inside another v-for, or a binding
+ * that may be a number at runtime). */
+function projectedList(
+  listExpr: string,
+  inner: string,
+  itemVar: string,
+  wxKey: string,
+  ctx: Ctx,
+  scope: Scope,
+): string | null {
+  if (scope.forStack.length || ctx.numericBindings?.has(listExpr)) return null;
+  if (wxKey === '*this') return null;
+  const reads = itemReads(inner, itemVar);
+  if (reads === null) return null;
+  if (wxKey) reads.add(wxKey);
+  const name = `__l${ctx.counters.l++}`;
+  const keys = [...reads].map((k) => JSON.stringify(k)).join(', ');
+  ctx.setupCode.push(
+    computedSrc(name, `__fjsProject(${rewritten(listExpr, ctx, scope)}, [${keys}])`),
+  );
+  ctx.returnedNames.push(name);
+  ctx.dataNames.push(name);
+  return name;
+}
+
+/** Properties of `itemVar` the emitted wxml reads, or null when it reads the
+ * item as a whole. Only `{{ }}` contents count — the item name also shows up
+ * as a class name or in `wx:for-item`, which are not expressions. */
+function itemReads(inner: string, itemVar: string): Set<string> | null {
+  const props = new Set<string>();
+  const re = new RegExp(`(?:^|[^\\w$.])${itemVar}(?:\\s*\\.\\s*([A-Za-z_$][\\w$]*))?`, 'g');
+  for (const mustache of inner.matchAll(/\{\{([\s\S]*?)\}\}/g)) {
+    // string bodies are text, not code: `'dot'` is not a read of `dot`
+    const code = mustache[1].replace(/'(?:\\.|[^'])*'|"(?:\\.|[^"])*"/g, "''");
+    for (const hit of code.matchAll(re)) {
+      if (!hit[1]) return null;
+      props.add(hit[1]);
+    }
+  }
+  return props;
 }
 
 export type TouchAction = 'none' | 'pan-x' | 'pan-y';
@@ -1081,8 +1140,12 @@ function genAttrs(el: ElementNode, ctx: Ctx, scope: Scope, custom: boolean, mapp
   const clsParts: string[] = [];
   if (downcastCls) clsParts.push(downcastCls);
   let dynamicClass: DirectiveNode | undefined;
+  // v-motion animates a stand-in the runtime owns; what lands in the wxml is
+  // its style string, merged into whatever :style / style the element has
+  const motion = genMotion(el, ctx, scope);
 
   for (const prop of el.props) {
+    if (motion?.consumed.has(prop)) continue;
     if (prop.type === NodeTypes.ATTRIBUTE) {
       const a = prop as AttributeNode;
       if (a.name === 'key' || a.name === 'class') continue; // assembled below / with v-for
@@ -1122,7 +1185,8 @@ function genAttrs(el: ElementNode, ctx: Ctx, scope: Scope, custom: boolean, mapp
       case 'for':
       case 'slot':
       case 'show':
-        continue; // handled by the chain/for/slot/genNode logic
+      case 'motion':
+        continue; // handled by the chain/for/slot/genNode/genMotion logic
       case 'bind': {
         const arg = dirArg(d);
         if (!arg) {
@@ -1135,7 +1199,7 @@ function genAttrs(el: ElementNode, ctx: Ctx, scope: Scope, custom: boolean, mapp
           continue;
         }
         if (arg === 'style') {
-          attrs.push(genStyleBinding(el, d, ctx, scope));
+          attrs.push(genStyleBinding(el, d, ctx, scope, motion?.expr));
           continue;
         }
         const attrName = wxAttrName(mappedTag, kebabAttr(arg));
@@ -1184,6 +1248,16 @@ function genAttrs(el: ElementNode, ctx: Ctx, scope: Scope, custom: boolean, mapp
         continue;
       default:
         warn(`[fjs/mp] ${ctx.filename}: unsupported directive v-${d.name}`);
+    }
+  }
+
+  // v-motion with no :style of its own: the stand-in's style is the binding
+  // (a static style= stays in front of it, same order as genStyleBinding)
+  if (motion) {
+    const i = attrs.findIndex((a) => a.startsWith('style='));
+    if (i < 0) attrs.push(`style="{{ ${motion.expr} }}"`);
+    else if (!attrs[i].includes('{{')) {
+      attrs[i] = `${attrs[i].slice(0, -1)}; {{ ${motion.expr} }}"`;
     }
   }
 
@@ -1384,7 +1458,7 @@ function scrollviewHeightMissing(el: ElementNode, ctx: Ctx): boolean {
 type ClassChunk = { text?: string; expr?: string };
 
 function classValueChunks(el: ElementNode, d: DirectiveNode, ctx: Ctx, scope: Scope): ClassChunk[] {
-  const expr = exprContent(d.exp).trim();
+  const expr = flattenExpr(exprContent(d.exp).trim());
   if (expr.startsWith('{')) {
     return [{ expr: inlineClassObject(expr, ctx, scope) }];
   }
@@ -1415,7 +1489,8 @@ function classValueChunks(el: ElementNode, d: DirectiveNode, ctx: Ctx, scope: Sc
   // generated computeds are template data too: __fjsData narrows setData
   // to dataNames, and a computed left out never reaches the wxml
   ctx.dataNames.push(name);
-  trackData(ctx, expr);
+  // no trackData for the source expression: it is read HERE, in setup, by the
+  // computed above — only what the wxml itself names has to cross setData
   return [{ expr: name }];
 }
 
@@ -1442,11 +1517,118 @@ function inlineClassObject(expr: string, ctx: Ctx, scope: Scope): string {
   return out.join(' + ') || "''";
 }
 
-function genStyleBinding(el: ElementNode, d: DirectiveNode, ctx: Ctx, scope: Scope): string {
-  const expr = exprContent(d.exp).trim();
+/** Variant bindings the mini program can run: pure style targets driven by
+ * the frame loop. `leave` needs a vdom unmount hook, which this host has no
+ * equivalent for. */
+const MOTION_KEYS = new Set(['initial', 'enter', 'variants', 'delay', 'duration']);
+/** Variants that need DOM event listeners or an IntersectionObserver. */
+const MOTION_DOM_KEYS = new Set([
+  'hovered', 'tapped', 'focused', 'visible', 'visible-once', 'visibleOnce', 'leave',
+]);
+
+interface MotionBinding {
+  /** wxml expression for the stand-in's style (`__m0`, or `__m0[i]`). */
+  expr: string;
+  /** props genAttrs must not emit — the directive and its variant bindings. */
+  consumed: Set<unknown>;
+}
+
+/** `v-motion` on the mini program. There is no element for motion to write
+ * to, so the runtime gives it a DOM-shaped stand-in and the element binds the
+ * stand-in's style (wx/motion.ts). The variant objects are evaluated in the
+ * SETUP scope — inside a v-for that is the per-item factory's parameters, so
+ * an expression reading the loop item keeps working. */
+function genMotion(el: ElementNode, ctx: Ctx, scope: Scope): MotionBinding | null {
+  const dir = el.props.find(
+    (p): p is DirectiveNode => p.type === NodeTypes.DIRECTIVE && p.name === 'motion',
+  );
+  if (!dir) return null;
+  const consumed = new Set<unknown>([dir]);
+  const entries: string[] = [];
+  let spread = '';
+  let refExpr: string | null = null;
+  for (const p of el.props) {
+    if (p.type !== NodeTypes.DIRECTIVE) continue;
+    const d = p as DirectiveNode;
+    if (d.name !== 'bind') continue;
+    const arg = dirArg(d) ?? '';
+    if (arg === 'ref') {
+      refExpr = flattenExpr(exprContent(d.exp).trim());
+      consumed.add(p);
+      continue;
+    }
+    if (MOTION_DOM_KEYS.has(arg)) {
+      warn(
+        `[fjs/mp] ${ctx.filename}: v-motion :${arg} needs DOM events or an ` +
+          `IntersectionObserver — dropped`,
+      );
+      consumed.add(p);
+      continue;
+    }
+    if (!MOTION_KEYS.has(arg)) continue;
+    consumed.add(p);
+    const src = rewritten(flattenExpr(exprContent(d.exp).trim()), ctx, scope);
+    if (arg === 'variants') spread = `...(${src})`;
+    else entries.push(`${arg}: ${src}`);
+  }
+  if (!spread && !entries.length) {
+    warn(`[fjs/mp] ${ctx.filename}: v-motion with no variants — dropped`);
+    return null;
+  }
+  if (scope.forStack.length > 1) {
+    warn(`[fjs/mp] ${ctx.filename}: v-motion inside nested v-for is not supported — dropped`);
+    return null;
+  }
+  const variants = `{ ${[spread, ...entries].filter(Boolean).join(', ')} }`;
+  const name = `__m${ctx.counters.m++}`;
+  ctx.usesMotion = true;
+  ctx.returnedNames.push(name);
+  ctx.dataNames.push(name);
+  if (scope.forStack.length === 0) {
+    const attach = refExpr ? `, (__el) => { (${rewritten(refExpr, ctx, scope)})(__el); }` : '';
+    ctx.setupCode.push(
+      `const ${name} = __fjsMotion(__fjsUseMotion, () => (${variants})${attach});`,
+    );
+    return { expr: name, consumed };
+  }
+  const f = scope.forStack[0];
+  const list = rewriteExpr(f.list, { bindings: ctx.bindings, skip: new Set() });
+  const params = `${f.item}, ${f.index}`;
+  const attach = refExpr
+    ? `(__el, ${params}) => { (${rewritten(refExpr, ctx, scope)})(__el); }`
+    : 'undefined';
+  // :key on the v-motion element itself: a changed key remounts on the other
+  // hosts, which is how a page replays an entrance — the runtime rebuilds the
+  // instance instead (the key is NOT consumed, wx:key still reads it)
+  const keyDir = el.props.find(
+    (p): p is DirectiveNode =>
+      p.type === NodeTypes.DIRECTIVE && p.name === 'bind' && dirArg(p) === 'key',
+  );
+  const keyFn = keyDir
+    ? `, (${params}) => (${rewritten(flattenExpr(exprContent(keyDir.exp).trim()), ctx, scope)})`
+    : '';
+  const tail = keyFn ? `, ${attach}${keyFn}` : refExpr ? `, ${attach}` : '';
+  ctx.setupCode.push(
+    `const ${name} = __fjsMotionEach(__fjsUseMotion, () => ${list}, ` +
+      `(${params}) => (${variants})${tail});`,
+  );
+  // the list is read here, in setup, by the helper above — not by the wxml
+  return { expr: `${name}[${f.index}]`, consumed };
+}
+
+function genStyleBinding(
+  el: ElementNode,
+  d: DirectiveNode,
+  ctx: Ctx,
+  scope: Scope,
+  motionExpr?: string,
+): string {
+  const expr = flattenExpr(exprContent(d.exp).trim());
   const inline = inlineStyleExpr(expr, ctx, scope);
   const staticSty = staticAttr(el, 'style');
-  return `style="${staticSty ? escapeAttr(staticSty) + '; ' : ''}{{ ${inline} }}"`;
+  // motion writes last: a tweened transform must win over the resting one
+  const value = motionExpr ? `(${inline}) + ';' + ${motionExpr}` : inline;
+  return `style="${staticSty ? escapeAttr(staticSty) + '; ' : ''}{{ ${value} }}"`;
 }
 
 function inlineStyleExpr(expr: string, ctx: Ctx, scope: Scope): string {
@@ -1488,7 +1670,8 @@ function inlineStyleExpr(expr: string, ctx: Ctx, scope: Scope): string {
   // generated computeds are template data too: __fjsData narrows setData
   // to dataNames, and a computed left out never reaches the wxml
   ctx.dataNames.push(name);
-  trackData(ctx, expr);
+  // no trackData for the source expression: it is read HERE, in setup, by the
+  // computed above — only what the wxml itself names has to cross setData
   return name;
 }
 
@@ -1746,6 +1929,37 @@ function findKeyColon(part: string): number {
   return -1;
 }
 
+/** A wxml attribute value is one line, and the wxml expression parser has no
+ * trailing commas — so a multi-line object/array literal that is perfectly
+ * valid in a Vue template (`:variants="{\n  a: { … },\n}"`) has to be
+ * flattened before it lands in an attribute. Whitespace inside string and
+ * template literals is content, so it is copied through untouched. */
+export function flattenExpr(expr: string): string {
+  if (!/[\n\r\t]|,\s*[}\])]/.test(expr)) return expr;
+  let out = '';
+  let quote = '';
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i];
+    if (quote) {
+      out += ch;
+      if (ch === '\\') out += expr[++i] ?? '';
+      else if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch;
+    } else if (/\s/.test(ch)) {
+      if (out && !out.endsWith(' ')) out += ' ';
+      continue;
+    } else if (ch === '}' || ch === ']' || ch === ')') {
+      // the space the comma sat before is the literal's own spacing
+      out = out.replace(/,(\s*)$/, (_m, ws: string) => (ws ? ' ' : ''));
+    }
+    out += ch;
+  }
+  return out.trim();
+}
+
 /** Converts every template literal in an expression to string
  * concatenation — wxml {{}} has no backticks. Handles nesting
  * (`` `a${ `b` }c` ``) and escapes. */
@@ -1853,7 +2067,7 @@ function templateLiteralToConcat(expr: string): string {
 /** Inline expression for {{}}/attrs: extract anything containing a call into
  * a computed (wxml cannot call functions), otherwise pass through verbatim. */
 function inlineExpr(expr: string, ctx: Ctx, scope: Scope): string {
-  const trimmed = convertTemplateLiterals(expr.trim());
+  const trimmed = flattenExpr(convertTemplateLiterals(expr.trim()));
   // v-for scope vars must stay in wxml (an instance-level computed cannot
   // see them); concatenation without backticks is wxml-safe verbatim
   const forScoped = freeScopeIdentifiers(trimmed, ctx.bindings, new Set(GLOBAL_IDENTIFIERS)).some(
@@ -1866,7 +2080,8 @@ function inlineExpr(expr: string, ctx: Ctx, scope: Scope): string {
     // generated computeds are template data too: __fjsData narrows setData
     // to dataNames, and a computed left out never reaches the wxml
     ctx.dataNames.push(name);
-    trackData(ctx, trimmed);
+    // no trackData for the source expression: it is read HERE, in setup, by the
+    // computed above — only what the wxml itself names has to cross setData
     return name;
   }
   if (forScoped && hasCall(trimmed)) return perItemExpr(trimmed, ctx, scope);
@@ -1904,8 +2119,8 @@ function perItemExpr(expr: string, ctx: Ctx, scope: Scope, wrap = (body: string)
   ctx.setupCode.push(computedSrc(name, body));
   ctx.returnedNames.push(name);
   ctx.dataNames.push(name);
-  trackData(ctx, expr);
-  for (const f of scope.forStack) trackData(ctx, f.list);
+  // no trackData for the source expression: it is read HERE, in setup, by the
+  // computed above — only what the wxml itself names has to cross setData
   return name + scope.forStack.map((f) => `[${f.index}]`).join('');
 }
 

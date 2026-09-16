@@ -90,6 +90,10 @@ function propNames(sfc: WevuSfc): string[] {
  * everything on the way so the watcher tracks nested mutations too —
  * unlike a vdom render, nothing else walks the data for us. */
 function snapshot(value: unknown, seen: Set<object>): unknown {
+  // setData serializes across the JSCore bridge: a function or symbol reached
+  // through a bound object (an anime.js easing carries `ease` / `onComplete`)
+  // is not serializable and the host throws on the whole payload
+  if (typeof value === 'function' || typeof value === 'symbol') return null;
   if (value === null || typeof value !== 'object') return value ?? null;
   const obj = value as object;
   if (seen.has(obj)) return '[circular]';
@@ -103,6 +107,8 @@ function snapshot(value: unknown, seen: Set<object>): unknown {
     }
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value)) {
+      // an array slot keeps its index (null); an object key just goes away
+      if (typeof v === 'function' || typeof v === 'symbol') continue;
       out[k] = snapshot(v, seen);
     }
     return out;
@@ -205,14 +211,40 @@ function mountInstance(self: MpInstance, sfc: WevuSfc): void {
   // watch() (not effect()) so the callback only fires when a tracked dep
   // changed — the getter builds the full snapshot each run, which doubles
   // as the deep dependency scan. Data stays untouched until the first diff.
+  //
+  // The scheduler is not optional here: @vue/reactivity on its own has no job
+  // queue (that lives in runtime-core, which this target does not ship), so
+  // without one the getter re-runs and setData fires on EVERY property write.
+  // One Anime.js tick writing 25 objects × 3 properties crossed the bridge 75
+  // times per frame. Coalescing to one flush per microtask is what
+  // runtime-core's pre-flush queue does, and it keeps `nextTick()` (also a
+  // microtask) ordered after the setData of the writes that preceded it.
+  let queued = false;
   const stopWatch = scope.run(() =>
-    watch(render, (next) => {
-      const patch = shallowDiff(prev, next as Record<string, unknown>);
-      if (patch) {
-        prev = next as Record<string, unknown>;
-        self.setData(patch, () => runHooks(hooks, 'rendered'));
-      }
-    }),
+    watch(
+      render,
+      (next) => {
+        const patch = shallowDiff(prev, next as Record<string, unknown>);
+        if (patch) {
+          prev = next as Record<string, unknown>;
+          self.setData(patch, () => runHooks(hooks, 'rendered'));
+        }
+      },
+      {
+        scheduler: (job, isFirstRun) => {
+          if (isFirstRun) {
+            job();
+            return;
+          }
+          if (queued) return;
+          queued = true;
+          void Promise.resolve().then(() => {
+            queued = false;
+            job();
+          });
+        },
+      },
+    ),
   );
 
   self.__fjs_state = {

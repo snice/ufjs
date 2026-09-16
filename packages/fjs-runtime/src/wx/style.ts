@@ -98,3 +98,30 @@ export function onCssVarsChange(fn: () => void): () => void {
   resolveCssColor,
   onCssVarsChange,
 };
+
+// ---- v-for list projection --------------------------------------------------
+//
+// A list only reaches the WXML so the template can walk it, and the template
+// usually reads two or three properties off each item. Everything else on the
+// item still crosses the setData bridge and, worse, still counts as a CHANGE:
+// an animation that writes `dot.scale` 60 times a second re-sends all 25 dots
+// every frame even though the template reads nothing but `dot.id`.
+//
+// So the compiler projects the list down to the properties the template
+// actually reads (wxml.ts genFor) and the projection runs through here. The
+// projected array is then usually CONSTANT — it diffs equal and never gets
+// sent again.
+
+/** Item-wise pick. A non-array list (v-for over an object, or over a number)
+ * and non-object items pass through untouched — wx:for handles those shapes
+ * itself, and the compiler only projects when no expression reads the item as
+ * a whole. */
+export function project(list: unknown, keys: string[]): unknown {
+  if (!Array.isArray(list)) return list;
+  return list.map((item) => {
+    if (item === null || typeof item !== 'object') return item;
+    const out: Record<string, unknown> = {};
+    for (const key of keys) out[key] = (item as Record<string, unknown>)[key];
+    return out;
+  });
+}
