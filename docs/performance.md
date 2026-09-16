@@ -724,3 +724,112 @@ article mount 12.2ms (render 12.1 · bridge 0.1 · gc before 8.1)
   `Object.keys` 数组，以及 `markDirty` 的子树遍历上。在上面两条之后是次要项。
 - Dart 侧 `Uint8List.fromList(ops.asTypedList(len))` 有一次拷贝，可换
   零拷贝视图。
+
+## 小程序端：一页 Anime.js 为什么卡（2026-09）
+
+> 这一节不是 Flutter 管线的账，是小程序端的。渲染在另一个进程里，页面能优化的
+> 只有过桥这一件事：`setData` 发多少次、每次带多少字节。
+
+症状：`examples/hello-fjs` 的 animation 组开放到小程序端（specs/061）之后，
+Anime.js 那页明显卡（用户报告）。这一页同时在动 25 个圆点（stagger 网格）、
+3 个方块（时间轴）、5 条缓动轨和一个计数器，全部通过「动普通对象 + 模板绑定」
+实现——每帧都有大量响应式写入。
+
+排查下来是两笔账，都与 Anime.js 无关。
+
+### ① 每一次属性写入都过一趟桥
+
+[`wx/instance.ts`](../packages/fjs-runtime/src/wx/instance.ts) 用
+`watch(render, cb)` 驱动 `setData`：getter 建整份 data 的深快照（顺带完成深度
+依赖扫描），回调做 `shallowDiff` 再发。
+
+问题在于**这个目标只装 `@vue/reactivity`**——`vue` 在小程序端解析到
+[`wx/vue.ts`](../packages/fjs-runtime/src/wx/vue.ts)，里面是反应式内核，没有
+vdom，也**没有 runtime-core 的任务队列**。而独立的 `@vue/reactivity` 里，
+不给 scheduler 的 `watch` 是**同步**的：
+
+```js
+// @vue/reactivity（独立包）
+const o = reactive({ a: 0, b: 0, c: 0 });
+let n = 0;
+watch(() => JSON.stringify(o), () => n++);
+o.a = 1; o.b = 2; o.c = 3;
+n; // → 3（同步跑了三遍；完整的 vue 包里这里是 0，微任务后才 1）
+```
+
+于是 Anime.js 一帧写 25 个对象 × 3 个属性 = **一帧 75 次**「整份深快照 +
+整份 deepEqual + `setData`」。渲染进程一帧收到 75 条数据更新。
+
+**改法**：给 `watch` 传 scheduler——首跑同步（挂载那一帧不能延后），其余把 job
+排到一个微任务，期间重复触发只排一次。这正是 runtime-core 的 pre-flush 队列在
+做的事，也保证 `nextTick()`（同样是微任务）仍排在 `setData` 之后：
+
+```ts
+scheduler: (job, isFirstRun) => {
+  if (isFirstRun) return void job();
+  if (queued) return;
+  queued = true;
+  void Promise.resolve().then(() => { queued = false; job(); });
+}
+```
+
+一拍里写多少次都只有一次 `setData`。75 → 1。
+
+### ② 列表整份过桥，而且整份算「变了」
+
+`wx:for="{{ dots }}"` 要的只是走一遍列表；模板真正读的只有 `dot.id`（位移是
+`__d1[index]` 这张按项算好的表——模板里没有函数调用，`dotStyle(dot)` 早就被
+提成 setup 里的 computed）。但 25 个 dot 的 `scale / rotate / y / color` 也在
+data 里，动画每帧改 `scale`，**整个数组每帧重发**。
+
+`lanes` 更典型：数组项里挂着 Anime.js 的 `Spring` 求解器实例，它的
+`completed / v / …` 每帧在变，而模板只读 `lane.name`。
+
+**改法**：编译器把 v-for 列表按**模板真正读到的字段**投影。`genFor` 在生成完
+循环体之后，扫描**已经产出的那段 wxml**——模板读什么，字面就写在里面——取
+`{{ }}` 里对 item 的属性读取（字符串字面量不算；`class="dot"`、
+`wx:for-item="dot"` 这些非表达式位置也不算），加上 `wx:key` 用到的那个属性：
+
+```js
+// 产出
+const __l0 = __fjsComputed(() => __fjsProject(dots, ["id"]));
+// wxml: wx:for="{{ __l0 }}"
+```
+
+投影后的数组通常是**常量**，diff 相等就再也不发。原列表名也不再进
+`__fjsData`。原样放过的情况：整项被读（`{{ chip }}`、`dot[key]`、事件的
+`data-args`）、`wx:key="*this"`、嵌套 v-for 的内层列表（内层列表表达式在外层
+item 的作用域里，setup 看不到）、运行时才知道是不是数字的列表；非数组（对
+object 做 v-for）与原始值项由运行时 `project()` 透传。
+
+顺带把几处「生成 computed」的地方不再往 `dataNames` 里登记**computed 自己在
+setup 里读的**依赖——`__fjsData` 现在就是「模板真正读到的名字」，与它的注释
+一致。
+
+### 账面
+
+按这一页自己的数据形状算出来的每帧负载（**计算值，不是真机测量**）：
+
+| | 改前 | 改后 |
+|---|---:|---:|
+| `dots`（25 × 5 字段） | 1616 B | — |
+| `lanes`（含 Spring 求解器） | 614 B | — |
+| `boxes` | 214 B | — |
+| 位移表 `__d1` / `__d4` / `__d7` + 标量 | 2703 B | 2703 B |
+| **合计 / 帧** | **~5.1 KB** | **~2.7 KB** |
+| **`setData` 次数 / 帧** | **~75** | **1** |
+
+投影是通用收益，不止这一页：2048 的 tile 现在只带 `value` + `id`，
+`CELLS` 只带 `x` / `y`。
+
+### 没做的与剩下的
+
+- **路径级 `setData`（`__d1[7]`）没做**：这一页 25 项**全部**每帧在变，发 25
+  个 key 并不比发一个数组便宜。列表里只有少数几项在动时才划算。
+- 剩下的 2.7 KB 基本就是 25 个点的 transform 字符串，是这个 demo 的量级本身。
+  还想再降的话，`dotStyle` 里那句常量 `background-color` 可以挪出动画样式
+  （约省 600 B/帧）——那是示例代码的取舍，不是管线的。
+- 一个更早的同类问题：`snapshot()` 原本把**函数**原样拷进 `setData`
+  （Anime.js 的缓动实例上挂着 `ease` / `onComplete`），宿主 `JSON.stringify`
+  直接抛 `Cannot convert object to primitive value`。函数与 symbol 现在在快照
+  阶段就丢掉。
