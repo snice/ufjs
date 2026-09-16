@@ -64,6 +64,26 @@ const WXMP_APPID_RE = /^wx[0-9a-f]{16}$/;
 // suffixes — failing here beats a cryptic YAML error from `flutter pub get`
 const PUBSPEC_VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
 
+/** One WeChat subPackages entry (specs/063): route fragments assign pages to
+ * a subpackage root; `public` moves public/ subdirectories with them. */
+export interface MpSubpackageConfig {
+  /** Directory under the miniprogram root, no leading/trailing slash. */
+  root: string;
+  /** Route paths / path fragments / page names, same matching as mp.exclude. */
+  pages: string[];
+  /** public/ subdirectories (single names, e.g. "wm") shipped inside the
+   * subpackage; product URLs are rewritten to /<root>/<dir>/… */
+  public?: string[];
+}
+
+/** WeChat preloadRule value (specs/063). `packages` names subpackage roots
+ * declared in `mp.subpackages` (or "__APP__" for the main package); network
+ * defaults to WeChat's own "wifi". */
+export interface MpPreloadRule {
+  network?: 'all' | 'wifi';
+  packages: string[];
+}
+
 export interface FjsConfig {
   /** Flutter host project directory, relative to the project root. */
   flutterDir?: string;
@@ -90,6 +110,14 @@ export interface FjsConfig {
     excludeComponents?: string[];
     /** WeChat appid written to project.config.json. Default: touristappid. */
     appid?: string;
+    /** WeChat subPackages (specs/063): pages matching a fragment emit under
+     * the entry's root so the 2MB main-package cap only carries the shell,
+     * the built-in component pages and the runtime. */
+    subpackages?: MpSubpackageConfig[];
+    /** WeChat preloadRule (specs/063), keyed by fjs route path (leading
+     * slash optional) instead of the mini-program page path — the build
+     * translates both directions. Packages reference `subpackages` roots. */
+    preloadRule?: Record<string, MpPreloadRule>;
   };
 }
 

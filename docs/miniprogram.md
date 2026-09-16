@@ -91,6 +91,8 @@ dist/mp/
     components/<name>/*        编译后的本地组件（Shell、Panel…）
     pages/<route>/*            **页面本体**：页面 SFC 即 page
     assets/                    静态图片（import 被改写成根绝对路径常量）
+    <sub>/…                    分包（fjs.mp.subpackages）：页面、专属 vendor、
+                               专属 shared、搬入的 public 目录，见下节
 ```
 
 页面就是页面：路由 SFC 直接以 `Component()`（`isPage: true`）注册为
@@ -105,12 +107,63 @@ createFjsApp 在另外两端做的一致，`route`（path/query/meta）由编译
 裸导入按 app 的 `package.json` 处理：包名在 `dependencies` / `devDependencies`
 里的，→ `fjs/npm/<spec>.js`（CJS shim），所有用到的 npm 入口由 esbuild 打进
 **一个** `fjs/npm/vendor.js`（es2018、minify，共用内部模块只有一份实例，如
-echarts/zrender、three 及其 addons），并在项目根写出列出这些依赖的
-`package.json`（同官方模板布局）；不在 package.json 里的包名直接报错。没用
+echarts/zrender、three 及其 addons）；不在 package.json 里的包名直接报错。产物
+根目录**不写** package.json：构建不使用「构建 npm」，该文件在 miniprogramRoot
+之外也不参与上传，留着只会让开发者工具弹无关的 npm 构建提示。没用
 开发者工具的「构建 npm」：它只打包每个包的 `main` 入口，子路径导入
 （`echarts/core`、`three/examples/jsm/...`）和纯 ESM 包过不去，而且要求产物
 目录里有 node_modules。注意主包 2MB 上限：大库（three、echarts 全量）真机
-预览 / 上传可能超限。
+预览 / 上传可能超限——配分包（下一节）把这些库挪出主包。
+
+### 分包（specs/063）
+
+`package.json` 的 `fjs.mp.subpackages` 声明微信 subPackages，页面源码零改动：
+
+```jsonc
+"fjs": {
+  "mp": {
+    "subpackages": [
+      { "root": "game",   "pages": ["example/game/"], "public": ["wm", "fb"] },
+      { "root": "canvas", "pages": ["example/canvas/", "example/animation/"], "public": ["spine"] }
+    ]
+  }
+}
+```
+
+- `pages` 片段的匹配语义与 `mp.exclude` 一致（path 全等 / includes / 页面名）。
+  页面命中两个分包、tab 页被配进分包、root 用保留名（`pages`/`components`/
+  `images`/`assets`/`workers`/`fjs`/`html`）或互为前缀、主包一个页面不剩——都是
+  构建期报错。
+- **npm vendor 按归属拆包**：只被一个分包可达的库进 `<root>/fjs/npm/vendor.js`；
+  被主包或多个包引用的进主包 vendor（子包 require 主包合法，反之禁止；共享库
+  因此只有一份实例）。每包仍有一份 `fjs/npm/<spec>.js` shim，指向 spec 实际
+  所在的 vendor。本地模块同样按可达性归属：只被一个分包可达的进
+  `<root>/fjs/shared/`，否则主包——否则一个只有分包页面用的 adapter 会把它
+  的大库依赖拽回主包 vendor。
+- **public 目录跟分包走**（`public` 字段，目录名单个名字）：图片复制到
+  `<root>/<dir>/`，产物里该包模块的字符串字面量与 wxml 里的 `/dir/…` 前缀
+  统一改写成 `/<root>/dir/…`（模板串头部也改写，`` `/wm/${name}.png` `` 这类
+  动态拼路径因此无需改页面）。数据文件（atlas/skel…）的 base64 模块仍留主包
+  （public-data 注册表在主包 app.ts 注册，主包不能 require 子包文件），注册表
+  key 改写成新 URL。**守卫**：包外任何产物文件若仍引用已搬目录的前缀，构建
+  报错并列出文件——宁可失败也不发一个真机断图的包。
+- 已知限制：URL 拼在**更长字符串中段**（`'go /wm/x'`）不改写也不报错；wxss
+  的 `url()` 不支持（fjs 样式引擎本就不支持背景图，产物里不会出现）。
+- `components/`、runtime 组件、`workers/` 恒在主包（子包页面跨包 require/引用
+  主包组件均合法）。没配 `subpackages` 时产物与不分包版本逐字节同形。
+- **分包预下载**：`mp.preloadRule` 按 **fjs 路由路径**（可省开头的 `/`）声明，
+  编译期翻译成 app.json 的真实页面路径 key；`packages` 引用 `subpackages` 的
+  root（`"__APP__"` 表示主包），`network` 可选 `"all"`/`"wifi"`（默认微信的
+  wifi）。key 不是已知路由、packages 引用未声明的 root、network 非法都是构建
+  报错。同组页面共享 2MB 预下载限额（微信侧校验）。hello-fjs 的配置：进"示例"
+  tab 即在任意网络下预下载 game 与 canvas：
+
+  ```jsonc
+  "preloadRule": { "/example": { "network": "all", "packages": ["game", "canvas"] } }
+  ```
+
+- hello-fjs 是参考配置：主包从 3.1MB 降到 ~1.2MB（源码口径），game/canvas 两个
+  分包各 ~0.8/1.1MB。
 
 ## 标签映射（编译期）
 

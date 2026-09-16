@@ -17,6 +17,11 @@ export interface MpRouteRecord {
   path: string;
   name: string;
   meta: RouteMeta;
+  /** The real mini-program page path relative to the miniprogram root.
+   * Subpackaged pages (specs/063) live under their package root
+   * (`canvas/pages/x/x`); absent for plain builds, where the historical
+   * `pages/<name>/<name>` shape applies. */
+  mpPage?: string;
 }
 
 let routes: MpRouteRecord[] = [];
@@ -29,10 +34,13 @@ export function registerRoutes(table: MpRouteRecord[]): void {
 
 /** Whether a mini-program page path (`pages/index/index`, leading slash
  * optional) is a tab page — the native tabBar covers the bottom inset there.
- * Published on the __fjsWx global for fjs-safe-area (a plain JS component). */
+ * Published on the __fjsWx global for fjs-safe-area (a plain JS component).
+ * Exact match against the table (subpackage pages carry their root in
+ * mpPage); a tab page can never live in a subpackage, so unknown paths are
+ * simply not tabs. */
 export function isTabPagePath(pagePath: string): boolean {
-  const name = String(pagePath).replace(/^\//, '').split('/')[1];
-  const record = routes.find((r) => r.name === name);
+  const clean = String(pagePath).replace(/^\//, '');
+  const record = routes.find((r) => (r.mpPage ?? `pages/${r.name}/${r.name}`) === clean);
   return typeof record?.meta?.tab === 'number';
 }
 (globalThis as Record<string, unknown>).__fjsWx = {
@@ -72,13 +80,17 @@ function toLocation(raw: RouteLocationRaw): RouteLocation {
   };
 }
 
-/** Route path -> mini-program page path. The compiler writes pages to
- * `pages/<name>/<name>` where name is the route name, so `/comp/switch`
- * maps to `/pages/comp-switch/comp-switch`. */
+/** Route path -> mini-program page path. The compiler knows where each page
+ * physically landed (a subpackaged page lives under its package root,
+ * specs/063) and hands the record an `mpPage`; without one, the historical
+ * `pages/<name>/<name>` shape applies (`/comp/switch` ->
+ * `/pages/comp-switch/comp-switch`). */
 function mpUrl(loc: RouteLocation): string {
-  const name = recordFor(loc.path)?.name ?? loc.path.slice(1).replace(/\//g, '-');
+  const record = recordFor(loc.path);
+  const name = record?.name ?? loc.path.slice(1).replace(/\//g, '-');
+  const page = record?.mpPage ?? `pages/${name}/${name}`;
   const search = loc.fullPath.includes('?') ? '?' + loc.fullPath.split('?')[1] : '';
-  return `/pages/${name}/${name}${search}`;
+  return `/${page}${search}`;
 }
 
 function navigate(loc: RouteLocation, mode: 'navigateTo' | 'redirectTo'): Promise<void> {

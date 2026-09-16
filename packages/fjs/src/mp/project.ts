@@ -41,7 +41,16 @@ export interface MpPage {
 export function appJson(
   pages: MpPage[],
   renderer: 'webview' | 'skyline' = 'webview',
-  options: { workers?: boolean } = {},
+  options: {
+    workers?: boolean;
+    /** specs/063 — entries already hold page paths relative to their root.
+     * The key is only emitted when non-empty: a project without subpackages
+     * keeps the exact pre-subpackage output shape. */
+    subpackages?: Array<{ root: string; pages: string[] }>;
+    /** specs/063 — already translated to real page-path keys by
+     * translatePreloadRule. Only emitted when non-empty. */
+    preloadRule?: Record<string, { network?: 'all' | 'wifi'; packages: string[] }>;
+  } = {},
 ): string {
   // native tab bar from the routes' <route> tab meta (hello uni-app style):
   // text-only items — iconPath is optional and the app ships no icon assets
@@ -65,6 +74,12 @@ export function appJson(
     JSON.stringify(
       {
         pages: pages.map((p) => `pages/${p.name}/${p.name}`),
+        ...(options.subpackages?.length && {
+          subPackages: options.subpackages.map(({ root, pages: list }) => ({ root, pages: list })),
+        }),
+        ...(options.preloadRule && Object.keys(options.preloadRule).length && {
+          preloadRule: options.preloadRule,
+        }),
         window: {
           navigationStyle: 'custom',
           navigationBarTextStyle: 'black',

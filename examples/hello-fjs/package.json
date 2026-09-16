@@ -47,6 +47,21 @@
   },
   "fjs": {
     "mp": {
+      "subpackages": [
+        {
+          "root": "game",
+          "pages": ["example/game/"],
+          "public": ["wm", "fb"]
+        },
+        {
+          "root": "canvas",
+          "pages": ["example/canvas/", "example/animation/"],
+          "public": ["spine"]
+        }
+      ],
+      "preloadRule": {
+        "/example": { "network": "all", "packages": ["game", "canvas"] }
+      },
       "exclude": [
         "example/canvas/echarts",
         "example/canvas/webgl-instanced",
