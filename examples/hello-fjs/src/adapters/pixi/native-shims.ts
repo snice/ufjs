@@ -79,6 +79,24 @@ if (hasNativeHost) {
       addEventListener: () => {},
       removeEventListener: () => {},
     });
+    // ADAPTER.createCanvas → document.createElement('canvas')：Program 构造期
+    // getTestContext() 探测片元精度就走这条。给一个 getContext 恒返回 null 的
+    // 惰性元素 —— pixi 拿不到测试 context 就退回 MEDIUM 精度，与此前模拟器上
+    // 碰巧由 F2 适配层 document 桩兜住时的行为一致。宿主已有 createElement
+    // （如 F2 页先装过）则不覆盖。
+    if (typeof doc.createElement !== 'function') {
+      doc.createElement = () => ({
+        width: 0,
+        height: 0,
+        style: {},
+        getContext: () => null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        setAttribute: () => {},
+        appendChild: () => {},
+        removeChild: () => {},
+      });
+    }
   }
   {
     const nav = (g.navigator ?? {}) as Record<string, unknown>;

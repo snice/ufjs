@@ -10,6 +10,7 @@
 // 再把 canvas.devicePixelRatio 交给 F2 自己 scale。App 上这个值是 1。
 // ctx.canvas 仍然要藏：逼 F2 走 EventEmitter，两端触摸都走 handleTouch。
 import { Canvas, CanvasRenderer } from '@antv/f2';
+import { hasNativeHost } from 'fjs';
 import type { FjsCanvasApi, FjsCanvasContext2D } from 'fjs';
 import type { FjsTouchEvent } from 'fjs';
 
@@ -279,14 +280,20 @@ function createOffscreen(ctx: FjsCanvasContext2D | null) {
  * flip ECharts onto HTML tooltip — this stub only implements createElement
  * / createElementNS, nothing a page can mount. */
 function installF2HostStubs(): void {
-  if (typeof document !== 'undefined') return;
+  if (!hasNativeHost) return;
   const g = globalThis as Record<string, unknown>;
-  if (g.document) return;
-  const stub = {
-    documentElement: { style: { fontSize: '50px' } },
-    body: { appendChild() {}, removeChild() {} },
-    head: { appendChild() {}, removeChild() {} },
-    defaultView: g,
+  // 合并而不是"已有就跳过"：pixi 垫片（adapters/pixi/native-shims）也会装一个
+  // 残缺 document。先进消消乐再进图表页时，跳过会让 G 拿不到能量文字的 canvas。
+  // F2 的 createElement 覆盖对方的：它的 canvas getContext('webgl') 同样返回
+  // null，pixi 需要的行为不变。
+  const doc = (g.document ?? {}) as Record<string, unknown>;
+  if (doc.__fjsF2Stub) return;
+  Object.assign(doc, {
+    __fjsF2Stub: true,
+    documentElement: doc.documentElement ?? { style: { fontSize: '50px' } },
+    body: doc.body ?? { appendChild() {}, removeChild() {} },
+    head: doc.head ?? { appendChild() {}, removeChild() {} },
+    defaultView: doc.defaultView ?? g,
     createElement(tag: string) {
       if (String(tag).toLowerCase() === 'canvas') return createOffscreen(lastContext);
       return { style: {}, appendChild() {}, removeChild() {}, setAttribute() {} };
@@ -294,8 +301,8 @@ function installF2HostStubs(): void {
     createElementNS(_ns: string, tag: string) {
       return { style: {}, appendChild() {}, removeChild() {}, setAttribute() {}, tagName: tag };
     },
-  };
-  g.document = stub;
+  });
+  g.document = doc;
 }
 
 installF2HostStubs();
