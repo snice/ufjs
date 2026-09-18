@@ -108,13 +108,14 @@ class _HomeState extends State<_Home> {
       _busy = true;
       _error = null;
     });
+    _logs.startSession();
     _logs.add(LogLevel.status, 'connecting to ${server.label}…');
     FjsEngine? engine;
     HostedBuild? hosted;
     try {
       // probe first: an unreachable host would otherwise surface as an
       // opaque socket error from inside the engine's dev client
-      final manifest = await server.probe();
+      final manifest = await server.probeWithRetry();
       engine = _createEngine(
         assets: manifest.isHosted ? HostedAssetBundle(server.origin) : null,
       );

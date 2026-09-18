@@ -71,6 +71,21 @@ class DevServer {
 
   /// Asks the server what project it is serving. Doubles as the reachability
   /// check: a connect attempt only proceeds if this succeeds.
+  /// Asks until it gets an answer: a hosted build is reached over the
+  /// internet (a cold TLS handshake on a slow network can take seconds, and
+  /// one dropped attempt is common), so it gets a longer timeout and one
+  /// retry. A LAN `fjs dev` answers in milliseconds or not at all.
+  Future<DevManifest> probeWithRetry() async {
+    if (!secure) return probe();
+    try {
+      return await probe(timeout: const Duration(seconds: 12));
+    } on FormatException {
+      rethrow; // an answer, just not one we can use: retrying won't help
+    } catch (_) {
+      return probe(timeout: const Duration(seconds: 12));
+    }
+  }
+
   Future<DevManifest> probe({Duration timeout = const Duration(seconds: 4)}) async {
     final client = HttpClient()..connectionTimeout = timeout;
     try {

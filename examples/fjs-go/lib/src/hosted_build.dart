@@ -289,7 +289,7 @@ class HostedBuild {
   Future<void> load({bool fresh = false}) async {
     if (fresh) {
       // a manual reload asks what is deployed now, not what was at connect
-      manifest = await server.probe();
+      manifest = await server.probeWithRetry();
       _chunks.clear();
     }
     final started = DateTime.now();

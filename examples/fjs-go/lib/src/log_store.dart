@@ -21,7 +21,19 @@ class LogStore extends ChangeNotifier {
   final List<LogEntry> _entries = [];
 
   List<LogEntry> get entries => List.unmodifiable(_entries);
-  bool get hasErrors => _entries.any((e) => e.level == LogLevel.error);
+  /// Errors of the current session only: a failed connect before this one
+  /// is history, and must not put a red badge on a project that runs fine.
+  bool get hasErrors => _entries.any(
+        (e) => e.level == LogLevel.error && !e.at.isBefore(_sessionStart),
+      );
+
+  DateTime _sessionStart = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Starts counting errors afresh; earlier lines stay in the log.
+  void startSession() {
+    _sessionStart = DateTime.now();
+    notifyListeners();
+  }
 
   void add(LogLevel level, String message) {
     _entries.add(LogEntry(level, message, DateTime.now()));

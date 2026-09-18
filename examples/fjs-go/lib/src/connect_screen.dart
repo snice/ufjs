@@ -128,101 +128,120 @@ class _ConnectScreenState extends State<ConnectScreen> {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 560),
-            child: ListView(
-              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-              padding: EdgeInsets.fromLTRB(
-                20,
-                8,
-                20,
-                32 + MediaQuery.paddingOf(context).bottom,
-              ),
-              children: [
-                _TopBar(onHelp: () => showConnectHelp(context)),
-                const SizedBox(height: 24),
-                Text('开始调试', style: theme.textTheme.headlineMedium),
-                const SizedBox(height: 6),
-                Text(
-                  '连接电脑上运行的 fjs dev，改完 JS / Vue 代码即刻生效，无需重新编译。',
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(color: go.secondaryText, height: 1.45),
-                ),
-                if (_canScan) ...[
-                  const SizedBox(height: 20),
-                  _ScanHero(
-                    enabled: !widget.busy,
-                    onTap: () => unawaited(_scan()),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                GroupCard(
-                  children: [
-                    GoRow(
-                      leading: const IconTile(
-                        icon: Icons.play_arrow_rounded,
-                        color: Brand.pink,
-                      ),
-                      title: '在线演示',
-                      subtitle: '还没有 fjs dev？先看看组件和示例',
-                      trailing: widget.busy && _pending == DevServer.showcase
-                          ? const _RowSpinner()
-                          : const Chevron(),
-                      onTap: widget.busy
-                          ? null
-                          : () => _connect(DevServer.showcase),
+            // on a tablet the content is shorter than the screen and sits
+            // centred; on a phone it scrolls, exactly like a list
+            child: LayoutBuilder(
+              builder: (context, box) {
+                final padding = EdgeInsets.fromLTRB(
+                  20,
+                  8,
+                  20,
+                  32 + MediaQuery.paddingOf(context).bottom,
+                );
+                return SingleChildScrollView(
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: padding,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: box.maxHeight - padding.vertical,
                     ),
-                  ],
-                ),
-                AnimatedSize(
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
-                  alignment: Alignment.topCenter,
-                  child: widget.error == null
-                      ? const SizedBox(width: double.infinity)
-                      : Padding(
-                          padding: const EdgeInsets.only(top: 16),
-                          child: _ErrorCard(message: widget.error!),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _TopBar(onHelp: () => showConnectHelp(context)),
+                        const SizedBox(height: 24),
+                        Text('开始调试', style: theme.textTheme.headlineMedium),
+                        const SizedBox(height: 6),
+                        Text(
+                          '连接电脑上运行的 fjs dev，改完 JS / Vue 代码即刻生效，无需重新编译。',
+                          style: theme.textTheme.bodyMedium
+                              ?.copyWith(color: go.secondaryText, height: 1.45),
                         ),
-                ),
-                _NearbyServers(
-                  discovery: _discovery,
-                  busy: widget.busy,
-                  pending: _pending,
-                  onPick: _connect,
-                ),
-                if (recents.isNotEmpty) ...[
-                  const SectionHeader('最近连接'),
-                  GroupCard(
-                    children: [
-                      for (final server in recents)
-                        _RecentRow(
-                          server: server,
+                        if (_canScan) ...[
+                          const SizedBox(height: 20),
+                          _ScanHero(
+                            enabled: !widget.busy,
+                            onTap: () => unawaited(_scan()),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        GroupCard(
+                          children: [
+                            GoRow(
+                              leading: const IconTile(
+                                icon: Icons.play_arrow_rounded,
+                                color: Brand.pink,
+                              ),
+                              title: '在线演示',
+                              subtitle: '还没有 fjs dev？先看看组件和示例',
+                              trailing:
+                                  widget.busy && _pending == DevServer.showcase
+                                      ? const _RowSpinner()
+                                      : const Chevron(),
+                              onTap: widget.busy
+                                  ? null
+                                  : () => _connect(DevServer.showcase),
+                            ),
+                          ],
+                        ),
+                        AnimatedSize(
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeOutCubic,
+                          alignment: Alignment.topCenter,
+                          child: widget.error == null
+                              ? const SizedBox(width: double.infinity)
+                              : Padding(
+                                  padding: const EdgeInsets.only(top: 16),
+                                  child: _ErrorCard(message: widget.error!),
+                                ),
+                        ),
+                        _NearbyServers(
+                          discovery: _discovery,
                           busy: widget.busy,
-                          pending: widget.busy &&
-                              !_pendingFromField &&
-                              _pending == server,
-                          onTap: () => _connect(server),
-                          onForget: () => unawaited(_forget(server)),
+                          pending: _pending,
+                          onPick: _connect,
                         ),
-                    ],
+                        if (recents.isNotEmpty) ...[
+                          const SectionHeader('最近连接'),
+                          GroupCard(
+                            children: [
+                              for (final server in recents)
+                                _RecentRow(
+                                  server: server,
+                                  busy: widget.busy,
+                                  pending: widget.busy &&
+                                      !_pendingFromField &&
+                                      _pending == server,
+                                  onTap: () => _connect(server),
+                                  onForget: () => unawaited(_forget(server)),
+                                ),
+                            ],
+                          ),
+                        ],
+                        const SectionHeader('输入地址'),
+                        _AddressCard(
+                          controller: _controller,
+                          busy: widget.busy,
+                          pending: widget.busy && _pendingFromField,
+                          error: _parseError,
+                          onSubmit: _submitField,
+                        ),
+                        const SizedBox(height: 28),
+                        Center(
+                          child: TextButton.icon(
+                            onPressed: () => showConnectHelp(context),
+                            icon: const Icon(Icons.help_outline_rounded,
+                                size: 18),
+                            label: const Text('连接遇到问题？'),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ],
-                const SectionHeader('输入地址'),
-                _AddressCard(
-                  controller: _controller,
-                  busy: widget.busy,
-                  pending: widget.busy && _pendingFromField,
-                  error: _parseError,
-                  onSubmit: _submitField,
-                ),
-                const SizedBox(height: 28),
-                Center(
-                  child: TextButton.icon(
-                    onPressed: () => showConnectHelp(context),
-                    icon: const Icon(Icons.help_outline_rounded, size: 18),
-                    label: const Text('连接遇到问题？'),
-                  ),
-                ),
-              ],
+                );
+              },
             ),
           ),
         ),
@@ -539,8 +558,8 @@ class _RecentRow extends StatelessWidget {
                 tooltip: '移除',
                 visualDensity: VisualDensity.compact,
                 onPressed: busy ? null : onForget,
-                icon: Icon(Icons.close_rounded,
-                    size: 18, color: go.tertiaryText),
+                icon:
+                    Icon(Icons.close_rounded, size: 18, color: go.tertiaryText),
               ),
       ),
     );
