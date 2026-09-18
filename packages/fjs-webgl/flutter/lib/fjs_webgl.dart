@@ -242,7 +242,9 @@ class _FjsWebglCanvasViewState extends State<FjsWebglCanvasView> {
         // GL framebuffers are bottom-up. iOS's CVPixelBuffer path presents
         // them as-is, so the picture arrives vertically mirrored against the
         // browser's top-down presentation and has to be flipped here. Android
-        // does not: SurfaceProducer already applies the texture transform.
+        // does not: SurfaceProducer already applies the texture transform —
+        // and neither does ohos, whose OHNativeWindow texture behaves the same
+        // (a flip there stood the glTF viewer's model on its head).
         //
         // Getting this wrong is not a cosmetic bug. A page that compensates
         // in its own projection matrix (mirroring clip-space Y) also reverses
@@ -253,7 +255,10 @@ class _FjsWebglCanvasViewState extends State<FjsWebglCanvasView> {
         // collapses while ambient looks fine (spec 023: three.js's Xbot lit
         // correctly on web, flat and dark on Android).
         final texture = Texture(textureId: id);
-        if (defaultTargetPlatform == TargetPlatform.android) return texture;
+        if (defaultTargetPlatform == TargetPlatform.android ||
+            FjsWebglRuntime.isOhos) {
+          return texture;
+        }
         return Transform(
           transform: Matrix4.diagonal3Values(1.0, -1.0, 1.0),
           alignment: Alignment.center,

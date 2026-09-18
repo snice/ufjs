@@ -24,6 +24,7 @@ import 'package:flutter/widgets.dart' show Size, WidgetsBinding, debugPrint;
 import 'package:flutter_angle/flutter_angle.dart';
 
 import 'gl_state.dart';
+import 'ohos_surface.dart';
 import 'package:flutter_fjs/flutter_fjs.dart'
     show
         CanvasChunkReader,
@@ -1473,8 +1474,56 @@ class _LocationQuery {
   final String name;
 }
 
+/// One canvas node's presentable GL target, whichever backend made it:
+/// flutter_angle everywhere it has a native half, [OhosGl] on ohos (where
+/// it has none — see ohos_surface.dart).
+abstract class _GlSurface {
+  int get textureId;
+  RenderingContext getContext();
+  /// Binds this surface (and its viewport) on the one shared context.
+  void activate();
+  /// Hands the back buffer to the compositor.
+  void present();
+  /// Whether an EGL window/pbuffer surface backs this texture (log only).
+  bool get hasEglSurface;
+}
+
+class _AngleSurface implements _GlSurface {
+  _AngleSurface(this.angle, this.texture);
+  final FlutterAngle angle;
+  final FlutterAngleTexture texture;
+  @override
+  int get textureId => texture.textureId;
+  @override
+  RenderingContext getContext() => texture.getContext();
+  @override
+  void activate() => texture.activate();
+  @override
+  void present() => angle.updateTexture(texture);
+  @override
+  bool get hasEglSurface {
+    final surface = texture.surfaceId;
+    return surface != null && surface.address != 0;
+  }
+}
+
+class _OhosSurface implements _GlSurface {
+  _OhosSurface(this.texture);
+  final OhosGlTexture texture;
+  @override
+  int get textureId => texture.textureId;
+  @override
+  RenderingContext getContext() => texture.getContext();
+  @override
+  void activate() => texture.activate();
+  @override
+  void present() => texture.present();
+  @override
+  bool get hasEglSurface => texture.live;
+}
+
 class _NodeGlState {
-  FlutterAngleTexture? texture;
+  _GlSurface? texture;
   FjsAngleBindings? bindings;
   /// [bindings] wrapped with this canvas's context-state bookkeeping — what
   /// the decoder actually drives (spec 036).
@@ -1525,7 +1574,12 @@ class FjsWebglRuntime {
   static final FjsWebglRuntime instance = FjsWebglRuntime._();
 
   FlutterAngle? _angle;
+  OhosGl? _ohos;
   final Map<int, _NodeGlState> _states = {};
+
+  /// The OpenHarmony flutter fork reports its own operatingSystem, and
+  /// isAndroid is false there (same test as flutter_fjs's ffi.dart).
+  static final bool isOhos = Platform.operatingSystem == 'ohos';
 
   /// What the plugin's ONE GL context holds right now. Every canvas node
   /// renders through the same context, so each one restores its own state
@@ -1606,13 +1660,21 @@ class FjsWebglRuntime {
     return surface == null || surface.address == 0;
   }
 
-  Future<void> _freeTexture(FlutterAngleTexture texture) async {
+  Future<void> _freeTexture(_GlSurface surface) async {
     // `deleteTexture` makes the dying surface current and then destroys it,
     // and callers do not await this — so the makeCurrent can land AFTER the
     // next page's node has bound its own surface, leaving a destroyed one
     // current with nothing to say so. Forget the binding on both sides of
     // the await; [_activate] then re-binds on the next frame.
     _activeNode = null;
+    if (surface is _OhosSurface) {
+      final deleting = surface.texture.dispose();
+      _gl.pluginTouched();
+      await deleting;
+      _activeNode = null;
+      return;
+    }
+    final texture = (surface as _AngleSurface).texture;
     if (!_canReleasePluginTexture) {
       if (!_leakLogged) {
         _leakLogged = true;
@@ -1689,6 +1751,9 @@ class FjsWebglRuntime {
   ) async {
     final old = state.texture;
     try {
+      if (isOhos) {
+        return await _createOhosTexture(state, nodeId, size, dpr, old);
+      }
       final angle = _angle ??= FlutterAngle();
       await angle.init();
       // A resized canvas clears its picture in the browser; a fresh texture
@@ -1735,24 +1800,10 @@ class FjsWebglRuntime {
       // for the very first one, into no framebuffer at all).
       texture.activate();
       _activeNode = nodeId;
-      state.texture = texture;
-      state.bindings =
-          FjsAngleBindings(texture.getContext(), state.locationRecords);
       // Same pixel size the plugin's activate() uses for its viewport: the
       // WebGL default viewport and scissor for this context.
-      final widthPx = (options.width * dpr).toInt();
-      final heightPx = (options.height * dpr).toInt();
-      _gl.pluginActivated(widthPx, heightPx);
-      state.tracked?.dispose();
-      final tracked = TrackedGlBindings(state.bindings!, _gl,
-          width: widthPx, height: heightPx);
-      // A new context starts at the WebGL defaults, whatever the canvas
-      // before it left behind (spec 036).
-      tracked.sync();
-      state.tracked = tracked;
-      state.decoder = WebglChunkDecoder(tracked);
-      state.logicalSize = size;
-      state.dpr = dpr;
+      _adopt(state, _AngleSurface(angle, texture), size, dpr,
+          (options.width * dpr).toInt(), (options.height * dpr).toInt());
       return true;
     } catch (error) {
       // No ANGLE on this device / no GPU: keep the page alive and blank the
@@ -1763,6 +1814,42 @@ class FjsWebglRuntime {
           '$error');
       return false;
     }
+  }
+
+  /// ohos: [OhosGl] instead of flutter_angle (ohos_surface.dart). The
+  /// texture is sized in DEVICE pixels here — there is no plugin-side dpr
+  /// scaling to double it.
+  Future<bool> _createOhosTexture(_NodeGlState state, int nodeId, Size size,
+      double dpr, _GlSurface? old) async {
+    final gl = _ohos ??= OhosGl();
+    await gl.init();
+    if (old != null) await _freeTexture(old);
+    final widthPx = (size.width * dpr).round().clamp(1, 1 << 14);
+    final heightPx = (size.height * dpr).round().clamp(1, 1 << 14);
+    final texture = await gl.createTexture(widthPx, heightPx);
+    // createTexture left the new surface current
+    _activeNode = nodeId;
+    _adopt(state, _OhosSurface(texture), size, dpr, widthPx, heightPx);
+    return true;
+  }
+
+  /// Wires a freshly created, already-bound surface into [state].
+  void _adopt(_NodeGlState state, _GlSurface surface, Size size, double dpr,
+      int widthPx, int heightPx) {
+    state.texture = surface;
+    state.bindings =
+        FjsAngleBindings(surface.getContext(), state.locationRecords);
+    _gl.pluginActivated(widthPx, heightPx);
+    state.tracked?.dispose();
+    final tracked = TrackedGlBindings(state.bindings!, _gl,
+        width: widthPx, height: heightPx);
+    // A new context starts at the WebGL defaults, whatever the canvas
+    // before it left behind (spec 036).
+    tracked.sync();
+    state.tracked = tracked;
+    state.decoder = WebglChunkDecoder(tracked);
+    state.logicalSize = size;
+    state.dpr = dpr;
   }
 
   void _drain(int nodeId, _NodeGlState state, MirrorNode node) {
@@ -1888,17 +1975,16 @@ class FjsWebglRuntime {
     // The simulator's FBO path and Android's SurfaceProducer do not need
     // this; a finish on an empty queue is a no-op there.
     bindings.finish();
-    _syncAppleSurface(bindings, texture);
-    _angle?.updateTexture(texture);
+    if (texture is _AngleSurface) _syncAppleSurface(bindings, texture.texture);
+    texture.present();
     // the non-surface path rebinds framebuffer 0
     _gl.pluginTouched();
     state.boundSincePresent = false;
     if (!_presentLogged) {
       _presentLogged = true;
-      final surface = texture.surfaceId;
       debugPrint('[fjs] webgl: first present on node $nodeId — textureId '
           '${texture.textureId}, eglSurface '
-          '${surface == null || surface.address == 0 ? "none(FBO path)" : "live"}');
+          '${texture.hasEglSurface ? "live" : "none(FBO path)"}');
     }
   }
 
@@ -2154,7 +2240,7 @@ class FjsWebglRuntime {
     // naming the canvas as its owner (spec 036)
     state?.tracked?.dispose();
     final texture = state?.texture;
-    if (texture != null && _angle != null) {
+    if (texture != null) {
       unawaited(_freeTexture(texture));
     }
   }

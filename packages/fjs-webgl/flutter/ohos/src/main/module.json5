@@ -1,0 +1,10 @@
+{
+  "module": {
+    "name": "fjs_webgl",
+    "type": "har",
+    "deviceTypes": [
+      "default",
+      "tablet"
+    ]
+  }
+}

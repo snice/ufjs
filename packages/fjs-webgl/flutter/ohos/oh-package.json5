@@ -1,0 +1,9 @@
+{
+  "name": "fjs_webgl",
+  "version": "0.1.4",
+  "description": "ohos side of fjs_webgl: Flutter textures backed by an OHNativeWindow for the Dart-side EGL context.",
+  "main": "index.ets",
+  "author": "",
+  "license": "MIT",
+  "dependencies": {}
+}

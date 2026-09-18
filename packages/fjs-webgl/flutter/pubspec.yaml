@@ -18,6 +18,18 @@ dependencies:
   # GL), adds Linux/web/wasm and iOS-simulator surfaces, and carries a much
   # newer ANGLE. Isolated to src/replay.dart — swap surface if it stalls.
   flutter_angle: ^0.4.2
+  # ohos backend (src/ohos_surface.dart) calls libEGL directly; flutter_angle
+  # already pulls this in, declared because we import it
+  ffi: ^2.1.0
+
+# flutter_angle has no ohos implementation, so ohos gets its own texture
+# registration shim (ohos/, see FjsWebglPlugin.ets). Only the OpenHarmony
+# flutter fork reads this key; android/ios stay plain Dart via flutter_angle.
+flutter:
+  plugin:
+    platforms:
+      ohos:
+        pluginClass: FjsWebglPlugin
 
 dev_dependencies:
   flutter_test:

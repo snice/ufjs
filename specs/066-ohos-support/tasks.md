@@ -43,6 +43,14 @@
       认了模板形状的 ohos 模块（registrant 自动生成、entry/oh_modules 下
       har 链接、libs 合入 HAP），LAN 地址模拟器可达
 
+- [x] T024 WebGL 补洞：flutter_angle 无 ohos 原生端（`initOpenGL` 报
+      MissingPluginException，画布空白）。fjs_webgl 自带 ohos 后端：
+      `ohos/FjsWebglPlugin.ets` 只注册 Flutter 纹理并回传 OHNativeWindow*，
+      `lib/src/ohos_surface.dart` 在 Dart 侧走 FFI 调系统 libEGL 建上下文与
+      window surface，GL 调用复用 flutter_angle 的 LibOpenGLES(libGLESv3.so)
+      + RenderingContext；`replay.dart` 抽出 `_GlSurface`，ANGLE 路径行为不变。
+      Texture 在 ohos 上不做 Y 翻转（同 Android）。模拟器实测三角形、glTF 正常
+
 ## 文档
 
 - [x] T030 `docs/toolchain.md`（鸿蒙前置条件小节、看设备、--hap、host open）、
