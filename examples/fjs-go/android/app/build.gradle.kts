@@ -1,21 +1,22 @@
 plugins {
-    id "com.android.application"
-    id "kotlin-android"
+    id("com.android.application")
+    id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
-    id "dev.flutter.flutter-gradle-plugin"
+    id("dev.flutter.flutter-gradle-plugin")
 }
 
 android {
     namespace = "dev.flutterjs.fjs_go"
-    compileSdk = 35
+    compileSdk = flutter.compileSdkVersion
+    ndkVersion = flutter.ndkVersion
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_1_8
+        jvmTarget = JavaVersion.VERSION_17.toString()
     }
 
     defaultConfig {
@@ -25,12 +26,12 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         ndk {
-            abiFilters "arm64-v8a"
+            abiFilters += "arm64-v8a"
         }
     }
 
     signingConfigs {
-        fjsGo {
+        create("fjsGo") {
             keyAlias = "key0"
             keyPassword = "123456"
             storeFile = file("app.jks")
@@ -40,10 +41,10 @@ android {
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.fjsGo
+            signingConfig = signingConfigs.getByName("fjsGo")
         }
         release {
-            signingConfig = signingConfigs.fjsGo
+            signingConfig = signingConfigs.getByName("fjsGo")
         }
     }
 }

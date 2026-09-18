@@ -40,7 +40,7 @@ jobs:
       - name: Install Android packages
         run: |
           yes | sdkmanager --licenses >/dev/null
-          sdkmanager --install "platforms;android-34" "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager --install "platforms;android-36" "build-tools;35.0.0" "ndk;28.2.13676358"
 
       - name: Flutter pub get
         working-directory: examples/fjs-go
