@@ -18,7 +18,13 @@ void main() {
     await app.main();
     await settleFjs(tester);
 
+    // the project name lives in the dev menu behind the floating button
+    await tester.tap(find.byTooltip('开发菜单'));
+    await tester.pumpAndSettle();
     expect(find.text('hello-fjs'), findsOneWidget);
+    await tester.tapAt(const Offset(20, 20)); // modal barrier
+    await tester.pumpAndSettle();
+
     expect(find.text('内置组件'), findsWidgets);
     expect(find.text('<swiper>'), findsOneWidget);
 

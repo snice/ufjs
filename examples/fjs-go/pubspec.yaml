@@ -32,6 +32,12 @@ dependencies:
     sdk: flutter
   flutter_fjs:
     path: ../../packages/flutter_fjs
+  fjs_iconmind:
+    path: ../../packages/fjs-iconmind/flutter
+  fjs_webgl:
+    path: ../../packages/fjs-webgl/flutter
+  fjs_webview:
+    path: ../../packages/fjs-webview/flutter
 
 
   # The following adds the Cupertino Icons font to your application.
@@ -41,7 +47,15 @@ dependencies:
   # 没走 mobile_scanner —— 它在 iOS 上要 MLKit（部署目标 15.5、模拟器排掉
   # arm64），Android 上多打包一份条码模型，为一个只用一次的入口不划算。
   camera: ^0.11.0
+  # sha256 of hosted program files, checked against the manifest's hashes
+  crypto: ^3.0.0
   zxing2: ^0.2.4
+
+# The fjs modules above depend on the published flutter_fjs; this app runs
+# the checkout's, so every package has to agree on that one.
+dependency_overrides:
+  flutter_fjs:
+    path: ../../packages/flutter_fjs
 
 dev_dependencies:
   flutter_test:
@@ -66,6 +80,12 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/logo.png
+    # the showcase runtime, used while it matches the manifest's hash
+    # (hosted_build.dart); refresh with tool/update_showcase_seed.sh
+    - assets/shared.fjsbundle.gz
 
   # To add assets to your application, add an assets section, like this:
   # assets:

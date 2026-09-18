@@ -36,7 +36,11 @@ commands:
       --no-minify           keep the bundle readable (minify is on by
                             default, like vite build; fjs dev never minifies)
       --gz                  with --release: gzip copied .fjsbundle assets
-      --web                 browser build (DOM tags + vue-router)
+      --root-path <path>    with --release: prefix of the file paths in
+                            manifest.json (default: assets/fjs/); use "."
+                            to serve assets/fjs from a web server, e.g.
+                            fjs go's online showcase
+      --web                browser build (DOM tags + vue-router)
                             into dist/web, one chunk per page + index.html
       --mp                  WeChat mini-program build (skyline +
                             glass-easel) into dist/mp — open it in

@@ -859,6 +859,20 @@ fjs build --pages --release --gz
     assets/x-<hash>.png # 页面 import 进来的资源
 ```
 
+`manifest.json` 里的 `hashes` 记录每个程序文件的内容哈希（sha256 前 16 位），
+键就是 manifest 里写的路径。嵌入式宿主不读它；从网络加载的宿主（fjs go 在线
+演示）靠它判断本地副本能否直接用，哈希没变就不发请求。
+
+要把这个目录直接放到网站上（例如 fjs go 的在线演示），加 `--root-path .`，
+manifest 里的路径就相对 manifest 本身，不再带 `assets/fjs/` 前缀：
+
+```bash
+fjs build --pages --release --gz --root-path .
+# 然后把 .fjs/flutter/assets/fjs/ 整个目录部署到站点根目录
+```
+
+这样产出的 manifest 只适合网络加载，嵌入式宿主仍用默认值。
+
 ### 本地文件（图片、字体…）
 
 页面拿本地文件有两条路，两条都会进 App 包（specs/017-local-image-assets）：

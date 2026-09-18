@@ -10,14 +10,19 @@
 //   → run this app, enter the address fjs dev prints
 import 'dart:io' show Platform;
 
+import 'package:fjs_iconmind/fjs_iconmind.dart';
+import 'package:fjs_webgl/fjs_webgl.dart';
+import 'package:fjs_webview/fjs_webview.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_fjs/flutter_fjs.dart';
 
 import 'src/connect_screen.dart';
 import 'src/dev_server.dart';
+import 'src/hosted_build.dart';
 import 'src/log_store.dart';
 import 'src/recent_servers.dart';
 import 'src/session_screen.dart';
+import 'src/theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,12 +40,8 @@ class FjsGoApp extends StatelessWidget {
     return MaterialApp(
       title: 'fjs go',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.indigo),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: Colors.indigo,
-        brightness: Brightness.dark,
-      ),
+      theme: buildGoTheme(Brightness.light),
+      darkTheme: buildGoTheme(Brightness.dark),
       home: _Home(recents: recents),
     );
   }
@@ -76,19 +77,29 @@ class _HomeState extends State<_Home> {
   FjsEngine? _engine;
   DevServer? _server;
   DevManifest _manifest = const DevManifest.unknown();
+
+  /// Set when the session is a hosted release build rather than fjs dev.
+  HostedBuild? _hosted;
   String? _error;
   bool _busy = false;
 
   /// A fresh engine per session: disposing the old one is what guarantees a
   /// disconnected project leaves no timers or host modules behind.
-  FjsEngine _createEngine() {
+  FjsEngine _createEngine({AssetBundle? assets}) {
     final engine = FjsEngine();
+    // before the modules register: iconmind warms its icon set right away
+    if (assets != null) engine.assetBundle = assets;
     engine.onLog = _logs.addEngineLog;
     engine.host.register('device', (args) => {
           'platform': Platform.operatingSystem,
           'locale': Platform.localeName,
           'args': args,
         });
+    // the Dart halves of the fjs modules a project may use — what autolink
+    // registers in a generated host, registered by hand here
+    FjsIconmind.register(engine);
+    FjsWebgl.register(engine);
+    FjsWebview.register(engine);
     return engine;
   }
 
@@ -99,15 +110,25 @@ class _HomeState extends State<_Home> {
     });
     _logs.add(LogLevel.status, 'connecting to ${server.label}…');
     FjsEngine? engine;
+    HostedBuild? hosted;
     try {
       // probe first: an unreachable host would otherwise surface as an
       // opaque socket error from inside the engine's dev client
       final manifest = await server.probe();
-      engine = _createEngine();
-      await engine.connectDev(server.host, server.port);
-      await widget.recents.remember(server);
+      engine = _createEngine(
+        assets: manifest.isHosted ? HostedAssetBundle(server.origin) : null,
+      );
+      if (manifest.isHosted) {
+        hosted = HostedBuild(engine, server, manifest);
+        await hosted.load();
+      } else {
+        await engine.connectDev(server.host, server.port);
+      }
+      // the showcase has its own permanent entry; listing it again is noise
+      if (server != DevServer.showcase) await widget.recents.remember(server);
       _logs.add(LogLevel.status, 'connected — ${manifest.displayName}');
       if (!mounted) {
+        hosted?.close();
         engine.dispose();
         return;
       }
@@ -115,9 +136,11 @@ class _HomeState extends State<_Home> {
         _engine = engine;
         _server = server;
         _manifest = manifest;
+        _hosted = hosted;
         _busy = false;
       });
     } catch (e) {
+      hosted?.close();
       engine?.dispose();
       _logs.add(LogLevel.error, 'connect failed: $e');
       if (!mounted) return;
@@ -138,6 +161,8 @@ class _HomeState extends State<_Home> {
             text.contains('TimeoutException'));
     if (error is FormatException) return error.message;
     if (!unreachable) return text;
+    // an internet host: none of the LAN advice below applies
+    if (server.secure) return '连不上 ${server.label}。\n请检查网络连接后重试。';
     // iOS 14+ gates every LAN connection behind the local-network prompt,
     // and a denied one fails exactly like an unplugged cable — worse, the
     // broadcast discovery may already be running, so the server shows up in
@@ -158,7 +183,12 @@ class _HomeState extends State<_Home> {
     if (engine == null) return;
     _logs.add(LogLevel.status, 'manual reload');
     try {
-      await engine.reloadDev();
+      final hosted = _hosted;
+      if (hosted != null) {
+        await hosted.load(fresh: true);
+      } else {
+        await engine.reloadDev();
+      }
     } catch (e) {
       _logs.add(LogLevel.error, 'reload failed: $e');
     }
@@ -166,18 +196,22 @@ class _HomeState extends State<_Home> {
 
   void _disconnect() {
     final engine = _engine;
+    final hosted = _hosted;
     _logs.add(LogLevel.status, 'disconnected');
     setState(() {
       _engine = null;
       _server = null;
       _manifest = const DevManifest.unknown();
+      _hosted = null;
     });
+    hosted?.close();
     engine?.disconnectDev();
     engine?.dispose();
   }
 
   @override
   void dispose() {
+    _hosted?.close();
     _engine?.disconnectDev();
     _engine?.dispose();
     _logs.dispose();
@@ -188,21 +222,27 @@ class _HomeState extends State<_Home> {
   Widget build(BuildContext context) {
     final engine = _engine;
     final server = _server;
-    if (engine != null && server != null) {
-      return SessionScreen(
-        engine: engine,
-        server: server,
-        manifest: _manifest,
-        logs: _logs,
-        onReload: _reload,
-        onDisconnect: _disconnect,
-      );
-    }
-    return ConnectScreen(
-      recents: widget.recents,
-      onConnect: _connect,
-      error: _error,
-      busy: _busy,
+    // a cross-fade rather than a route push: the connect screen is not
+    // somewhere the back gesture inside a project should return to
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 280),
+      child: engine != null && server != null
+          ? SessionScreen(
+              key: const ValueKey('session'),
+              engine: engine,
+              server: server,
+              manifest: _manifest,
+              logs: _logs,
+              onReload: _reload,
+              onDisconnect: _disconnect,
+            )
+          : ConnectScreen(
+              key: const ValueKey('connect'),
+              recents: widget.recents,
+              onConnect: _connect,
+              error: _error,
+              busy: _busy,
+            ),
     );
   }
 }

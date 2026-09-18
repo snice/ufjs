@@ -38,4 +38,44 @@ void main() {
     expect(DevServer.parse('a:1'), DevServer.parse('a:1'));
     expect(DevServer.parse('a:1'), isNot(DevServer.parse('a:2')));
   });
+
+  test('an https url keeps its own port instead of the dev port', () {
+    final s = DevServer.parse('https://fjs-showcase.zhuzhe.dev/');
+    expect(s.secure, isTrue);
+    expect(s.port, 443);
+    expect(s.label, 'https://fjs-showcase.zhuzhe.dev');
+    expect(s.origin.toString(), 'https://fjs-showcase.zhuzhe.dev');
+    expect(DevServer.parse(s.label), s); // recents round-trip
+  });
+
+  test('a bare public domain is a hosted build over https', () {
+    expect(DevServer.parse('fjs-showcase.zhuzhe.dev'), DevServer.showcase);
+  });
+
+  test('LAN names and IPs keep the dev port', () {
+    expect(DevServer.parse('my-mac.local').port, DevServer.defaultPort);
+    expect(DevServer.parse('localhost').port, DevServer.defaultPort);
+    expect(DevServer.parse('192.168.1.20').secure, isFalse);
+  });
+
+  test('a release manifest marks a hosted build', () {
+    final hosted = DevManifest.fromJson(const {
+      'name': 'hello-fjs',
+      'bundle': 'assets/fjs/bundle.fjsbundle',
+      'pages': {'about': 'assets/fjs/pages/about.fjsbundle'},
+    });
+    expect(hosted.isHosted, isTrue);
+    expect(hosted.pages['about'], 'assets/fjs/pages/about.fjsbundle');
+    expect(hosted.hashes, isEmpty); // builds before --release wrote hashes
+    expect(DevManifest.fromJson(const {'name': 'x', 'split': true}).isHosted, isFalse);
+  });
+
+  test('manifest hashes are read by the path they name', () {
+    final m = DevManifest.fromJson(const {
+      'bundle': 'bundle.fjsbundle.gz',
+      'shared': 'shared.fjsbundle.gz',
+      'hashes': {'shared.fjsbundle.gz': '0123456789abcdef', 'bad': 1},
+    });
+    expect(m.hashes, {'shared.fjsbundle.gz': '0123456789abcdef'});
+  });
 }

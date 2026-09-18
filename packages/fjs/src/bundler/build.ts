@@ -14,6 +14,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { gzipSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
 import esbuild from 'esbuild';
 import { WORKERS_DIR, writeWorkers } from '../project/workers.js';
 import { ensureFlutterHost, projectName } from '../commands/run.js';
@@ -193,6 +194,12 @@ export interface BuildOptions {
   mode: FlutterMode;
   /** With --release, gzip .fjsbundle assets copied into Flutter. */
   gz: boolean;
+  /** With --release, the prefix the manifest writes before each program
+   * file. `assets/fjs/` (the default) is the Flutter asset key an embedded
+   * host loads; `--root-path .` writes paths relative to the manifest
+   * itself, for serving assets/fjs from a web server (fjs go's hosted
+   * mode, the showcase). */
+  rootPath?: string;
   /** With --release, also run `flutter build apk`. */
   apk: boolean;
   /** With --release, also run `flutter build hap` (OpenHarmony fork only). */
@@ -231,6 +238,17 @@ function generatedEntry(
   return { contents, resolveDir, sourcefile: `fjs-entry/${name}.ts`, loader: 'ts' };
 }
 
+/** Where an embedded host finds the release program: its Flutter assets. */
+export const RELEASE_ROOT_PATH = 'assets/fjs/';
+
+/** `--root-path` as the prefix the manifest paths start with: `.` (or an
+ * empty value) means relative to the manifest, anything else gets exactly
+ * one trailing slash. */
+export function releasePathPrefix(rootPath: string): string {
+  const trimmed = rootPath.trim().replace(/^\.\/?$/, '').replace(/\/+$/, '');
+  return trimmed ? `${trimmed}/` : '';
+}
+
 export function parseBuildArgs(argv: string[]): BuildOptions {
   const opts: BuildOptions = {
     outDir: 'dist',
@@ -243,6 +261,7 @@ export function parseBuildArgs(argv: string[]): BuildOptions {
     release: false,
     mode: 'release',
     gz: false,
+    rootPath: RELEASE_ROOT_PATH,
     apk: false,
     hap: false,
     flutterDir: configuredFlutterDir(),
@@ -267,6 +286,9 @@ export function parseBuildArgs(argv: string[]): BuildOptions {
     else if (a === '--minify') opts.minify = true;
     else if (a === '--no-minify') opts.minify = false;
     else if (a === '--gz') opts.gz = true;
+    else if (a === '--root-path' || a === '--rootPath') {
+      opts.rootPath = argv[++i] ?? RELEASE_ROOT_PATH;
+    }
     else if (a === '--out') opts.outDir = argv[++i] ?? opts.outDir;
     else if (a === '--flutter-dir') opts.flutterDir = argv[++i] ?? opts.flutterDir;
     else if (a === '--analyze') opts.analyze = true;
@@ -1198,6 +1220,7 @@ export function releaseBuild(opts: BuildOptions, res: BuildResult): void {
 
   const bundleAsset = copyReleaseAsset(res.bytecodePath, path.join(assets, 'bundle.fjsbundle'), opts.gz);
 
+  const prefix = releasePathPrefix(opts.rootPath ?? RELEASE_ROOT_PATH);
   const pages: Record<string, string> = {};
   let sharedAsset: string | null = null;
   if (res.sharedBytecodePath && res.pageBytecodeChunks) {
@@ -1208,7 +1231,7 @@ export function releaseBuild(opts: BuildOptions, res: BuildResult): void {
     );
     for (const [chunk, file] of Object.entries(res.pageBytecodeChunks)) {
       const asset = copyReleaseAsset(file, path.join(pagesOut, `${chunk}.fjsbundle`), opts.gz);
-      pages[chunk] = `assets/fjs/pages/${path.basename(asset)}`;
+      pages[chunk] = `${prefix}pages/${path.basename(asset)}`;
     }
   }
   const routes = pagesFor(root, 'app').map((page) => ({
@@ -1222,10 +1245,15 @@ export function releaseBuild(opts: BuildOptions, res: BuildResult): void {
     entry: opts.entry ?? 'src/main.ts',
     split: Boolean(res.sharedBytecodePath),
     compression: opts.gz ? 'gzip' : null,
-    shared: sharedAsset ? `assets/fjs/${path.basename(sharedAsset)}` : null,
-    bundle: `assets/fjs/${path.basename(bundleAsset)}`,
+    shared: sharedAsset ? `${prefix}${path.basename(sharedAsset)}` : null,
+    bundle: `${prefix}${path.basename(bundleAsset)}`,
     pages,
     routes,
+    hashes: releaseAssetHashes(assets, prefix, [
+      bundleAsset,
+      ...(sharedAsset ? [sharedAsset] : []),
+      ...Object.values(pages).map((p) => path.join(pagesOut, path.basename(p))),
+    ]),
   };
   fs.writeFileSync(
     path.join(assets, 'manifest.json'),
@@ -1247,6 +1275,27 @@ export function releaseBuild(opts: BuildOptions, res: BuildResult): void {
     if (result.status !== 0) throw new Error('flutter build hap failed');
     console.log(`built HAP under ${path.relative(root, path.join(flutterDir, 'ohos', 'entry', 'build', 'default', 'outputs', 'default'))}`);
   }
+}
+
+/**
+ * Content hash of each program file, keyed by the path the manifest names
+ * it by (so `shared.fjsbundle.gz` under `--root-path .`). A host that loads
+ * the build over the network (fjs go's hosted mode) compares these with the
+ * copies it already has and skips the request for every one that matches —
+ * the manifest alone then says whether anything changed. Hosts reading
+ * their own assets ignore the field.
+ */
+export function releaseAssetHashes(
+  assetsDir: string,
+  prefix: string,
+  files: string[],
+): Record<string, string> {
+  const hashes: Record<string, string> = {};
+  for (const file of files) {
+    const key = prefix + path.relative(assetsDir, file).split(path.sep).join('/');
+    hashes[key] = createHash('sha256').update(fs.readFileSync(file)).digest('hex').slice(0, 16);
+  }
+  return hashes;
 }
 
 function copyReleaseAsset(from: string, to: string, gzip: boolean): string {
