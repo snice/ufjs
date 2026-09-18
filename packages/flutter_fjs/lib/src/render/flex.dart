@@ -52,8 +52,9 @@ Widget buildFlex(
     // like [_flexChild] does for the non-wrapping path.
     return LayoutBuilder(
       builder: (context, constraints) {
-        final mainAxisMax =
-            horizontal ? constraints.maxWidth : constraints.maxHeight;
+        final mainAxisMax = horizontal
+            ? constraints.maxWidth
+            : constraints.maxHeight;
         return Wrap(
           direction: axis,
           spacing: gap ?? 0,
@@ -73,7 +74,8 @@ Widget buildFlex(
       },
     );
   }
-  final crossAlignment = style.alignItems ??
+  final crossAlignment =
+      style.alignItems ??
       (horizontal ? CrossAxisAlignment.center : CrossAxisAlignment.stretch);
   return LayoutBuilder(
     builder: (context, constraints) {
@@ -87,15 +89,12 @@ Widget buildFlex(
           : constraints.hasBoundedWidth;
       final effectiveCrossAlignment =
           !crossBounded && crossAlignment == CrossAxisAlignment.stretch
-              ? CrossAxisAlignment.start
-              : crossAlignment;
+          ? CrossAxisAlignment.start
+          : crossAlignment;
       final entries = <(Widget, MirrorNode?)>[
         for (var i = 0; i < kids.length; i++) ...[
           if (gap != null && i > 0)
-            (
-              horizontal ? SizedBox(width: gap) : SizedBox(height: gap),
-              null,
-            ),
+            (horizontal ? SizedBox(width: gap) : SizedBox(height: gap), null),
           (kids[i], i < kidNodes.length ? kidNodes[i] : null),
         ],
       ];
@@ -103,8 +102,9 @@ Widget buildFlex(
       // content box, the same reference CSS uses. Flex hands its children an
       // unbounded main axis, so a child cannot read it from its own
       // constraints — see [_flexChild].
-      final mainAxisMax =
-          horizontal ? constraints.maxWidth : constraints.maxHeight;
+      final mainAxisMax = horizontal
+          ? constraints.maxWidth
+          : constraints.maxHeight;
       final children = [
         for (final (child, childNode) in entries)
           _flexChild(
@@ -159,8 +159,8 @@ Widget _wrapChild({
   // [_flexChild]
   final needsMainBound = horizontal
       ? s.hasRelativeSpacing ||
-          s.leftLength?.isRelative == true ||
-          s.rightLength?.isRelative == true
+            s.leftLength?.isRelative == true ||
+            s.rightLength?.isRelative == true
       : s.topLength?.isRelative == true || s.bottomLength?.isRelative == true;
   if ((mainLength?.isRelative == true || needsMainBound) &&
       mainAxisMax.isFinite) {
@@ -211,8 +211,8 @@ Widget _flexChild({
     fjsWarnOnce(
       'sticky-style-deep:${childNode.id}',
       'position: sticky on node ${childNode.id} only sticks as a scroll '
-      'view\'s DIRECT child (or inside a sticky-section); use the '
-      '<sticky-header> tag or move it up a level.',
+          'view\'s DIRECT child (or inside a sticky-section); use the '
+          '<sticky-header> tag or move it up a level.',
     );
   }
   // absolutely-positioned children are out of flow; never expand them
@@ -258,11 +258,12 @@ Widget _flexChild({
   // added — the child still shrink-wraps if it turns out not to want the
   // space. An unbounded box (inside a scroller) keeps falling back, which
   // is what CSS says there too.
-  final needsWidthBound = s.hasRelativeSpacing ||
+  final needsWidthBound =
+      s.hasRelativeSpacing ||
       s.leftLength?.isRelative == true ||
       s.rightLength?.isRelative == true;
-  final needsHeightBound = s.topLength?.isRelative == true ||
-      s.bottomLength?.isRelative == true;
+  final needsHeightBound =
+      s.topLength?.isRelative == true || s.bottomLength?.isRelative == true;
   final needsMainBound = horizontal ? needsWidthBound : needsHeightBound;
   final mainLength = horizontal ? s.widthLength : s.heightLength;
   if ((mainLength?.isRelative == true || needsMainBound) &&
@@ -308,8 +309,13 @@ Widget buildBox(
   bool cull = false,
 }) {
   if (!style.isPositioningContext) {
-    return buildFlex(style, kids, kidNodes,
-        growChildren: growChildren, cull: cull);
+    return buildFlex(
+      style,
+      kids,
+      kidNodes,
+      growChildren: growChildren,
+      cull: cull,
+    );
   }
   final flow = <Widget>[];
   final flowNodes = <MirrorNode>[];
@@ -326,21 +332,25 @@ Widget buildBox(
     if (childNode != null) flowNodes.add(childNode);
   }
   if (over.isEmpty) {
-    return buildFlex(style, kids, kidNodes,
-        growChildren: growChildren, cull: cull);
+    return buildFlex(
+      style,
+      kids,
+      kidNodes,
+      growChildren: growChildren,
+      cull: cull,
+    );
   }
   Widget stack(BoxConstraints? outer) => Stack(
-        // the box sizes to its in-flow content, and a positioned child may
-        // hang outside it (`top: -4px`) exactly like it does on web
-        clipBehavior: Clip.none,
-        children: [
-          // a positioned child may hang outside the flow box, so the flow
-          // half keeps culling but the Stack as a whole is left alone
-          buildFlex(style, flow, flowNodes,
-              growChildren: growChildren, cull: cull),
-          for (final entry in over) positionedChild(entry.$1, entry.$2, outer),
-        ],
-      );
+    // the box sizes to its in-flow content, and a positioned child may
+    // hang outside it (`top: -4px`) exactly like it does on web
+    clipBehavior: Clip.none,
+    children: [
+      // a positioned child may hang outside the flow box, so the flow
+      // half keeps culling but the Stack as a whole is left alone
+      buildFlex(style, flow, flowNodes, growChildren: growChildren, cull: cull),
+      for (final entry in over) positionedChild(entry.$1, entry.$2, outer),
+    ],
+  );
   // Only a positioned child that declared a relative width/height or a
   // relative offset (`top: 50%`, spec 044) needs the extra LayoutBuilder —
   // see [positionedChild] for why it cannot read the box from its own
@@ -362,8 +372,11 @@ Widget buildBox(
 /// Takes the child's node directly: `kids` is built from the filtered
 /// [kidNodes], so indexing back into `node.children` would misalign
 /// whenever a hidden child was dropped.
-Widget positionedChild(MirrorNode? childNode, Widget child,
-    [BoxConstraints? outer]) {
+Widget positionedChild(
+  MirrorNode? childNode,
+  Widget child, [
+  BoxConstraints? outer,
+]) {
   final s = childNode != null ? FjsStyle.of(childNode) : null;
   if (s?.position != 'absolute') return child;
   // Positioned wants pixels at build time, so a relative width/height — or

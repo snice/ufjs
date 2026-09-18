@@ -87,14 +87,19 @@ void main() {
     // image cache is keyed by URL — found on the simulator: editing a PNG
     // during `fjs dev` kept showing the first copy (specs/017 §4).
     expect(
-      (fjsResolveImageSource('/images/photo.png', devUri: dev, devGeneration: 3)!
+      (fjsResolveImageSource(
+                '/images/photo.png',
+                devUri: dev,
+                devGeneration: 3,
+              )!
               as CachedNetworkImageProvider)
           .url,
       'http://127.0.0.1:38900/images/photo.png?fjs=3',
     );
     // release keys stay clean — nothing is editable there
     expect(
-      (fjsResolveImageSource('/images/photo.png', devGeneration: 3)! as AssetImage)
+      (fjsResolveImageSource('/images/photo.png', devGeneration: 3)!
+              as AssetImage)
           .assetName,
       '$fjsPublicAssetRoot/images/photo.png',
     );
@@ -119,7 +124,8 @@ void main() {
       );
     }
     expect(
-      (fjsResolveImageSource('/assets/photo-ABC123.png')! as AssetImage).assetName,
+      (fjsResolveImageSource('/assets/photo-ABC123.png')! as AssetImage)
+          .assetName,
       '$fjsPublicAssetRoot/assets/photo-ABC123.png',
     );
   });
@@ -184,8 +190,9 @@ void main() {
     expect(resolved.alignment, Alignment.center);
   });
 
-  testWidgets('dispatches one load event with intrinsic dimensions',
-      (tester) async {
+  testWidgets('dispatches one load event with intrinsic dimensions', (
+    tester,
+  ) async {
     final provider = _CompletingImageProvider();
     final events = <(int, int, String?)>[];
     final node = _node(style: const {'borderRadius': '8px'});
@@ -228,12 +235,12 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(
-        events, [(7, FjsEvent.error, '{"errMsg":"image load failed"}')]);
+    expect(events, [(7, FjsEvent.error, '{"errMsg":"image load failed"}')]);
   });
 
-  testWidgets('empty source does not create a provider or dispatch',
-      (tester) async {
+  testWidgets('empty source does not create a provider or dispatch', (
+    tester,
+  ) async {
     final events = <(int, int, String?)>[];
     final node = _node(src: '');
     await tester.pumpWidget(
@@ -251,8 +258,9 @@ void main() {
     expect(events, isEmpty);
   });
 
-  testWidgets('drops the old provider result after a source change',
-      (tester) async {
+  testWidgets('drops the old provider result after a source change', (
+    tester,
+  ) async {
     final first = _CompletingImageProvider();
     final second = _CompletingImageProvider();
     final events = <(int, int, String?)>[];
@@ -306,7 +314,8 @@ MirrorTree _lazyInScrollView({required int rows, required double rowHeight}) {
     ..add(v & 0xff)
     ..add((v >> 8) & 0xff);
   void u32(int v) => bytes.addAll(
-      (ByteData(4)..setUint32(0, v, Endian.little)).buffer.asUint8List());
+    (ByteData(4)..setUint32(0, v, Endian.little)).buffer.asUint8List(),
+  );
   void raw(List<int> l) => bytes.addAll(l);
   void create(int id, String tag, Map<String, Object?> props) {
     u8(UiOpCode.create);
@@ -348,8 +357,9 @@ MirrorTree _lazyInScrollView({required int rows, required double rowHeight}) {
 }
 
 void _lazyTests() {
-  testWidgets('lazy-load waits until the scroll view reaches it',
-      (tester) async {
+  testWidgets('lazy-load waits until the scroll view reaches it', (
+    tester,
+  ) async {
     // 20 x 200px of rows above the image, in a 400px viewport: the image
     // starts far outside the 240px preload margin.
     final tree = _lazyInScrollView(rows: 20, rowHeight: 200);
@@ -374,7 +384,9 @@ void _lazyTests() {
     expect(events, isEmpty, reason: 'nothing requested before it is near');
 
     await tester.drag(
-        find.byType(SingleChildScrollView), const Offset(0, -4000));
+      find.byType(SingleChildScrollView),
+      const Offset(0, -4000),
+    );
     await tester.pumpAndSettle();
     // the asset does not exist in this package, so the terminal event is the
     // error one; what is under test is that there is now EXACTLY one, and
@@ -383,8 +395,9 @@ void _lazyTests() {
     expect(events, [(22, FjsEvent.error, '{"errMsg":"image load failed"}')]);
   });
 
-  testWidgets('lazy-load outside any viewport warns and loads anyway',
-      (tester) async {
+  testWidgets('lazy-load outside any viewport warns and loads anyway', (
+    tester,
+  ) async {
     // Constitution V: a host that cannot answer "is this near the screen?"
     // must say so, not pretend to be lazy and then load immediately.
     final provider = _CompletingImageProvider();

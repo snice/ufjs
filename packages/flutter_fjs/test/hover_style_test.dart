@@ -101,7 +101,11 @@ Future<TestGesture> _hover(WidgetTester tester, Offset target) async {
 void main() {
   const base = {'width': 100.0, 'height': 100.0, 'backgroundColor': '#ffffff'};
   const hover = {'width': 100.0, 'height': 100.0, 'backgroundColor': '#f2f2f2'};
-  const active = {'width': 100.0, 'height': 100.0, 'backgroundColor': '#eef4ff'};
+  const active = {
+    'width': 100.0,
+    'height': 100.0,
+    'backgroundColor': '#eef4ff',
+  };
 
   testWidgets('op 12 sets and clears node.hoverStyle', (tester) async {
     final w = _W();
@@ -133,12 +137,16 @@ void main() {
     expect(tree.node(1)!.hoverStyleMap, isNull);
   });
 
-  testWidgets('a hovered node paints its :hover style, un-hover restores',
-      (tester) async {
+  testWidgets('a hovered node paints its :hover style, un-hover restores', (
+    tester,
+  ) async {
     await tester.pumpWidget(_render(_treeWith(base: base, hover: hover)));
     expect(_boxColor(tester), const Color(0xFFFFFFFF));
 
-    final gesture = await _hover(tester, tester.getCenter(find.byType(Container)));
+    final gesture = await _hover(
+      tester,
+      tester.getCenter(find.byType(Container)),
+    );
     expect(_boxColor(tester), const Color(0xFFF2F2F2));
 
     await gesture.moveTo(const Offset(1, 1));
@@ -150,7 +158,10 @@ void main() {
     await tester.pumpWidget(
       _render(_treeWith(base: base, hover: hover, active: active)),
     );
-    final gesture = await _hover(tester, tester.getCenter(find.byType(Container)));
+    final gesture = await _hover(
+      tester,
+      tester.getCenter(find.byType(Container)),
+    );
     expect(_boxColor(tester), const Color(0xFFF2F2F2));
 
     // mouse down = pressed while still hovered: :active lays over :hover

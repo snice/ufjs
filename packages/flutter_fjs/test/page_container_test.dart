@@ -75,14 +75,14 @@ class _Ops {
 typedef Events = List<(int, String?)>;
 
 Widget render(MirrorTree tree, Events log) => MaterialApp(
-      home: Scaffold(
-        body: FjsNodeRenderer(
-          tree: tree,
-          ids: tree.rootChildren,
-          dispatch: (id, type, {String? text}) => log.add((type, text)),
-        ),
-      ),
-    );
+  home: Scaffold(
+    body: FjsNodeRenderer(
+      tree: tree,
+      ids: tree.rootChildren,
+      dispatch: (id, type, {String? text}) => log.add((type, text)),
+    ),
+  ),
+);
 
 (MirrorTree, Events) openable({
   String position = 'bottom',
@@ -134,39 +134,47 @@ const enterChain = [FjsEvent.beforeEnter, FjsEvent.enter, FjsEvent.afterEnter];
 const leaveChain = [FjsEvent.beforeLeave, FjsEvent.leave, FjsEvent.afterLeave];
 
 void main() {
-  testWidgets('show drives the container, and the leave chain fires on a JS-driven close', (tester) async {
-    final (tree, log) = openable();
-    await tester.pumpWidget(render(tree, log));
-    expect(find.text('row 0'), findsNothing);
+  testWidgets(
+    'show drives the container, and the leave chain fires on a JS-driven close',
+    (tester) async {
+      final (tree, log) = openable();
+      await tester.pumpWidget(render(tree, log));
+      expect(find.text('row 0'), findsNothing);
 
-    setShow(tree, true);
-    await tester.pumpAndSettle();
-    expect(find.text('row 0'), findsOneWidget);
-    expect(log.map((e) => e.$1), enterChain);
+      setShow(tree, true);
+      await tester.pumpAndSettle();
+      expect(find.text('row 0'), findsOneWidget);
+      expect(log.map((e) => e.$1), enterChain);
 
-    // modal's "JS already knows" rule does NOT apply: the page syncs show
-    // from @after-leave, so even a JS-driven close reports the chain.
-    setShow(tree, false);
-    await tester.pumpAndSettle();
-    expect(find.text('row 0'), findsNothing);
-    expect(log.map((e) => e.$1), [...enterChain, ...leaveChain]);
-  });
+      // modal's "JS already knows" rule does NOT apply: the page syncs show
+      // from @after-leave, so even a JS-driven close reports the chain.
+      setShow(tree, false);
+      await tester.pumpAndSettle();
+      expect(find.text('row 0'), findsNothing);
+      expect(log.map((e) => e.$1), [...enterChain, ...leaveChain]);
+    },
+  );
 
-  testWidgets('overlay tap reports clickoverlay and leaves the close to the page', (tester) async {
-    final (tree, log) = openable();
-    await tester.pumpWidget(render(tree, log));
-    setShow(tree, true);
-    await tester.pumpAndSettle();
-    log.clear();
+  testWidgets(
+    'overlay tap reports clickoverlay and leaves the close to the page',
+    (tester) async {
+      final (tree, log) = openable();
+      await tester.pumpWidget(render(tree, log));
+      setShow(tree, true);
+      await tester.pumpAndSettle();
+      log.clear();
 
-    await tester.tapAt(const Offset(10, 10));
-    await tester.pumpAndSettle();
-    expect(log, [(FjsEvent.clickOverlay, null)]);
-    // still open — wx semantics: the page closes in its own handler
-    expect(find.text('row 0'), findsOneWidget);
-  });
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      expect(log, [(FjsEvent.clickOverlay, null)]);
+      // still open — wx semantics: the page closes in its own handler
+      expect(find.text('row 0'), findsOneWidget);
+    },
+  );
 
-  testWidgets('content added while open shows up in the open container', (tester) async {
+  testWidgets('content added while open shows up in the open container', (
+    tester,
+  ) async {
     final (tree, log) = openable();
     await tester.pumpWidget(render(tree, log));
     setShow(tree, true);
@@ -178,7 +186,9 @@ void main() {
     expect(find.text('row 1'), findsOneWidget);
   });
 
-  testWidgets('an edge swipe pops the container and fires the leave chain', (tester) async {
+  testWidgets('an edge swipe pops the container and fires the leave chain', (
+    tester,
+  ) async {
     final (tree, log) = openable();
     await tester.pumpWidget(render(tree, log));
     setShow(tree, true);
@@ -194,7 +204,9 @@ void main() {
     expect(log.map((e) => e.$1), leaveChain);
   });
 
-  testWidgets('close-on-slide-down pops past the threshold, not below it', (tester) async {
+  testWidgets('close-on-slide-down pops past the threshold, not below it', (
+    tester,
+  ) async {
     final (tree, log) = openable(slideDown: true);
     await tester.pumpWidget(render(tree, log));
     setShow(tree, true);

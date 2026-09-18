@@ -115,12 +115,15 @@ void main() {
     expect(mid, lessThan(1));
 
     await tester.pump(const Duration(milliseconds: 50));
-    expect(tester.widget<Opacity>(find.byType(Opacity).first).opacity,
-        closeTo(0.2, 1e-9));
+    expect(
+      tester.widget<Opacity>(find.byType(Opacity).first).opacity,
+      closeTo(0.2, 1e-9),
+    );
   });
 
-  testWidgets('removing transform from transition makes transform immediate',
-      (tester) async {
+  testWidgets('removing transform from transition makes transform immediate', (
+    tester,
+  ) async {
     final tree = _treeWith(
       '{"style":{"width":100,"height":100,"backgroundColor":"#ffffff",'
       '"transition":"transform 200ms linear"}}',
@@ -137,50 +140,53 @@ void main() {
     expect(_outerTransform(tester).transform.storage[12], 100);
   });
 
-  testWidgets('transform transition can restart after transition was disabled',
-      (tester) async {
-    final tree = _treeWith(
-      '{"style":{"width":100,"height":100,"backgroundColor":"#ffffff",'
-      '"transition":"transform 200ms linear"},'
-      '"onTouchstart":true,"onTouchmove":true,'
-      '"onTouchend":true,"onTouchcancel":true}',
-    );
-    await tester.pumpWidget(_render(tree));
+  testWidgets(
+    'transform transition can restart after transition was disabled',
+    (tester) async {
+      final tree = _treeWith(
+        '{"style":{"width":100,"height":100,"backgroundColor":"#ffffff",'
+        '"transition":"transform 200ms linear"},'
+        '"onTouchstart":true,"onTouchmove":true,'
+        '"onTouchend":true,"onTouchcancel":true}',
+      );
+      await tester.pumpWidget(_render(tree));
 
-    _setProps(
-      tree,
-      '{"style":{"width":100,"height":100,"backgroundColor":"#ffffff",'
-      '"transition":"transform 200ms linear",'
-      '"transform":"translate(100px, 0)"}}',
-    );
-    await tester.pumpWidget(_render(tree));
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(_outerTransform(tester).transform.storage[12], 100);
+      _setProps(
+        tree,
+        '{"style":{"width":100,"height":100,"backgroundColor":"#ffffff",'
+        '"transition":"transform 200ms linear",'
+        '"transform":"translate(100px, 0)"}}',
+      );
+      await tester.pumpWidget(_render(tree));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(_outerTransform(tester).transform.storage[12], 100);
 
-    _setProps(
-      tree,
-      '{"style":{"width":100,"height":100,"backgroundColor":"#ffffff",'
-      '"transition":"none","transform":null}}',
-    );
-    await tester.pumpWidget(_render(tree));
-    expect(_outerTransform(tester).transform.storage[12], 0);
+      _setProps(
+        tree,
+        '{"style":{"width":100,"height":100,"backgroundColor":"#ffffff",'
+        '"transition":"none","transform":null}}',
+      );
+      await tester.pumpWidget(_render(tree));
+      expect(_outerTransform(tester).transform.storage[12], 0);
 
-    _setProps(
-      tree,
-      '{"style":{"transition":"transform 200ms linear",'
-      '"transform":"translate(100px, 0)"}}',
-    );
-    await tester.pumpWidget(_render(tree));
-    expect(_outerTransform(tester).transform.storage[12], 0);
+      _setProps(
+        tree,
+        '{"style":{"transition":"transform 200ms linear",'
+        '"transform":"translate(100px, 0)"}}',
+      );
+      await tester.pumpWidget(_render(tree));
+      expect(_outerTransform(tester).transform.storage[12], 0);
 
-    await tester.pump(const Duration(milliseconds: 100));
-    final mid = _outerTransform(tester).transform.storage[12];
-    expect(mid, greaterThan(0));
-    expect(mid, lessThan(100));
-  });
+      await tester.pump(const Duration(milliseconds: 100));
+      final mid = _outerTransform(tester).transform.storage[12];
+      expect(mid, greaterThan(0));
+      expect(mid, lessThan(100));
+    },
+  );
 
-  testWidgets('disabling transform transition clears stale animation state',
-      (tester) async {
+  testWidgets('disabling transform transition clears stale animation state', (
+    tester,
+  ) async {
     final tree = _treeWith(
       '{"style":{"width":100,"height":100,"backgroundColor":"#ffffff",'
       '"transition":"transform 200ms linear"},'
@@ -222,8 +228,9 @@ void main() {
     expect(restarted, lessThan(100));
   });
 
-  testWidgets('transform transition retargets from current animated position',
-      (tester) async {
+  testWidgets('transform transition retargets from current animated position', (
+    tester,
+  ) async {
     final tree = _treeWith(
       '{"style":{"width":100,"height":100,"backgroundColor":"#ffffff",'
       '"transition":"transform 200ms linear"},'

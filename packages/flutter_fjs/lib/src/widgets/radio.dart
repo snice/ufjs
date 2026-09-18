@@ -43,19 +43,19 @@ class _FjsRadioState extends State<FjsRadio>
 
   @override
   FjsControlHandle createControlHandle() => FjsControlHandle(
-        nodeId: widget.node.id,
-        kind: FjsControlKind.radio,
-        getName: () => widget.node.props['name']?.toString(),
-        getId: () => widget.node.props['id']?.toString(),
-        getValue: () => _value,
-        // A group turns the other radios off; that is not the user changing
-        // this one, so it must not dispatch an event of its own.
-        setChecked: (next) {
-          if (!mounted || next == _value) return;
-          setState(() => _value = next);
-        },
-        toggle: () => _select(),
-      );
+    nodeId: widget.node.id,
+    kind: FjsControlKind.radio,
+    getName: () => widget.node.props['name']?.toString(),
+    getId: () => widget.node.props['id']?.toString(),
+    getValue: () => _value,
+    // A group turns the other radios off; that is not the user changing
+    // this one, so it must not dispatch an event of its own.
+    setChecked: (next) {
+      if (!mounted || next == _value) return;
+      setState(() => _value = next);
+    },
+    toggle: () => _select(),
+  );
 
   @override
   void didUpdateWidget(covariant FjsRadio oldWidget) {

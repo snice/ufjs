@@ -80,6 +80,7 @@ abstract final class CanvasPathCmd {
   static const cubicTo = 3;
   static const quadTo = 4;
   static const arc = 5;
+
   /// Legacy: a current JS runtime lowers `arcTo` to lineTo + arc and never
   /// sends this. Kept for bundles older than that (`fjs dev` connects any
   /// bundle to any client), and to keep the numbering stable.
@@ -106,10 +107,11 @@ class CanvasOpException implements Exception {
 /// Cursor over one chunk. Bounds-checked: a truncated or misaligned chunk
 /// throws rather than painting garbage (constitution V).
 class CanvasChunkReader {
-  CanvasChunkReader(this.bytes)
-      : _data = ByteData.sublistView(bytes),
-        _p = 0;
+  /// Starts a cursor over [bytes] — one canvas chunk as delivered by the
+  /// JS side, little-endian throughout.
+  CanvasChunkReader(this.bytes) : _data = ByteData.sublistView(bytes), _p = 0;
 
+  /// The chunk being read; [offset] indexes into it.
   final Uint8List bytes;
   final ByteData _data;
   int _p;
@@ -117,13 +119,16 @@ class CanvasChunkReader {
   /// Strings defined by this chunk, by id.
   final Map<int, String> strings = {};
 
+  /// True once every byte of the chunk has been read; a [CanvasOpException]
+  /// is the alternative for chunks that end mid-command.
   bool get done => _p >= bytes.length;
   int get offset => _p;
 
   void _need(int n) {
     if (_p + n > bytes.length) {
       throw CanvasOpException(
-          'truncated canvas chunk at offset $_p (need $n, have ${bytes.length - _p})');
+        'truncated canvas chunk at offset $_p (need $n, have ${bytes.length - _p})',
+      );
     }
   }
 
@@ -155,6 +160,8 @@ class CanvasChunkReader {
     return v;
   }
 
+  /// IEEE 754 single precision, little-endian — coordinates and sizes the
+  /// JS writer did not want to round to fixed-point.
   double f32() {
     _need(4);
     final v = _data.getFloat32(_p, Endian.little);

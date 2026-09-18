@@ -28,20 +28,20 @@ class _FjsCheckboxState extends State<FjsCheckbox>
     with FjsControlRegistration<FjsCheckbox> {
   @override
   FjsControlHandle createControlHandle() => FjsControlHandle(
-        nodeId: widget.node.id,
-        kind: FjsControlKind.checkbox,
-        getName: () => widget.node.props['name']?.toString(),
-        getId: () => widget.node.props['id']?.toString(),
-        getValue: () => _value,
-        setChecked: (next) {
-          if (!mounted || next == _value) return;
-          setState(() => _value = next);
-        },
-        toggle: () {
-          if (fjsBool(widget.node.props['disabled'])) return;
-          _emit(!_value);
-        },
-      );
+    nodeId: widget.node.id,
+    kind: FjsControlKind.checkbox,
+    getName: () => widget.node.props['name']?.toString(),
+    getId: () => widget.node.props['id']?.toString(),
+    getValue: () => _value,
+    setChecked: (next) {
+      if (!mounted || next == _value) return;
+      setState(() => _value = next);
+    },
+    toggle: () {
+      if (fjsBool(widget.node.props['disabled'])) return;
+      _emit(!_value);
+    },
+  );
 
   late bool _value = widget.node.props['value'] == true;
   bool _lastProp = false;
@@ -64,8 +64,11 @@ class _FjsCheckboxState extends State<FjsCheckbox>
 
   void _emit(bool next) {
     setState(() => _value = next);
-    widget.dispatch(widget.node.id, FjsEvent.valueChanged,
-        text: next ? '1' : '0');
+    widget.dispatch(
+      widget.node.id,
+      FjsEvent.valueChanged,
+      text: next ? '1' : '0',
+    );
     notifyControlChanged();
   }
 

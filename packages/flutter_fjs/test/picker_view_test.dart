@@ -81,41 +81,47 @@ MirrorTree treeOf(List<N> roots) {
 typedef Events = List<(int, String?)>;
 
 Widget render(MirrorTree tree, Events log) => MaterialApp(
-      home: Scaffold(
-        body: FjsNodeRenderer(
-          tree: tree,
-          ids: tree.rootChildren,
-          dispatch: (id, type, {String? text}) => log.add((type, text)),
-        ),
-      ),
-    );
+  home: Scaffold(
+    body: FjsNodeRenderer(
+      tree: tree,
+      ids: tree.rootChildren,
+      dispatch: (id, type, {String? text}) => log.add((type, text)),
+    ),
+  ),
+);
 
 const int valueChanged = 5;
 
 N column(List<String> items) => N(
-      'picker-view-column',
-      children: [for (final item in items) N('text', text: item)],
-    );
+  'picker-view-column',
+  children: [for (final item in items) N('text', text: item)],
+);
 
 N vueColumn(List<String> items) => N(
-      'picker-view-column',
-      children: [
-        N('view', props: {
-          'style': {'display': 'none'},
-        }),
-        for (final item in items) N('text', text: item),
-      ],
-    );
+  'picker-view-column',
+  children: [
+    N(
+      'view',
+      props: {
+        'style': {'display': 'none'},
+      },
+    ),
+    for (final item in items) N('text', text: item),
+  ],
+);
 
 void main() {
   setUp(resetFjsWarnOnce);
 
   testWidgets('renders one wheel per column', (tester) async {
     final tree = treeOf([
-      N('picker-view', children: [
-        column(['一', '二', '三']),
-        column(['A', 'B']),
-      ]),
+      N(
+        'picker-view',
+        children: [
+          column(['一', '二', '三']),
+          column(['A', 'B']),
+        ],
+      ),
     ]);
     await tester.pumpWidget(render(tree, []));
     expect(find.byType(ListWheelScrollView), findsNWidgets(2));
@@ -123,44 +129,52 @@ void main() {
     expect(find.text('B'), findsOneWidget);
   });
 
-  testWidgets('value picks the starting item, and past the end takes the last',
-      (tester) async {
-    final tree = treeOf([
-      N('picker-view', props: {
-        'value': [1, 99]
-      }, children: [
-        column(['一', '二', '三']),
-        column(['A', 'B']),
-      ]),
-    ]);
-    final log = <(int, String?)>[];
-    await tester.pumpWidget(render(tree, log));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'value picks the starting item, and past the end takes the last',
+    (tester) async {
+      final tree = treeOf([
+        N(
+          'picker-view',
+          props: {
+            'value': [1, 99],
+          },
+          children: [
+            column(['一', '二', '三']),
+            column(['A', 'B']),
+          ],
+        ),
+      ]);
+      final log = <(int, String?)>[];
+      await tester.pumpWidget(render(tree, log));
+      await tester.pumpAndSettle();
 
-    final wheels = tester
-        .widgetList<ListWheelScrollView>(find.byType(ListWheelScrollView))
-        .toList();
-    expect(
-      (wheels[0].controller as FixedExtentScrollController).selectedItem,
-      1,
-    );
-    // 99 is past the end of a two-item column -> the last one
-    expect(
-      (wheels[1].controller as FixedExtentScrollController).selectedItem,
-      1,
-    );
-    // adopting a prop is not a user change
-    expect(log, isEmpty);
-  });
+      final wheels = tester
+          .widgetList<ListWheelScrollView>(find.byType(ListWheelScrollView))
+          .toList();
+      expect(
+        (wheels[0].controller as FixedExtentScrollController).selectedItem,
+        1,
+      );
+      // 99 is past the end of a two-item column -> the last one
+      expect(
+        (wheels[1].controller as FixedExtentScrollController).selectedItem,
+        1,
+      );
+      // adopting a prop is not a user change
+      expect(log, isEmpty);
+    },
+  );
 
   testWidgets('settling on an item reports every column once', (tester) async {
     final tree = treeOf([
-      N('picker-view', props: {
-        'onValueChanged': true
-      }, children: [
-        column(['一', '二', '三']),
-        column(['A', 'B']),
-      ]),
+      N(
+        'picker-view',
+        props: {'onValueChanged': true},
+        children: [
+          column(['一', '二', '三']),
+          column(['A', 'B']),
+        ],
+      ),
     ]);
     final log = <(int, String?)>[];
     await tester.pumpWidget(render(tree, log));
@@ -177,12 +191,16 @@ void main() {
 
   testWidgets('vue anchors do not count as wheel items', (tester) async {
     final tree = treeOf([
-      N('picker-view', props: {
-        'value': [2],
-        'onValueChanged': true
-      }, children: [
-        vueColumn(['2024', '2025', '2026', '2027']),
-      ]),
+      N(
+        'picker-view',
+        props: {
+          'value': [2],
+          'onValueChanged': true,
+        },
+        children: [
+          vueColumn(['2024', '2025', '2026', '2027']),
+        ],
+      ),
     ]);
     final log = <(int, String?)>[];
     await tester.pumpWidget(render(tree, log));
@@ -191,10 +209,7 @@ void main() {
     final wheel = tester.widget<ListWheelScrollView>(
       find.byType(ListWheelScrollView),
     );
-    expect(
-      (wheel.controller as FixedExtentScrollController).selectedItem,
-      2,
-    );
+    expect((wheel.controller as FixedExtentScrollController).selectedItem, 2);
     expect(find.text('2026'), findsOneWidget);
     expect(log, isEmpty);
 
@@ -209,10 +224,13 @@ void main() {
 
   testWidgets('a non-column child is dropped, loudly', (tester) async {
     final tree = treeOf([
-      N('picker-view', children: [
-        column(['一']),
-        N('text', text: '我不该在这里'),
-      ]),
+      N(
+        'picker-view',
+        children: [
+          column(['一']),
+          N('text', text: '我不该在这里'),
+        ],
+      ),
     ]);
     await tester.pumpWidget(render(tree, []));
 
@@ -222,9 +240,12 @@ void main() {
 
   testWidgets('without a height it is five rows tall', (tester) async {
     final tree = treeOf([
-      N('picker-view', children: [
-        column(['一', '二'])
-      ]),
+      N(
+        'picker-view',
+        children: [
+          column(['一', '二']),
+        ],
+      ),
     ]);
     await tester.pumpWidget(render(tree, []));
 
@@ -233,15 +254,19 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('a column that disappears takes its wheel with it',
-      (tester) async {
+  testWidgets('a column that disappears takes its wheel with it', (
+    tester,
+  ) async {
     // What a linked picker does: three columns become two.
     final tree = treeOf([
-      N('picker-view', children: [
-        column(['一']),
-        column(['A']),
-        column(['x']),
-      ]),
+      N(
+        'picker-view',
+        children: [
+          column(['一']),
+          column(['A']),
+          column(['x']),
+        ],
+      ),
     ]);
     await tester.pumpWidget(render(tree, []));
     expect(find.byType(ListWheelScrollView), findsNWidgets(3));

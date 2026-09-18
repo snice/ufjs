@@ -10,7 +10,9 @@ import 'package:flutter_fjs/src/ui_ops.dart';
 class _W {
   final List<int> b = [];
   void u8(int v) => b.add(v & 0xff);
-  void u16(int v) => b..add(v & 0xff)..add((v >> 8) & 0xff);
+  void u16(int v) => b
+    ..add(v & 0xff)
+    ..add((v >> 8) & 0xff);
   void u32(int v) {
     final d = ByteData(4)..setUint32(0, v, Endian.little);
     b.addAll(d.buffer.asUint8List());
@@ -281,11 +283,12 @@ void main() {
 
   test('truncated frame throws with offset', () {
     final tree = MirrorTree();
-    expect(() => tree.applyFrame(Uint8List.fromList([UiOpCode.create, 1])),
-        throwsA(isA<UiOpException>()));
+    expect(
+      () => tree.applyFrame(Uint8List.fromList([UiOpCode.create, 1])),
+      throwsA(isA<UiOpException>()),
+    );
   });
 }
-
 
 // ---- interned styles (ops 7/8/9) -------------------------------------------
 
@@ -360,20 +363,28 @@ void _styleTests() {
     expect(tree.node(1)!.styleMap['color'], 'red');
   });
 
-  test('resetStyles drops the directory but not what nodes already resolved', () {
-    final w = _W()
-      ..create(1, 'view')
-      ..defineStyle(5, '{"color":"green"}')
-      ..setStyle(1, 5);
-    final tree = MirrorTree()..applyFrame(w.frame);
+  test(
+    'resetStyles drops the directory but not what nodes already resolved',
+    () {
+      final w = _W()
+        ..create(1, 'view')
+        ..defineStyle(5, '{"color":"green"}')
+        ..setStyle(1, 5);
+      final tree = MirrorTree()..applyFrame(w.frame);
 
-    tree.applyFrame((_W()..u8(UiOpCode.resetStyles)).frame);
-    expect(tree.node(1)!.styleMap['color'], 'green');
+      tree.applyFrame((_W()..u8(UiOpCode.resetStyles)).frame);
+      expect(tree.node(1)!.styleMap['color'], 'green');
 
-    // the id is gone, so a later reference to it is the undefined case
-    tree.applyFrame((_W()..create(2, 'view')..setStyle(2, 5)).frame);
-    expect(tree.node(2)!.styleMap, isEmpty);
-  });
+      // the id is gone, so a later reference to it is the undefined case
+      tree.applyFrame(
+        (_W()
+              ..create(2, 'view')
+              ..setStyle(2, 5))
+            .frame,
+      );
+      expect(tree.node(2)!.styleMap, isEmpty);
+    },
+  );
 
   test('clear drops the style directory too', () {
     final w = _W()
@@ -383,7 +394,12 @@ void _styleTests() {
     final tree = MirrorTree()..applyFrame(w.frame);
     tree.clear();
 
-    tree.applyFrame((_W()..create(1, 'view')..setStyle(1, 4)).frame);
+    tree.applyFrame(
+      (_W()
+            ..create(1, 'view')
+            ..setStyle(1, 4))
+          .frame,
+    );
     expect(tree.node(1)!.styleMap, isEmpty);
   });
 

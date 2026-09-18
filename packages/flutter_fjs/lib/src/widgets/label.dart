@@ -51,7 +51,7 @@ class _FjsLabelState extends State<FjsLabel> {
       fjsWarnOnce(
         'label-no-target:${widget.node.id}',
         '<label> node ${widget.node.id} has no control to activate'
-        '${target == null ? '' : ' (for="$target")'} — the tap does nothing.',
+            '${target == null ? '' : ' (for="$target")'} — the tap does nothing.',
       );
       return;
     }

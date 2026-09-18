@@ -103,41 +103,54 @@ void setProps(MirrorTree tree, int id, Map<String, Object?> props) {
 typedef Events = List<(int, String?)>;
 
 Widget render(MirrorTree tree, Events log) => MaterialApp(
-      home: Scaffold(
-        body: SizedBox(
-          height: 400,
-          child: FjsNodeRenderer(
-            tree: tree,
-            ids: tree.rootChildren,
-            dispatch: (id, type, {String? text}) => log.add((type, text)),
-          ),
-        ),
+  home: Scaffold(
+    body: SizedBox(
+      height: 400,
+      child: FjsNodeRenderer(
+        tree: tree,
+        ids: tree.rootChildren,
+        dispatch: (id, type, {String? text}) => log.add((type, text)),
       ),
-    );
+    ),
+  ),
+);
 
 const int scrollEvent = 12;
 const int scrollToUpper = 24;
 const int scrollToLower = 25;
 
 List<N> rows(int count) => [
-      for (var i = 0; i < count; i++)
-        N('view', props: {'id': 'row-$i', 'style': {'height': 100}},
-            children: [N('text', text: 'row $i')]),
-    ];
+  for (var i = 0; i < count; i++)
+    N(
+      'view',
+      props: {
+        'id': 'row-$i',
+        'style': {'height': 100},
+      },
+      children: [N('text', text: 'row $i')],
+    ),
+];
 
 void main() {
   setUp(resetFjsWarnOnce);
 
-  testWidgets('reports the six-field payload, not a bare offset',
-      (tester) async {
+  testWidgets('reports the six-field payload, not a bare offset', (
+    tester,
+  ) async {
     final built = treeOf([
-      N('scroll-view', props: {'scrollY': true, 'onScroll': true},
-          children: rows(20)),
+      N(
+        'scroll-view',
+        props: {'scrollY': true, 'onScroll': true},
+        children: rows(20),
+      ),
     ]);
     final log = <(int, String?)>[];
     await tester.pumpWidget(render(built.tree, log));
 
-    await tester.drag(find.byType(SingleChildScrollView), const Offset(0, -200));
+    await tester.drag(
+      find.byType(SingleChildScrollView),
+      const Offset(0, -200),
+    );
     await tester.pumpAndSettle();
 
     final scrolls = log.where((e) => e.$1 == scrollEvent).toList();
@@ -155,14 +168,19 @@ void main() {
     expect(detail['scrollHeight'], greaterThan(0));
   });
 
-  testWidgets('reports an edge on entry, once, and again after leaving',
-      (tester) async {
+  testWidgets('reports an edge on entry, once, and again after leaving', (
+    tester,
+  ) async {
     final built = treeOf([
-      N('scroll-view', props: {
-        'scrollY': true,
-        'onScrolltoupper': true,
-        'onScrolltolower': true,
-      }, children: rows(20)),
+      N(
+        'scroll-view',
+        props: {
+          'scrollY': true,
+          'onScrolltoupper': true,
+          'onScrolltolower': true,
+        },
+        children: rows(20),
+      ),
     ]);
     final log = <(int, String?)>[];
     await tester.pumpWidget(render(built.tree, log));
@@ -170,7 +188,10 @@ void main() {
     // primed, not reported (scroll/metrics.ts)
     expect(log.where((e) => e.$1 == scrollToUpper), isEmpty);
 
-    await tester.drag(find.byType(SingleChildScrollView), const Offset(0, -2000));
+    await tester.drag(
+      find.byType(SingleChildScrollView),
+      const Offset(0, -2000),
+    );
     await tester.pumpAndSettle();
     expect(log.where((e) => e.$1 == scrollToLower).length, 1);
 
@@ -183,15 +204,22 @@ void main() {
     await tester.drag(find.byType(SingleChildScrollView), const Offset(0, 800));
     await tester.pumpAndSettle();
     expect(log.where((e) => e.$1 == scrollToUpper), isEmpty); // still mid-list
-    await tester.drag(find.byType(SingleChildScrollView), const Offset(0, -2000));
+    await tester.drag(
+      find.byType(SingleChildScrollView),
+      const Offset(0, -2000),
+    );
     await tester.pumpAndSettle();
     expect(log.where((e) => e.$1 == scrollToLower).length, 2);
   });
 
-  testWidgets('scroll-top moves the scroller only when the value changes',
-      (tester) async {
-    final scroller = N('scroll-view',
-        props: {'scrollY': true, 'scrollTop': 0}, children: rows(20));
+  testWidgets('scroll-top moves the scroller only when the value changes', (
+    tester,
+  ) async {
+    final scroller = N(
+      'scroll-view',
+      props: {'scrollY': true, 'scrollTop': 0},
+      children: rows(20),
+    );
     final built = treeOf([scroller], named: {'scroller': scroller});
     await tester.pumpWidget(render(built.tree, []));
 
@@ -208,7 +236,10 @@ void main() {
 
     // the user scrolls elsewhere; re-sending the SAME prop must not drag
     // them back
-    await tester.drag(find.byType(SingleChildScrollView), const Offset(0, -150));
+    await tester.drag(
+      find.byType(SingleChildScrollView),
+      const Offset(0, -150),
+    );
     await tester.pumpAndSettle();
     final afterDrag = tester
         .widget<SingleChildScrollView>(find.byType(SingleChildScrollView))
@@ -229,8 +260,11 @@ void main() {
   });
 
   testWidgets('scroll-into-view lands on the named row', (tester) async {
-    final scroller = N('scroll-view',
-        props: {'scrollY': true}, children: rows(20));
+    final scroller = N(
+      'scroll-view',
+      props: {'scrollY': true},
+      children: rows(20),
+    );
     final built = treeOf([scroller], named: {'scroller': scroller});
     await tester.pumpWidget(render(built.tree, []));
 
@@ -249,45 +283,56 @@ void main() {
     );
   });
 
-  testWidgets('scroll-into-view re-lands on the SAME id after an empty clears it (specs/054)',
-      (tester) async {
-    final scroller = N('scroll-view',
-        props: {'scrollY': true}, children: rows(20));
-    final built = treeOf([scroller], named: {'scroller': scroller});
-    await tester.pumpWidget(render(built.tree, []));
+  testWidgets(
+    'scroll-into-view re-lands on the SAME id after an empty clears it (specs/054)',
+    (tester) async {
+      final scroller = N(
+        'scroll-view',
+        props: {'scrollY': true},
+        children: rows(20),
+      );
+      final built = treeOf([scroller], named: {'scroller': scroller});
+      await tester.pumpWidget(render(built.tree, []));
 
-    double offset() => tester
-        .widget<SingleChildScrollView>(find.byType(SingleChildScrollView))
-        .controller!
-        .offset;
+      double offset() => tester
+          .widget<SingleChildScrollView>(find.byType(SingleChildScrollView))
+          .controller!
+          .offset;
 
-    setProps(built.tree, built.ids['scroller']!, {
-      'scrollY': true,
-      'scrollIntoView': 'row-5',
-    });
-    await tester.pumpAndSettle();
-    expect(offset(), moreOrLessEquals(500, epsilon: 2));
+      setProps(built.tree, built.ids['scroller']!, {
+        'scrollY': true,
+        'scrollIntoView': 'row-5',
+      });
+      await tester.pumpAndSettle();
+      expect(offset(), moreOrLessEquals(500, epsilon: 2));
 
-    // the user scrolls back up; '' must clear the memo so the SAME id can
-    // be asked again — the miniprogram re-trigger idiom
-    await tester.drag(find.byType(SingleChildScrollView), const Offset(0, 600));
-    await tester.pumpAndSettle();
-    setProps(built.tree, built.ids['scroller']!, {
-      'scrollY': true,
-      'scrollIntoView': '',
-    });
-    await tester.pumpAndSettle();
-    setProps(built.tree, built.ids['scroller']!, {
-      'scrollY': true,
-      'scrollIntoView': 'row-5',
-    });
-    await tester.pumpAndSettle();
-    expect(offset(), moreOrLessEquals(500, epsilon: 2));
-  });
+      // the user scrolls back up; '' must clear the memo so the SAME id can
+      // be asked again — the miniprogram re-trigger idiom
+      await tester.drag(
+        find.byType(SingleChildScrollView),
+        const Offset(0, 600),
+      );
+      await tester.pumpAndSettle();
+      setProps(built.tree, built.ids['scroller']!, {
+        'scrollY': true,
+        'scrollIntoView': '',
+      });
+      await tester.pumpAndSettle();
+      setProps(built.tree, built.ids['scroller']!, {
+        'scrollY': true,
+        'scrollIntoView': 'row-5',
+      });
+      await tester.pumpAndSettle();
+      expect(offset(), moreOrLessEquals(500, epsilon: 2));
+    },
+  );
 
   testWidgets('a scroll-into-view that matches nothing warns', (tester) async {
-    final scroller = N('scroll-view',
-        props: {'scrollY': true}, children: rows(5));
+    final scroller = N(
+      'scroll-view',
+      props: {'scrollY': true},
+      children: rows(5),
+    );
     final built = treeOf([scroller], named: {'scroller': scroller});
     await tester.pumpWidget(render(built.tree, []));
 

@@ -39,35 +39,41 @@ void main() {
       expect(b.left, isNull);
     });
 
-    test('side longhand > side shorthand > global longhand > global shorthand',
-        () {
-      final b = styled({
-        'border': '1px solid #000000',
-        'borderBottom': '2px solid #111111',
-        'borderBottomWidth': 4,
-      }).boxBorders()!;
-      // bottom: the side longhand width wins, the side shorthand color stays
-      expect(b.bottom!.width, 4);
-      expect(b.bottom!.color, const Color(0xFF111111));
-      // the other sides only saw the global shorthand
-      expect(b.top!.width, 1);
-      expect(b.top!.color, const Color(0xFF000000));
-    });
+    test(
+      'side longhand > side shorthand > global longhand > global shorthand',
+      () {
+        final b = styled({
+          'border': '1px solid #000000',
+          'borderBottom': '2px solid #111111',
+          'borderBottomWidth': 4,
+        }).boxBorders()!;
+        // bottom: the side longhand width wins, the side shorthand color stays
+        expect(b.bottom!.width, 4);
+        expect(b.bottom!.color, const Color(0xFF111111));
+        // the other sides only saw the global shorthand
+        expect(b.top!.width, 1);
+        expect(b.top!.color, const Color(0xFF000000));
+      },
+    );
 
     test('a lone side color or style implies the 1px hairline', () {
       final b = styled({'borderBottomColor': '#123456'}).boxBorders()!;
       expect(b.bottom!.width, 1);
       expect(b.bottom!.color, const Color(0xFF123456));
-      expect(styled({'borderBottomStyle': 'dashed'}).boxBorders()!.bottom!.kind,
-          FjsBorderStyle.dashed);
+      expect(
+        styled({'borderBottomStyle': 'dashed'}).boxBorders()!.bottom!.kind,
+        FjsBorderStyle.dashed,
+      );
     });
 
     test('none and zero width turn the side off', () {
       expect(styled({'borderBottom': 'none'}).boxBorders(), isNull);
       expect(styled({'borderBottomWidth': 0}).boxBorders(), isNull);
       // global none with a side color: the side longhand wins its hairline
-      final b = styled({'border': 'none', 'borderBottomColor': '#000000'})
-          .boxBorders()!;
+      final b = styled({
+        'border': 'none',
+        'borderBottomColor': '#000000',
+      }).boxBorders()!;
       expect(b.bottom, isNotNull);
       expect(b.top, isNull);
     });
@@ -81,14 +87,17 @@ void main() {
         expect(s.color, chrome);
       }
       // `border-bottom: none`: bottom off, the other three keep the default
-      final mixed = styled({'borderBottom': 'none'})
-          .boxBorders(defaultBorderColor: chrome)!;
+      final mixed = styled({
+        'borderBottom': 'none',
+      }).boxBorders(defaultBorderColor: chrome)!;
       expect(mixed.bottom, isNull);
       expect(mixed.top!.color, chrome);
       expect(mixed.left!.color, chrome);
       // and with no default, an undeclared side is just absent
-      expect(styled({'borderTop': '1px solid #000'}).boxBorders()!.bottom,
-          isNull);
+      expect(
+        styled({'borderTop': '1px solid #000'}).boxBorders()!.bottom,
+        isNull,
+      );
     });
 
     test('dashed sides are visible to the painter routing', () {
@@ -106,22 +115,27 @@ void main() {
     test('hasBorderDeclaration covers the side keys', () {
       expect(styled({'borderBottom': 'none'}).hasBorderDeclaration, isTrue);
       expect(
-          styled({'borderLeftColor': '#fff'}).hasSideBorderDeclaration, isTrue);
+        styled({'borderLeftColor': '#fff'}).hasSideBorderDeclaration,
+        isTrue,
+      );
     });
   });
 
   group('painting routes', () {
-    testWidgets('mixed solid sides without a radius use a per-side Border',
-        (tester) async {
-      await tester.pumpWidget(box({
-        'width': 100,
-        'height': 40,
-        'borderTop': '1px solid #ff0000',
-        'borderBottom': '3px solid #00ff00',
-      }));
-      final decoration = tester
-          .widget<Container>(find.byType(Container))
-          .decoration as BoxDecoration;
+    testWidgets('mixed solid sides without a radius use a per-side Border', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        box({
+          'width': 100,
+          'height': 40,
+          'borderTop': '1px solid #ff0000',
+          'borderBottom': '3px solid #00ff00',
+        }),
+      );
+      final decoration =
+          tester.widget<Container>(find.byType(Container)).decoration
+              as BoxDecoration;
       final border = decoration.border as Border;
       expect(border.top.color, const Color(0xFFFF0000));
       expect(border.top.width, 1);
@@ -131,30 +145,36 @@ void main() {
       expect(decoration.border!.dimensions.vertical, 4);
     });
 
-    testWidgets('a radius with uniform sides still goes through Border.all',
-        (tester) async {
-      await tester.pumpWidget(box({
-        'width': 100,
-        'height': 40,
-        'border': '1px solid #cccccc',
-        'borderRadius': 8,
-      }));
-      final decoration = tester
-          .widget<Container>(find.byType(Container))
-          .decoration as BoxDecoration;
+    testWidgets('a radius with uniform sides still goes through Border.all', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        box({
+          'width': 100,
+          'height': 40,
+          'border': '1px solid #cccccc',
+          'borderRadius': 8,
+        }),
+      );
+      final decoration =
+          tester.widget<Container>(find.byType(Container)).decoration
+              as BoxDecoration;
       final border = decoration.border as Border;
       expect(border.top.color, const Color(0xFFCCCCCC));
       expect(decoration.borderRadius, BorderRadius.circular(8));
     });
 
-    testWidgets('a radius with mixed sides is painted over and inset',
-        (tester) async {
-      await tester.pumpWidget(box({
-        'width': 100,
-        'height': 40,
-        'borderRadius': 8,
-        'borderBottom': '2px solid #00ff00',
-      }));
+    testWidgets('a radius with mixed sides is painted over and inset', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        box({
+          'width': 100,
+          'height': 40,
+          'borderRadius': 8,
+          'borderBottom': '2px solid #00ff00',
+        }),
+      );
       final painter = tester
           .widgetList<CustomPaint>(find.byType(CustomPaint))
           .map((c) => c.foregroundPainter)
@@ -164,73 +184,89 @@ void main() {
       expect(painter.borderRadius, BorderRadius.circular(8));
       // room for the stroke is reserved in front of the content
       final padding = tester.widget<Padding>(
-        find.ancestor(
-          of: find.byType(SizedBox),
-          matching: find.byType(Padding),
-        ).first,
+        find
+            .ancestor(of: find.byType(SizedBox), matching: find.byType(Padding))
+            .first,
       );
       expect(padding.padding, const EdgeInsets.only(bottom: 2));
     });
 
-    testWidgets('a button-side default keeps three sides when one is turned off',
-        (tester) async {
-      const chrome = Color(0x29000000);
-      await tester.pumpWidget(
-        Directionality(
-          textDirection: TextDirection.ltr,
-          child: Center(
-            child: SizedBox(
-              width: 100,
-              height: 40,
-              child: decorateNode(
-                styled({'borderBottom': 'none'}),
-                const SizedBox.expand(),
-                defaultBorderColor: chrome,
+    testWidgets(
+      'a button-side default keeps three sides when one is turned off',
+      (tester) async {
+        const chrome = Color(0x29000000);
+        await tester.pumpWidget(
+          Directionality(
+            textDirection: TextDirection.ltr,
+            child: Center(
+              child: SizedBox(
+                width: 100,
+                height: 40,
+                child: decorateNode(
+                  styled({'borderBottom': 'none'}),
+                  const SizedBox.expand(),
+                  defaultBorderColor: chrome,
+                ),
               ),
             ),
           ),
-        ),
-      );
-      final decoration = tester
-          .widget<Container>(find.byType(Container))
-          .decoration as BoxDecoration;
-      final border = decoration.border as Border;
-      expect(border.top.color, chrome);
-      expect(border.left.color, chrome);
-      expect(border.bottom, BorderSide.none);
-    });
+        );
+        final decoration =
+            tester.widget<Container>(find.byType(Container)).decoration
+                as BoxDecoration;
+        final border = decoration.border as Border;
+        expect(border.top.color, chrome);
+        expect(border.left.color, chrome);
+        expect(border.bottom, BorderSide.none);
+      },
+    );
   });
 
   group('side path geometry', () {
     test('a straight top edge spans the inset width', () {
       // 100 wide inset by 1 per side: the edge alone is 98
-      final path = fjsBorderSidePath(FjsBoxSidePosition.top,
-          const Rect.fromLTRB(1, 1, 99, 39), null);
-      final length = path.computeMetrics().fold<double>(0, (n, m) => n + m.length);
+      final path = fjsBorderSidePath(
+        FjsBoxSidePosition.top,
+        const Rect.fromLTRB(1, 1, 99, 39),
+        null,
+      );
+      final length = path.computeMetrics().fold<double>(
+        0,
+        (n, m) => n + m.length,
+      );
       expect(length, closeTo(98, 0.01));
     });
 
     test('rounded corners add half of each adjacent arc', () {
       const radius = BorderRadius.all(Radius.circular(8));
-      final path = fjsBorderSidePath(FjsBoxSidePosition.top,
-          const Rect.fromLTRB(1, 1, 99, 39), radius);
-      final length = path.computeMetrics().fold<double>(0, (n, m) => n + m.length);
+      final path = fjsBorderSidePath(
+        FjsBoxSidePosition.top,
+        const Rect.fromLTRB(1, 1, 99, 39),
+        radius,
+      );
+      final length = path.computeMetrics().fold<double>(
+        0,
+        (n, m) => n + m.length,
+      );
       // inset edges 98 - 2*8 = 82, plus two quarter-arc halves = one full
       // quarter circle of radius 8: 82 + 8*pi/2
       expect(length, closeTo(82 + 8 * math.pi / 2, 0.1));
     });
 
-    testWidgets('the painter draws without hitting a decoration assertion',
-        (tester) async {
+    testWidgets('the painter draws without hitting a decoration assertion', (
+      tester,
+    ) async {
       // BoxDecoration would throw on a non-uniform Border + radius; the
       // painter path must not route through it
-      await tester.pumpWidget(box({
-        'width': 100,
-        'height': 40,
-        'borderRadius': 8,
-        'borderTop': '1px solid #ff0000',
-        'borderBottom': '2px dashed #00ff00',
-      }));
+      await tester.pumpWidget(
+        box({
+          'width': 100,
+          'height': 40,
+          'borderRadius': 8,
+          'borderTop': '1px solid #ff0000',
+          'borderBottom': '2px dashed #00ff00',
+        }),
+      );
       expect(tester.takeException(), isNull);
     });
   });

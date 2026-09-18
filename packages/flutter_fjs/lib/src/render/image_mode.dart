@@ -63,9 +63,7 @@ FjsImageMode resolveFjsImageMode(
 
   var mode = explicit;
   if (!fjsImageModeNames.contains(mode)) {
-    warn?.call(
-      'image received unsupported mode="$mode"; using "scaleToFill".',
-    );
+    warn?.call('image received unsupported mode="$mode"; using "scaleToFill".');
     mode = 'scaleToFill';
   }
 

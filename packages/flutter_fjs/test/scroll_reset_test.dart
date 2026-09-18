@@ -64,24 +64,26 @@ void _mountPage(MirrorTree tree) {
 }
 
 Widget _app(MirrorTree tree) => MaterialApp(
-      home: KeyedSubtree(
-        key: ValueKey('fjs-tree-${tree.generation}'),
-        child: FjsNodeRenderer(
-          tree: tree,
-          ids: tree.rootChildren,
-          dispatch: (_, __, {String? text}) {},
-        ),
-      ),
-    );
+  home: KeyedSubtree(
+    key: ValueKey('fjs-tree-${tree.generation}'),
+    child: FjsNodeRenderer(
+      tree: tree,
+      ids: tree.rootChildren,
+      dispatch: (_, __, {String? text}) {},
+    ),
+  ),
+);
 
 void main() {
-  testWidgets('a reload puts the scroll-view back at the top',
-      (tester) async {
+  testWidgets('a reload puts the scroll-view back at the top', (tester) async {
     final tree = MirrorTree();
     _mountPage(tree);
     await tester.pumpWidget(_app(tree));
 
-    await tester.drag(find.byType(SingleChildScrollView), const Offset(0, -400));
+    await tester.drag(
+      find.byType(SingleChildScrollView),
+      const Offset(0, -400),
+    );
     await tester.pumpAndSettle();
     final scrolled = tester
         .widget<Scrollable>(find.byType(Scrollable))
@@ -98,7 +100,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      tester.widget<Scrollable>(find.byType(Scrollable)).controller!.position
+      tester
+          .widget<Scrollable>(find.byType(Scrollable))
+          .controller!
+          .position
           .pixels,
       0,
     );

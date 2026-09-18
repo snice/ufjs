@@ -73,13 +73,13 @@ class _W {
 }
 
 Widget _render(MirrorTree tree) => Directionality(
-      textDirection: TextDirection.ltr,
-      child: FjsNodeRenderer(
-        tree: tree,
-        ids: tree.rootChildren,
-        dispatch: (_, __, {String? text}) {},
-      ),
-    );
+  textDirection: TextDirection.ltr,
+  child: FjsNodeRenderer(
+    tree: tree,
+    ids: tree.rootChildren,
+    dispatch: (_, __, {String? text}) {},
+  ),
+);
 
 Future<MirrorTree> _mount(WidgetTester tester, _W w) async {
   final tree = MirrorTree()
@@ -125,8 +125,9 @@ _W _sentence() => _W()
   ..insert(2, 6, 2);
 
 void main() {
-  testWidgets('text with text children is ONE paragraph of spans',
-      (tester) async {
+  testWidgets('text with text children is ONE paragraph of spans', (
+    tester,
+  ) async {
     await _mount(tester, _sentence());
 
     expect(find.byType(RichText), findsOneWidget);
@@ -144,8 +145,9 @@ void main() {
     expect(spans[0].style?.fontWeight, isNot(FontWeight.bold));
   });
 
-  testWidgets('element text with no child nodes stays a plain Text',
-      (tester) async {
+  testWidgets('element text with no child nodes stays a plain Text', (
+    tester,
+  ) async {
     await _mount(
       tester,
       _W()
@@ -158,8 +160,9 @@ void main() {
     expect(text.textSpan, isNull);
   });
 
-  testWidgets('a non-text child is an inline WidgetSpan on the baseline',
-      (tester) async {
+  testWidgets('a non-text child is an inline WidgetSpan on the baseline', (
+    tester,
+  ) async {
     final w = _sentence()
       ..defineStyle(3, '{"width":12,"height":12,"backgroundColor":"#07c160"}')
       ..create(7, 'view')
@@ -209,8 +212,9 @@ void main() {
     expect(shifts, [closeTo(-14 / 3, 0.01), closeTo(14 / 5, 0.01)]);
   });
 
-  testWidgets('editing a span two levels down refreshes the paragraph',
-      (tester) async {
+  testWidgets('editing a span two levels down refreshes the paragraph', (
+    tester,
+  ) async {
     final tree = await _mount(tester, _sentence());
     expect(_paragraph(tester).toPlainText(), '满 199 减 30');
 
@@ -243,8 +247,9 @@ void main() {
   // specs/035: rich-text sends a paragraph as ONE text node whose runs are
   // the internal `richSpans` prop (fjs-runtime/src/rich-text/spans.ts).
 
-  testWidgets('richSpans: one text node is one paragraph of runs',
-      (tester) async {
+  testWidgets('richSpans: one text node is one paragraph of runs', (
+    tester,
+  ) async {
     await _mount(
       tester,
       _W()
@@ -252,9 +257,10 @@ void main() {
         ..create(1, 'text')
         ..setStyle(1, 1)
         ..setProps(
-            1,
-            '{"richSpans":["满 ",{"t":"199","s":{"fontWeight":"bold","color":"#FA5151"}},'
-            '{"t":"划","s":{"textDecoration":"underline line-through"}}," 减 30"]}')
+          1,
+          '{"richSpans":["满 ",{"t":"199","s":{"fontWeight":"bold","color":"#FA5151"}},'
+          '{"t":"划","s":{"textDecoration":"underline line-through"}}," 减 30"]}',
+        )
         ..insert(0, 1, 0),
     );
 
@@ -275,38 +281,51 @@ void main() {
     expect(runs[2].style!.color, isNull);
     expect(
       runs[2].style!.decoration,
-      TextDecoration.combine([TextDecoration.underline, TextDecoration.lineThrough]),
+      TextDecoration.combine([
+        TextDecoration.underline,
+        TextDecoration.lineThrough,
+      ]),
     );
   });
 
-  testWidgets('richSpans: sub / super shift and keep the paragraph style',
-      (tester) async {
+  testWidgets('richSpans: sub / super shift and keep the paragraph style', (
+    tester,
+  ) async {
     await _mount(
       tester,
       _W()
         ..defineStyle(1, '{"color":"#FA5151","fontSize":14}')
         ..create(1, 'text')
         ..setStyle(1, 1)
-        ..setProps(1,
-            '{"richSpans":["mc",{"t":"2","s":{"fontSize":11.62,"verticalAlign":"super"}}]}')
+        ..setProps(
+          1,
+          '{"richSpans":["mc",{"t":"2","s":{"fontSize":11.62,"verticalAlign":"super"}}]}',
+        )
         ..insert(0, 1, 0),
     );
 
     final kids = _paragraph(tester).children!;
     expect(kids[0], isA<TextSpan>());
     expect(kids[1], isA<WidgetSpan>());
-    final shift = tester.widget<Transform>(find.byType(Transform)).transform.getTranslation().y;
+    final shift = tester
+        .widget<Transform>(find.byType(Transform))
+        .transform
+        .getTranslation()
+        .y;
     expect(shift, closeTo(-14 / 3, 0.01));
     // a WidgetSpan does not inherit the outer TextSpan's style, so the run is
     // wrapped in the paragraph's: still red, at its own smaller size
-    final inner = tester.widgetList<RichText>(find.byType(RichText)).last.text as TextSpan;
+    final inner =
+        tester.widgetList<RichText>(find.byType(RichText)).last.text
+            as TextSpan;
     final wrapped = inner.children!.single as TextSpan;
     expect(wrapped.style!.color, const Color(0xFFFA5151));
     expect((wrapped.children!.single as TextSpan).style!.fontSize, 11.62);
   });
 
-  testWidgets('richSpans: a malformed run is skipped, not thrown',
-      (tester) async {
+  testWidgets('richSpans: a malformed run is skipped, not thrown', (
+    tester,
+  ) async {
     await _mount(
       tester,
       _W()

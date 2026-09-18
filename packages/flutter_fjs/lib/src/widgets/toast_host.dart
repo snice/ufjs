@@ -62,8 +62,10 @@ class _FjsToastHostState extends State<FjsToastHost> {
                 color: const Color(0xCC222222),
                 borderRadius: BorderRadius.circular(10),
                 child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                   child: Text(
                     message,
                     textAlign: TextAlign.center,

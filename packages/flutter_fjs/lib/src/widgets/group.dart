@@ -41,21 +41,19 @@ class _FjsControlGroupState extends State<FjsControlGroup>
   /// concerned: `name` -> selected name(s).
   @override
   FjsControlHandle createControlHandle() => FjsControlHandle(
-        nodeId: widget.node.id,
-        kind: FjsControlKind.group,
-        getName: () => widget.node.props['name']?.toString(),
-        getId: () => widget.node.props['id']?.toString(),
-        getValue: () => widget.multiple ? _selectedNames() : _selectedName(),
-      );
+    nodeId: widget.node.id,
+    kind: FjsControlKind.group,
+    getName: () => widget.node.props['name']?.toString(),
+    getId: () => widget.node.props['id']?.toString(),
+    getValue: () => widget.multiple ? _selectedNames() : _selectedName(),
+  );
 
   FjsControlRegistry _registryFor(FjsControlRegistry? parent) {
     return FjsControlRegistry(parent: parent)
       ..onChanged = _onChildChanged
       // The group speaks for its members; they do not also show up on their
       // own in an enclosing <form>'s payload.
-      ..owns = widget.multiple
-          ? FjsControlKind.checkbox
-          : FjsControlKind.radio;
+      ..owns = widget.multiple ? FjsControlKind.checkbox : FjsControlKind.radio;
   }
 
   bool _isMember(FjsControlHandle handle) =>
@@ -89,8 +87,8 @@ class _FjsControlGroupState extends State<FjsControlGroup>
       fjsWarnOnce(
         'group-unnamed:${member.nodeId}',
         '<${widget.multiple ? 'checkbox' : 'radio'}> node ${member.nodeId} is '
-        'inside a group but has no `name`, so it can never appear in the '
-        "group's payload. Give it a name.",
+            'inside a group but has no `name`, so it can never appear in the '
+            "group's payload. Give it a name.",
       );
     }
   }

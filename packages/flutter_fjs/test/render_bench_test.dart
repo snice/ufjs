@@ -77,11 +77,13 @@ class _W {
   Uint8List get frame => Uint8List.fromList(b);
 }
 
-const _row = '{"backgroundColor":"#1c1c1e","borderColor":"#38383a",'
+const _row =
+    '{"backgroundColor":"#1c1c1e","borderColor":"#38383a",'
     '"borderRadius":"8px","padding":"12px 16px","margin":"4px 12px",'
     '"flexDirection":"row","alignItems":"center","gap":"8px",'
     '"boxShadow":"0 1px 2px rgba(0,0,0,.2)"}';
-const _title = '{"color":"#f2f2f7","fontSize":"15px","fontWeight":"500","flexGrow":1}';
+const _title =
+    '{"color":"#f2f2f7","fontSize":"15px","fontWeight":"500","flexGrow":1}';
 const _meta = '{"color":"#8e8e93","fontSize":"12px"}';
 
 const _rows = 400; // 1200 nodes
@@ -122,13 +124,13 @@ MirrorTree _tree() {
 }
 
 Widget _render(MirrorTree tree) => Directionality(
-      textDirection: TextDirection.ltr,
-      child: FjsNodeRenderer(
-        tree: tree,
-        ids: tree.rootChildren,
-        dispatch: (_, __, {String? text}) {},
-      ),
-    );
+  textDirection: TextDirection.ltr,
+  child: FjsNodeRenderer(
+    tree: tree,
+    ids: tree.rootChildren,
+    dispatch: (_, __, {String? text}) {},
+  ),
+);
 
 /// A surface tall enough for every row. The root's children are Expanded
 /// (a page root fills its route), which cannot live under an unbounded
@@ -142,143 +144,166 @@ void _bigSurface(WidgetTester tester) {
 /// Rebuilds the root renderer, which is what engine.notifyListeners() causes
 /// on every frame through FjsView's ListenableBuilder.
 void _rebuildRoot(WidgetTester tester) {
-  final element = tester.element(find.byType(FjsNodeRenderer)) as StatelessElement;
+  final element =
+      tester.element(find.byType(FjsNodeRenderer)) as StatelessElement;
   element.markNeedsBuild();
   tester.binding.buildOwner!.buildScope(element);
 }
 
 void main() {
-  testWidgets('parse cache: one full rebuild, cached vs bypassed',
-      (tester) async {
-    _bigSurface(tester);
-    final tree = _tree();
-    await tester.pumpWidget(_render(tree));
+  testWidgets(
+    'parse cache: one full rebuild, cached vs bypassed',
+    (tester) async {
+      _bigSurface(tester);
+      final tree = _tree();
+      await tester.pumpWidget(_render(tree));
 
-    // the view cache would otherwise stop the rebuild at the root, leaving
-    // nothing for the parse cache to be measured against
-    fjsDisableViewCache = true;
-    addTearDown(() => fjsDisableViewCache = false);
+      // the view cache would otherwise stop the rebuild at the root, leaving
+      // nothing for the parse cache to be measured against
+      fjsDisableViewCache = true;
+      addTearDown(() => fjsDisableViewCache = false);
 
-    var warm = 1 << 30, cold = 1 << 30, warmParses = 0, coldParses = 0;
-    for (var i = 0; i < 25; i++) {
-      for (final bypass in [true, false]) {
-        fjsDisableParseCache = bypass;
-        fjsParseCalls = 0;
+      var warm = 1 << 30, cold = 1 << 30, warmParses = 0, coldParses = 0;
+      for (var i = 0; i < 25; i++) {
+        for (final bypass in [true, false]) {
+          fjsDisableParseCache = bypass;
+          fjsParseCalls = 0;
+          final sw = Stopwatch()..start();
+          _rebuildRoot(tester);
+          sw.stop();
+          final us = sw.elapsedMicroseconds;
+          if (i < 5) continue;
+          if (bypass && us < cold) {
+            cold = us;
+            coldParses = fjsParseCalls;
+          }
+          if (!bypass && us < warm) {
+            warm = us;
+            warmParses = fjsParseCalls;
+          }
+        }
+      }
+      fjsDisableParseCache = false;
+      // ignore: avoid_print
+      print(
+        '[parse-cache] nodes=${_rows * 3} warm=${warm / 1000}ms '
+        'cold=${cold / 1000}ms ratio=${(cold / warm).toStringAsFixed(2)}x '
+        'parses: $coldParses -> $warmParses',
+      );
+      expect(warmParses, 0);
+      expect(coldParses, greaterThan(0));
+    },
+    skip: !const bool.fromEnvironment('FJS_BENCH'),
+  );
+
+  testWidgets(
+    'view cache: one leaf edit, cached vs bypassed',
+    (tester) async {
+      _bigSurface(tester);
+      final tree = _tree();
+      await tester.pumpWidget(_render(tree));
+
+      var n = 0;
+      // one leaf changes, then the root rebuilds — exactly what one reactive
+      // update does: applyFrame marks the node, notifyListeners rebuilds the
+      // root, and the question is how far that travels
+      int editOneLeaf() {
+        tree.applyFrame((_W()..setText(_titleId(3), 'v${n++}')).frame);
         final sw = Stopwatch()..start();
+        tree.flushDirty();
         _rebuildRoot(tester);
         sw.stop();
-        final us = sw.elapsedMicroseconds;
-        if (i < 5) continue;
-        if (bypass && us < cold) {
-          cold = us;
-          coldParses = fjsParseCalls;
-        }
-        if (!bypass && us < warm) {
-          warm = us;
-          warmParses = fjsParseCalls;
+        return sw.elapsedMicroseconds;
+      }
+
+      var cached = 1 << 30,
+          bypassed = 1 << 30,
+          cachedBuilds = 0,
+          bypassedBuilds = 0;
+      for (var i = 0; i < 25; i++) {
+        for (final bypass in [true, false]) {
+          fjsDisableViewCache = bypass;
+          FjsNodeRenderer.buildCount = 0;
+          final us = editOneLeaf();
+          final builds = FjsNodeRenderer.buildCount;
+          if (i < 5) continue;
+          if (bypass && us < bypassed) {
+            bypassed = us;
+            bypassedBuilds = builds;
+          }
+          if (!bypass && us < cached) {
+            cached = us;
+            cachedBuilds = builds;
+          }
         }
       }
-    }
-    fjsDisableParseCache = false;
-    // ignore: avoid_print
-    print('[parse-cache] nodes=${_rows * 3} warm=${warm / 1000}ms '
-        'cold=${cold / 1000}ms ratio=${(cold / warm).toStringAsFixed(2)}x '
-        'parses: $coldParses -> $warmParses');
-    expect(warmParses, 0);
-    expect(coldParses, greaterThan(0));
-  }, skip: !const bool.fromEnvironment('FJS_BENCH'));
-
-  testWidgets('view cache: one leaf edit, cached vs bypassed', (tester) async {
-    _bigSurface(tester);
-    final tree = _tree();
-    await tester.pumpWidget(_render(tree));
-
-    var n = 0;
-    // one leaf changes, then the root rebuilds — exactly what one reactive
-    // update does: applyFrame marks the node, notifyListeners rebuilds the
-    // root, and the question is how far that travels
-    int editOneLeaf() {
-      tree.applyFrame((_W()..setText(_titleId(3), 'v${n++}')).frame);
-      final sw = Stopwatch()..start();
-      tree.flushDirty();
-      _rebuildRoot(tester);
-      sw.stop();
-      return sw.elapsedMicroseconds;
-    }
-
-    var cached = 1 << 30, bypassed = 1 << 30, cachedBuilds = 0, bypassedBuilds = 0;
-    for (var i = 0; i < 25; i++) {
-      for (final bypass in [true, false]) {
-        fjsDisableViewCache = bypass;
-        FjsNodeRenderer.buildCount = 0;
-        final us = editOneLeaf();
-        final builds = FjsNodeRenderer.buildCount;
-        if (i < 5) continue;
-        if (bypass && us < bypassed) {
-          bypassed = us;
-          bypassedBuilds = builds;
-        }
-        if (!bypass && us < cached) {
-          cached = us;
-          cachedBuilds = builds;
-        }
-      }
-    }
-    fjsDisableViewCache = false;
-    // ignore: avoid_print
-    print('[view-cache] nodes=${_rows * 3} cached=${cached / 1000}ms '
+      fjsDisableViewCache = false;
+      // ignore: avoid_print
+      print(
+        '[view-cache] nodes=${_rows * 3} cached=${cached / 1000}ms '
         'bypassed=${bypassed / 1000}ms '
         'ratio=${(bypassed / cached).toStringAsFixed(1)}x '
-        'node builds: $bypassedBuilds -> $cachedBuilds');
-    expect(cachedBuilds, lessThan(bypassedBuilds));
-  }, skip: !const bool.fromEnvironment('FJS_BENCH'));
+        'node builds: $bypassedBuilds -> $cachedBuilds',
+      );
+      expect(cachedBuilds, lessThan(bypassedBuilds));
+    },
+    skip: !const bool.fromEnvironment('FJS_BENCH'),
+  );
 
-  testWidgets('theme switch: does per-node granularity cost anything?',
-      (tester) async {
-    // The case granularity cannot help: every node genuinely changed, so
-    // every node rebuilds either way. The question is whether the machinery
-    // that makes leaf edits cheap — a ListenableBuilder element per node —
-    // makes this case MORE expensive than it was.
-    _bigSurface(tester);
-    final tree = _tree();
-    await tester.pumpWidget(_render(tree));
+  testWidgets(
+    'theme switch: does per-node granularity cost anything?',
+    (tester) async {
+      // The case granularity cannot help: every node genuinely changed, so
+      // every node rebuilds either way. The question is whether the machinery
+      // that makes leaf edits cheap — a ListenableBuilder element per node —
+      // makes this case MORE expensive than it was.
+      _bigSurface(tester);
+      final tree = _tree();
+      await tester.pumpWidget(_render(tree));
 
-    var sid = 100;
-    int switchTheme() {
-      final w = _W()..defineStyle(++sid, '{"backgroundColor":"#${sid}0e1a"}');
-      for (var i = 0; i < _rows; i++) {
-        w.setStyle(2 + i * 3, sid);
-      }
-      tree.applyFrame(w.frame);
-      final sw = Stopwatch()..start();
-      tree.flushDirty();
-      _rebuildRoot(tester);
-      sw.stop();
-      return sw.elapsedMicroseconds;
-    }
-
-    var cached = 1 << 30, bypassed = 1 << 30, cachedBuilds = 0, bypassedBuilds = 0;
-    for (var i = 0; i < 15; i++) {
-      for (final bypass in [true, false]) {
-        fjsDisableViewCache = bypass;
-        FjsNodeRenderer.buildCount = 0;
-        final us = switchTheme();
-        final builds = FjsNodeRenderer.buildCount;
-        if (i < 3) continue;
-        if (bypass && us < bypassed) {
-          bypassed = us;
-          bypassedBuilds = builds;
+      var sid = 100;
+      int switchTheme() {
+        final w = _W()..defineStyle(++sid, '{"backgroundColor":"#${sid}0e1a"}');
+        for (var i = 0; i < _rows; i++) {
+          w.setStyle(2 + i * 3, sid);
         }
-        if (!bypass && us < cached) {
-          cached = us;
-          cachedBuilds = builds;
+        tree.applyFrame(w.frame);
+        final sw = Stopwatch()..start();
+        tree.flushDirty();
+        _rebuildRoot(tester);
+        sw.stop();
+        return sw.elapsedMicroseconds;
+      }
+
+      var cached = 1 << 30,
+          bypassed = 1 << 30,
+          cachedBuilds = 0,
+          bypassedBuilds = 0;
+      for (var i = 0; i < 15; i++) {
+        for (final bypass in [true, false]) {
+          fjsDisableViewCache = bypass;
+          FjsNodeRenderer.buildCount = 0;
+          final us = switchTheme();
+          final builds = FjsNodeRenderer.buildCount;
+          if (i < 3) continue;
+          if (bypass && us < bypassed) {
+            bypassed = us;
+            bypassedBuilds = builds;
+          }
+          if (!bypass && us < cached) {
+            cached = us;
+            cachedBuilds = builds;
+          }
         }
       }
-    }
-    fjsDisableViewCache = false;
-    // ignore: avoid_print
-    print('[theme-switch] nodes=${_rows * 3} '
+      fjsDisableViewCache = false;
+      // ignore: avoid_print
+      print(
+        '[theme-switch] nodes=${_rows * 3} '
         'granular=${cached / 1000}ms flat=${bypassed / 1000}ms '
-        'node builds: $bypassedBuilds vs $cachedBuilds');
-  }, skip: !const bool.fromEnvironment('FJS_BENCH'));
+        'node builds: $bypassedBuilds vs $cachedBuilds',
+      );
+    },
+    skip: !const bool.fromEnvironment('FJS_BENCH'),
+  );
 }

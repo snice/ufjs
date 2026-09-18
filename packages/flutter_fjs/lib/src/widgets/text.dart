@@ -29,7 +29,8 @@ const _defaultFontSize = 14.0;
 /// paints with its text (a background behind the glyphs); a paragraph's own
 /// background is its box decoration, drawn by decorateNode.
 TextStyle fjsTextStyle(FjsStyle style, {bool span = false}) {
-  final lineHeight = style.lineHeightMultiplier ??
+  final lineHeight =
+      style.lineHeightMultiplier ??
       () {
         final abs = style.lineHeightAbsolute;
         if (abs == null) return null;
@@ -67,10 +68,13 @@ TextStyle fjsTextStyle(FjsStyle style, {bool span = false}) {
 /// paragraph's TextSpan, the way CSS inheritance does on the web.
 TextStyle fjsSpanStyle(FjsStyle style) {
   final fontSize = style.fontSize;
-  final lineHeight = style.lineHeightMultiplier ??
+  final lineHeight =
+      style.lineHeightMultiplier ??
       () {
         final abs = style.lineHeightAbsolute;
-        return abs != null && fontSize != null && fontSize > 0 ? abs / fontSize : null;
+        return abs != null && fontSize != null && fontSize > 0
+            ? abs / fontSize
+            : null;
       }();
   return TextStyle(
     color: style.color,
@@ -153,8 +157,9 @@ Widget buildText(
   );
 }
 
-String _transformed(FjsStyle style, String data) =>
-    style.textTransform != null ? transformText(style.textTransform, data)! : data;
+String _transformed(FjsStyle style, String data) => style.textTransform != null
+    ? transformText(style.textTransform, data)!
+    : data;
 
 /// One `richSpans` run: a bare string, or `{t, s}` with the run's own style.
 /// Anything else is skipped (and reported once in debug).
@@ -165,11 +170,18 @@ InlineSpan? _richSpan(Object? run, FjsStyle paragraph) {
   final declared = run['s'];
   if (text is! String || declared is! Map) return null;
   final style = FjsStyle({'style': Map<String, Object?>.from(declared)});
-  final content = TextSpan(text: _transformed(paragraph, text), style: fjsSpanStyle(style));
+  final content = TextSpan(
+    text: _transformed(paragraph, text),
+    style: fjsSpanStyle(style),
+  );
   // A shifted run sits in a WidgetSpan, where the paragraph's TextSpan style
   // no longer reaches: give it the paragraph's style to inherit from.
-  return _shifted(style.verticalAlign, paragraph, content,
-          inherited: fjsTextStyle(paragraph)) ??
+  return _shifted(
+        style.verticalAlign,
+        paragraph,
+        content,
+        inherited: fjsTextStyle(paragraph),
+      ) ??
       content;
 }
 
@@ -214,7 +226,9 @@ InlineSpan _span(
       ? null
       : fjsTextStyle(style, span: true);
   final content = TextSpan(
-    text: kid.text == null || kid.text!.isEmpty ? null : _transformed(style, kid.text!),
+    text: kid.text == null || kid.text!.isEmpty
+        ? null
+        : _transformed(style, kid.text!),
     style: textStyle,
     children: grandKids.isEmpty
         ? null
@@ -233,7 +247,12 @@ InlineSpan _span(
 ///
 /// [inherited] is the style the run would otherwise have taken from the
 /// paragraph; a node span passes none because its style is fully resolved.
-InlineSpan? _shifted(String? align, FjsStyle parent, TextSpan content, {TextStyle? inherited}) {
+InlineSpan? _shifted(
+  String? align,
+  FjsStyle parent,
+  TextSpan content, {
+  TextStyle? inherited,
+}) {
   if (align != 'sub' && align != 'super') return null;
   final parentSize = parent.fontSize ?? _defaultFontSize;
   final dy = align == 'super' ? -parentSize / 3 : parentSize / 5;
@@ -242,7 +261,11 @@ InlineSpan? _shifted(String? align, FjsStyle parent, TextSpan content, {TextStyl
     baseline: TextBaseline.alphabetic,
     child: Transform.translate(
       offset: Offset(0, dy),
-      child: Text.rich(inherited == null ? content : TextSpan(style: inherited, children: [content])),
+      child: Text.rich(
+        inherited == null
+            ? content
+            : TextSpan(style: inherited, children: [content]),
+      ),
     ),
   );
 }
@@ -261,8 +284,10 @@ void _warnBoxOnSpan(FjsStyle style) {
       style.widthLength != null ||
       style.heightLength != null) {
     _warnedBoxOnSpan = true;
-    debugPrint('[fjs] a <text> nested in a <text> is an inline span: its '
-        'margin / padding / border / width / height are ignored');
+    debugPrint(
+      '[fjs] a <text> nested in a <text> is an inline span: its '
+      'margin / padding / border / width / height are ignored',
+    );
   }
 }
 
@@ -272,18 +297,28 @@ bool _warnedRichSpans = false;
 /// alongside children or element text, means something else wrote it —
 /// report it once rather than render a silently different paragraph
 /// (constitution V).
-void _warnRichSpansOnce(MirrorNode node, Object richSpans, List<MirrorNode> childNodes) {
+void _warnRichSpansOnce(
+  MirrorNode node,
+  Object richSpans,
+  List<MirrorNode> childNodes,
+) {
   if (_warnedRichSpans) return;
   String? problem;
   if (richSpans is! List) {
     problem = 'is not a list';
-  } else if (richSpans.any((run) =>
-      run is! String && !(run is Map && run['t'] is String && run['s'] is Map))) {
+  } else if (richSpans.any(
+    (run) =>
+        run is! String &&
+        !(run is Map && run['t'] is String && run['s'] is Map),
+  )) {
     problem = 'has a run that is neither a string nor {t, s}';
   } else if (childNodes.isNotEmpty || (node.text?.isNotEmpty ?? false)) {
-    problem = 'arrived together with children or element text, which are ignored';
+    problem =
+        'arrived together with children or element text, which are ignored';
   }
   if (problem == null) return;
   _warnedRichSpans = true;
-  debugPrint('[fjs] <text> internal prop richSpans $problem (rendering the runs only)');
+  debugPrint(
+    '[fjs] <text> internal prop richSpans $problem (rendering the runs only)',
+  );
 }

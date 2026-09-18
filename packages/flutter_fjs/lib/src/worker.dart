@@ -129,8 +129,7 @@ class FjsWorker {
 
     // log + postMessage bridge (worker's postMessage rides invokeHost)
     final onLog = ffi.Pointer.fromFunction<OnLogC>(_logTrampoline);
-    final invoke =
-        ffi.Pointer.fromFunction<InvokeHostC>(_invokeTrampoline, 0);
+    final invoke = ffi.Pointer.fromFunction<InvokeHostC>(_invokeTrampoline, 0);
     bind.setCallbacks(vm, onLog, ffi.nullptr, invoke);
     _ctx = _WorkerCtx(vm, bind, toMain);
 
@@ -177,7 +176,13 @@ globalThis.__fjsDispatchEvent = function (nodeId, eventType, params) {
       if (m is String) {
         final units = utf8.encode(m);
         final p = _toCString(m);
-        bind.dispatchEvent(vm, workerId, FjsEvent.workerMessage, p, units.length);
+        bind.dispatchEvent(
+          vm,
+          workerId,
+          FjsEvent.workerMessage,
+          p,
+          units.length,
+        );
         malloc.free(p);
       }
     });
@@ -199,8 +204,12 @@ globalThis.__fjsDispatchEvent = function (nodeId, eventType, params) {
     }
   }
 
-  static int _invokeTrampoline(ffi.Pointer<ffi.Uint8> namePtr, int argc,
-      ffi.Pointer<FJSValue> args, ffi.Pointer<FJSValue> out) {
+  static int _invokeTrampoline(
+    ffi.Pointer<ffi.Uint8> namePtr,
+    int argc,
+    ffi.Pointer<FJSValue> args,
+    ffi.Pointer<FJSValue> out,
+  ) {
     final ctx = _ctx;
     if (ctx == null) return -1;
     final name = cString(namePtr);

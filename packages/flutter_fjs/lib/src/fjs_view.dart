@@ -108,7 +108,8 @@ class _FjsViewState extends State<FjsView> with WidgetsBindingObserver {
         final parked = <int>[];
         for (final id in tree.rootChildren) {
           final node = tree.node(id);
-          if (node == null || FjsView.rootNavKey(node) != widget.navKey) continue;
+          if (node == null || FjsView.rootNavKey(node) != widget.navKey)
+            continue;
           (FjsView.rootParked(node) ? parked : ids).add(id);
         }
         _rootKeys.removeWhere(
@@ -119,14 +120,14 @@ class _FjsViewState extends State<FjsView> with WidgetsBindingObserver {
         }
 
         Widget layer(int id) => KeyedSubtree(
-              key: _keyFor(id),
-              child: FjsNodeRenderer(
-                tree: tree,
-                ids: [id],
-                dispatch: engine.dispatchEvent,
-                registry: engine.components,
-              ),
-            );
+          key: _keyFor(id),
+          child: FjsNodeRenderer(
+            tree: tree,
+            ids: [id],
+            dispatch: engine.dispatchEvent,
+            registry: engine.components,
+          ),
+        );
 
         final shown = [for (final id in ids) layer(id)];
         Widget content = shown.length == 1

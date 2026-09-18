@@ -54,8 +54,9 @@ class FjsLength {
   int get hashCode => Object.hash(px, percent);
 
   @override
-  String toString() =>
-      isRelative ? 'FjsLength(${px}px + ${percent * 100}%)' : 'FjsLength(${px}px)';
+  String toString() => isRelative
+      ? 'FjsLength(${px}px + ${percent * 100}%)'
+      : 'FjsLength(${px}px)';
 }
 
 /// One padding/margin declaration after the shorthand+longhand merge, with
@@ -151,7 +152,8 @@ List<String>? _tokenize(String source) {
       // A sign glued to a number is part of it (`calc(-8px + 50%)`); an
       // operator is what CSS requires to be surrounded by spaces, which is
       // exactly the case where the buffer already holds a term.
-      if (buf.isEmpty && (out.isEmpty || _isOperator(out.last) || out.last == '(')) {
+      if (buf.isEmpty &&
+          (out.isEmpty || _isOperator(out.last) || out.last == '(')) {
         buf.write(c);
         continue;
       }
@@ -231,4 +233,3 @@ class _CalcParser {
     return _term(token);
   }
 }
-

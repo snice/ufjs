@@ -76,14 +76,14 @@ const int modalClosed = 7;
 typedef Events = List<(int, String?)>;
 
 Widget render(MirrorTree tree, Events log) => MaterialApp(
-      home: Scaffold(
-        body: FjsNodeRenderer(
-          tree: tree,
-          ids: tree.rootChildren,
-          dispatch: (id, type, {String? text}) => log.add((type, text)),
-        ),
-      ),
-    );
+  home: Scaffold(
+    body: FjsNodeRenderer(
+      tree: tree,
+      ids: tree.rootChildren,
+      dispatch: (id, type, {String? text}) => log.add((type, text)),
+    ),
+  ),
+);
 
 /// A modal holding one text child, closed.
 (MirrorTree, Events) openable({int rows = 1}) {
@@ -102,8 +102,7 @@ Widget render(MirrorTree tree, Events log) => MaterialApp(
 }
 
 void setVisible(MirrorTree tree, bool visible) {
-  final ops = _Ops()
-    ..props(1, {'visible': visible, 'onModalClosed': true});
+  final ops = _Ops()..props(1, {'visible': visible, 'onModalClosed': true});
   tree.applyFrame(ops.take());
   tree.flushDirty();
 }
@@ -152,8 +151,9 @@ void main() {
     expect(log, isEmpty);
   });
 
-  testWidgets('content added while open shows up in the open sheet',
-      (tester) async {
+  testWidgets('content added while open shows up in the open sheet', (
+    tester,
+  ) async {
     // The reason the snapshot had to go: <picker>'s linked columns are
     // replaced while the sheet is up (specs/008-picker/plan.md §3.2).
     final (tree, log) = openable();
@@ -162,18 +162,21 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('row 1'), findsNothing);
 
-    tree.applyFrame((_Ops()
-          ..create(11, 'text')
-          ..text(11, 'row 1')
-          ..insert(1, 11))
-        .take());
+    tree.applyFrame(
+      (_Ops()
+            ..create(11, 'text')
+            ..text(11, 'row 1')
+            ..insert(1, 11))
+          .take(),
+    );
     tree.flushDirty();
     await tester.pumpAndSettle();
     expect(find.text('row 1'), findsOneWidget);
   });
 
-  testWidgets('content removed while open disappears from the open sheet',
-      (tester) async {
+  testWidgets('content removed while open disappears from the open sheet', (
+    tester,
+  ) async {
     final (tree, log) = openable(rows: 2);
     await tester.pumpWidget(render(tree, log));
     setVisible(tree, true);
@@ -187,8 +190,9 @@ void main() {
     expect(find.text('row 0'), findsOneWidget);
   });
 
-  testWidgets('content taller than the sheet scrolls instead of overflowing',
-      (tester) async {
+  testWidgets('content taller than the sheet scrolls instead of overflowing', (
+    tester,
+  ) async {
     final (tree, log) = openable(rows: 40);
     await tester.pumpWidget(render(tree, log));
     setVisible(tree, true);

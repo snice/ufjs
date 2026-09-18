@@ -136,8 +136,10 @@ class _ButtonNodeAdapter extends FjsNodeAdapter {
       defaultBorderRadius: fjsButtonDefaultBorderRadius,
       defaultBackgroundColor: chrome.background,
       defaultBorderColor: chrome.border,
-      foregroundDecoration:
-          fjsButtonForegroundDecoration(context.style, active),
+      foregroundDecoration: fjsButtonForegroundDecoration(
+        context.style,
+        active,
+      ),
       foregroundKey: active ? fjsButtonPressMaskKey : null,
     );
   }
@@ -260,7 +262,6 @@ class _ListViewNodeAdapter extends FjsNodeAdapter {
     );
   }
 }
-
 
 class _RadioNodeAdapter extends FjsNodeAdapter {
   const _RadioNodeAdapter();
@@ -424,7 +425,11 @@ class _SafeAreaNodeAdapter extends FjsNodeAdapter {
     final raw = context.node.props['edges'];
     final named = raw == null
         ? null
-        : raw.toString().split(RegExp(r'[\s,]+')).where((e) => e.isNotEmpty).toSet();
+        : raw
+              .toString()
+              .split(RegExp(r'[\s,]+'))
+              .where((e) => e.isNotEmpty)
+              .toSet();
     bool edge(String name) => named == null || named.contains(name);
     return SafeArea(
       top: edge('top'),
@@ -455,8 +460,9 @@ class _RefreshNodeAdapter extends FjsNodeAdapter {
         context.dispatch(context.node.id, FjsEvent.refresh);
         await Future<void>.delayed(const Duration(milliseconds: 600));
       },
-      child:
-          children.isNotEmpty ? children.single : ListView(children: const []),
+      child: children.isNotEmpty
+          ? children.single
+          : ListView(children: const []),
     );
   }
 }
@@ -479,8 +485,8 @@ class _SwiperNodeAdapter extends FjsNodeAdapter {
         fjsWarnOnce(
           'swiper-bare-page:${context.node.id}',
           '<swiper> node ${context.node.id}: child <${child.tag}> is not a '
-          '<swiper-item>; it is shown as a page anyway, but wrap it in '
-          '<swiper-item>.',
+              '<swiper-item>; it is shown as a page anyway, but wrap it in '
+              '<swiper-item>.',
         );
         break;
       }
@@ -553,11 +559,7 @@ class _PickerViewColumnNodeAdapter extends FjsNodeAdapter {
 
   @override
   Widget build(FjsNodeAdapterContext context) {
-    return buildBox(
-      context.style,
-      context.buildChildren(),
-      context.childNodes,
-    );
+    return buildBox(context.style, context.buildChildren(), context.childNodes);
   }
 }
 
@@ -609,11 +611,7 @@ class _StickyHeaderNodeAdapter extends FjsNodeAdapter {
   @override
   Widget build(FjsNodeAdapterContext context) {
     _warnOutsideSticky(context);
-    return buildBox(
-      context.style,
-      context.buildChildren(),
-      context.childNodes,
-    );
+    return buildBox(context.style, context.buildChildren(), context.childNodes);
   }
 }
 
@@ -626,11 +624,7 @@ class _StickySectionNodeAdapter extends FjsNodeAdapter {
   @override
   Widget build(FjsNodeAdapterContext context) {
     _warnOutsideSticky(context);
-    return buildBox(
-      context.style,
-      context.buildChildren(),
-      context.childNodes,
-    );
+    return buildBox(context.style, context.buildChildren(), context.childNodes);
   }
 }
 
@@ -638,8 +632,8 @@ void _warnOutsideSticky(FjsNodeAdapterContext context) {
   fjsWarnOnce(
     'sticky-outside:${context.node.id}',
     '<${context.node.tag}> node ${context.node.id} is only sticky as a '
-    'DIRECT child of a scroll-view that hosts sticky tags (type="custom" on '
-    'the mini program). It renders as a plain container here.',
+        'DIRECT child of a scroll-view that hosts sticky tags (type="custom" on '
+        'the mini program). It renders as a plain container here.',
   );
 }
 
@@ -667,10 +661,7 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
       // bookkeeping (percent widths, culling)
       return buildBox(
         context.style,
-        [
-          buildText(context.node, context.style, childNodes: const []),
-          ...kids,
-        ],
+        [buildText(context.node, context.style, childNodes: const []), ...kids],
         [null, ...context.childNodes],
         growChildren: context.isRoot,
       );

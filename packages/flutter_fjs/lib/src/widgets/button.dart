@@ -43,8 +43,10 @@ const _onFilled = Color(0xFFFFFFFF);
 const _defaultForeground = _primary;
 const _pressedMask = Color(0x1A000000); // rgba(0, 0, 0, 0.1)
 
-const fjsButtonDefaultPadding =
-    EdgeInsets.symmetric(horizontal: 16, vertical: 10);
+const fjsButtonDefaultPadding = EdgeInsets.symmetric(
+  horizontal: 16,
+  vertical: 10,
+);
 const _miniPadding = EdgeInsets.symmetric(horizontal: 12, vertical: 6);
 final fjsButtonDefaultBorderRadius = BorderRadius.circular(8);
 
@@ -64,11 +66,12 @@ FjsButtonChrome fjsButtonChrome(MirrorNode node, FjsStyle style) {
   final accent = type == 'warn'
       ? _warn
       : type == 'primary'
-          ? _primary
-          : null;
+      ? _primary
+      : null;
   final filled = accent != null && !plain;
   return FjsButtonChrome(
-    foreground: style.color ?? (filled ? _onFilled : accent ?? _defaultForeground),
+    foreground:
+        style.color ?? (filled ? _onFilled : accent ?? _defaultForeground),
     background: filled ? accent : null,
     border: filled ? null : (accent ?? fjsButtonDefaultBorder),
     padding: mini ? _miniPadding : fjsButtonDefaultPadding,
@@ -113,7 +116,6 @@ Widget buildButton(
     if (hasTapEvent(node)) dispatchTap(node, dispatch);
   }
 
-
   final text = Text(
     label,
     style: TextStyle(
@@ -128,24 +130,25 @@ Widget buildButton(
 
   final button = TextButton(
     onPressed: enabled ? onPressed : null,
-    style: TextButton.styleFrom(
-      foregroundColor: chrome.foreground,
-      // A disabled TextButton greys its own label; the whole button is
-      // faded instead (below), the way `.fjs-button:disabled` does.
-      disabledForegroundColor: chrome.foreground,
-      padding: EdgeInsets.zero,
-      minimumSize: Size.zero,
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      textStyle: const TextStyle(fontWeight: FontWeight.w400),
-      // Press feedback is the Stack mask below, driven by pointer-down —
-      // Material's own overlay waits for the tap recognizer to win the
-      // arena (`kPressTimeout`), so a quick tap painted nothing. Keep
-      // InkWell visually inert.
-      animationDuration: Duration.zero,
-    ).copyWith(
-      overlayColor: const WidgetStatePropertyAll(Colors.transparent),
-      splashFactory: NoSplash.splashFactory,
-    ),
+    style:
+        TextButton.styleFrom(
+          foregroundColor: chrome.foreground,
+          // A disabled TextButton greys its own label; the whole button is
+          // faded instead (below), the way `.fjs-button:disabled` does.
+          disabledForegroundColor: chrome.foreground,
+          padding: EdgeInsets.zero,
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          textStyle: const TextStyle(fontWeight: FontWeight.w400),
+          // Press feedback is the Stack mask below, driven by pointer-down —
+          // Material's own overlay waits for the tap recognizer to win the
+          // arena (`kPressTimeout`), so a quick tap painted nothing. Keep
+          // InkWell visually inert.
+          animationDuration: Duration.zero,
+        ).copyWith(
+          overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+          splashFactory: NoSplash.splashFactory,
+        ),
     child: chrome.loading
         ? Row(
             mainAxisSize: MainAxisSize.min,

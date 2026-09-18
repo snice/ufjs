@@ -77,7 +77,9 @@ class FjsDashedBorderPainter extends CustomPainter {
     if (rect.width <= 0 || rect.height <= 0) return;
     final path = Path();
     if (borderRadius != null) {
-      path.addRRect(borderRadius!.toRRect(Offset.zero & size).deflate(width / 2));
+      path.addRRect(
+        borderRadius!.toRRect(Offset.zero & size).deflate(width / 2),
+      );
     } else {
       path.addRect(rect);
     }
@@ -105,7 +107,11 @@ enum FjsBoxSidePosition { top, right, bottom, left }
 /// stroke straddles the path). Corner radii are taken as declared; per-side
 /// widths usually differ by a pixel or two, and re-fitting the arcs to the
 /// inset corners is accuracy nobody can see at hairline widths.
-Path fjsBorderSidePath(FjsBoxSidePosition which, Rect rect, BorderRadius? radius) {
+Path fjsBorderSidePath(
+  FjsBoxSidePosition which,
+  Rect rect,
+  BorderRadius? radius,
+) {
   double clampRadius(double r, double alongEdge, double acrossEdge) =>
       math.min(r, math.min(alongEdge, acrossEdge) / 2);
   final tl = clampRadius(radius?.topLeft.x ?? 0, rect.width, rect.height);
@@ -122,25 +128,34 @@ Path fjsBorderSidePath(FjsBoxSidePosition which, Rect rect, BorderRadius? radius
           ? p.arcTo(corner(rect.left + tl, rect.top + tl, tl), 5 * q, q, false)
           : p.moveTo(rect.left, rect.top);
       p.lineTo(rect.right - tr, rect.top);
-      if (tr > 0) p.arcTo(corner(rect.right - tr, rect.top + tr, tr), 6 * q, q, false);
+      if (tr > 0)
+        p.arcTo(corner(rect.right - tr, rect.top + tr, tr), 6 * q, q, false);
     case FjsBoxSidePosition.right:
       tr > 0
           ? p.arcTo(corner(rect.right - tr, rect.top + tr, tr), 7 * q, q, false)
           : p.moveTo(rect.right, rect.top);
       p.lineTo(rect.right, rect.bottom - br);
-      if (br > 0) p.arcTo(corner(rect.right - br, rect.bottom - br, br), 0, q, false);
+      if (br > 0)
+        p.arcTo(corner(rect.right - br, rect.bottom - br, br), 0, q, false);
     case FjsBoxSidePosition.bottom:
       br > 0
           ? p.arcTo(corner(rect.right - br, rect.bottom - br, br), q, q, false)
           : p.moveTo(rect.right, rect.bottom);
       p.lineTo(rect.left + bl, rect.bottom);
-      if (bl > 0) p.arcTo(corner(rect.left + bl, rect.bottom - bl, bl), 2 * q, q, false);
+      if (bl > 0)
+        p.arcTo(corner(rect.left + bl, rect.bottom - bl, bl), 2 * q, q, false);
     case FjsBoxSidePosition.left:
       bl > 0
-          ? p.arcTo(corner(rect.left + bl, rect.bottom - bl, bl), 3 * q, q, false)
+          ? p.arcTo(
+              corner(rect.left + bl, rect.bottom - bl, bl),
+              3 * q,
+              q,
+              false,
+            )
           : p.moveTo(rect.left, rect.bottom);
       p.lineTo(rect.left, rect.top + tl);
-      if (tl > 0) p.arcTo(corner(rect.left + tl, rect.top + tl, tl), 4 * q, q, false);
+      if (tl > 0)
+        p.arcTo(corner(rect.left + tl, rect.top + tl, tl), 4 * q, q, false);
   }
   return p;
 }
@@ -179,8 +194,13 @@ class FjsSideBorderPainter extends CustomPainter {
             ..style = PaintingStyle.stroke,
         );
       } else {
-        strokeDashes(canvas, path,
-            width: side.width, color: side.color, kind: side.kind);
+        strokeDashes(
+          canvas,
+          path,
+          width: side.width,
+          color: side.color,
+          kind: side.kind,
+        );
       }
     }
 

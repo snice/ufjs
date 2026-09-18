@@ -102,7 +102,9 @@ class _FjsSwiperState extends State<FjsSwiper> {
   void initState() {
     super.initState();
     _index = _clampCurrent(_intProp('current', 0));
-    _lastRequestedCurrent = widget.node.props['current'] == null ? null : _index;
+    _lastRequestedCurrent = widget.node.props['current'] == null
+        ? null
+        : _index;
     _controller = PageController(
       initialPage: _circular ? _circularOrigin() + _index : _index,
     );
@@ -131,7 +133,7 @@ class _FjsSwiperState extends State<FjsSwiper> {
     fjsWarnOnce(
       'swiper-current:${widget.node.id}',
       '<swiper> node ${widget.node.id}: current=$value is outside '
-      '0..${_count - 1}; clamped.',
+          '0..${_count - 1}; clamped.',
     );
     return value < 0 ? 0 : _count - 1;
   }
@@ -142,8 +144,7 @@ class _FjsSwiperState extends State<FjsSwiper> {
     final page = _circular
         // step to the nearest copy of `target`, so a jump from the last page
         // to the first animates forward rather than rewinding the whole list
-        ? (controller.page ?? 0).round() +
-            _shortestStep(_index, target, _count)
+        ? (controller.page ?? 0).round() + _shortestStep(_index, target, _count)
         : target;
     _animatingTo = target;
     controller
@@ -194,11 +195,7 @@ class _FjsSwiperState extends State<FjsSwiper> {
     if (target != null) _animatingTo = null;
     _index = real;
     // The page number a page sees is always a real one, never a clone's.
-    widget.dispatch(
-      widget.node.id,
-      FjsEvent.pageChanged,
-      text: '$real',
-    );
+    widget.dispatch(widget.node.id, FjsEvent.pageChanged, text: '$real');
     setState(() {}); // repaint the dots
   }
 
@@ -241,9 +238,10 @@ class _FjsSwiperState extends State<FjsSwiper> {
   }
 
   Widget _dots() {
-    final color = parseColor(widget.node.props['indicatorColor']) ??
-        fjsSwiperDotColor;
-    final active = parseColor(widget.node.props['indicatorActiveColor']) ??
+    final color =
+        parseColor(widget.node.props['indicatorColor']) ?? fjsSwiperDotColor;
+    final active =
+        parseColor(widget.node.props['indicatorActiveColor']) ??
         fjsSwiperDotActiveColor;
     final dots = [
       for (var i = 0; i < _count; i++)
@@ -266,7 +264,10 @@ class _FjsSwiperState extends State<FjsSwiper> {
       top: _vertical ? 0 : null,
       child: IgnorePointer(
         child: _vertical
-            ? Column(mainAxisAlignment: MainAxisAlignment.center, children: dots)
+            ? Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: dots,
+              )
             : Row(mainAxisAlignment: MainAxisAlignment.center, children: dots),
       ),
     );

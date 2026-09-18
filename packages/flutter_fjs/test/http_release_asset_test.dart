@@ -25,8 +25,9 @@ void main() {
 
   final assets = <String, Uint8List>{
     'assets/fjs/public/assets/Xbot-D2z3.glb': Uint8List.fromList([1, 2, 3]),
-    'assets/fjs/public/data/config.json':
-        Uint8List.fromList(utf8.encode('{"a":1}')),
+    'assets/fjs/public/data/config.json': Uint8List.fromList(
+      utf8.encode('{"a":1}'),
+    ),
   };
 
   late _Events events;
@@ -41,11 +42,11 @@ void main() {
     http.register(host);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMessageHandler('flutter/assets', (ByteData? message) async {
-      final key = utf8.decode(message!.buffer.asUint8List());
-      final bytes = assets[key];
-      if (bytes == null) return null;
-      return ByteData.sublistView(bytes);
-    });
+          final key = utf8.decode(message!.buffer.asUint8List());
+          final bytes = assets[key];
+          if (bytes == null) return null;
+          return ByteData.sublistView(bytes);
+        });
   });
 
   tearDown(() {
@@ -56,7 +57,10 @@ void main() {
 
   Future<Map<String, Object?>> fetch(String url) async {
     final id = 1;
-    host.invoke('fjs.http.request', [id, jsonEncode({'url': url})]);
+    host.invoke('fjs.http.request', [
+      id,
+      jsonEncode({'url': url}),
+    ]);
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
     expect(events.received, hasLength(1));

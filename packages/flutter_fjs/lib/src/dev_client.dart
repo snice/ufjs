@@ -30,6 +30,7 @@ class DevClient {
   final void Function(String message)? onLog;
 
   WebSocket? _ws;
+
   /// Called on every change push. [DevReload.units] names the dev units to
   /// hot-swap (module-level reload, spec 037) and [DevReload.pages] the
   /// page chunks that have to remount afterwards; both empty means the
@@ -87,7 +88,7 @@ class DevClient {
   /// has no business timing out on its own while the user is starting a
   /// server or reading a permission sheet.
   Future<Uint8List> fetchForBootstrap(String path, {String? query}) async {
-    for (var attempt = 0;; attempt++) {
+    for (var attempt = 0; ; attempt++) {
       try {
         return await fetch(path, query: query);
       } on HttpException {
@@ -120,9 +121,7 @@ class DevClient {
   Future<Uint8List> fetch(String path, {String? query}) async {
     final started = DateTime.now();
     try {
-      final bytes = await fetchUrl(
-        _base.replace(path: path, query: query),
-      );
+      final bytes = await fetchUrl(_base.replace(path: path, query: query));
       // closed while this was in flight: whoever asked has moved on, and
       // applying a bundle after a disconnect is worse than failing
       if (_closed) throw const HttpException('dev client closed');
@@ -159,43 +158,50 @@ class DevClient {
 
   Future<void> _openSocket() async {
     final ws = await WebSocket.connect(
-        _base.replace(scheme: 'ws', path: '/ws').toString());
+      _base.replace(scheme: 'ws', path: '/ws').toString(),
+    );
     if (_closed) {
       await ws.close();
       return;
     }
     _ws = ws;
     _retryAttempt = 0;
-    ws.listen((data) {
-      if (_closed) return;
-      final msg = data.toString();
-      if (msg.startsWith('eval ')) {
-        final rest = msg.substring('eval '.length);
-        final space = rest.indexOf(' ');
-        if (space > 0) {
-          onEval?.call(rest.substring(0, space), rest.substring(space + 1));
+    ws.listen(
+      (data) {
+        if (_closed) return;
+        final msg = data.toString();
+        if (msg.startsWith('eval ')) {
+          final rest = msg.substring('eval '.length);
+          final space = rest.indexOf(' ');
+          if (space > 0) {
+            onEval?.call(rest.substring(0, space), rest.substring(space + 1));
+          }
+          return;
         }
-        return;
-      }
-      if (msg == 'perf') {
-        onPerf?.call();
-        return;
-      }
-      if (msg == 'reload' || msg.startsWith('reload')) {
-        final reload = parseReload(msg);
-        onLog?.call(reload.isFull
-            ? 'change detected — reloading'
-            : 'change detected — hot-swapping '
-                '${[...reload.units, ...reload.pages].join(', ')}');
-        onReload?.call(reload);
-      }
-    }, onError: (Object e) {
-      if (!_closed) onLog?.call('dev socket error: $e');
-    }, onDone: () {
-      if (_closed) return;
-      onLog?.call('dev server disconnected — retrying');
-      _scheduleRetry();
-    });
+        if (msg == 'perf') {
+          onPerf?.call();
+          return;
+        }
+        if (msg == 'reload' || msg.startsWith('reload')) {
+          final reload = parseReload(msg);
+          onLog?.call(
+            reload.isFull
+                ? 'change detected — reloading'
+                : 'change detected — hot-swapping '
+                      '${[...reload.units, ...reload.pages].join(', ')}',
+          );
+          onReload?.call(reload);
+        }
+      },
+      onError: (Object e) {
+        if (!_closed) onLog?.call('dev socket error: $e');
+      },
+      onDone: () {
+        if (_closed) return;
+        onLog?.call('dev server disconnected — retrying');
+        _scheduleRetry();
+      },
+    );
   }
 
   /// Backoff between reconnect attempts, in seconds; the last value repeats.
@@ -204,8 +210,9 @@ class DevClient {
   void _scheduleRetry() {
     if (_closed || _retryTimer != null) return;
     _ws = null;
-    final index =
-        _retryAttempt < _retryDelays.length ? _retryAttempt : _retryDelays.length - 1;
+    final index = _retryAttempt < _retryDelays.length
+        ? _retryAttempt
+        : _retryDelays.length - 1;
     _retryAttempt++;
     _retryTimer = Timer(Duration(seconds: _retryDelays[index]), () async {
       _retryTimer = null;

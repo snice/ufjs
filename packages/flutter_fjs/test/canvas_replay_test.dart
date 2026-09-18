@@ -64,7 +64,9 @@ class _RecordingCanvas implements Canvas {
 
   @override
   void drawRect(Rect rect, Paint paint) {
-    calls.add('drawRect(${rect.left},${rect.top},${rect.width},${rect.height})');
+    calls.add(
+      'drawRect(${rect.left},${rect.top},${rect.width},${rect.height})',
+    );
     paints.add(paint);
   }
 
@@ -90,11 +92,16 @@ class _RecordingCanvas implements Canvas {
   void translate(double dx, double dy) => calls.add('translate($dx,$dy)');
 
   @override
-  void transform(Float64List matrix4) =>
-      calls.add('transform(${matrix4[0]},${matrix4[5]},${matrix4[12]},${matrix4[13]})');
+  void transform(Float64List matrix4) => calls.add(
+    'transform(${matrix4[0]},${matrix4[5]},${matrix4[12]},${matrix4[13]})',
+  );
 
   @override
-  void clipRect(Rect rect, {ui.ClipOp clipOp = ui.ClipOp.intersect, bool doAntiAlias = true}) {
+  void clipRect(
+    Rect rect, {
+    ui.ClipOp clipOp = ui.ClipOp.intersect,
+    bool doAntiAlias = true,
+  }) {
     calls.add('clipRect');
   }
 
@@ -259,7 +266,10 @@ void main() {
     chunk.cmd(0xEE);
 
     expect(
-      () => CanvasReplay(_RecordingCanvas(), const Size(10, 10)).run([chunk.take()]),
+      () => CanvasReplay(
+        _RecordingCanvas(),
+        const Size(10, 10),
+      ).run([chunk.take()]),
       throwsA(isA<CanvasOpException>()),
     );
   });
@@ -270,7 +280,10 @@ void main() {
     chunk.f32(1); // three arguments short
 
     expect(
-      () => CanvasReplay(_RecordingCanvas(), const Size(10, 10)).run([chunk.take()]),
+      () => CanvasReplay(
+        _RecordingCanvas(),
+        const Size(10, 10),
+      ).run([chunk.take()]),
       throwsA(isA<CanvasOpException>()),
     );
   });
@@ -292,7 +305,7 @@ void main() {
     final canvas = _RecordingCanvas();
     CanvasReplay(canvas, const Size(100, 100)).run([chunk.take()]);
 
-    expect(canvas.paints.single.color.alpha, 0);
+    expect((canvas.paints.single.color.a * 255.0).round(), 0);
   });
 
   test('setTransform after a restore is measured from the restored matrix', () {
@@ -322,8 +335,11 @@ void main() {
     // the last transform must be a no-op: the canvas is already at (40, 20)
     // after the restore, so asking for (40, 20) again may not move it
     final last = canvas.calls.last;
-    expect(last, 'transform(1.0,1.0,0.0,0.0)',
-        reason: 'delta computed against the restored matrix, not the stale one');
+    expect(
+      last,
+      'transform(1.0,1.0,0.0,0.0)',
+      reason: 'delta computed against the restored matrix, not the stale one',
+    );
   });
 
   group('retention', () {
@@ -375,8 +391,11 @@ void main() {
         ..cmd(CanvasCmd.clearAll);
       list.append(marked.take());
       expect(list.chunks, hasLength(1));
-      expect(list.needsLayer, isTrue,
-          reason: 'the flag is read before the drop, not lost with it');
+      expect(
+        list.needsLayer,
+        isTrue,
+        reason: 'the flag is read before the drop, not lost with it',
+      );
     });
 
     test('the marker replays as a no-op', () {
@@ -401,15 +420,20 @@ void main() {
       // is ever dropped, so every repaint replays all of them
       final printed = () {
         for (var i = 0; i < 241; i++) {
-          list.append((_Chunk()
-                ..cmd(CanvasCmd.needsLayer)
-                ..cmd(CanvasCmd.save))
-              .take());
+          list.append(
+            (_Chunk()
+                  ..cmd(CanvasCmd.needsLayer)
+                  ..cmd(CanvasCmd.save))
+                .take(),
+          );
         }
       };
-      runZoned(printed, zoneSpecification: ZoneSpecification(
-        print: (_, __, ___, line) => logs.add(line),
-      ));
+      runZoned(
+        printed,
+        zoneSpecification: ZoneSpecification(
+          print: (_, __, ___, line) => logs.add(line),
+        ),
+      );
       expect(logs, hasLength(1));
       expect(logs.single, contains('without a full-canvas clearRect()'));
     });

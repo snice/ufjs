@@ -95,8 +95,13 @@ void main() {
     expect(res['status'], 200);
     expect(seen.single.headers.value('x-token'), 'abc');
     expect(seen.single.headers.contentType?.mimeType, 'text/plain');
-    expect((res['headers']! as Map)['content-type'], startsWith('application/json'));
-    final body = jsonDecode(utf8.decode(base64Decode(res['bodyBase64']! as String)));
+    expect(
+      (res['headers']! as Map)['content-type'],
+      startsWith('application/json'),
+    );
+    final body = jsonDecode(
+      utf8.decode(base64Decode(res['bodyBase64']! as String)),
+    );
     expect(body, {'method': 'POST', 'body': 'hello'});
   });
 
@@ -105,7 +110,10 @@ void main() {
     final res = await events.waitFor(2);
     expect(res['ok'], isTrue);
     expect(res['status'], 404);
-    expect(utf8.decode(base64Decode(res['bodyBase64']! as String)), 'not found');
+    expect(
+      utf8.decode(base64Decode(res['bodyBase64']! as String)),
+      'not found',
+    );
   });
 
   test('carries binary bodies through base64 intact', () async {

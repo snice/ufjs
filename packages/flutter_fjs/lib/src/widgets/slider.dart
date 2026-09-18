@@ -20,17 +20,15 @@ class _FjsSliderState extends State<FjsSlider>
     with FjsControlRegistration<FjsSlider> {
   @override
   FjsControlHandle createControlHandle() => FjsControlHandle(
-        nodeId: widget.node.id,
-        kind: FjsControlKind.slider,
-        getName: () => widget.node.props['name']?.toString(),
-        getId: () => widget.node.props['id']?.toString(),
-        // An integral value goes into a form payload as an int: jsonEncode
-        // would write 30.0 where the web adapter's JSON.stringify writes 30,
-        // and the two payloads have to match byte for byte.
-        getValue: () => _value == _value.roundToDouble()
-            ? _value.toInt()
-            : _value,
-      );
+    nodeId: widget.node.id,
+    kind: FjsControlKind.slider,
+    getName: () => widget.node.props['name']?.toString(),
+    getId: () => widget.node.props['id']?.toString(),
+    // An integral value goes into a form payload as an int: jsonEncode
+    // would write 30.0 where the web adapter's JSON.stringify writes 30,
+    // and the two payloads have to match byte for byte.
+    getValue: () => _value == _value.roundToDouble() ? _value.toInt() : _value,
+  );
 
   late double _min = _num(widget.node.props['min'], 0);
   late double _max = () {
@@ -77,8 +75,11 @@ class _FjsSliderState extends State<FjsSlider>
             ? null
             : (v) {
                 setState(() => _value = v);
-                widget.dispatch(widget.node.id, FjsEvent.valueChanged,
-                    text: v.toStringAsFixed(2));
+                widget.dispatch(
+                  widget.node.id,
+                  FjsEvent.valueChanged,
+                  text: v.toStringAsFixed(2),
+                );
                 notifyControlChanged();
               },
       ),

@@ -94,8 +94,9 @@ void main() {
     });
 
     test('linear-gradient direction keywords', () {
-      final g = parseGradient('linear-gradient(to right, red, blue)')
-          as LinearGradient?;
+      final g =
+          parseGradient('linear-gradient(to right, red, blue)')
+              as LinearGradient?;
       expect(g!.begin, Alignment.centerLeft);
       expect(g.end, Alignment.centerRight);
     });
@@ -170,24 +171,38 @@ void main() {
     }
 
     test('translate in every spelling', () {
-      expect(apply(parseTransform('translate(10px, -4px)')!, Offset.zero),
-          const Offset(10, -4));
+      expect(
+        apply(parseTransform('translate(10px, -4px)')!, Offset.zero),
+        const Offset(10, -4),
+      );
       // a bare number is a pixel count, like the rest of the inline API
-      expect(apply(parseTransform('translate(10, 4)')!, Offset.zero),
-          const Offset(10, 4));
-      expect(apply(parseTransform('translateX(8px)')!, Offset.zero),
-          const Offset(8, 0));
-      expect(apply(parseTransform('translateY(8px)')!, Offset.zero),
-          const Offset(0, 8));
+      expect(
+        apply(parseTransform('translate(10, 4)')!, Offset.zero),
+        const Offset(10, 4),
+      );
+      expect(
+        apply(parseTransform('translateX(8px)')!, Offset.zero),
+        const Offset(8, 0),
+      );
+      expect(
+        apply(parseTransform('translateY(8px)')!, Offset.zero),
+        const Offset(0, 8),
+      );
     });
 
     test('scale and rotate', () {
-      expect(apply(parseTransform('scale(2)')!, const Offset(3, 5)),
-          const Offset(6, 10));
-      expect(apply(parseTransform('scale(2, 3)')!, const Offset(3, 5)),
-          const Offset(6, 15));
-      final rotated =
-          apply(parseTransform('rotate(90deg)')!, const Offset(1, 0));
+      expect(
+        apply(parseTransform('scale(2)')!, const Offset(3, 5)),
+        const Offset(6, 10),
+      );
+      expect(
+        apply(parseTransform('scale(2, 3)')!, const Offset(3, 5)),
+        const Offset(6, 15),
+      );
+      final rotated = apply(
+        parseTransform('rotate(90deg)')!,
+        const Offset(1, 0),
+      );
       expect(rotated.dx, closeTo(0, 1e-9));
       expect(rotated.dy, closeTo(1, 1e-9));
       expect(parseAngle('0.5turn'), closeTo(pi, 1e-9));
@@ -212,13 +227,19 @@ void main() {
       final transitions = parseTransitions({
         'transition': 'transform 180ms ease-out 40ms, opacity .12s linear',
       })!;
-      expect(transitions.forProperty('transform')!.duration,
-          const Duration(milliseconds: 180));
-      expect(transitions.forProperty('transform')!.delay,
-          const Duration(milliseconds: 40));
+      expect(
+        transitions.forProperty('transform')!.duration,
+        const Duration(milliseconds: 180),
+      );
+      expect(
+        transitions.forProperty('transform')!.delay,
+        const Duration(milliseconds: 40),
+      );
       expect(transitions.forProperty('transform')!.curve, Curves.easeOut);
-      expect(transitions.forProperty('opacity')!.duration,
-          const Duration(milliseconds: 120));
+      expect(
+        transitions.forProperty('opacity')!.duration,
+        const Duration(milliseconds: 120),
+      );
       expect(transitions.forProperty('opacity')!.curve, Curves.linear);
     });
 
@@ -227,10 +248,14 @@ void main() {
         'transitionProperty': 'background-color, transform',
         'transitionDuration': '100ms',
       })!;
-      expect(transitions.forProperty('backgroundColor')!.duration,
-          const Duration(milliseconds: 100));
-      expect(transitions.forProperty('transform')!.duration,
-          const Duration(milliseconds: 100));
+      expect(
+        transitions.forProperty('backgroundColor')!.duration,
+        const Duration(milliseconds: 100),
+      );
+      expect(
+        transitions.forProperty('transform')!.duration,
+        const Duration(milliseconds: 100),
+      );
     });
   });
 }

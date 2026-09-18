@@ -81,10 +81,11 @@ class _FjsPickerViewState extends State<FjsPickerView> {
 
   List<int> get _propValue {
     final raw = widget.node.props['value'];
-    final list =
-        raw is List ? raw : (raw is String ? _decode(raw) : const <Object?>[]);
+    final list = raw is List
+        ? raw
+        : (raw is String ? _decode(raw) : const <Object?>[]);
     return [
-      for (final v in list) v is num ? v.toInt() : int.tryParse('$v') ?? 0
+      for (final v in list) v is num ? v.toInt() : int.tryParse('$v') ?? 0,
     ];
   }
 
@@ -97,9 +98,9 @@ class _FjsPickerViewState extends State<FjsPickerView> {
   }
 
   List<int> _optionIds(MirrorNode column) => [
-        for (final id in column.children)
-          if (widget.tree.node(id) case final child? when !_isHidden(child)) id,
-      ];
+    for (final id in column.children)
+      if (widget.tree.node(id) case final child? when !_isHidden(child)) id,
+  ];
 
   static List<Object?> _decode(String raw) {
     try {
@@ -237,27 +238,28 @@ class _FjsPickerViewState extends State<FjsPickerView> {
               stops: [0.0, 0.28, 0.72, 1.0],
             ).createShader(bounds),
             child: Row(
-            children: [
-              for (var i = 0; i < columns.length; i++)
-                Expanded(
-                  child: ListWheelScrollView.useDelegate(
-                    controller:
-                        i < _controllers.length ? _controllers[i] : null,
-                    itemExtent: itemHeight,
-                    diameterRatio: _flatDiameterRatio,
-                    perspective: 0.001,
-                    physics: const FixedExtentScrollPhysics(),
-                    onSelectedItemChanged: (index) => _onSettled(i, index),
-                    childDelegate: ListWheelChildBuilderDelegate(
-                      childCount: options[i].length,
-                      builder: (_, index) {
-                        final child = widget.tree.node(options[i][index]);
-                        if (child == null) return null;
-                        return Center(child: widget.buildNode(child));
-                      },
+              children: [
+                for (var i = 0; i < columns.length; i++)
+                  Expanded(
+                    child: ListWheelScrollView.useDelegate(
+                      controller: i < _controllers.length
+                          ? _controllers[i]
+                          : null,
+                      itemExtent: itemHeight,
+                      diameterRatio: _flatDiameterRatio,
+                      perspective: 0.001,
+                      physics: const FixedExtentScrollPhysics(),
+                      onSelectedItemChanged: (index) => _onSettled(i, index),
+                      childDelegate: ListWheelChildBuilderDelegate(
+                        childCount: options[i].length,
+                        builder: (_, index) {
+                          final child = widget.tree.node(options[i][index]);
+                          if (child == null) return null;
+                          return Center(child: widget.buildNode(child));
+                        },
+                      ),
                     ),
                   ),
-                ),
               ],
             ),
           ),

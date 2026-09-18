@@ -6,8 +6,7 @@
 // (packages/fjs-webgl/flutter/test/webgl_replay_test.dart).
 import 'dart:typed_data';
 
-import 'package:flutter_fjs/flutter_fjs.dart'
-    show UiOpCode, canvasNodeDisposed;
+import 'package:flutter_fjs/flutter_fjs.dart' show UiOpCode, canvasNodeDisposed;
 import 'package:flutter_fjs/src/mirror_tree.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -15,12 +14,8 @@ import 'package:flutter_test/flutter_test.dart';
 Uint8List webglOp(int nodeId, List<int> payload) {
   final out = BytesBuilder();
   out.addByte(UiOpCode.webgl);
-  void u32(int v) => out.add([
-        v & 0xff,
-        (v >> 8) & 0xff,
-        (v >> 16) & 0xff,
-        (v >> 24) & 0xff,
-      ]);
+  void u32(int v) =>
+      out.add([v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff]);
   u32(nodeId);
   u32(payload.length);
   out.add(payload);
@@ -79,12 +74,8 @@ void main() {
 Uint8List _createOp(int nodeId, String tag) {
   final out = BytesBuilder();
   out.addByte(UiOpCode.create);
-  void u32(int v) => out.add([
-        v & 0xff,
-        (v >> 8) & 0xff,
-        (v >> 16) & 0xff,
-        (v >> 24) & 0xff,
-      ]);
+  void u32(int v) =>
+      out.add([v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff]);
   u32(nodeId);
   final encoded = Uint8List.fromList(tag.codeUnits);
   out.addByte(encoded.length & 0xff);

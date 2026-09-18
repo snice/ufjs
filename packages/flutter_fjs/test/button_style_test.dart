@@ -85,8 +85,9 @@ void main() {
     expect(style.animationDuration, Duration.zero);
   });
 
-  testWidgets('explicit border color still paints a CSS border',
-      (tester) async {
+  testWidgets('explicit border color still paints a CSS border', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       _render(
         _buttonTree(
@@ -109,7 +110,9 @@ void main() {
     const hairline = '"border":"1px solid rgba(0,0,0,0.16)"';
 
     Future<Border?> borderOf(WidgetTester tester, String style) async {
-      await tester.pumpWidget(_render(_buttonTree('{"onTap":true,"style":{$style}}')));
+      await tester.pumpWidget(
+        _render(_buttonTree('{"onTap":true,"style":{$style}}')),
+      );
       final containers = tester.widgetList<Container>(find.byType(Container));
       if (containers.isEmpty) return null;
       return (containers.last.decoration as BoxDecoration?)?.border as Border?;
@@ -153,8 +156,9 @@ void main() {
   // `disabled` is a state the page asked for (faded, inert), while a button
   // with no handler at all is just a static label with normal chrome.
   group('disabled and loading', () {
-    testWidgets('disabled does not dispatch and shows no press mask',
-        (tester) async {
+    testWidgets('disabled does not dispatch and shows no press mask', (
+      tester,
+    ) async {
       final events = <int>[];
       final tree = _buttonTree('{"onTap":true,"disabled":true}');
       await tester.pumpWidget(
@@ -168,8 +172,9 @@ void main() {
           ),
         ),
       );
-      final press =
-          await tester.startGesture(tester.getCenter(find.byType(TextButton)));
+      final press = await tester.startGesture(
+        tester.getCenter(find.byType(TextButton)),
+      );
       await tester.pump();
       expect(_mask, findsNothing);
       await press.up();
@@ -199,20 +204,23 @@ void main() {
       expect(find.byType(Opacity), findsNothing);
     });
 
-    testWidgets('a button with no handler stays a plain static button',
-        (tester) async {
+    testWidgets('a button with no handler stays a plain static button', (
+      tester,
+    ) async {
       await tester.pumpWidget(_render(_buttonTree('{}')));
       expect(find.byType(Opacity), findsNothing);
-      final press =
-          await tester.startGesture(tester.getCenter(find.byType(TextButton)));
+      final press = await tester.startGesture(
+        tester.getCenter(find.byType(TextButton)),
+      );
       await tester.pump();
       expect(_mask, findsNothing);
       await press.up();
     });
   });
 
-  testWidgets('pointer down paints the 10% mask on the next frame',
-      (tester) async {
+  testWidgets('pointer down paints the 10% mask on the next frame', (
+    tester,
+  ) async {
     await tester.pumpWidget(_render(_buttonTree(filled)));
 
     final press = await tester.startGesture(
@@ -250,8 +258,9 @@ void main() {
     expect(_mask, findsNothing);
   });
 
-  testWidgets('press mask stays the button size inside a stretch column',
-      (tester) async {
+  testWidgets('press mask stays the button size inside a stretch column', (
+    tester,
+  ) async {
     // The regression from wrapping with Stack+Positioned.fill: the stack
     // took the column's stretched width, the button shrink-wrapped, and
     // the mask painted a full-width grey bar beside it.

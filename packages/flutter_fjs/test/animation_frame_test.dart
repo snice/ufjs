@@ -25,8 +25,9 @@ void main() {
   }
   ffi.DynamicLibrary.open(lib);
 
-  testWidgets('requestAnimationFrame callback runs on a later frame',
-      (tester) async {
+  testWidgets('requestAnimationFrame callback runs on a later frame', (
+    tester,
+  ) async {
     final logs = <String>[];
     final engine = FjsEngine()..onLog = (_, message) => logs.add(message);
     addTearDown(engine.dispose);

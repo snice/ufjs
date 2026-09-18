@@ -13,10 +13,7 @@ double _round(double value) => (value * 10).roundToDouble() / 10;
 
 /// Serializes a `@linechange` event. The key ORDER is part of the contract,
 /// and `heightRpx` is deliberately absent (fjs has no rpx coordinate system).
-String fjsLineChangePayload({
-  required double height,
-  required int lineCount,
-}) {
+String fjsLineChangePayload({required double height, required int lineCount}) {
   final rounded = _round(height);
   return jsonEncode({
     // jsonEncode writes 68.0 where JS writes 68; match JS.

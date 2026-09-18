@@ -49,7 +49,10 @@ void main() {
   /// in [logs] by the time runSource returns.
   String dump(String expr, {String tag = 'OUT'}) {
     final before = logs.length;
-    engine.runSource('globalThis.dump("$tag", $expr);', filename: 'viewport-dump.js');
+    engine.runSource(
+      'globalThis.dump("$tag", $expr);',
+      filename: 'viewport-dump.js',
+    );
     return logs.skip(before).firstWhere((l) => l.startsWith('$tag '));
   }
 

@@ -28,8 +28,12 @@ class _W {
 /// One 100x40 view carrying [style]; called again with new values to move
 /// the SAME node's style across frames (that is what a transition needs —
 /// a fresh tree would have nothing to animate from).
-Uint8List _frame(String background, String transition,
-    {String? gradient, int width = 100}) {
+Uint8List _frame(
+  String background,
+  String transition, {
+  String? gradient,
+  int width = 100,
+}) {
   final w = _W();
   w.u8(UiOpCode.create);
   w.u32(1);
@@ -56,15 +60,15 @@ Uint8List _frame(String background, String transition,
 }
 
 Widget _render(MirrorTree tree) => MaterialApp(
-      home: Align(
-        alignment: Alignment.topLeft,
-        child: FjsNodeRenderer(
-          tree: tree,
-          ids: tree.rootChildren,
-          dispatch: (_, __, {String? text}) {},
-        ),
-      ),
-    );
+  home: Align(
+    alignment: Alignment.topLeft,
+    child: FjsNodeRenderer(
+      tree: tree,
+      ids: tree.rootChildren,
+      dispatch: (_, __, {String? text}) {},
+    ),
+  ),
+);
 
 BoxDecoration _deco(WidgetTester tester) =>
     tester.widget<Container>(find.byType(Container).first).decoration
@@ -73,9 +77,11 @@ BoxDecoration _deco(WidgetTester tester) =>
 Color? _background(WidgetTester tester) => _deco(tester).color;
 
 void main() {
-  testWidgets('background-color interpolates through the change',
-      (tester) async {
-    final tree = MirrorTree()..applyFrame(_frame('#dd524d', 'background-color 1s linear'));
+  testWidgets('background-color interpolates through the change', (
+    tester,
+  ) async {
+    final tree = MirrorTree()
+      ..applyFrame(_frame('#dd524d', 'background-color 1s linear'));
     await tester.pumpWidget(_render(tree));
     expect(_background(tester), const Color(0xFFDD524D));
 
@@ -86,8 +92,16 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     // halfway: channels are between the endpoints (linear curve)
     final mid = _background(tester)!;
-    expect(mid.red, inInclusiveRange(115, 135), reason: '221 -> 28 halfways ~124');
-    expect(mid.blue, inInclusiveRange(92, 105), reason: '77 -> 120 halfways ~98.5');
+    expect(
+      (mid.r * 255.0).round(),
+      inInclusiveRange(115, 135),
+      reason: '221 -> 28 halfways ~124',
+    );
+    expect(
+      (mid.b * 255.0).round(),
+      inInclusiveRange(92, 105),
+      reason: '77 -> 120 halfways ~98.5',
+    );
     await tester.pump(const Duration(milliseconds: 600));
     expect(_background(tester), const Color(0xFF1C3D78));
   });
@@ -131,8 +145,7 @@ void main() {
   testWidgets('width interpolates and re-lays-out per frame', (tester) async {
     // a size transition is a LAYOUT animation: the resolved px animates and
     // the subtree re-lays-out each frame — same cost as on web
-    final tree = MirrorTree()
-      ..applyFrame(_frame('#dd524d', 'width 1s linear'));
+    final tree = MirrorTree()..applyFrame(_frame('#dd524d', 'width 1s linear'));
     await tester.pumpWidget(_render(tree));
     expect(tester.getSize(find.byType(Container)).width, 100);
 
@@ -156,8 +169,9 @@ void main() {
     expect(tester.getSize(find.byType(Container)).width, 200);
   });
 
-  testWidgets('a gradient background jumps instead of transitioning',
-      (tester) async {
+  testWidgets('a gradient background jumps instead of transitioning', (
+    tester,
+  ) async {
     // gradients are outside the transition contract (spec 044 note: the
     // TweenAnimationBuilder only carries the solid color); a changed
     // gradient applies on the next frame with no interpolation

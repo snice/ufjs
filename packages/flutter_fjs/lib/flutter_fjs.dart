@@ -1,11 +1,12 @@
-// flutter_fjs — JS/TS runtime for Flutter.
-//
-// See docs/architecture.md for the layering. Entry points:
-//   * FjsEngine         — the JS engine host (runSource / runBundle / dev)
-//   * FjsView           — widget that renders the JS UI tree
-//   * FjsApp            — Navigator driven by the JS router (native routes)
-//   * HostRegistry      — Dart-side host modules callable from JS
-//   * ComponentRegistry — Dart widgets rendered for JS tags
+/// JS/TS runtime for Flutter: QuickJS-ng embedded via FFI, JS UI tags
+/// rendered as a mirror tree of Flutter widgets.
+///
+/// See docs/architecture.md for the layering. Entry points:
+///   * [FjsEngine]         — the JS engine host (runSource / runBundle / dev)
+///   * [FjsView]           — widget that renders the JS UI tree
+///   * [FjsApp]            — Navigator driven by the JS router (native routes)
+///   * [HostRegistry]      — Dart-side host modules callable from JS
+///   * [ComponentRegistry] — Dart widgets rendered for JS tags
 library flutter_fjs;
 
 export 'src/bytes.dart' show FjsByteData;
@@ -33,15 +34,14 @@ export 'src/registry/component.dart' show ComponentRegistry, ComponentBuilder;
 // the node a ComponentBuilder is handed: props, text and children ids. Part
 // of the public surface because writing a builder means reading it.
 export 'src/canvas/canvas_module.dart'
-show
-    canvasDisplayOverride,
-    canvasReadback,
-    canvasNodeDisposed,
-    FjsCanvasDisplayOverride,
-    FjsCanvasReadback,
-    FjsCanvasNodeDisposed;
-export 'src/canvas/canvas_ops.dart'
-show CanvasChunkReader, CanvasOpException;
+    show
+        canvasDisplayOverride,
+        canvasReadback,
+        canvasNodeDisposed,
+        FjsCanvasDisplayOverride,
+        FjsCanvasReadback,
+        FjsCanvasNodeDisposed;
+export 'src/canvas/canvas_ops.dart' show CanvasChunkReader, CanvasOpException;
 export 'src/canvas/images.dart' show FjsCanvasImages;
 export 'src/mirror_tree.dart' show MirrorNode;
 // how the widget layer itself reads a CSS color, for builders that read one

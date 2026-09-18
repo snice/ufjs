@@ -43,23 +43,27 @@ void registerCanvasHostModules({
     ..register('fjs.canvas.loadImage', (args) {
       final handle = _int(args, 0);
       final src = args.length > 1 ? args[1]?.toString() ?? '' : '';
-      unawaited(_loadImage(
-        handle: handle,
-        src: src,
-        dispatch: dispatch,
-        devUri: devUri(),
-        devGeneration: devGeneration(),
-      ));
+      unawaited(
+        _loadImage(
+          handle: handle,
+          src: src,
+          dispatch: dispatch,
+          devUri: devUri(),
+          devGeneration: devGeneration(),
+        ),
+      );
       return null;
     })
     ..register('fjs.canvas.toDataURL', (args) {
       final requestId = _int(args, 0);
       final nodeId = _int(args, 1);
-      unawaited(_toDataUrl(
-        requestId: requestId,
-        node: tree.node(nodeId),
-        dispatch: dispatch,
-      ));
+      unawaited(
+        _toDataUrl(
+          requestId: requestId,
+          node: tree.node(nodeId),
+          dispatch: dispatch,
+        ),
+      );
       return null;
     });
 }
@@ -75,7 +79,8 @@ class _Font {
 }
 
 _Font _decodeFont(String? json) {
-  if (json == null || json.isEmpty) return const _Font(10, 400, false, 'sans-serif');
+  if (json == null || json.isEmpty)
+    return const _Font(10, 400, false, 'sans-serif');
   try {
     final map = jsonDecode(json) as Map<String, Object?>;
     return _Font(
@@ -101,7 +106,9 @@ String _measure(_Font font, String text) {
     italic: font.italic,
     color: const Color(0xFF000000),
   );
-  final ascent = painter.computeDistanceToActualBaseline(TextBaseline.alphabetic);
+  final ascent = painter.computeDistanceToActualBaseline(
+    TextBaseline.alphabetic,
+  );
   return jsonEncode({
     'width': _round(painter.width),
     'actualBoundingBoxAscent': _round(ascent),

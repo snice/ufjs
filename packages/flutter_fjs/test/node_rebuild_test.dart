@@ -107,13 +107,13 @@ MirrorTree _tree() {
 }
 
 Widget _render(MirrorTree tree) => Directionality(
-      textDirection: TextDirection.ltr,
-      child: FjsNodeRenderer(
-        tree: tree,
-        ids: tree.rootChildren,
-        dispatch: (_, __, {String? text}) {},
-      ),
-    );
+  textDirection: TextDirection.ltr,
+  child: FjsNodeRenderer(
+    tree: tree,
+    ids: tree.rootChildren,
+    dispatch: (_, __, {String? text}) {},
+  ),
+);
 
 /// Applies a frame the way the engine does: mutate, then release the
 /// per-node signals in one go.
@@ -135,8 +135,11 @@ void main() {
     expect(find.text('changed'), findsOneWidget);
     // the text node, plus its row (a parent re-collects its children, and
     // reads their position/flexGrow while laying itself out)
-    expect(FjsNodeRenderer.buildCount, lessThanOrEqualTo(4),
-        reason: 'a leaf edit must not cost one build per node on the page');
+    expect(
+      FjsNodeRenderer.buildCount,
+      lessThanOrEqualTo(4),
+      reason: 'a leaf edit must not cost one build per node on the page',
+    );
   });
 
   testWidgets('restyling one node does not rebuild the page', (tester) async {
@@ -169,8 +172,9 @@ void main() {
     expect(FjsNodeRenderer.buildCount, greaterThanOrEqualTo(_rows));
   });
 
-  testWidgets('inserting a child rebuilds the parent, not its siblings',
-      (tester) async {
+  testWidgets('inserting a child rebuilds the parent, not its siblings', (
+    tester,
+  ) async {
     final tree = _tree();
     await tester.pumpWidget(_render(tree));
 
@@ -189,8 +193,9 @@ void main() {
     expect(FjsNodeRenderer.buildCount, lessThanOrEqualTo(6));
   });
 
-  testWidgets('a child becoming hidden makes its parent re-collect',
-      (tester) async {
+  testWidgets('a child becoming hidden makes its parent re-collect', (
+    tester,
+  ) async {
     // display:none is evaluated by the PARENT when it gathers its children,
     // so a child-only signal would leave the row showing a gap. This is the
     // test that fails if the parent is not marked alongside the child.
@@ -217,8 +222,9 @@ void main() {
     expect(find.text('row 4'), findsNothing);
   });
 
-  testWidgets('a reorder moves rows without rebuilding their subtrees',
-      (tester) async {
+  testWidgets('a reorder moves rows without rebuilding their subtrees', (
+    tester,
+  ) async {
     final tree = _tree();
     await tester.pumpWidget(_render(tree));
 
@@ -228,7 +234,10 @@ void main() {
     await tester.pump();
 
     expect(find.text('row ${_rows - 1}'), findsOneWidget);
-    expect(FjsNodeRenderer.buildCount, lessThanOrEqualTo(4),
-        reason: 'a move is a slot change, not a rebuild');
+    expect(
+      FjsNodeRenderer.buildCount,
+      lessThanOrEqualTo(4),
+      reason: 'a move is a slot change, not a rebuild',
+    );
   });
 }

@@ -142,14 +142,13 @@ void main() {
 
   tearDown(() => engine.dispose());
 
-  Future<void> pumpApp(
-    WidgetTester tester, {
-    TargetPlatform? platform,
-  }) async {
-    await tester.pumpWidget(MaterialApp(
-      theme: platform == null ? null : ThemeData(platform: platform),
-      home: FjsApp(engine: engine),
-    ));
+  Future<void> pumpApp(WidgetTester tester, {TargetPlatform? platform}) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: platform == null ? null : ThemeData(platform: platform),
+        home: FjsApp(engine: engine),
+      ),
+    );
     await tester.pumpAndSettle();
   }
 
@@ -196,8 +195,9 @@ void main() {
     expect(events.single, contains('11:1'));
   });
 
-  testWidgets('popping waits for the route transition before JS unmount',
-      (tester) async {
+  testWidgets('popping waits for the route transition before JS unmount', (
+    tester,
+  ) async {
     final logs = <String>[];
     engine.onLog = (_, message) => logs.add(message);
     await pumpApp(tester, platform: TargetPlatform.android);
@@ -315,8 +315,9 @@ void main() {
     expect(find.text('page-2'), findsOneWidget);
   });
 
-  testWidgets('a named transition is the same route on every platform',
-      (tester) async {
+  testWidgets('a named transition is the same route on every platform', (
+    tester,
+  ) async {
     await pumpApp(tester);
 
     // what `meta.transition: "fjs-fade"` sends
@@ -363,12 +364,16 @@ void main() {
     expect(midPushHomeX, lessThan(homeX));
     final pageX = tester.getCenter(find.text('page-1')).dx;
     expect(pageX, greaterThan(homeX));
-    expect(pageX, lessThan(tester.view.physicalSize.width / tester.view.devicePixelRatio));
+    expect(
+      pageX,
+      lessThan(tester.view.physicalSize.width / tester.view.devicePixelRatio),
+    );
     await tester.pumpAndSettle();
 
     // fully covered: the base route is offstage but still laid out
-    final coveredHomeX =
-        tester.getCenter(find.text('home', skipOffstage: false)).dx;
+    final coveredHomeX = tester
+        .getCenter(find.text('home', skipOffstage: false))
+        .dx;
     expect(coveredHomeX, lessThan(homeX));
 
     engine.runSource('popTop()');
@@ -378,8 +383,9 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('list-view builds lazily and emits scroll offsets',
-      (tester) async {
+  testWidgets('list-view builds lazily and emits scroll offsets', (
+    tester,
+  ) async {
     engine.dispose();
     engine = FjsEngine();
     engine.runSource(_listProgram, filename: 'list-test.js');
@@ -422,8 +428,9 @@ void main() {
     expect(find.text('page-1'), findsOneWidget);
   });
 
-  testWidgets('a UI frame mid-pop does not recreate the leaving route',
-      (tester) async {
+  testWidgets('a UI frame mid-pop does not recreate the leaving route', (
+    tester,
+  ) async {
     final logs = <String>[];
     engine.onLog = (_, message) => logs.add(message);
     await pumpApp(tester, platform: TargetPlatform.android);
@@ -458,8 +465,9 @@ void main() {
     expect(find.text('home'), findsOneWidget);
   });
 
-  testWidgets('a UI frame during a platform pop keeps the same route',
-      (tester) async {
+  testWidgets('a UI frame during a platform pop keeps the same route', (
+    tester,
+  ) async {
     await pumpApp(tester, platform: TargetPlatform.android);
     engine.runSource('push(1, "", "fjs-fade")');
     await tester.pumpAndSettle();

@@ -41,7 +41,8 @@ Widget gestureNode(
   // because the inner recognizer stepped aside. `loading` is a button's
   // second inert state — kept tag-scoped, since the prop means nothing on
   // any other tag.
-  final inert = fjsBool(node.props['disabled']) ||
+  final inert =
+      fjsBool(node.props['disabled']) ||
       (node.tag == 'button' && fjsBool(node.props['loading']));
   final onTap = hasTapEvent(node) && !inert
       ? () => dispatch(node.id, FjsEvent.tap)

@@ -120,14 +120,20 @@ void main() {
     );
     final areas = tester.widgetList<SafeArea>(find.byType(SafeArea)).toList();
     expect(areas, hasLength(2));
-    expect([areas[0].top, areas[0].bottom, areas[0].left, areas[0].right], [true, false, false, false]);
-    expect([areas[1].top, areas[1].bottom, areas[1].left, areas[1].right], [false, true, false, false]);
+    expect(
+      [areas[0].top, areas[0].bottom, areas[0].left, areas[0].right],
+      [true, false, false, false],
+    );
+    expect(
+      [areas[1].top, areas[1].bottom, areas[1].left, areas[1].right],
+      [false, true, false, false],
+    );
     expect(tester.takeException(), isNull);
   });
 
-
-  testWidgets('the shell fills the page, top bar and tab bar pinned',
-      (tester) async {
+  testWidgets('the shell fills the page, top bar and tab bar pinned', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Material(

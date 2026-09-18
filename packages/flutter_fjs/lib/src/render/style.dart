@@ -1,11 +1,11 @@
 // Style resolution for the widget layer. Property reference: docs/ui-api.md.
-import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../mirror_tree.dart';
 import 'length.dart';
 import 'style_parse.dart';
-
 
 /// Splits a shorthand value into components at top-level whitespace —
 /// whitespace inside parentheses (a `calc(50% - 8px)` component) does not
@@ -35,10 +35,22 @@ const _defaultBorderColor = Color(0xFFDDDDDD);
 
 /// The single-side border keys, shorthands and longhands.
 const _borderSideKeys = [
-  'borderTop', 'borderRight', 'borderBottom', 'borderLeft',
-  'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
-  'borderTopColor', 'borderRightColor', 'borderBottomColor', 'borderLeftColor',
-  'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle',
+  'borderTop',
+  'borderRight',
+  'borderBottom',
+  'borderLeft',
+  'borderTopWidth',
+  'borderRightWidth',
+  'borderBottomWidth',
+  'borderLeftWidth',
+  'borderTopColor',
+  'borderRightColor',
+  'borderBottomColor',
+  'borderLeftColor',
+  'borderTopStyle',
+  'borderRightStyle',
+  'borderBottomStyle',
+  'borderLeftStyle',
 ];
 
 /// One resolved side (`border-bottom: 1px solid #eee`).
@@ -71,8 +83,12 @@ class FjsBoxBorders {
     return same(right) && same(bottom) && same(left);
   }
 
-  bool get hasDashed =>
-      [top, right, bottom, left].any((s) => s != null && s.kind != FjsBorderStyle.solid);
+  bool get hasDashed => [
+    top,
+    right,
+    bottom,
+    left,
+  ].any((s) => s != null && s.kind != FjsBorderStyle.solid);
 
   /// The uniform sides as Flutter's `Border.all`, or null when not uniform.
   Border? get uniformBorder => !isUniform || isNone
@@ -139,7 +155,9 @@ class FjsStyle {
     final base = node.styleMap;
     final hover = hovered ? node.hoverStyleMap : null;
     final active = pressed ? node.activeStyleMap : null;
-    style = hover == null && active == null ? base : {...base, ...?hover, ...?active};
+    style = hover == null && active == null
+        ? base
+        : {...base, ...?hover, ...?active};
   }
 
   /// Whether the node carries a page-authored `:active` style. Buttons also
@@ -172,6 +190,7 @@ class FjsStyle {
   /// from "no border-width at all". See [border].
   double? get declaredBorderWidth => _num('borderWidth');
   Color? get declaredBorderColor => _color('borderColor');
+
   /// Absolute width/height, in logical pixels. A relative one (`50%`,
   /// `calc(...)`) reads as null here — it cannot be known before layout, and
   /// null is what every consumer already treats as "auto". Use
@@ -212,14 +231,16 @@ class FjsStyle {
       final word = declaredKind.toString().trim().toLowerCase();
       if (word == 'none' || word == 'hidden') return null;
     }
-    final width = declaredWidth ??
+    final width =
+        declaredWidth ??
         shorthand?.width ??
         (declaredColor != null || declaredKind != null ? 1.0 : null);
     if (width == null || width <= 0) return null;
     return (
       width: width,
       color: declaredColor ?? shorthand?.color ?? _defaultBorderColor,
-      kind: parseBorderStyle(declaredKind) ??
+      kind:
+          parseBorderStyle(declaredKind) ??
           shorthand?.kind ??
           FjsBorderStyle.solid,
     );
@@ -241,7 +262,8 @@ class FjsStyle {
 
   /// Whether any single-side border key was declared. An inline `<text>`
   /// span warns about ignored box properties, and these are box properties.
-  bool get hasSideBorderDeclaration => _borderSideKeys.any((k) => _v(k) != null);
+  bool get hasSideBorderDeclaration =>
+      _borderSideKeys.any((k) => _v(k) != null);
 
   /// The four CSS sides, each resolved through
   /// `border-<side>-width/color/style` > `border-<side>` >
@@ -276,7 +298,8 @@ class FjsStyle {
         // `border-bottom: none` / `hidden` parse to null — declared, and off
         width = sShort?.width ?? 0;
       } else if (sColor != null || sKindRaw != null) {
-        width = 1; // a lone color or style means the default hairline, as in CSS
+        width =
+            1; // a lone color or style means the default hairline, as in CSS
       } else if (gWidth != null) {
         width = gWidth > 0 ? gWidth : 0;
       } else if (_v('border') != null) {
@@ -287,20 +310,29 @@ class FjsStyle {
         // nothing declared anywhere: only here does a built-in default fill in
         return defaultBorderColor == null
             ? null
-            : (width: 1.0, color: defaultBorderColor, kind: FjsBorderStyle.solid);
+            : (
+                width: 1.0,
+                color: defaultBorderColor,
+                kind: FjsBorderStyle.solid,
+              );
       }
       if (width <= 0) return null;
       final kind = sKindRaw != null
           ? sKind
           : sShortRaw != null
-              ? sShort?.kind
-              : gKindRaw != null
-                  ? gKind
-                  : gShort?.kind ?? FjsBorderStyle.solid;
+          ? sShort?.kind
+          : gKindRaw != null
+          ? gKind
+          : gShort?.kind ?? FjsBorderStyle.solid;
       if (kind == null) return null; // a `none` / `hidden` style, per side
       return (
         width: width,
-        color: sColor ?? sShort?.color ?? gColor ?? gShort?.color ?? _defaultBorderColor,
+        color:
+            sColor ??
+            sShort?.color ??
+            gColor ??
+            gShort?.color ??
+            _defaultBorderColor,
         kind: kind,
       );
     }
@@ -309,7 +341,8 @@ class FjsStyle {
     final right = resolve('Right');
     final bottom = resolve('Bottom');
     final left = resolve('Left');
-    if (top == null && right == null && bottom == null && left == null) return null;
+    if (top == null && right == null && bottom == null && left == null)
+      return null;
     return FjsBoxBorders(top: top, right: right, bottom: bottom, left: left);
   }
 
@@ -339,6 +372,7 @@ class FjsStyle {
 
   FontWeight? get fontWeight => parseFontWeight(_v('fontWeight'));
   FontStyle? get fontStyle => parseFontStyle(_v('fontStyle'));
+
   /// The declared family, with the generic `monospace` turned into a font
   /// this platform actually has. Flutter resolves a family by NAME, and no
   /// iOS font is called "monospace": the lookup fails quietly and the text
@@ -451,21 +485,11 @@ class FjsStyle {
       if (nums.any((n) => n == null)) return null;
       return switch (nums.length) {
         1 => (top: nums[0]!, right: nums[0]!, bottom: nums[0]!, left: nums[0]!),
-        2 => (
-            top: nums[0]!,
-            right: nums[1]!,
-            bottom: nums[0]!,
-            left: nums[1]!
-          ),
+        2 => (top: nums[0]!, right: nums[1]!, bottom: nums[0]!, left: nums[1]!),
         // top | horizontal | bottom
         3 => (top: nums[0]!, right: nums[1]!, bottom: nums[2]!, left: nums[1]!),
         // CSS order: top right bottom left -> Flutter: left top right bottom
-        4 => (
-            top: nums[0]!,
-            right: nums[1]!,
-            bottom: nums[2]!,
-            left: nums[3]!
-          ),
+        4 => (top: nums[0]!, right: nums[1]!, bottom: nums[2]!, left: nums[3]!),
         _ => null,
       };
     }
@@ -480,7 +504,6 @@ class FjsStyle {
     }
     return null;
   }
-
 
   /// The shorthand (`margin: 8px 0`) plus the longhands (`margin-top`), with
   /// a longhand overriding the side the shorthand set — the common authoring
@@ -532,7 +555,11 @@ class FjsStyle {
       }
 
       return EdgeInsets.fromLTRB(
-          g('left') ?? 0, g('top') ?? 0, g('right') ?? 0, g('bottom') ?? 0);
+        g('left') ?? 0,
+        g('top') ?? 0,
+        g('right') ?? 0,
+        g('bottom') ?? 0,
+      );
     }
     return null;
   }

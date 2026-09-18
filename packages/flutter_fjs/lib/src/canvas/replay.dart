@@ -281,8 +281,9 @@ class CanvasReplay {
           _patterns[handle] = _PatternDef(r.u32(), r.u8());
         default:
           throw CanvasOpException(
-              'unknown canvas command 0x${cmd.toRadixString(16)} at offset '
-              '${r.offset - 1}');
+            'unknown canvas command 0x${cmd.toRadixString(16)} at offset '
+            '${r.offset - 1}',
+          );
       }
     }
   }
@@ -346,12 +347,12 @@ class CanvasReplay {
       if (shader != null) paint.shader = shader;
     }
     final alpha = state.globalAlpha.clamp(0.0, 1.0);
-    paint.color = color.withOpacity((color.opacity * alpha).clamp(0.0, 1.0));
+    paint.color = color.withValues(alpha: (color.a * alpha).clamp(0.0, 1.0));
     if (source != null && alpha < 1) {
       // a shader ignores the paint colour, so global alpha has to be applied
       // as a colour filter instead
       paint.colorFilter = ColorFilter.mode(
-        const Color(0xFFFFFFFF).withOpacity(alpha),
+        const Color(0xFFFFFFFF).withValues(alpha: alpha),
         BlendMode.modulate,
       );
     }
@@ -367,7 +368,7 @@ class CanvasReplay {
     if (needsLayer) {
       canvas.saveLayer(null, Paint()..blendMode = blend);
     }
-    if (state.shadowColor.opacity > 0 &&
+    if (state.shadowColor.a > 0 &&
         (state.shadowBlur > 0 ||
             state.shadowOffsetX != 0 ||
             state.shadowOffsetY != 0)) {
@@ -376,8 +377,10 @@ class CanvasReplay {
         ..shader = null;
       if (state.shadowBlur > 0) {
         // CSS blur radius is roughly two standard deviations
-        shadowPaint.maskFilter =
-            MaskFilter.blur(BlurStyle.normal, state.shadowBlur / 2);
+        shadowPaint.maskFilter = MaskFilter.blur(
+          BlurStyle.normal,
+          state.shadowBlur / 2,
+        );
       }
       canvas.save();
       canvas.translate(state.shadowOffsetX, state.shadowOffsetY);
@@ -422,7 +425,10 @@ class CanvasReplay {
         final next = distance + step;
         if (on && next > 0) {
           out.addPath(
-            metric.extractPath(math.max(distance, 0), math.min(next, metric.length)),
+            metric.extractPath(
+              math.max(distance, 0),
+              math.min(next, metric.length),
+            ),
             Offset.zero,
           );
         }
@@ -494,14 +500,15 @@ class CanvasReplay {
     final count = form == CanvasDrawImageForm.srcDstRect
         ? 8
         : form == CanvasDrawImageForm.dstRect
-            ? 4
-            : 2;
+        ? 4
+        : 2;
     final args = [for (var i = 0; i < count; i++) r.f32()];
     final image = FjsCanvasImages.instance.lookup(handle);
     if (image == null) return; // still decoding; the page redraws on load
     final paint = _paint(fill: true)..color = const Color(0xFFFFFFFF);
-    paint.color =
-        paint.color.withOpacity(_state.globalAlpha.clamp(0.0, 1.0));
+    paint.color = paint.color.withValues(
+      alpha: _state.globalAlpha.clamp(0.0, 1.0),
+    );
     paint.shader = null;
     switch (form) {
       case CanvasDrawImageForm.dstPoint:
@@ -580,8 +587,13 @@ class CanvasReplay {
       final y = source.repeat == 1 || source.repeat == 3
           ? TileMode.clamp
           : TileMode.repeated;
-      return ui.ImageShader(image, x, y, Matrix4identity(),
-          filterQuality: FilterQuality.low);
+      return ui.ImageShader(
+        image,
+        x,
+        y,
+        Matrix4identity(),
+        filterQuality: FilterQuality.low,
+      );
     }
     return null;
   }
@@ -604,7 +616,14 @@ Float64List Matrix4identity() {
   return m;
 }
 
-Float64List _matrix4(double a, double b, double c, double d, double e, double f) {
+Float64List _matrix4(
+  double a,
+  double b,
+  double c,
+  double d,
+  double e,
+  double f,
+) {
   final m = Float64List(16);
   m[0] = a;
   m[1] = b;
@@ -665,7 +684,9 @@ Path decodePath(Uint8List bytes) {
       case CanvasPathCmd.close:
         path.close();
       default:
-        throw CanvasOpException('unknown canvas path command at ${r.offset - 1}');
+        throw CanvasOpException(
+          'unknown canvas path command at ${r.offset - 1}',
+        );
     }
   }
   return path;
@@ -714,7 +735,11 @@ void _ellipse(Path path, CanvasChunkReader r) {
   final ccw = r.u8() == 1;
   final sweep = _sweep(start, end, ccw);
   if (rotation == 0) {
-    final oval = Rect.fromCenter(center: Offset(x, y), width: rx * 2, height: ry * 2);
+    final oval = Rect.fromCenter(
+      center: Offset(x, y),
+      width: rx * 2,
+      height: ry * 2,
+    );
     if (_isFullTurn(sweep)) {
       path.addOval(oval);
       return;
@@ -724,7 +749,11 @@ void _ellipse(Path path, CanvasChunkReader r) {
   }
   // a rotated ellipse is the unrotated one under a transform; adding it as a
   // sub-path keeps the caller's current point intact
-  final subOval = Rect.fromCenter(center: Offset.zero, width: rx * 2, height: ry * 2);
+  final subOval = Rect.fromCenter(
+    center: Offset.zero,
+    width: rx * 2,
+    height: ry * 2,
+  );
   final sub = Path();
   if (_isFullTurn(sweep)) {
     sub.addOval(subOval);
@@ -733,8 +762,14 @@ void _ellipse(Path path, CanvasChunkReader r) {
   }
   final m = _multiply(
     _matrix4(1, 0, 0, 1, x, y),
-    _matrix4(math.cos(rotation), math.sin(rotation), -math.sin(rotation),
-        math.cos(rotation), 0, 0),
+    _matrix4(
+      math.cos(rotation),
+      math.sin(rotation),
+      -math.sin(rotation),
+      math.cos(rotation),
+      0,
+      0,
+    ),
   );
   path.addPath(sub, Offset.zero, matrix4: m);
 }
@@ -775,9 +810,11 @@ void _arcTo(Path path, CanvasChunkReader r) {
   if (!_warnedArcTo) {
     _warnedArcTo = true;
     // ignore: avoid_print
-    print('[fjs] <canvas> arcTo() came over the wire, which only a JS runtime '
-        'older than the one this host expects does. Corners that should be '
-        'rounded are drawn sharp — upgrade @ufjs/runtime.');
+    print(
+      '[fjs] <canvas> arcTo() came over the wire, which only a JS runtime '
+      'older than the one this host expects does. Corners that should be '
+      'rounded are drawn sharp — upgrade @ufjs/runtime.',
+    );
   }
   path.lineTo(x1, y1);
   path.lineTo(x2, y2);
@@ -800,7 +837,7 @@ TextPainter textPainterFor({
   required bool italic,
   required Color color,
 }) {
-  final key = '$family|$size|$weight|$italic|${color.value}|$text';
+  final key = '$family|$size|$weight|$italic|${color.toARGB32()}|$text';
   final cached = _textPainters[key];
   if (cached != null) return cached;
   final painter = TextPainter(

@@ -115,7 +115,9 @@ void main() {
     addTearDown(echo.close);
     echo.listen((request) async {
       final chunks = await request.fold<List<int>>(
-          <int>[], (all, chunk) => all..addAll(chunk));
+        <int>[],
+        (all, chunk) => all..addAll(chunk),
+      );
       received = chunks;
       request.response.statusCode = 200;
       await request.response.close();
@@ -129,7 +131,10 @@ void main() {
     while (received == null && DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
-    expect(received, [1, 2, 3, 250],
-        reason: 'the request body crossed as a handle and Dart read it out');
+    expect(
+      received,
+      [1, 2, 3, 250],
+      reason: 'the request body crossed as a handle and Dart read it out',
+    );
   });
 }

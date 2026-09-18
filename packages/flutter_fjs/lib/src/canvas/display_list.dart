@@ -89,20 +89,24 @@ class FjsCanvasDisplayList {
     if (_chunks.length > _chunkBudget && !_warnedChunks) {
       _warnedChunks = true;
       // ignore: avoid_print
-      print('[fjs] <canvas> has drawn ${_chunks.length} frames without a '
-          'full-canvas clearRect(); the host replays all of them on every '
-          'repaint, so this gets slower the longer it runs. Clear the whole '
-          'canvas before redrawing — a charting library doing "dirty '
-          'rectangle" rendering has to be told to stop (see '
-          'docs/canvas-compat.md).');
+      print(
+        '[fjs] <canvas> has drawn ${_chunks.length} frames without a '
+        'full-canvas clearRect(); the host replays all of them on every '
+        'repaint, so this gets slower the longer it runs. Clear the whole '
+        'canvas before redrawing — a charting library doing "dirty '
+        'rectangle" rendering has to be told to stop (see '
+        'docs/canvas-compat.md).',
+      );
     }
     if (_bytes > _byteBudget && !_warnedBudget) {
       _warnedBudget = true;
       // ignore: avoid_print
-      print('[fjs] <canvas> has retained ${_bytes ~/ 1024}KB of drawing '
-          'commands without a full-canvas clearRect(); the host keeps them '
-          'all so the picture survives repaints. Call '
-          'clearRect(0, 0, width, height) before redrawing.');
+      print(
+        '[fjs] <canvas> has retained ${_bytes ~/ 1024}KB of drawing '
+        'commands without a full-canvas clearRect(); the host keeps them '
+        'all so the picture survives repaints. Call '
+        'clearRect(0, 0, width, height) before redrawing.',
+      );
     }
   }
 

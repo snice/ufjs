@@ -22,8 +22,10 @@ const double _preloadSlack = 240;
 bool _refreshQueued = false;
 
 FjsImageVisibilityHandle registerFjsImageVisibility(
-    BuildContext context, VoidCallback onVisible,
-    {VoidCallback? onFallback}) {
+  BuildContext context,
+  VoidCallback onVisible, {
+  VoidCallback? onFallback,
+}) {
   final handle = FjsImageVisibilityHandle(context, onVisible, onFallback);
   _handles.add(handle);
   scheduleFjsImageVisibilityRefresh();

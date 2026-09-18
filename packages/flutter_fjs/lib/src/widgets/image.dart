@@ -30,11 +30,7 @@ import '../render/style.dart';
 import 'control_scope.dart' show fjsWarnOnce;
 import 'dispatch.dart';
 
-Widget buildImage(
-  MirrorNode node,
-  FjsStyle style,
-  FjsDispatch dispatch,
-) {
+Widget buildImage(MirrorNode node, FjsStyle style, FjsDispatch dispatch) {
   return FjsImage(node: node, style: style, dispatch: dispatch);
 }
 
@@ -251,18 +247,24 @@ class _FjsImageState extends State<FjsImage> {
     // FjsAssetScope.of is null outside a FjsView — a widget test building
     // this directly, and any host that mounts one by hand. That is the
     // release reading of a local src, which is the safe default.
-    final provider = widget.providerOverride ??
+    final provider =
+        widget.providerOverride ??
         fjsResolveImageSource(
           _src,
           devUri: FjsAssetScope.of(context)?.devUri,
           devGeneration: FjsAssetScope.of(context)?.generation ?? 0,
-          warn: (message) => fjsWarnOnce('image-src:${widget.node.id}:$_src', message),
+          warn: (message) =>
+              fjsWarnOnce('image-src:${widget.node.id}:$_src', message),
         );
     if (provider == null) {
       // Nothing to resolve: report the same terminal error the page would
       // get from a 404, rather than sitting on an empty box forever.
       _terminal = true;
-      widget.dispatch(widget.node.id, FjsEvent.error, text: fjsImageErrorPayload());
+      widget.dispatch(
+        widget.node.id,
+        FjsEvent.error,
+        text: fjsImageErrorPayload(),
+      );
       if (mounted) setState(() {});
       return;
     }
@@ -375,11 +377,7 @@ class _FjsImageState extends State<FjsImage> {
         fixedHeight.isFinite &&
         fixedWidth >= 0 &&
         fixedHeight >= 0) {
-      image = SizedBox(
-        width: fixedWidth,
-        height: fixedHeight,
-        child: image,
-      );
+      image = SizedBox(width: fixedWidth, height: fixedHeight, child: image);
     }
     // The generic decoration paints a radius but only clips when the page
     // also asks for overflow:hidden. The old image adapter clipped by

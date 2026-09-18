@@ -22,19 +22,18 @@ import '../widgets/dispatch.dart';
 /// Builds the node's view when a module owns its display. Return null to
 /// fall through to the 2d CustomPaint (e.g. the node never created a webgl
 /// context).
-typedef FjsCanvasDisplayOverride = Widget? Function(
-  MirrorNode node,
-  FjsDispatch dispatch,
-);
+typedef FjsCanvasDisplayOverride =
+    Widget? Function(MirrorNode node, FjsDispatch dispatch);
 
 /// Exports a node's picture as a data URL and reports it the way the 2d
 /// `toDataURL` path does (`dispatch(requestId, 30, text: {'t': 'dataurl',
 /// ...})`). Called only for nodes with op 11 chunks.
-typedef FjsCanvasReadback = Future<void> Function(
-  int requestId,
-  int nodeId,
-  void Function(Map<String, Object?> payload) report,
-);
+typedef FjsCanvasReadback =
+    Future<void> Function(
+      int requestId,
+      int nodeId,
+      void Function(Map<String, Object?> payload) report,
+    );
 
 /// Frees whatever the module pinned to this node (GL context, texture).
 typedef FjsCanvasNodeDisposed = void Function(int nodeId);

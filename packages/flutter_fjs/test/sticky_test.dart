@@ -7,7 +7,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show RenderBox;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_fjs/src/ffi.dart' show FjsEvent;
 import 'package:flutter_fjs/src/mirror_tree.dart';
@@ -84,47 +83,50 @@ Built treeOf(List<N> roots) {
 typedef Events = List<(int, int, String?)>;
 
 Widget render(MirrorTree tree, Events log) => MaterialApp(
-      home: Scaffold(
-        body: SizedBox(
-          height: 400,
-          child: FjsNodeRenderer(
-            tree: tree,
-            ids: tree.rootChildren,
-            dispatch: (id, type, {String? text}) => log.add((id, type, text)),
-          ),
-        ),
+  home: Scaffold(
+    body: SizedBox(
+      height: 400,
+      child: FjsNodeRenderer(
+        tree: tree,
+        ids: tree.rootChildren,
+        dispatch: (id, type, {String? text}) => log.add((id, type, text)),
       ),
-    );
+    ),
+  ),
+);
 
 N block(String id, {double height = 100}) => N(
+  'view',
+  props: {
+    'id': id,
+    'style': {'height': height, 'background-color': '#eeeeee'},
+  },
+);
+
+N header(String id) => N(
+  'sticky-header',
+  props: {'id': id, 'onStickontopchange': true},
+  children: [
+    N(
       'view',
       props: {
-        'id': id,
-        'style': {'height': height, 'background-color': '#eeeeee'},
+        'style': {'height': 40, 'background-color': '#007aff'},
       },
-    );
-
-N header(String id) => N('sticky-header', props: {'id': id, 'onStickontopchange': true}, children: [
-      N(
-        'view',
-        props: {
-          'style': {'height': 40, 'background-color': '#007aff'},
-        },
-        children: [N('text', text: id)],
-      ),
-    ]);
+      children: [N('text', text: id)],
+    ),
+  ],
+);
 
 void main() {
   setUp(resetFjsWarnOnce);
 
   testWidgets('sticky children take the sliver route', (tester) async {
     final built = treeOf([
-      N('scroll-view', props: {'scrollY': true}, children: [
-        block('lead'),
-        header('h1'),
-        block('a'),
-        block('b'),
-      ]),
+      N(
+        'scroll-view',
+        props: {'scrollY': true},
+        children: [block('lead'), header('h1'), block('a'), block('b')],
+      ),
     ]);
     await tester.pumpWidget(render(built.tree, <(int, int, String?)>[]));
     expect(find.byType(CustomScrollView), findsOneWidget);
@@ -135,11 +137,15 @@ void main() {
     tester,
   ) async {
     final built = treeOf([
-      N('scroll-view', props: {'scrollY': true}, children: [
-        block('lead', height: 300),
-        header('h1'),
-        block('a', height: 600),
-      ]),
+      N(
+        'scroll-view',
+        props: {'scrollY': true},
+        children: [
+          block('lead', height: 300),
+          header('h1'),
+          block('a', height: 600),
+        ],
+      ),
     ]);
     final h1 = built.ids['sticky-header:h1']!;
     final log = <(int, int, String?)>[];
@@ -147,10 +153,7 @@ void main() {
 
     // open: the header sits below the lead block, un-stuck — primed, not
     // reported, like the scroll edge events
-    expect(
-      log.where((e) => e.$2 == FjsEvent.stickOnTopChange),
-      isEmpty,
-    );
+    expect(log.where((e) => e.$2 == FjsEvent.stickOnTopChange), isEmpty);
 
     // scroll past the lead: the header pins at the viewport top. The drag
     // needs to cover the lead (300) plus some of what follows — there is
@@ -160,22 +163,25 @@ void main() {
     final flips = log.where((e) => e.$2 == FjsEvent.stickOnTopChange).toList();
     expect(flips, isNotEmpty);
     expect(flips.first.$1, h1);
-    expect(
-      jsonDecode(flips.first.$3!) as Map<String, Object?>,
-      {'isStickOnTop': true},
-    );
+    expect(jsonDecode(flips.first.$3!) as Map<String, Object?>, {
+      'isStickOnTop': true,
+    });
   });
 
   testWidgets('a pushed header unsticks while the next one pins', (
     tester,
   ) async {
     final built = treeOf([
-      N('scroll-view', props: {'scrollY': true}, children: [
-        header('h1'),
-        block('a', height: 300),
-        header('h2'),
-        block('b', height: 900),
-      ]),
+      N(
+        'scroll-view',
+        props: {'scrollY': true},
+        children: [
+          header('h1'),
+          block('a', height: 300),
+          header('h2'),
+          block('b', height: 900),
+        ],
+      ),
     ]);
     final h1 = built.ids['sticky-header:h1']!;
     final h2 = built.ids['sticky-header:h2']!;
@@ -183,10 +189,7 @@ void main() {
     await tester.pumpWidget(render(built.tree, log));
 
     // h1 opens at the very top: primed stuck, silent
-    expect(
-      log.where((e) => e.$2 == FjsEvent.stickOnTopChange),
-      isEmpty,
-    );
+    expect(log.where((e) => e.$2 == FjsEvent.stickOnTopChange), isEmpty);
 
     // scroll deep enough that h2 arrives and pushes h1 off the top
     await tester.drag(find.byType(CustomScrollView), const Offset(0, -500));
@@ -201,15 +204,19 @@ void main() {
     tester,
   ) async {
     final built = treeOf([
-      N('scroll-view', props: {'scrollY': true}, children: [
-        block('lead', height: 300),
-        N('sticky-section', children: [
-          header('s1'),
-          block('a', height: 300),
-        ]),
-        header('s2'),
-        block('b', height: 1200),
-      ]),
+      N(
+        'scroll-view',
+        props: {'scrollY': true},
+        children: [
+          block('lead', height: 300),
+          N(
+            'sticky-section',
+            children: [header('s1'), block('a', height: 300)],
+          ),
+          header('s2'),
+          block('b', height: 1200),
+        ],
+      ),
     ]);
     final s1 = built.ids['sticky-header:s1']!;
     final log = <(int, int, String?)>[];
@@ -219,8 +226,10 @@ void main() {
     await tester.drag(find.byType(CustomScrollView), const Offset(0, -400));
     await tester.pumpAndSettle();
     var flips = log.where((e) => e.$2 == FjsEvent.stickOnTopChange).toList();
-    expect(flips.where((e) => e.$1 == s1).map((e) => e.$3),
-        contains('{"isStickOnTop":true}'));
+    expect(
+      flips.where((e) => e.$1 == s1).map((e) => e.$3),
+      contains('{"isStickOnTop":true}'),
+    );
 
     // …and is pushed off once the section (300..640) has passed, while the
     // scroll keeps going to 1480.
@@ -235,19 +244,26 @@ void main() {
     tester,
   ) async {
     final built = treeOf([
-      N('scroll-view', props: {'scrollY': true}, children: [
-        block('lead', height: 300),
-        N('view', props: {
-          'id': 'cap',
-          'style': {
-            'position': 'sticky',
-            'top': '0px',
-            'height': 40,
-            'background-color': '#007aff',
-          },
-        }),
-        block('a', height: 600),
-      ]),
+      N(
+        'scroll-view',
+        props: {'scrollY': true},
+        children: [
+          block('lead', height: 300),
+          N(
+            'view',
+            props: {
+              'id': 'cap',
+              'style': {
+                'position': 'sticky',
+                'top': '0px',
+                'height': 40,
+                'background-color': '#007aff',
+              },
+            },
+          ),
+          block('a', height: 600),
+        ],
+      ),
     ]);
     final cap = built.ids['view:cap']!;
     await tester.pumpWidget(render(built.tree, <(int, int, String?)>[]));
@@ -269,19 +285,26 @@ void main() {
 
   testWidgets('style-level sticky top becomes the pin line', (tester) async {
     final built = treeOf([
-      N('scroll-view', props: {'scrollY': true}, children: [
-        block('lead', height: 300),
-        N('view', props: {
-          'id': 'cap',
-          'style': {
-            'position': 'sticky',
-            'top': '60px',
-            'height': 40,
-            'background-color': '#007aff',
-          },
-        }),
-        block('a', height: 600),
-      ]),
+      N(
+        'scroll-view',
+        props: {'scrollY': true},
+        children: [
+          block('lead', height: 300),
+          N(
+            'view',
+            props: {
+              'id': 'cap',
+              'style': {
+                'position': 'sticky',
+                'top': '60px',
+                'height': 40,
+                'background-color': '#007aff',
+              },
+            },
+          ),
+          block('a', height: 600),
+        ],
+      ),
     ]);
     final cap = built.ids['view:cap']!;
     await tester.pumpWidget(render(built.tree, <(int, int, String?)>[]));
@@ -304,68 +327,82 @@ void main() {
     final logs = <String>[];
     debugPrint = (message, {wrapWidth}) => logs.add(message ?? '');
     final built = treeOf([
-      N('scroll-view', props: {'scrollY': true}, children: [
-        // one level too deep for the sticky split: the outer view is a run
-        N('view', children: [
-          N('view', props: {
-            'style': {'position': 'sticky', 'top': '0px', 'height': 40},
-          }),
-        ]),
-        block('a', height: 600),
-      ]),
+      N(
+        'scroll-view',
+        props: {'scrollY': true},
+        children: [
+          // one level too deep for the sticky split: the outer view is a run
+          N(
+            'view',
+            children: [
+              N(
+                'view',
+                props: {
+                  'style': {'position': 'sticky', 'top': '0px', 'height': 40},
+                },
+              ),
+            ],
+          ),
+          block('a', height: 600),
+        ],
+      ),
     ]);
     try {
       await tester.pumpWidget(render(built.tree, <(int, int, String?)>[]));
       // the ordinary box route stays (no sticky direct child)
       expect(find.byType(SingleChildScrollView), findsOneWidget);
-      expect(
-        logs.join('\n'),
-        contains('position: sticky on node'),
-      );
+      expect(logs.join('\n'), contains('position: sticky on node'));
     } finally {
       debugPrint = original;
     }
   });
 
-  testWidgets('scroll-into-view on a buried grouped header lands on its group start (specs/054)',
-      (tester) async {
-    final built = treeOf([
-      N('scroll-view', props: {'scrollY': true, 'id': 'sv'}, children: [
-        N('sticky-section', children: [
-          header('gA'),
-          block('a', height: 300),
-        ]),
-        N('sticky-section', children: [
-          header('gB'),
-          block('b', height: 900),
-        ]),
-      ]),
-    ]);
-    await tester.pumpWidget(render(built.tree, <(int, int, String?)>[]));
+  testWidgets(
+    'scroll-into-view on a buried grouped header lands on its group start (specs/054)',
+    (tester) async {
+      final built = treeOf([
+        N(
+          'scroll-view',
+          props: {'scrollY': true, 'id': 'sv'},
+          children: [
+            N(
+              'sticky-section',
+              children: [header('gA'), block('a', height: 300)],
+            ),
+            N(
+              'sticky-section',
+              children: [header('gB'), block('b', height: 900)],
+            ),
+          ],
+        ),
+      ]);
+      await tester.pumpWidget(render(built.tree, <(int, int, String?)>[]));
 
-    // deep inside group B: group A (header 40 + block 300) has fully passed
-    await tester.drag(find.byType(CustomScrollView), const Offset(0, -900));
-    await tester.pumpAndSettle();
-    final offset = () => tester
-        .widget<CustomScrollView>(find.byType(CustomScrollView))
-        .controller!
-        .offset;
-    expect(offset(), greaterThan(400));
+      // deep inside group B: group A (header 40 + block 300) has fully passed
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -900));
+      await tester.pumpAndSettle();
+      final offset = () => tester
+          .widget<CustomScrollView>(find.byType(CustomScrollView))
+          .controller!
+          .offset;
+      expect(offset(), greaterThan(400));
 
-    // jumping back to A must land on the GROUP START (0), not on the
-    // header's pinned/pushed-out paint position — the same semantic
-    // skyline's native scroll-into-view delivers
-    final w = _W()
-      ..u8(UiOpCode.setProps)
-      ..u32(built.ids['scroll-view:sv']!);
-    final json = utf8.encode(
-        '{"scrollY":true,"id":"sv","scrollIntoView":"gA"}');
-    w.u32(json.length);
-    w.raw(json);
-    built.tree.applyFrame(Uint8List.fromList(w.b));
-    built.tree.flushDirty();
-    await tester.pumpAndSettle();
+      // jumping back to A must land on the GROUP START (0), not on the
+      // header's pinned/pushed-out paint position — the same semantic
+      // skyline's native scroll-into-view delivers
+      final w = _W()
+        ..u8(UiOpCode.setProps)
+        ..u32(built.ids['scroll-view:sv']!);
+      final json = utf8.encode(
+        '{"scrollY":true,"id":"sv","scrollIntoView":"gA"}',
+      );
+      w.u32(json.length);
+      w.raw(json);
+      built.tree.applyFrame(Uint8List.fromList(w.b));
+      built.tree.flushDirty();
+      await tester.pumpAndSettle();
 
-    expect(offset(), moreOrLessEquals(0, epsilon: 2));
-  });
+      expect(offset(), moreOrLessEquals(0, epsilon: 2));
+    },
+  );
 }

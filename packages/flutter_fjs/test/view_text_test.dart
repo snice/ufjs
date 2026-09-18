@@ -71,15 +71,17 @@ MirrorTree _tree() {
 void main() {
   testWidgets('a view with element text renders it', (tester) async {
     final tree = _tree();
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: FjsNodeRenderer(
-          tree: tree,
-          ids: tree.rootChildren,
-          dispatch: (_, __, {String? text}) {},
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FjsNodeRenderer(
+            tree: tree,
+            ids: tree.rootChildren,
+            dispatch: (_, __, {String? text}) {},
+          ),
         ),
       ),
-    ));
+    );
     expect(find.text('自身文本'), findsOneWidget);
     expect(find.text('子文本'), findsOneWidget);
     // order: own text first, then the children
@@ -105,15 +107,17 @@ void main() {
     w.u32(0);
     final tree = MirrorTree();
     tree.applyFrame(Uint8List.fromList(w.b));
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: FjsNodeRenderer(
-          tree: tree,
-          ids: tree.rootChildren,
-          dispatch: (_, __, {String? text}) {},
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FjsNodeRenderer(
+            tree: tree,
+            ids: tree.rootChildren,
+            dispatch: (_, __, {String? text}) {},
+          ),
         ),
       ),
-    ));
+    );
     // no exception, and nothing painted for the blank run
     expect(find.byType(Text), findsNothing);
   });

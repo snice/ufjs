@@ -62,26 +62,27 @@ void setAreaProps(MirrorTree tree, Map<String, Object?> props) {
 typedef Events = List<(int, String?)>;
 
 Widget render(MirrorTree tree, Events log, {double width = 200}) => MaterialApp(
-      home: Scaffold(
-        body: SizedBox(
-          width: width,
-          height: 600,
-          child: FjsNodeRenderer(
-            tree: tree,
-            ids: tree.rootChildren,
-            dispatch: (id, type, {String? text}) => log.add((type, text)),
-          ),
-        ),
+  home: Scaffold(
+    body: SizedBox(
+      width: width,
+      height: 600,
+      child: FjsNodeRenderer(
+        tree: tree,
+        ids: tree.rootChildren,
+        dispatch: (id, type, {String? text}) => log.add((type, text)),
       ),
-    );
+    ),
+  ),
+);
 
 TextField theField(WidgetTester tester) =>
     tester.widget<TextField>(find.byType(TextField));
 
 void main() {
   group('auto-height', () {
-    testWidgets('off and unsized: three lines, then it scrolls inside',
-        (tester) async {
+    testWidgets('off and unsized: three lines, then it scrolls inside', (
+      tester,
+    ) async {
       final tree = areaTree({});
       await tester.pumpWidget(render(tree, []));
       final field = theField(tester);
@@ -99,8 +100,9 @@ void main() {
       expect(field.expands, isFalse);
     });
 
-    testWidgets('off with a styled height: it fills that box and scrolls',
-        (tester) async {
+    testWidgets('off with a styled height: it fills that box and scrolls', (
+      tester,
+    ) async {
       final tree = areaTree({
         'style': {'height': 120},
       });
@@ -113,8 +115,9 @@ void main() {
       expect(field.textAlignVertical, TextAlignVertical.top);
     });
 
-    testWidgets('a styled height is ignored while auto-height is on',
-        (tester) async {
+    testWidgets('a styled height is ignored while auto-height is on', (
+      tester,
+    ) async {
       final tree = areaTree({
         'autoHeight': true,
         'style': {'height': 120},
@@ -141,8 +144,9 @@ void main() {
   });
 
   group('confirm-type', () {
-    testWidgets('return is a newline key and reports no confirm',
-        (tester) async {
+    testWidgets('return is a newline key and reports no confirm', (
+      tester,
+    ) async {
       final tree = areaTree({'confirmType': 'return'});
       final log = <(int, String?)>[];
       await tester.pumpWidget(render(tree, log));
@@ -158,8 +162,9 @@ void main() {
       );
     });
 
-    testWidgets('every other value maps to its action and reports confirm',
-        (tester) async {
+    testWidgets('every other value maps to its action and reports confirm', (
+      tester,
+    ) async {
       for (final (name, action) in <(String, TextInputAction)>[
         ('send', TextInputAction.send),
         ('search', TextInputAction.search),
@@ -193,8 +198,9 @@ void main() {
   });
 
   group('focus', () {
-    testWidgets('auto-focus takes the field on the first frame',
-        (tester) async {
+    testWidgets('auto-focus takes the field on the first frame', (
+      tester,
+    ) async {
       final tree = areaTree({'autoFocus': true});
       await tester.pumpWidget(render(tree, []));
       await tester.pump();
@@ -204,8 +210,9 @@ void main() {
       );
     });
 
-    testWidgets('focus moves on a change and does not grab it back',
-        (tester) async {
+    testWidgets('focus moves on a change and does not grab it back', (
+      tester,
+    ) async {
       final tree = areaTree({'focus': false});
       final log = <(int, String?)>[];
       await tester.pumpWidget(render(tree, log));
@@ -233,8 +240,9 @@ void main() {
   });
 
   group('linechange', () {
-    testWidgets('primes once, then reports only when the count changes',
-        (tester) async {
+    testWidgets('primes once, then reports only when the count changes', (
+      tester,
+    ) async {
       final tree = areaTree({'autoHeight': true});
       final log = <(int, String?)>[];
       await tester.pumpWidget(render(tree, log, width: 120));
@@ -245,7 +253,10 @@ void main() {
       // The priming report: the JS component drops this one
       // (components/textarea.ts), so a page never sees it.
       expect(lines().length, 1);
-      expect(jsonDecode(lines().first.$2!), {'height': anything, 'lineCount': 1});
+      expect(jsonDecode(lines().first.$2!), {
+        'height': anything,
+        'lineCount': 1,
+      });
 
       await tester.enterText(find.byType(TextField), 'short');
       await tester.pump();
@@ -259,8 +270,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(lines().length, greaterThan(1));
-      final detail =
-          jsonDecode(lines().last.$2!) as Map<String, Object?>;
+      final detail = jsonDecode(lines().last.$2!) as Map<String, Object?>;
       expect(detail.keys.toList(), ['height', 'lineCount']);
       expect(detail['lineCount'], greaterThan(1));
     });
@@ -326,14 +336,17 @@ void main() {
       final tree = areaTree({'placeholder': 'say something'});
       await tester.pumpWidget(render(tree, []));
       // the same #999999 base-css.ts pins for ::placeholder
-      expect(theField(tester).decoration!.hintStyle!.color,
-          const Color(0xFF999999));
+      expect(
+        theField(tester).decoration!.hintStyle!.color,
+        const Color(0xFF999999),
+      );
     });
   });
 
   group('maxlength', () {
-    testWidgets('truncates silently at the limit the component sent',
-        (tester) async {
+    testWidgets('truncates silently at the limit the component sent', (
+      tester,
+    ) async {
       final tree = areaTree({'maxlength': 5});
       await tester.pumpWidget(render(tree, []));
       await tester.enterText(find.byType(TextField), 'abcdefghij');

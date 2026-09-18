@@ -34,6 +34,7 @@ class _FjsListViewState extends State<FjsListView> {
   bool _scrollQueued = false;
   double _lastOffset = -1;
   double _lastSentOffset = -1;
+
   /// Content extent along the scrolling axis, for the payload's
   /// scrollHeight / scrollWidth.
   double _lastMetrics = 0;
@@ -48,7 +49,8 @@ class _FjsListViewState extends State<FjsListView> {
       return false;
     }
     _lastOffset = notification.metrics.pixels;
-    _lastMetrics = notification.metrics.maxScrollExtent +
+    _lastMetrics =
+        notification.metrics.maxScrollExtent +
         notification.metrics.viewportDimension;
     if ((_lastOffset - _lastSentOffset).abs() < 0.5) return false;
     if (_scrollQueued) return false;

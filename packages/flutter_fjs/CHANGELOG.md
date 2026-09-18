@@ -1,3 +1,17 @@
+## 0.1.5
+
+- **修 Flutter 3.44 编译错误**：官方 3.44 把 `CupertinoPageTransitionsBuilder`
+  从 material 挪进 cupertino（breaking change decouple-page-transition-builders），
+  `fjs-slide` 的过渡声明在 3.44+ 上报 undefined。现在同时 import 两端，
+  3.38（本包下限）到最新 stable 都能编过。本机若装的是 3.41 系 ohos fork
+  （类还在 material），此前本地 `flutter analyze` 不会复现。
+- **pub.dev 体检修复（specs/067）**：补 `example/`（`FjsEngine` + `FjsApp`
+  的最小宿主）；`flutter_fjs` 库与 `CanvasChunkReader` 公开成员补 dartdoc；
+  全包过 `dart format`；清理全部弃用 API（`withOpacity`/`withValues`、
+  `onPop`/`onPopWithResult`、`activeColor`/`activeThumbColor`、颜色
+  `.value/.opacity/.red` 等 getter 换新访问器）。静态分析、依赖下限、
+  文档三项 pub 满分。
+
 ## 0.1.4
 
 - **最低 Flutter 版本提到 3.38.0（Dart 3.10）。** 更低的版本编译不过：WebGL 模块

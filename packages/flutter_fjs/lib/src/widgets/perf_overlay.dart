@@ -79,7 +79,8 @@ class _FjsPerfOverlayState extends State<FjsPerfOverlay> {
                 Positioned(
                   left: at?.dx,
                   right: at == null ? _panelMargin : null,
-                  top: at?.dy ??
+                  top:
+                      at?.dy ??
                       MediaQuery.paddingOf(context).top + _panelMargin,
                   // Being draggable means taking pointers: a tap that lands on
                   // the panel goes to it, not to the app under it. That is the
@@ -117,8 +118,10 @@ class _FjsPerfOverlayState extends State<FjsPerfOverlay> {
 
   Offset _clamp(Offset at, BoxConstraints box) {
     final maxX = (box.maxWidth - _panelSize.width).clamp(0.0, double.infinity);
-    final maxY =
-        (box.maxHeight - _panelSize.height).clamp(0.0, double.infinity);
+    final maxY = (box.maxHeight - _panelSize.height).clamp(
+      0.0,
+      double.infinity,
+    );
     return Offset(at.dx.clamp(0.0, maxX), at.dy.clamp(0.0, maxY));
   }
 }
@@ -185,11 +188,13 @@ class _PerfPanelState extends State<_PerfPanel> {
   /// The timings inside [_window], dropping the rest as it goes.
   List<FrameTiming> _recent() {
     if (_timings.isEmpty) return const <FrameTiming>[];
-    final newest =
-        _timings.last.timestampInMicroseconds(FramePhase.rasterFinish);
+    final newest = _timings.last.timestampInMicroseconds(
+      FramePhase.rasterFinish,
+    );
     final cutoff = newest - _window.inMicroseconds;
     _timings.removeWhere(
-        (t) => t.timestampInMicroseconds(FramePhase.rasterFinish) < cutoff);
+      (t) => t.timestampInMicroseconds(FramePhase.rasterFinish) < cutoff,
+    );
     return _timings;
   }
 
@@ -227,15 +232,17 @@ class _PerfPanelState extends State<_PerfPanel> {
           children: [
             _row('fps', '$n'),
             _row(
-                'ui',
-                '${uiAvg.toStringAsFixed(1)}/'
-                    '${_uiPeak.toStringAsFixed(1)} ms',
-                bad: _uiPeak > _budgetMs),
+              'ui',
+              '${uiAvg.toStringAsFixed(1)}/'
+                  '${_uiPeak.toStringAsFixed(1)} ms',
+              bad: _uiPeak > _budgetMs,
+            ),
             _row(
-                'gpu',
-                '${gpuAvg.toStringAsFixed(1)}/'
-                    '${_gpuPeak.toStringAsFixed(1)} ms',
-                bad: _gpuPeak > _budgetMs),
+              'gpu',
+              '${gpuAvg.toStringAsFixed(1)}/'
+                  '${_gpuPeak.toStringAsFixed(1)} ms',
+              bad: _gpuPeak > _budgetMs,
+            ),
             _row(
               'heap',
               heap == null
@@ -243,7 +250,7 @@ class _PerfPanelState extends State<_PerfPanel> {
                   // panel still works
                   ? 'n/a'
                   : '${(heap.bytes / 1048576).toStringAsFixed(1)}MB·'
-                      '${heap.objects}',
+                        '${heap.objects}',
             ),
             _row('nodes', '${widget.engine.tree.nodeCount}'),
           ],

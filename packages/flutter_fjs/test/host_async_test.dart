@@ -58,7 +58,10 @@ void main() {
   /// channel's contract, so it is asserted on the text itself.
   Future<String> _settlement(String id, String name, String argsJson) async {
     final before = logs.length;
-    engine.runSource("callAsync($id, '$name', '$argsJson')", filename: 'call.js');
+    engine.runSource(
+      "callAsync($id, '$name', '$argsJson')",
+      filename: 'call.js',
+    );
     final deadline = DateTime.now().add(const Duration(seconds: 5));
     while (DateTime.now().isBefore(deadline)) {
       for (var i = before; i < logs.length; i++) {
@@ -72,30 +75,45 @@ void main() {
     fail('no settlement event reached the VM for call $id');
   }
 
-  test('an async handler settles back into the VM with the decoded args', () async {
-    List<Object?>? receivedArgs;
-    engine.host.registerAsync('test.profile', (args) async {
-      receivedArgs = args;
-      await Future<void>.delayed(const Duration(milliseconds: 30));
-      return <String, Object?>{'name': 'zt', 'age': 42};
-    });
+  test(
+    'an async handler settles back into the VM with the decoded args',
+    () async {
+      List<Object?>? receivedArgs;
+      engine.host.registerAsync('test.profile', (args) async {
+        receivedArgs = args;
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        return <String, Object?>{'name': 'zt', 'age': 42};
+      });
 
-    final payload = await _settlement('7', 'test.profile', '[42,"full"]');
-    expect(receivedArgs, [42, 'full'],
-        reason: 'the args array crossed as one JSON string and came back decoded');
-    expect(payload, startsWith('{"ok":true,"value":'),
-        reason: 'field order is fixed: ok first');
-    expect(jsonDecode(payload), {'ok': true, 'value': {'name': 'zt', 'age': 42}});
-  });
+      final payload = await _settlement('7', 'test.profile', '[42,"full"]');
+      expect(
+        receivedArgs,
+        [42, 'full'],
+        reason:
+            'the args array crossed as one JSON string and came back decoded',
+      );
+      expect(
+        payload,
+        startsWith('{"ok":true,"value":'),
+        reason: 'field order is fixed: ok first',
+      );
+      expect(jsonDecode(payload), {
+        'ok': true,
+        'value': {'name': 'zt', 'age': 42},
+      });
+    },
+  );
 
-  test('an unregistered name fails immediately instead of hanging the promise',
-      () async {
-    final payload = await _settlement('8', 'test.missing', '[]');
-    final wire = jsonDecode(payload) as Map<String, Object?>;
-    expect(wire['ok'], isFalse);
-    expect(wire['errMsg'], contains('test.missing'));
-    expect(wire['errMsg'], contains('not registered'));
-  });
+  test(
+    'an unregistered name fails immediately instead of hanging the promise',
+    () async {
+      final payload = await _settlement('8', 'test.missing', '[]');
+      final wire = jsonDecode(payload) as Map<String, Object?>;
+      expect(wire['ok'], isFalse);
+      expect(wire['errMsg'], contains('test.missing'));
+      expect(wire['errMsg'], contains('not registered'));
+    },
+  );
 
   test('a handler that throws settles as an error payload', () async {
     engine.host.registerAsync('test.boom', (args) async {
@@ -113,19 +131,22 @@ void main() {
     expect(jsonDecode(payload), {'ok': true, 'value': null});
   });
 
-  test('a non-JSON-encodable return value is an error payload, not a dropped result',
-      () async {
-    engine.host.registerAsync('test.opaque', (args) async => DateTime.now());
-    final payload = await _settlement('11', 'test.opaque', '[]');
-    final wire = jsonDecode(payload) as Map<String, Object?>;
-    expect(wire['ok'], isFalse);
-    expect(wire['errMsg'], contains('JSON-encodable'));
-  });
+  test(
+    'a non-JSON-encodable return value is an error payload, not a dropped result',
+    () async {
+      engine.host.registerAsync('test.opaque', (args) async => DateTime.now());
+      final payload = await _settlement('11', 'test.opaque', '[]');
+      final wire = jsonDecode(payload) as Map<String, Object?>;
+      expect(wire['ok'], isFalse);
+      expect(wire['errMsg'], contains('JSON-encodable'));
+    },
+  );
 
   test('concurrent calls settle independently', () async {
     engine.host.registerAsync('test.slow', (args) async {
       await Future<void>.delayed(
-          Duration(milliseconds: 40 * ((args[0] as int) + 1)));
+        Duration(milliseconds: 40 * ((args[0] as int) + 1)),
+      );
       return args[0];
     });
     final results = await Future.wait([
@@ -133,9 +154,6 @@ void main() {
       _settlement('21', 'test.slow', '[1]'),
       _settlement('22', 'test.slow', '[2]'),
     ]);
-    expect(
-      results.map((p) => jsonDecode(p)['value']).toList(),
-      [0, 1, 2],
-    );
+    expect(results.map((p) => jsonDecode(p)['value']).toList(), [0, 1, 2]);
   });
 }

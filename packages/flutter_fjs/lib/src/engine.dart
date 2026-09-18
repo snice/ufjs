@@ -113,7 +113,10 @@ class FjsEngine extends ChangeNotifier {
           final raw = jsonDecode(argsJson ?? '[]');
           decoded = raw is List ? raw : <Object?>[raw];
         } catch (e) {
-          _sendAsyncResult(id, errMsg: 'fjs.async.invoke: malformed args JSON: $e');
+          _sendAsyncResult(
+            id,
+            errMsg: 'fjs.async.invoke: malformed args JSON: $e',
+          );
           return;
         }
         try {
@@ -140,9 +143,10 @@ class FjsEngine extends ChangeNotifier {
           ? jsonEncode(<String, Object?>{'ok': false, 'errMsg': errMsg})
           : jsonEncode(<String, Object?>{'ok': true, 'value': value});
     } catch (e) {
-      payload = jsonEncode(
-        <String, Object?>{'ok': false, 'errMsg': 'async result is not JSON-encodable: $e'},
-      );
+      payload = jsonEncode(<String, Object?>{
+        'ok': false,
+        'errMsg': 'async result is not JSON-encodable: $e',
+      });
     }
     dispatchEvent(id, FjsEvent.asyncResult, text: payload);
   }
@@ -157,11 +161,16 @@ class FjsEngine extends ChangeNotifier {
       ..register('js.worker.create', (args) {
         final id = FjsWorker.nextId;
         final code = args.isNotEmpty ? args.first.toString() : '';
-        final worker = FjsWorker.startWithId(id, code, onMessage: (msg) {
-          dispatchEvent(id, FjsEvent.workerMessage, text: msg);
-        }, onError: (err) {
-          onLog?.call(3, '[worker] $err');
-        });
+        final worker = FjsWorker.startWithId(
+          id,
+          code,
+          onMessage: (msg) {
+            dispatchEvent(id, FjsEvent.workerMessage, text: msg);
+          },
+          onError: (err) {
+            onLog?.call(3, '[worker] $err');
+          },
+        );
         _workers[id] = worker;
         return id;
       })
@@ -323,10 +332,12 @@ class FjsEngine extends ChangeNotifier {
   final Set<int> _routesPendingPop = {};
   final Set<String> _loadedChunks = {};
   final Map<String, Future<void>> _loadingChunks = {};
+
   /// Dev units (spec 037) whose factory has been registered in this VM.
   /// Registration is cheap and idempotent; the factories themselves run
   /// lazily on first `__fjsRequireUnit`, so "loaded" here means "defined".
   final Set<String> _loadedUnits = {};
+
   /// True when the dev server negotiated units mode (spec 037): split build
   /// plus per-module unit files. False everywhere else — release, older
   /// dev servers, single-bundle dev.
@@ -453,12 +464,12 @@ class FjsEngine extends ChangeNotifier {
   }
 
   static NavEntry _navArgs(List<Object?> args) => NavEntry(
-        key: args.isNotEmpty ? (args.first as num).toInt() : 0,
-        path: args.length > 1 ? args[1]?.toString() ?? '' : '',
-        title: args.length > 2 ? args[2]?.toString() ?? '' : '',
-        chunk: args.length > 3 ? args[3]?.toString() ?? '' : '',
-        transition: args.length > 4 ? args[4]?.toString() ?? '' : '',
-      );
+    key: args.isNotEmpty ? (args.first as num).toInt() : 0,
+    path: args.length > 1 ? args[1]?.toString() ?? '' : '',
+    title: args.length > 2 ? args[2]?.toString() ?? '' : '',
+    chunk: args.length > 3 ? args[3]?.toString() ?? '' : '',
+    transition: args.length > 4 ? args[4]?.toString() ?? '' : '',
+  );
 
   void _pushRoute(NavEntry entry, {required bool replaceTop}) {
     if (replaceTop && _navStack.isNotEmpty) {
@@ -802,8 +813,9 @@ class FjsEngine extends ChangeNotifier {
     if (units) {
       // per-segment encoding: the id keeps its slashes, so the server's
       // decodeURIComponent restores the path form it indexed the unit under
-      unitLoader = (id) =>
-          dev.fetch('/units/${id.split('/').map(Uri.encodeComponent).join('/')}.js');
+      unitLoader = (id) => dev.fetch(
+        '/units/${id.split('/').map(Uri.encodeComponent).join('/')}.js',
+      );
     }
     await _loadFromDev(dev, split, units);
     dev.onReload = (reload) async {
@@ -848,12 +860,16 @@ class FjsEngine extends ChangeNotifier {
   Future<void> _preloadDevChunks(Map<String, Object?>? manifest) async {
     final rawRoutes = manifest?['routes'];
     if (rawRoutes is! List) return;
-    final chunks = <String>{
-      for (final route in rawRoutes)
-        if (route is Map && route['chunk'] is String) route['chunk'] as String,
-    }
-        .where((chunk) => chunk.isNotEmpty && !_loadedChunks.contains(chunk))
-        .toList();
+    final chunks =
+        <String>{
+              for (final route in rawRoutes)
+                if (route is Map && route['chunk'] is String)
+                  route['chunk'] as String,
+            }
+            .where(
+              (chunk) => chunk.isNotEmpty && !_loadedChunks.contains(chunk),
+            )
+            .toList();
     if (chunks.isEmpty) return;
     await Future<void>.delayed(const Duration(milliseconds: 250));
     onLog?.call(1, '[dev] preloading ${chunks.length} page chunks');
@@ -935,7 +951,10 @@ class FjsEngine extends ChangeNotifier {
         _loadedUnits.add(entry.key);
       }
       for (final id in reload.units) {
-        runSource('__fjsRequireUnit(${jsonEncode(id)});', filename: 'unit-trigger.js');
+        runSource(
+          '__fjsRequireUnit(${jsonEncode(id)});',
+          filename: 'unit-trigger.js',
+        );
         if (_disposed || _vm == null) return true;
       }
       for (final chunk in reload.pages) {
@@ -969,9 +988,12 @@ class FjsEngine extends ChangeNotifier {
   /// unit bundle defines every shared app module's factory (it runs nothing
   /// — factories execute lazily on first require), so the app entry and
   /// every page chunk find their dependencies already registered.
-  Future<void> _loadFromDev(DevClient dev, bool split, [bool units = false]) async {
-    final shared =
-        split ? await dev.fetchForBootstrap('/shared.js') : null;
+  Future<void> _loadFromDev(
+    DevClient dev,
+    bool split, [
+    bool units = false,
+  ]) async {
+    final shared = split ? await dev.fetchForBootstrap('/shared.js') : null;
     final unitBundle = units ? await dev.fetchForBootstrap('/units.js') : null;
     final bundle = await dev.fetchBundle();
     if (shared != null) {
@@ -1045,9 +1067,13 @@ class FjsEngine extends ChangeNotifier {
     Map<String, String>? headers,
     List<int>? body,
     Duration? timeout,
-  }) =>
-      _http.fetch(url,
-          method: method, headers: headers, body: body, timeout: timeout);
+  }) => _http.fetch(
+    url,
+    method: method,
+    headers: headers,
+    body: body,
+    timeout: timeout,
+  );
 
   /// [fetch], decoded as utf8 — the shape most callers want (JSON, text).
   Future<String> fetchString(
@@ -1056,9 +1082,15 @@ class FjsEngine extends ChangeNotifier {
     Map<String, String>? headers,
     List<int>? body,
     Duration? timeout,
-  }) async =>
-      utf8.decode(await fetch(url,
-          method: method, headers: headers, body: body, timeout: timeout));
+  }) async => utf8.decode(
+    await fetch(
+      url,
+      method: method,
+      headers: headers,
+      body: body,
+      timeout: timeout,
+    ),
+  );
 
   /// Re-fetches the bundle from the connected dev server and applies it —
   /// the manual twin of the WebSocket reload push (dev-menu "reload").

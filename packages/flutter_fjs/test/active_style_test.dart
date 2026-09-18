@@ -65,7 +65,8 @@ Color? _boxColor(WidgetTester tester) {
 
 void main() {
   const base = '"style":{"width":100,"height":100,"backgroundColor":"#ffffff"}';
-  const active = '"activeStyle":{"width":100,"height":100,'
+  const active =
+      '"activeStyle":{"width":100,"height":100,'
       '"backgroundColor":"#eef4ff"}';
 
   testWidgets('a pressed node paints its :active style', (tester) async {
@@ -100,8 +101,9 @@ void main() {
     expect(_boxColor(tester), const Color(0xFFFFFFFF));
   });
 
-  testWidgets('a jitter under the drag threshold keeps the press',
-      (tester) async {
+  testWidgets('a jitter under the drag threshold keeps the press', (
+    tester,
+  ) async {
     // a mouse inside a scrollable resolves drags at 1px, so anything driven
     // by the gesture arena would drop the press on the smallest wobble
     await tester.pumpWidget(
@@ -136,24 +138,33 @@ void main() {
     await press.up();
   });
 
-  testWidgets('a node without an :active style adds no press handling',
-      (tester) async {
+  testWidgets('a node without an :active style adds no press handling', (
+    tester,
+  ) async {
     await tester.pumpWidget(_render(_treeWith('{$base}')));
     expect(find.byType(GestureDetector), findsNothing);
     expect(_boxColor(tester), const Color(0xFFFFFFFF));
   });
-  testWidgets('an :active transform reaches the transform wrapper',
-      (tester) async {
+  testWidgets('an :active transform reaches the transform wrapper', (
+    tester,
+  ) async {
     // The regression this guards: the transform wrapper (transitionNode)
     // used to be built from the BASE style only, so a pressed transform —
     // `:active { transform: scale(0.92) }` — never rendered at all (spec
     // 045 实机对拍修出). The state style now drives the wrapper too.
-    await tester.pumpWidget(_render(_treeWith(
-      '{"style":{"width":100,"height":100,"backgroundColor":"#ffffff"},'
-      '"activeStyle":{"transform":"scale(0.92)"}}',
-    )));
-    expect(tester.widgetList<Transform>(find.byType(Transform)).isEmpty,
-        isTrue, reason: 'unpressed, no base transform: no wrapper value');
+    await tester.pumpWidget(
+      _render(
+        _treeWith(
+          '{"style":{"width":100,"height":100,"backgroundColor":"#ffffff"},'
+          '"activeStyle":{"transform":"scale(0.92)"}}',
+        ),
+      ),
+    );
+    expect(
+      tester.widgetList<Transform>(find.byType(Transform)).isEmpty,
+      isTrue,
+      reason: 'unpressed, no base transform: no wrapper value',
+    );
 
     final press = await tester.startGesture(
       tester.getCenter(find.byType(Container)),

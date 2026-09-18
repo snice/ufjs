@@ -81,8 +81,9 @@ void main() {
 
   tearDown(() => engine.dispose());
 
-  testWidgets('a parked tab page stays mounted, offstage, with its scroll',
-      (tester) async {
+  testWidgets('a parked tab page stays mounted, offstage, with its scroll', (
+    tester,
+  ) async {
     await tester.pumpWidget(MaterialApp(home: FjsView(engine: engine)));
     await tester.pumpAndSettle();
     expect(find.text('home-0'), findsOneWidget);
@@ -113,8 +114,9 @@ void main() {
     expect(back.position.pixels, offset);
   });
 
-  testWidgets('dropping a parked page leaves the visible one alone',
-      (tester) async {
+  testWidgets('dropping a parked page leaves the visible one alone', (
+    tester,
+  ) async {
     await tester.pumpWidget(MaterialApp(home: FjsView(engine: engine)));
     await tester.pumpAndSettle();
 

@@ -37,11 +37,11 @@ class FjsScrollView extends StatefulWidget {
     this.child,
     this.slivers,
     this.stickyHeaderIds = const <int>[],
-  })  : assert(child != null || slivers != null),
-        assert(
-          slivers == null || child == null,
-          'a scroll view is either box-content or slivers, not both',
-        );
+  }) : assert(child != null || slivers != null),
+       assert(
+         slivers == null || child == null,
+         'a scroll view is either box-content or slivers, not both',
+       );
 
   final MirrorNode node;
   final MirrorTree tree;
@@ -93,7 +93,7 @@ class _FjsScrollViewState extends State<FjsScrollView> {
       fjsWarnOnce(
         'scroll-both-axes:${widget.node.id}',
         '<scroll-view> node ${widget.node.id} sets both scroll-x and '
-        'scroll-y; fjs scrolls vertically. Pick one.',
+            'scroll-y; fjs scrolls vertically. Pick one.',
       );
       return Axis.vertical;
     }
@@ -114,7 +114,8 @@ class _FjsScrollViewState extends State<FjsScrollView> {
       _numProp('upperThreshold') ?? fjsDefaultScrollThreshold;
   double get _lowerThreshold =>
       _numProp('lowerThreshold') ?? fjsDefaultScrollThreshold;
-  bool get _animated => widget.node.props['scrollWithAnimation'] == true ||
+  bool get _animated =>
+      widget.node.props['scrollWithAnimation'] == true ||
       widget.node.props['scrollWithAnimation'] == '';
 
   @override
@@ -130,7 +131,7 @@ class _FjsScrollViewState extends State<FjsScrollView> {
       fjsWarnOnce(
         'sticky-horizontal:${widget.node.id}',
         '<scroll-view> node ${widget.node.id}: sticky-header / '
-        'sticky-section only pin along the vertical axis.',
+            'sticky-section only pin along the vertical axis.',
       );
     }
     WidgetsBinding.instance.addPostFrameCallback((_) => _applyProps());
@@ -200,11 +201,13 @@ class _FjsScrollViewState extends State<FjsScrollView> {
       fjsWarnOnce(
         'scroll-into-view:${widget.node.id}:$id',
         '<scroll-view> node ${widget.node.id}: scroll-into-view="$id" '
-        'matches no descendant id — nothing scrolled.',
+            'matches no descendant id — nothing scrolled.',
       );
       return;
     }
-    final targetContext = widget.tree.existingGlobalKey(targetId)?.currentContext;
+    final targetContext = widget.tree
+        .existingGlobalKey(targetId)
+        ?.currentContext;
     if (targetContext == null || !targetContext.mounted) return;
     final box = targetContext.findRenderObject();
     final scroller = this.context.findRenderObject();
@@ -235,8 +238,10 @@ class _FjsScrollViewState extends State<FjsScrollView> {
     final local = box.localToGlobal(Offset.zero, ancestor: scroller);
     final delta = _horizontal ? local.dx : local.dy;
     _moveTo(
-      (_controller.offset + delta)
-          .clamp(0, _controller.position.maxScrollExtent),
+      (_controller.offset + delta).clamp(
+        0,
+        _controller.position.maxScrollExtent,
+      ),
     );
   }
 
@@ -273,8 +278,11 @@ class _FjsScrollViewState extends State<FjsScrollView> {
   /// Depth-first search for a descendant carrying this `id` prop. The bool
   /// in the result answers whether that descendant sits inside a
   /// sticky-header subtree.
-  (int?, bool) _findByDomId(MirrorNode from, String id,
-      {bool insideSticky = false}) {
+  (int?, bool) _findByDomId(
+    MirrorNode from,
+    String id, {
+    bool insideSticky = false,
+  }) {
     for (final childId in from.children) {
       final child = widget.tree.node(childId);
       if (child == null) continue;
@@ -348,7 +356,8 @@ class _FjsScrollViewState extends State<FjsScrollView> {
       _edge = fjsEdgeZone(
         offset: notification.metrics.pixels,
         viewport: notification.metrics.viewportDimension,
-        content: notification.metrics.maxScrollExtent +
+        content:
+            notification.metrics.maxScrollExtent +
             notification.metrics.viewportDimension,
         upperThreshold: _upperThreshold,
         lowerThreshold: _lowerThreshold,

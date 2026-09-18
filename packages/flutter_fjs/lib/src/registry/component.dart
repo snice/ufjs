@@ -12,12 +12,13 @@ import '../mirror_tree.dart';
 /// [node] carries props/text/children ids; [children] are the already-built
 /// Flutter widgets of the node's children; [dispatch] reports events back to
 /// JS (see FjsEvent); [context] is valid only during the build.
-typedef ComponentBuilder = Widget Function(
-  BuildContext context,
-  MirrorNode node,
-  List<Widget> children,
-  void Function(int nodeId, int eventType, {String? text}) dispatch,
-);
+typedef ComponentBuilder =
+    Widget Function(
+      BuildContext context,
+      MirrorNode node,
+      List<Widget> children,
+      void Function(int nodeId, int eventType, {String? text}) dispatch,
+    );
 
 class ComponentRegistry {
   final Map<String, ComponentBuilder> _builders = {};

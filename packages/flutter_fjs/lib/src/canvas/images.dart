@@ -55,8 +55,9 @@ class FjsCanvasImages {
 
   Future<void> _extractRgba(int handle, ui.Image image) async {
     try {
-      final data =
-          await image.toByteData(format: ui.ImageByteFormat.rawStraightRgba);
+      final data = await image.toByteData(
+        format: ui.ImageByteFormat.rawStraightRgba,
+      );
       if (data != null) _rgbaByHandle[handle] = data.buffer.asUint8List();
     } catch (_) {
       // a failed extraction only means texImage2D cannot use this image

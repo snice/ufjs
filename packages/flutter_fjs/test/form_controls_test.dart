@@ -125,10 +125,14 @@ void main() {
     testWidgets('is exclusive and reports the selected name', (tester) async {
       final log = <(int, String?)>[];
       final tree = treeOf([
-        N('radio-group', props: {'onValueChanged': true}, children: [
-          N('radio', props: {'name': 'a'}),
-          N('radio', props: {'name': 'b'}),
-        ]),
+        N(
+          'radio-group',
+          props: {'onValueChanged': true},
+          children: [
+            N('radio', props: {'name': 'a'}),
+            N('radio', props: {'name': 'b'}),
+          ],
+        ),
       ]);
       await tester.pumpWidget(render(tree, log));
 
@@ -141,13 +145,17 @@ void main() {
       expect(log, [(valueChanged, '1'), (valueChanged, 'a')]);
     });
 
-    testWidgets('tapping the selected radio again changes nothing',
-        (tester) async {
+    testWidgets('tapping the selected radio again changes nothing', (
+      tester,
+    ) async {
       final log = <(int, String?)>[];
       final tree = treeOf([
-        N('radio-group', children: [
-          N('radio', props: {'name': 'a', 'value': true}),
-        ]),
+        N(
+          'radio-group',
+          children: [
+            N('radio', props: {'name': 'a', 'value': true}),
+          ],
+        ),
       ]);
       await tester.pumpWidget(render(tree, log));
       await tapAt(tester, find.byType(GestureDetector).first);
@@ -156,50 +164,63 @@ void main() {
   });
 
   group('checkbox-group', () {
-    testWidgets('emits the selected names as a JSON array in document order',
-        (tester) async {
+    testWidgets('emits the selected names as a JSON array in document order', (
+      tester,
+    ) async {
       final log = <(int, String?)>[];
       final tree = treeOf([
-        N('checkbox-group', children: [
-          N('checkbox', props: {'name': 'a'}),
-          N('checkbox', props: {'name': 'b'}),
-          N('checkbox', props: {'name': 'c'}),
-        ]),
+        N(
+          'checkbox-group',
+          children: [
+            N('checkbox', props: {'name': 'a'}),
+            N('checkbox', props: {'name': 'b'}),
+            N('checkbox', props: {'name': 'c'}),
+          ],
+        ),
       ]);
       await tester.pumpWidget(render(tree, log));
       final boxes = find.byType(Checkbox);
 
       await tapAt(tester, boxes.at(2));
       await tapAt(tester, boxes.at(0));
-      final groupPayloads =
-          log.where((e) => e.$2 != '1' && e.$2 != '0').map((e) => e.$2).toList();
+      final groupPayloads = log
+          .where((e) => e.$2 != '1' && e.$2 != '0')
+          .map((e) => e.$2)
+          .toList();
       expect(groupPayloads, ['["c"]', '["a","c"]']);
     });
   });
 
   group('label', () {
-    testWidgets('forwards a tap to the control named by `for`',
-        (tester) async {
+    testWidgets('forwards a tap to the control named by `for`', (tester) async {
       final log = <(int, String?)>[];
       final tree = treeOf([
-        N('label', props: {'for': 'agree'}, children: [
-          N('text', text: '同意'),
-          N('checkbox', props: {'id': 'agree', 'onValueChanged': true}),
-        ]),
+        N(
+          'label',
+          props: {'for': 'agree'},
+          children: [
+            N('text', text: '同意'),
+            N('checkbox', props: {'id': 'agree', 'onValueChanged': true}),
+          ],
+        ),
       ]);
       await tester.pumpWidget(render(tree, log));
       await tapAt(tester, find.text('同意'));
       expect(log, [(valueChanged, '1')]);
     });
 
-    testWidgets('without `for`, takes the first control under it',
-        (tester) async {
+    testWidgets('without `for`, takes the first control under it', (
+      tester,
+    ) async {
       final log = <(int, String?)>[];
       final tree = treeOf([
-        N('label', children: [
-          N('text', text: '开关'),
-          N('switch', props: {'onValueChanged': true}),
-        ]),
+        N(
+          'label',
+          children: [
+            N('text', text: '开关'),
+            N('switch', props: {'onValueChanged': true}),
+          ],
+        ),
       ]);
       await tester.pumpWidget(render(tree, log));
       await tapAt(tester, find.text('开关'));
@@ -209,35 +230,43 @@ void main() {
     testWidgets('focuses an input instead of toggling it', (tester) async {
       final log = <(int, String?)>[];
       final tree = treeOf([
-        N('label', children: [
-          N('text', text: '昵称'),
-          N('input', props: {'onFocus': true}),
-        ]),
+        N(
+          'label',
+          children: [
+            N('text', text: '昵称'),
+            N('input', props: {'onFocus': true}),
+          ],
+        ),
       ]);
       await tester.pumpWidget(render(tree, log));
       await tapAt(tester, find.text('昵称'));
       expect(log, [(focusEvent, '')]);
     });
 
-    testWidgets('does not double-toggle when the control itself is tapped',
-        (tester) async {
+    testWidgets('does not double-toggle when the control itself is tapped', (
+      tester,
+    ) async {
       // The web side has to suppress this explicitly (a click bubbles to the
       // label); here the arena hands the tap to the inner detector and the
       // label's never fires. Asserted on both sides so the pair stays honest.
       final log = <(int, String?)>[];
       final tree = treeOf([
-        N('label', children: [
-          N('text', text: '开关'),
-          N('switch', props: {'onValueChanged': true}),
-        ]),
+        N(
+          'label',
+          children: [
+            N('text', text: '开关'),
+            N('switch', props: {'onValueChanged': true}),
+          ],
+        ),
       ]);
       await tester.pumpWidget(render(tree, log));
       await tapAt(tester, find.byType(Switch));
       expect(log, [(valueChanged, '1')]);
     });
 
-    testWidgets('renders its own text when it has no element children',
-        (tester) async {
+    testWidgets('renders its own text when it has no element children', (
+      tester,
+    ) async {
       // Before this tag existed, <label> was mapped to `text` by the HTML
       // compat table. Dropping the host text here would make it silently
       // vanish (constitution V).
@@ -277,11 +306,7 @@ void main() {
     testWidgets('emits focus and blur with the current text', (tester) async {
       final log = <(int, String?)>[];
       final tree = treeOf([
-        N('input', props: {
-          'value': 'hi',
-          'onFocus': true,
-          'onBlur': true,
-        }),
+        N('input', props: {'value': 'hi', 'onFocus': true, 'onBlur': true}),
       ]);
       await tester.pumpWidget(render(tree, log));
 
@@ -295,8 +320,9 @@ void main() {
       expect(log, [(focusEvent, 'hi'), (blurEvent, 'hi')]);
     });
 
-    testWidgets('caps the text at maxlength and treats -1 as no limit',
-        (tester) async {
+    testWidgets('caps the text at maxlength and treats -1 as no limit', (
+      tester,
+    ) async {
       final capped = treeOf([
         N('input', props: {'maxlength': 5, 'onTextChanged': true}),
       ]);

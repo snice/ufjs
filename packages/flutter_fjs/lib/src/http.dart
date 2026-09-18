@@ -42,7 +42,7 @@ class FjsHttp {
 
   /// Delivers the response back into the VM (the engine's dispatchEvent).
   final void Function(int requestId, int eventType, {String? text})
-      dispatchEvent;
+  dispatchEvent;
 
   /// The dev server a root-relative URL resolves against — the same closure
   /// the canvas host modules get. A browser resolves `/x` against the page
@@ -126,11 +126,15 @@ class FjsHttp {
     final id = --_dartId;
     var future = _fetch(id, url, method, headers, body);
     if (timeout != null) {
-      future = future.timeout(timeout, onTimeout: () {
-        _inFlight.remove(id)?.abort();
-        throw TimeoutException(
-            'request timed out after ${timeout.inMilliseconds}ms');
-      });
+      future = future.timeout(
+        timeout,
+        onTimeout: () {
+          _inFlight.remove(id)?.abort();
+          throw TimeoutException(
+            'request timed out after ${timeout.inMilliseconds}ms',
+          );
+        },
+      );
     }
     return future;
   }
@@ -143,8 +147,13 @@ class FjsHttp {
     List<int>? body,
   ) async {
     try {
-      final (response, bytes) =
-          await _exchange(id, url, method, headers: headers, body: body);
+      final (response, bytes) = await _exchange(
+        id,
+        url,
+        method,
+        headers: headers,
+        body: body,
+      );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException('${response.statusCode} for $url');
       }
@@ -230,8 +239,9 @@ class FjsHttp {
     var bodyBytes = _takeBytes(spec['bodyHandle']);
     final bodyBase64 = spec['bodyBase64']?.toString();
     if (bodyBytes == null) {
-      bodyBytes =
-          bodyBase64 == null || bodyBase64.isEmpty ? null : base64Decode(bodyBase64);
+      bodyBytes = bodyBase64 == null || bodyBase64.isEmpty
+          ? null
+          : base64Decode(bodyBase64);
     }
     final rawHeaders = spec['headers'];
     final (response, bytes) = await _exchange(
@@ -261,10 +271,11 @@ class FjsHttp {
       'status': response.statusCode,
       'statusText': response.reasonPhrase,
       // after redirects this is where the body actually came from
-      'url': (response.redirects.isNotEmpty
-              ? response.redirects.last.location
-              : url)
-          .toString(),
+      'url':
+          (response.redirects.isNotEmpty
+                  ? response.redirects.last.location
+                  : url)
+              .toString(),
       'redirected': response.redirects.isNotEmpty,
       'headers': outHeaders,
       if (handle != null)
@@ -316,8 +327,9 @@ class FjsHttp {
       // _releaseAssetResponse before it gets here. Kept defensive in case a
       // caller races a dev disconnect between the two checks.
       throw FormatException(
-          'relative fetch URL "$raw" needs a dev server connection to '
-          'resolve against');
+        'relative fetch URL "$raw" needs a dev server connection to '
+        'resolve against',
+      );
     }
     return base.resolve(raw.toString());
   }
@@ -335,8 +347,10 @@ class FjsHttp {
     }
     try {
       final data = await rootBundle.load('$fjsPublicAssetRoot/$path');
-      final bytes = data.buffer
-          .asUint8List(data.offsetInBytes, data.lengthInBytes);
+      final bytes = data.buffer.asUint8List(
+        data.offsetInBytes,
+        data.lengthInBytes,
+      );
       final handle = _putBytes(bytes);
       return {
         'ok': true,

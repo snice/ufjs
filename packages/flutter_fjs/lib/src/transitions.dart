@@ -4,6 +4,16 @@
 // native half. The default ('') is deliberately *not* in here: it stays
 // the platform's own transition, which is what an app that never mentions
 // transitions should get.
+//
+// CupertinoPageTransitionsBuilder lives in material on Flutter <= 3.43 and
+// moved to cupertino in 3.44 (breaking change decouple-page-transition-
+// builders). Neither library re-exports it across that line, so importing
+// both is what compiles everywhere between our floor (3.38) and pub.dev's
+// latest stable — on <= 3.43 the name resolves from material, on 3.44+
+// from cupertino. The ignore is for the <= 3.43 side, where this import
+// contributes nothing; on 3.44+ it is the one that provides the name.
+// ignore: unnecessary_import
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 class FjsTransitionSpec {
@@ -89,14 +99,14 @@ class FjsSlideUpTransitionsBuilder extends PageTransitionsBuilder {
     Widget child,
   ) {
     return SlideTransition(
-      position: Tween<Offset>(
-        begin: const Offset(0, 1),
-        end: Offset.zero,
-      ).animate(CurvedAnimation(
-        parent: animation,
-        curve: Curves.easeOutCubic,
-        reverseCurve: Curves.easeInCubic,
-      )),
+      position: Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero)
+          .animate(
+            CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCubic,
+              reverseCurve: Curves.easeInCubic,
+            ),
+          ),
       child: child,
     );
   }

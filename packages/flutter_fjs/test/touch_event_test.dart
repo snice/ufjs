@@ -80,8 +80,9 @@ MirrorTree _twoAbsoluteNodes() {
   w.str('view');
   w.u8(UiOpCode.setProps);
   w.u32(10);
-  var json =
-      utf8.encode('{"style":{"position":"relative","width":100,"height":220}}');
+  var json = utf8.encode(
+    '{"style":{"position":"relative","width":100,"height":220}}',
+  );
   w.u32(json.length);
   w.raw(json);
   w.u8(UiOpCode.insert);
@@ -155,7 +156,7 @@ class _Event {
     final raw = payload[key] ?? payload['touches'];
     return [
       for (final t in (raw as List<Object?>? ?? const []))
-        [for (final n in t as List<Object?>) n as num]
+        [for (final n in t as List<Object?>) n as num],
     ];
   }
 
@@ -175,7 +176,9 @@ Widget _render(
     ids: tree.rootChildren,
     dispatch: (id, type, {String? text}) => log.add(
       _Event(
-          type, text == null ? {} : jsonDecode(text) as Map<String, Object?>),
+        type,
+        text == null ? {} : jsonDecode(text) as Map<String, Object?>,
+      ),
     ),
   );
   return MaterialApp(
@@ -189,14 +192,16 @@ Widget _render(
 }
 
 const _box = '"style":{"width":100,"height":100,"backgroundColor":"#ffffff"}';
-const _listens = '"onTouchstart":true,"onTouchmove":true,'
+const _listens =
+    '"onTouchstart":true,"onTouchmove":true,'
     '"onTouchend":true,"onTouchcancel":true';
 
 void main() {
   setUp(debugResetTouches);
 
-  testWidgets('a drag reports start, move and end with DOM-shaped lists',
-      (tester) async {
+  testWidgets('a drag reports start, move and end with DOM-shaped lists', (
+    tester,
+  ) async {
     final log = <_Event>[];
     await tester.pumpWidget(
       _render(_treeWith('{$_box,$_listens,"id":"card"}'), log),
@@ -207,7 +212,7 @@ void main() {
     expect(log.single.type, FjsEvent.touchStart);
     expect(log.single.payload['id'], 'card');
     expect(log.single.touches, [
-      [1, start.dx, start.dy]
+      [1, start.dx, start.dy],
     ]);
     // one finger: targetTouches and changedTouches are the same list, and
     // the payload says so by leaving them out
@@ -219,7 +224,7 @@ void main() {
     await tester.pump();
     expect(log.single.type, FjsEvent.touchMove);
     expect(log.single.changedTouches, [
-      [1, start.dx + 20, start.dy + 30]
+      [1, start.dx + 20, start.dy + 30],
     ]);
 
     log.clear();
@@ -230,19 +235,18 @@ void main() {
     // survives only in changedTouches
     expect(log.single.touches, isEmpty);
     expect(log.single.changedTouches, [
-      [1, start.dx + 20, start.dy + 30]
+      [1, start.dx + 20, start.dy + 30],
     ]);
   });
 
-  testWidgets('the payload carries the node origin, so JS can offset',
-      (tester) async {
+  testWidgets('the payload carries the node origin, so JS can offset', (
+    tester,
+  ) async {
     // Coordinates are page-space; a page has no getBoundingClientRect to
     // convert them with, so the origin rides along and ui/touch.ts turns it
     // into offsetX/offsetY. A <canvas> hit-tests against exactly that.
     final log = <_Event>[];
-    await tester.pumpWidget(
-      _render(_treeWith('{$_box,$_listens}'), log),
-    );
+    await tester.pumpWidget(_render(_treeWith('{$_box,$_listens}'), log));
     final box = tester.getTopLeft(find.byType(Container));
     final start = tester.getCenter(find.byType(Container));
 
@@ -256,8 +260,9 @@ void main() {
     await finger.up();
   });
 
-  testWidgets('moves in one frame collapse to a single dispatch',
-      (tester) async {
+  testWidgets('moves in one frame collapse to a single dispatch', (
+    tester,
+  ) async {
     final log = <_Event>[];
     await tester.pumpWidget(_render(_treeWith('{$_box,$_listens}'), log));
     final start = tester.getCenter(find.byType(Container));
@@ -277,8 +282,7 @@ void main() {
     tester.binding.handlePointerEvent(finger.up());
   });
 
-  testWidgets(
-      'a second finger shows up in touches, and both move in one '
+  testWidgets('a second finger shows up in touches, and both move in one '
       'event', (tester) async {
     final log = <_Event>[];
     await tester.pumpWidget(_render(_treeWith('{$_box,$_listens}'), log));
@@ -307,17 +311,22 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('touch-action: none keeps an enclosing list from scrolling',
-      (tester) async {
+  testWidgets('touch-action: none keeps an enclosing list from scrolling', (
+    tester,
+  ) async {
     final log = <_Event>[];
     final controller = ScrollController();
-    await tester.pumpWidget(_render(
-      _treeWith('{"style":{"width":100,"height":100,'
-          '"backgroundColor":"#ffffff","touchAction":"none"},$_listens}'),
-      log,
-      scrollable: true,
-      controller: controller,
-    ));
+    await tester.pumpWidget(
+      _render(
+        _treeWith(
+          '{"style":{"width":100,"height":100,'
+          '"backgroundColor":"#ffffff","touchAction":"none"},$_listens}',
+        ),
+        log,
+        scrollable: true,
+        controller: controller,
+      ),
+    );
 
     final finger = await tester.startGesture(
       tester.getCenter(find.byType(Container)),
@@ -328,28 +337,36 @@ void main() {
     await tester.pump();
 
     expect(controller.offset, 0, reason: 'the node claimed the gesture');
-    expect(log.map((e) => e.type),
-        contains(FjsEvent.touchMove)); // and kept getting the moves
+    expect(
+      log.map((e) => e.type),
+      contains(FjsEvent.touchMove),
+    ); // and kept getting the moves
     expect(log.map((e) => e.type), isNot(contains(FjsEvent.touchCancel)));
   });
 
-  testWidgets('touch-action: none wins before a fast first scroll move',
-      (tester) async {
+  testWidgets('touch-action: none wins before a fast first scroll move', (
+    tester,
+  ) async {
     final log = <_Event>[];
     final controller = ScrollController();
-    await tester.pumpWidget(_render(
-      _treeWith('{"style":{"width":100,"height":100,'
-          '"backgroundColor":"#ffffff","touchAction":"none"},$_listens}'),
-      log,
-      scrollable: true,
-      controller: controller,
-    ));
+    await tester.pumpWidget(
+      _render(
+        _treeWith(
+          '{"style":{"width":100,"height":100,'
+          '"backgroundColor":"#ffffff","touchAction":"none"},$_listens}',
+        ),
+        log,
+        scrollable: true,
+        controller: controller,
+      ),
+    );
 
     final start = tester.getCenter(find.byType(Container));
     final finger = TestPointer(1, PointerDeviceKind.touch);
     tester.binding.handlePointerEvent(finger.down(start));
-    tester.binding
-        .handlePointerEvent(finger.move(start + const Offset(0, -80)));
+    tester.binding.handlePointerEvent(
+      finger.move(start + const Offset(0, -80)),
+    );
     await tester.pump();
 
     expect(controller.offset, 0, reason: 'the node won before scroll slop');
@@ -363,12 +380,14 @@ void main() {
   testWidgets('a scroll that takes over cancels the touches', (tester) async {
     final log = <_Event>[];
     final controller = ScrollController();
-    await tester.pumpWidget(_render(
-      _treeWith('{$_box,$_listens}'), // touch-action: auto
-      log,
-      scrollable: true,
-      controller: controller,
-    ));
+    await tester.pumpWidget(
+      _render(
+        _treeWith('{$_box,$_listens}'), // touch-action: auto
+        log,
+        scrollable: true,
+        controller: controller,
+      ),
+    );
 
     final finger = await tester.startGesture(
       tester.getCenter(find.byType(Container)),
@@ -385,17 +404,22 @@ void main() {
     await finger.up();
   });
 
-  testWidgets('touch-action: pan-y leaves vertical scrolling alone',
-      (tester) async {
+  testWidgets('touch-action: pan-y leaves vertical scrolling alone', (
+    tester,
+  ) async {
     final log = <_Event>[];
     final controller = ScrollController();
-    await tester.pumpWidget(_render(
-      _treeWith('{"style":{"width":100,"height":100,'
-          '"backgroundColor":"#ffffff","touchAction":"pan-y"},$_listens}'),
-      log,
-      scrollable: true,
-      controller: controller,
-    ));
+    await tester.pumpWidget(
+      _render(
+        _treeWith(
+          '{"style":{"width":100,"height":100,'
+          '"backgroundColor":"#ffffff","touchAction":"pan-y"},$_listens}',
+        ),
+        log,
+        scrollable: true,
+        controller: controller,
+      ),
+    );
 
     final finger = await tester.startGesture(
       tester.getCenter(find.byType(Container)),
@@ -433,17 +457,22 @@ void main() {
     await finger.up();
   });
 
-  testWidgets('a translated node is touched where it is painted',
-      (tester) async {
+  testWidgets('a translated node is touched where it is painted', (
+    tester,
+  ) async {
     // what a drag relies on: transform moves the hit test with the paint,
     // so the finger keeps holding the block it picked up
     final log = <_Event>[];
-    await tester.pumpWidget(_render(
-      _treeWith('{"style":{"width":100,"height":100,'
+    await tester.pumpWidget(
+      _render(
+        _treeWith(
+          '{"style":{"width":100,"height":100,'
           '"backgroundColor":"#ffffff","transform":"translate(120px, 0)"},'
-          '$_listens}'),
-      log,
-    ));
+          '$_listens}',
+        ),
+        log,
+      ),
+    );
     final painted = tester.getCenter(find.byType(Container));
 
     final finger = await tester.startGesture(painted);
@@ -456,8 +485,9 @@ void main() {
     await away.up();
   });
 
-  testWidgets('a transform arriving mid-drag does not cancel it',
-      (tester) async {
+  testWidgets('a transform arriving mid-drag does not cancel it', (
+    tester,
+  ) async {
     // the drag itself is what sets the transform, so the node gaining one
     // must not disturb the listener holding the finger
     final log = <_Event>[];
@@ -505,8 +535,9 @@ void main() {
     expect(log.last.type, FjsEvent.touchEnd);
   });
 
-  testWidgets('reordering absolute stack children mid-drag keeps the finger',
-      (tester) async {
+  testWidgets('reordering absolute stack children mid-drag keeps the finger', (
+    tester,
+  ) async {
     final log = <_Event>[];
     final tree = _twoAbsoluteNodes();
     await tester.pumpWidget(_render(tree, log));

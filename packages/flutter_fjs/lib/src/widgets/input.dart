@@ -20,8 +20,11 @@ import 'control_scope.dart';
 import 'dispatch.dart';
 
 class FjsInput extends StatefulWidget {
-  const FjsInput(
-      {required this.node, required this.style, required this.dispatch});
+  const FjsInput({
+    required this.node,
+    required this.style,
+    required this.dispatch,
+  });
 
   final MirrorNode node;
   final FjsStyle style;
@@ -33,21 +36,22 @@ class FjsInput extends StatefulWidget {
 
 class _FjsInputState extends State<FjsInput>
     with FjsControlRegistration<FjsInput> {
-  late final TextEditingController _controller =
-      TextEditingController(text: widget.node.props['value']?.toString() ?? '');
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.node.props['value']?.toString() ?? '',
+  );
   late final FocusNode _focusNode = FocusNode()..addListener(_onFocusChange);
 
   @override
   FjsControlHandle createControlHandle() => FjsControlHandle(
-        nodeId: widget.node.id,
-        kind: FjsControlKind.input,
-        getName: () => widget.node.props['name']?.toString(),
-        getId: () => widget.node.props['id']?.toString(),
-        // The live text, not the `value` prop: an fjs input may be
-        // uncontrolled, and then the prop was never written.
-        getValue: () => _controller.text,
-        focus: () => _focusNode.requestFocus(),
-      );
+    nodeId: widget.node.id,
+    kind: FjsControlKind.input,
+    getName: () => widget.node.props['name']?.toString(),
+    getId: () => widget.node.props['id']?.toString(),
+    // The live text, not the `value` prop: an fjs input may be
+    // uncontrolled, and then the prop was never written.
+    getValue: () => _controller.text,
+    focus: () => _focusNode.requestFocus(),
+  );
 
   /// One event per transition. A FocusNode fires its listener for other
   /// reasons too (focus moving between descendants, the node being
@@ -91,7 +95,8 @@ class _FjsInputState extends State<FjsInput>
   /// `expands` needs a bounded parent, so it is only used when the page
   /// actually gave the box a height — checked on the RESOLVED style, not on
   /// whether a `style` prop exists.
-  bool get _expands => _multiline && !_autoHeight && widget.style.height != null;
+  bool get _expands =>
+      _multiline && !_autoHeight && widget.style.height != null;
 
   static const int _defaultMultilineLines = 3;
 
@@ -246,7 +251,9 @@ class _FjsInputState extends State<FjsInput>
     final metrics = painter.computeLineMetrics();
     // An empty field is one line, not zero — that is what the page sees.
     final count = metrics.isEmpty ? 1 : metrics.length;
-    final height = painter.height > 0 ? painter.height : painter.preferredLineHeight;
+    final height = painter.height > 0
+        ? painter.height
+        : painter.preferredLineHeight;
     painter.dispose();
     if (count == _reportedLines) return;
     _reportedLines = count;

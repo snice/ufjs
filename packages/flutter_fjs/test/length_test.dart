@@ -32,7 +32,10 @@ void main() {
       expect(parseFjsLength('calc(50% + 8px)'), const FjsLength(8, 0.5));
       expect(parseFjsLength('calc(100% / 3)'), const FjsLength(0, 1 / 3));
       expect(parseFjsLength('calc(2 * 8px)'), const FjsLength(16, 0));
-      expect(parseFjsLength('calc(100% - (8px + 4px))'), const FjsLength(-12, 1));
+      expect(
+        parseFjsLength('calc(100% - (8px + 4px))'),
+        const FjsLength(-12, 1),
+      );
       // a sign glued to the number is part of it, not an operator
       expect(parseFjsLength('calc(-8px + 100%)'), const FjsLength(-8, 1));
       expect(parseFjsLength('CALC(100% - 10PX)'), const FjsLength(-10, 1));
@@ -73,8 +76,11 @@ void main() {
     test('min/max resolve against the parent when asked to', () {
       final s = styled({'maxWidth': '80%', 'minHeight': '10px'});
       expect(s.hasRelativeConstraints, isTrue);
-      expect(s.constraints?.maxWidth, double.infinity,
-          reason: 'the build-time getter cannot know the parent');
+      expect(
+        s.constraints?.maxWidth,
+        double.infinity,
+        reason: 'the build-time getter cannot know the parent',
+      );
       final resolved = s.constraintsIn(const BoxConstraints(maxWidth: 200));
       expect(resolved?.maxWidth, 160);
       expect(resolved?.minHeight, 10);
@@ -86,44 +92,54 @@ void main() {
   });
 
   group('layout', () {
-    testWidgets('a percentage width is a fraction of the parent box',
-        (tester) async {
-      await tester.pumpWidget(_host(
-        width: 300,
-        child: _styledBox({'width': '50%', 'height': '20px'}),
-      ));
-      expect(tester.getSize(find.byKey(const ValueKey('box'))),
-          const Size(150, 20));
+    testWidgets('a percentage width is a fraction of the parent box', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          width: 300,
+          child: _styledBox({'width': '50%', 'height': '20px'}),
+        ),
+      );
+      expect(
+        tester.getSize(find.byKey(const ValueKey('box'))),
+        const Size(150, 20),
+      );
     });
 
     testWidgets('calc() subtracts from the parent box', (tester) async {
-      await tester.pumpWidget(_host(
-        width: 300,
-        child: _styledBox({'width': 'calc(100% - 40px)', 'height': '20px'}),
-      ));
+      await tester.pumpWidget(
+        _host(
+          width: 300,
+          child: _styledBox({'width': 'calc(100% - 40px)', 'height': '20px'}),
+        ),
+      );
       expect(tester.getSize(find.byKey(const ValueKey('box'))).width, 260);
     });
 
-    testWidgets('a percentage of an unbounded axis falls back to auto',
-        (tester) async {
-      await tester.pumpWidget(_host(
-        width: 300,
-        // inside a scrollable the height is unbounded: nothing to be 50% of,
-        // so the box takes its content's height instead of throwing
-        scrollable: true,
-        child: _styledBox({'width': '50%', 'height': '50%'}),
-      ));
-      expect(tester.getSize(find.byKey(const ValueKey('box'))),
-          const Size(150, 40));
+    testWidgets('a percentage of an unbounded axis falls back to auto', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          width: 300,
+          // inside a scrollable the height is unbounded: nothing to be 50% of,
+          // so the box takes its content's height instead of throwing
+          scrollable: true,
+          child: _styledBox({'width': '50%', 'height': '50%'}),
+        ),
+      );
+      expect(
+        tester.getSize(find.byKey(const ValueKey('box'))),
+        const Size(150, 40),
+      );
     });
   });
 }
 
 /// The node's box, built the way the widget layer builds one.
-Widget _styledBox(Map<String, Object?> style) => decorateNode(
-      styled(style),
-      const SizedBox(width: 10, height: 40),
-    );
+Widget _styledBox(Map<String, Object?> style) =>
+    decorateNode(styled(style), const SizedBox(width: 10, height: 40));
 
 Widget _host({
   required double width,
@@ -145,7 +161,8 @@ Widget _host({
             ? SingleChildScrollView(
                 // a vertical scroll view hands its child a TIGHT width; the
                 // Align loosens it, the way the flow of a real page does
-                child: Align(alignment: Alignment.topLeft, child: box))
+                child: Align(alignment: Alignment.topLeft, child: box),
+              )
             : Align(alignment: Alignment.topLeft, child: box),
       ),
     ),

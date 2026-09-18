@@ -31,9 +31,11 @@ class _W {
 MirrorTree swiperTree(
   Map<String, Object?> props,
   int pages, {
+
   /// Put a plain <view> between the page and its text, the way a real page
   /// does (`<swiper-item><view class="slide">`).
   bool wrapInView = false,
+
   /// Pages as bare <view>s rather than <swiper-item>s — what the element
   /// API can still produce; the compiler rejects it in a template.
   bool bare = false,
@@ -113,22 +115,23 @@ void setSwiperProps(MirrorTree tree, Map<String, Object?> props) {
 typedef Events = List<(int, String?)>;
 
 Widget render(MirrorTree tree, Events log) => MaterialApp(
-      home: Scaffold(
-        body: FjsNodeRenderer(
-          tree: tree,
-          ids: tree.rootChildren,
-          dispatch: (id, type, {String? text}) => log.add((type, text)),
-        ),
-      ),
-    );
+  home: Scaffold(
+    body: FjsNodeRenderer(
+      tree: tree,
+      ids: tree.rootChildren,
+      dispatch: (id, type, {String? text}) => log.add((type, text)),
+    ),
+  ),
+);
 
 const int pageChanged = 6;
 
 void main() {
   setUp(resetFjsWarnOnce);
 
-  testWidgets('renders one page per child and starts on current',
-      (tester) async {
+  testWidgets('renders one page per child and starts on current', (
+    tester,
+  ) async {
     final tree = swiperTree({'current': 1}, 3);
     await tester.pumpWidget(render(tree, []));
     await tester.pumpAndSettle();
@@ -148,8 +151,9 @@ void main() {
     expect(log, [(pageChanged, '2')]);
   });
 
-  testWidgets('an out-of-range current lands on the last page and warns',
-      (tester) async {
+  testWidgets('an out-of-range current lands on the last page and warns', (
+    tester,
+  ) async {
     final logs = <String>[];
     final original = debugPrint;
     debugPrint = (message, {wrapWidth}) => logs.add(message ?? '');
@@ -164,8 +168,7 @@ void main() {
     expect(logs.where((l) => l.contains('current=9')), isNotEmpty);
   });
 
-  testWidgets('a bare child still pages and warns (specs/051)',
-      (tester) async {
+  testWidgets('a bare child still pages and warns (specs/051)', (tester) async {
     final logs = <String>[];
     final original = debugPrint;
     debugPrint = (message, {wrapWidth}) => logs.add(message ?? '');
@@ -177,7 +180,10 @@ void main() {
     } finally {
       debugPrint = original;
     }
-    expect(logs.where((l) => l.contains('is not a <swiper-item>')), hasLength(1));
+    expect(
+      logs.where((l) => l.contains('is not a <swiper-item>')),
+      hasLength(1),
+    );
   });
 
   testWidgets('swiper-item pages do not warn', (tester) async {
@@ -197,10 +203,12 @@ void main() {
     // Driven by autoplay rather than gestures: a fling's momentum can carry
     // two pages, and what is under test here is the INDEX the page sees,
     // not the physics.
-    final tree = swiperTree(
-      {'circular': true, 'autoplay': true, 'interval': 1000, 'duration': 1},
-      3,
-    );
+    final tree = swiperTree({
+      'circular': true,
+      'autoplay': true,
+      'interval': 1000,
+      'duration': 1,
+    }, 3);
     final log = <(int, String?)>[];
     await tester.pumpWidget(render(tree, log));
     await tester.pumpAndSettle();
@@ -212,17 +220,15 @@ void main() {
     // pumpAndSettle keeps the clock running, so more ticks may land after
     // these three; what matters is the order and that a clone's page number
     // never shows up.
-    expect(
-      log.map((e) => e.$2).take(3).toList(),
-      ['1', '2', '0'],
-    );
+    expect(log.map((e) => e.$2).take(3).toList(), ['1', '2', '0']);
   });
 
   testWidgets('autoplay turns the page on its interval', (tester) async {
-    final tree = swiperTree(
-      {'autoplay': true, 'interval': 1000, 'duration': 1},
-      3,
-    );
+    final tree = swiperTree({
+      'autoplay': true,
+      'interval': 1000,
+      'duration': 1,
+    }, 3);
     final log = <(int, String?)>[];
     await tester.pumpWidget(render(tree, log));
     await tester.pumpAndSettle();
@@ -239,17 +245,20 @@ void main() {
     expect(log.last.$2, '2');
   });
 
-  testWidgets('indicator dots: one per page, the current one filled',
-      (tester) async {
+  testWidgets('indicator dots: one per page, the current one filled', (
+    tester,
+  ) async {
     final tree = swiperTree({'indicatorDots': true, 'current': 1}, 3);
     await tester.pumpWidget(render(tree, []));
     await tester.pumpAndSettle();
 
     final dots = tester
         .widgetList<Container>(find.byType(Container))
-        .where((c) =>
-            c.constraints?.maxWidth == fjsSwiperDotSize ||
-            (c.decoration as BoxDecoration?)?.shape == BoxShape.circle)
+        .where(
+          (c) =>
+              c.constraints?.maxWidth == fjsSwiperDotSize ||
+              (c.decoration as BoxDecoration?)?.shape == BoxShape.circle,
+        )
         .toList();
     expect(dots, hasLength(3));
     final colors = dots
@@ -272,8 +281,7 @@ void main() {
     // a strip at the top of a 200px pager.
     // the id shows up twice: on the node's own view and on the flex wrapper
     // that carries its key
-    final content =
-        tester.getSize(find.byKey(const ValueKey<int>(3)).first);
+    final content = tester.getSize(find.byKey(const ValueKey<int>(3)).first);
     expect(content.height, moreOrLessEquals(pager.height, epsilon: 1));
   });
 

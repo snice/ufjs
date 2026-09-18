@@ -115,7 +115,7 @@ FjsStickySplit fjsStickySplit({
 
 class _StickySplitter {
   _StickySplitter(this.context, this.scrollStyle, int ownerId)
-      : warnPrefix = 'sticky:$ownerId';
+    : warnPrefix = 'sticky:$ownerId';
 
   final FjsNodeAdapterContext context;
   final FjsStyle scrollStyle;
@@ -186,7 +186,7 @@ class _StickySplitter {
       fjsWarnOnce(
         '$warnPrefix:overlap:${node.id}',
         '<sticky-header> node ${node.id}: allow-overlapping has no effect on '
-        'Flutter yet; headers push each other as if it were false.',
+            'Flutter yet; headers push each other as if it were false.',
       );
     }
     final topLength = FjsStyle.of(node).topLength;
@@ -196,13 +196,16 @@ class _StickySplitter {
       fjsWarnOnce(
         '$warnPrefix:relative-top:${node.id}',
         'position: sticky on node ${node.id}: a percentage `top` has no '
-        'scroller height to resolve against; pinning at 0.',
+            'scroller height to resolve against; pinning at 0.',
       );
     }
     final offset = fjsStickyOffsetTop(node);
     Widget content = _stickyContentBox(context, node);
     if (offset > 0) {
-      content = Padding(padding: EdgeInsets.only(top: offset), child: content);
+      content = Padding(
+        padding: EdgeInsets.only(top: offset),
+        child: content,
+      );
     }
     return PinnedHeaderSliver(child: content);
   }
@@ -224,7 +227,7 @@ class _StickySplitter {
       fjsWarnOnce(
         '$warnPrefix:push:${node.id}',
         '<sticky-section> node ${node.id}: push-pinned-header="false" has '
-        'no effect on Flutter; headers push each other as on web sections.',
+            'no effect on Flutter; headers push each other as on web sections.',
       );
     }
     final kidNodes = <MirrorNode>[];
@@ -240,8 +243,11 @@ class _StickySplitter {
     ];
     return SliverMainAxisGroup(
       slivers: [
-        for (final entry in splitNodes(kidNodes, kids,
-            runStyle: FjsStyle.of(node)))
+        for (final entry in splitNodes(
+          kidNodes,
+          kids,
+          runStyle: FjsStyle.of(node),
+        ))
           entry.$1,
       ],
     );
@@ -251,8 +257,8 @@ class _StickySplitter {
     fjsWarnOnce(
       '$warnPrefix:nested:${node.id}',
       '<sticky-section> node ${node.id} sits inside another sticky-section; '
-      'WeChat allows a section only as a scroll-view child. Rendered as a '
-      'plain container.',
+          'WeChat allows a section only as a scroll-view child. Rendered as a '
+          'plain container.',
     );
     return _stickyContentBox(context, node);
   }

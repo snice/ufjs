@@ -97,8 +97,9 @@ MirrorTree _tree() {
 }
 
 void main() {
-  testWidgets('boxes in a wrapping row hug their content and sit inline',
-      (tester) async {
+  testWidgets('boxes in a wrapping row hug their content and sit inline', (
+    tester,
+  ) async {
     tester.view.devicePixelRatio = 1.0;
     tester.view.physicalSize = const Size(500, 640);
     addTearDown(tester.view.reset);
@@ -121,7 +122,9 @@ void main() {
     debugPrint('box1 size: ${box1.size}, box2 size: ${box2.size}');
     final wraps = tester.widgetList<Wrap>(find.byType(Wrap));
     for (final w in wraps) {
-      debugPrint('wrap direction: ${w.direction}, alignment: ${w.alignment}, cross: ${w.crossAxisAlignment}');
+      debugPrint(
+        'wrap direction: ${w.direction}, alignment: ${w.alignment}, cross: ${w.crossAxisAlignment}',
+      );
     }
     debugPrint('wrap count: ${wraps.length}');
     final boxes = tester.renderObjectList<RenderBox>(find.byType(Flex));
@@ -132,9 +135,10 @@ void main() {
     expect(box1.size.width, lessThan(150));
     expect(box2.size.width, lessThan(250));
     // 横向排布：两个盒子的顶端齐平
-    expect((box1.localToGlobal(Offset.zero).dy -
-            box2.localToGlobal(Offset.zero).dy)
-        .abs(),
-        lessThan(1));
+    expect(
+      (box1.localToGlobal(Offset.zero).dy - box2.localToGlobal(Offset.zero).dy)
+          .abs(),
+      lessThan(1),
+    );
   });
 }

@@ -137,7 +137,7 @@ class _FjsAppState extends State<FjsApp> {
           // this Navigator is usually nested (under a host's Scaffold), and
           // a nested one does not see the system back button on its own
           enabled: _stack.isNotEmpty,
-          onPop: () => _navigator.currentState?.pop(),
+          onPopWithResult: (_) => _navigator.currentState?.pop(),
           child: Navigator(
             key: _navigator,
             observers: widget.observers,

@@ -220,7 +220,7 @@ class _ContainerConfig {
       fjsWarnOnce(
         'page-container:position:$position',
         '<page-container> does not know position="$position"; expected top, '
-        'bottom, right or center. Falling back to bottom.',
+            'bottom, right or center. Falling back to bottom.',
       );
       position = 'bottom';
     }
@@ -237,7 +237,7 @@ class _ContainerConfig {
           fjsWarnOnce(
             'page-container:overlay-style:$key',
             '<page-container> overlay-style only supports background and '
-            'opacity on this platform; "$key" is ignored.',
+                'opacity on this platform; "$key" is ignored.',
           );
       }
     });
@@ -264,11 +264,12 @@ class _ContainerConfig {
           fjsWarnOnce(
             'page-container:custom-style:$key',
             '<page-container> custom-style only supports background, '
-            'border-radius and opacity on this platform; "$key" is ignored.',
+                'border-radius and opacity on this platform; "$key" is ignored.',
           );
       }
     });
-    final base = radiusPx ?? (props['round'] == true ? fjsPageContainerRadius : 0.0);
+    final base =
+        radiusPx ?? (props['round'] == true ? fjsPageContainerRadius : 0.0);
     final radius = switch (position) {
       'top' => BorderRadius.vertical(bottom: Radius.circular(base)),
       'right' => BorderRadius.horizontal(left: Radius.circular(base)),
@@ -456,7 +457,10 @@ class _PageContainerRoute extends PageRoute<void> {
     // (buildContent); the edge swipe is the strip layered on top.
     return Stack(
       fit: StackFit.expand,
-      children: [child, _EdgeBackZone(route: this)],
+      children: [
+        child,
+        _EdgeBackZone(route: this),
+      ],
     );
   }
 
@@ -484,14 +488,12 @@ class _PageContainerRoute extends PageRoute<void> {
     final vertical = config.position != 'right';
     Widget panel = GestureDetector(
       onVerticalDragUpdate: vertical
-          ? (details) =>
-                _drag += closeSign * (details.primaryDelta ?? 0)
+          ? (details) => _drag += closeSign * (details.primaryDelta ?? 0)
           : null,
       onVerticalDragEnd: vertical ? _finishPanelDrag : null,
       onHorizontalDragUpdate: vertical
           ? null
-          : (details) =>
-                _drag += closeSign * (details.primaryDelta ?? 0),
+          : (details) => _drag += closeSign * (details.primaryDelta ?? 0),
       onHorizontalDragEnd: vertical ? null : _finishPanelDrag,
       child: ClipRRect(
         borderRadius: config.radius,

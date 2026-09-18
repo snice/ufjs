@@ -79,8 +79,12 @@ class HostBridge {
   late final ffi.Pointer<ffi.NativeFunction<InvokeHostC>> pointer =
       ffi.Pointer.fromFunction(_invokeHostTrampoline, 0);
 
-  static int _invokeHostTrampoline(ffi.Pointer<ffi.Uint8> namePtr, int argc,
-      ffi.Pointer<FJSValue> args, ffi.Pointer<FJSValue> out) {
+  static int _invokeHostTrampoline(
+    ffi.Pointer<ffi.Uint8> namePtr,
+    int argc,
+    ffi.Pointer<FJSValue> args,
+    ffi.Pointer<FJSValue> out,
+  ) {
     try {
       final name = cString(namePtr);
       final list = <Object?>[];

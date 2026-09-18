@@ -20,16 +20,16 @@ class _FjsSwitchState extends State<FjsSwitch>
     with FjsControlRegistration<FjsSwitch> {
   @override
   FjsControlHandle createControlHandle() => FjsControlHandle(
-        nodeId: widget.node.id,
-        kind: FjsControlKind.toggle,
-        getName: () => widget.node.props['name']?.toString(),
-        getId: () => widget.node.props['id']?.toString(),
-        getValue: () => _value,
-        toggle: () {
-          if (fjsBool(widget.node.props['disabled'])) return;
-          _emit(!_value);
-        },
-      );
+    nodeId: widget.node.id,
+    kind: FjsControlKind.toggle,
+    getName: () => widget.node.props['name']?.toString(),
+    getId: () => widget.node.props['id']?.toString(),
+    getValue: () => _value,
+    toggle: () {
+      if (fjsBool(widget.node.props['disabled'])) return;
+      _emit(!_value);
+    },
+  );
 
   late bool _value = widget.node.props['value'] == true;
   bool _lastProp = false;
@@ -52,8 +52,11 @@ class _FjsSwitchState extends State<FjsSwitch>
 
   void _emit(bool next) {
     setState(() => _value = next);
-    widget.dispatch(widget.node.id, FjsEvent.valueChanged,
-        text: next ? '1' : '0');
+    widget.dispatch(
+      widget.node.id,
+      FjsEvent.valueChanged,
+      text: next ? '1' : '0',
+    );
     notifyControlChanged();
   }
 
@@ -66,7 +69,7 @@ class _FjsSwitchState extends State<FjsSwitch>
     // when it is disabled.
     final control = Switch(
       value: _value,
-      activeColor: const Color(0xFFFFFFFF),
+      activeThumbColor: const Color(0xFFFFFFFF),
       activeTrackColor: const Color(0xFF34C759),
       inactiveThumbColor: const Color(0xFFFFFFFF),
       inactiveTrackColor: const Color(0xFFE5E5EA),
@@ -78,9 +81,7 @@ class _FjsSwitchState extends State<FjsSwitch>
       // pushes every row of a settings list apart; CSS sizes the switch
       // from the control alone.
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      onChanged: disabled
-          ? null
-          : _emit,
+      onChanged: disabled ? null : _emit,
     );
     return disabled ? Opacity(opacity: 0.5, child: control) : control;
   }

@@ -62,7 +62,8 @@ class _W {
 /// A root `view` with [rows] children, all resolving to one interned style —
 /// the shape a list of similar rows produces.
 MirrorTree _rows(int rows) {
-  const style = '{"backgroundColor":"#1c1c1e","borderColor":"#38383a",'
+  const style =
+      '{"backgroundColor":"#1c1c1e","borderColor":"#38383a",'
       '"borderRadius":"8px","padding":"12px 16px","margin":"4px 12px",'
       '"color":"#f2f2f7","fontSize":"15px","boxShadow":"0 1px 2px rgba(0,0,0,.2)"}';
   final w = _W()
@@ -81,29 +82,35 @@ MirrorTree _rows(int rows) {
 }
 
 Widget _render(MirrorTree tree) => Directionality(
-      textDirection: TextDirection.ltr,
-      child: FjsNodeRenderer(
-        tree: tree,
-        ids: tree.rootChildren,
-        dispatch: (_, __, {String? text}) {},
-      ),
-    );
+  textDirection: TextDirection.ltr,
+  child: FjsNodeRenderer(
+    tree: tree,
+    ids: tree.rootChildren,
+    dispatch: (_, __, {String? text}) {},
+  ),
+);
 
 void main() {
   setUp(fjsClearParseCaches);
 
-  testWidgets('parsing does not scale with the number of nodes sharing a style',
-      (tester) async {
-    await tester.pumpWidget(_render(_rows(1)));
-    final forOne = fjsParseCalls;
-    expect(forOne, greaterThan(0), reason: 'the style should have been parsed');
+  testWidgets(
+    'parsing does not scale with the number of nodes sharing a style',
+    (tester) async {
+      await tester.pumpWidget(_render(_rows(1)));
+      final forOne = fjsParseCalls;
+      expect(
+        forOne,
+        greaterThan(0),
+        reason: 'the style should have been parsed',
+      );
 
-    fjsClearParseCaches();
-    await tester.pumpWidget(_render(_rows(50)));
-    // 50 nodes resolve to the same interned style, so the same values are
-    // parsed the same number of times as for one node
-    expect(fjsParseCalls, forOne);
-  });
+      fjsClearParseCaches();
+      await tester.pumpWidget(_render(_rows(50)));
+      // 50 nodes resolve to the same interned style, so the same values are
+      // parsed the same number of times as for one node
+      expect(fjsParseCalls, forOne);
+    },
+  );
 
   testWidgets('a rebuild re-parses nothing', (tester) async {
     final tree = _rows(20);
@@ -116,14 +123,16 @@ void main() {
     expect(fjsParseCalls, afterFirst);
   });
 
-  testWidgets('a theme switch parses each new value once, not once per node',
-      (tester) async {
+  testWidgets('a theme switch parses each new value once, not once per node', (
+    tester,
+  ) async {
     final tree = _rows(50);
     await tester.pumpWidget(_render(tree));
     fjsClearParseCaches();
 
     // the dark variant: one new DEFINE_STYLE, every row re-pointed at it
-    final w = _W()..defineStyle(2, '{"backgroundColor":"#ffffff","color":"#1a1a1a"}');
+    final w = _W()
+      ..defineStyle(2, '{"backgroundColor":"#ffffff","color":"#1a1a1a"}');
     for (var i = 0; i < 50; i++) {
       w.setStyle(i + 2, 2);
     }
@@ -152,7 +161,10 @@ void main() {
 
   test('a shared box-shadow list is handed out frozen', () {
     final shadows = parseBoxShadows('0 1px 2px rgba(0,0,0,.2)')!;
-    expect(identical(shadows, parseBoxShadows('0 1px 2px rgba(0,0,0,.2)')), isTrue);
+    expect(
+      identical(shadows, parseBoxShadows('0 1px 2px rgba(0,0,0,.2)')),
+      isTrue,
+    );
     expect(() => shadows.add(shadows.first), throwsUnsupportedError);
   });
 }

@@ -441,7 +441,9 @@ class _TouchActionRecognizer extends OneSequenceGestureRecognizer {
     if (origin == null) return;
     if (event is PointerMoveEvent) {
       if (_claims(
-          event.position - origin, _slop[event.pointer] ?? _kClaimSlop)) {
+        event.position - origin,
+        _slop[event.pointer] ?? _kClaimSlop,
+      )) {
         _selfResolved.add(event.pointer);
         resolvePointer(event.pointer, GestureDisposition.accepted);
       }

@@ -66,47 +66,52 @@ MirrorTree _tree(void Function(_W w) build) {
 /// The shape both game pages have: a box with a definite height, a child that
 /// asks for all of it with `height: 100%`, and inside that child something
 /// with a flex of its own (the canvas surface).
-MirrorTree _fillTree({String outer = '"width":200,"height":300'}) =>
-    _tree((w) {
-      // node 1 is only there to be the root: a ROOT child is expanded by the
-      // page-root rule whether or not it asked (see buildFlex's growChildren),
-      // which would hide what these tests are about
-      w.create(1, 'view');
-      w.props(1, '{"style":{}}');
-      w.insert(0, 1);
-      w.create(2, 'view');
-      w.props(2, '{"style":{$outer}}');
-      w.insert(1, 2);
-      w.create(3, 'view');
-      w.props(3,
-          '{"style":{"width":"100%","height":"100%","backgroundColor":"#eef4ff"}}');
-      w.insert(2, 3);
-      w.create(4, 'view');
-      w.props(4, '{"style":{"flexGrow":1,"backgroundColor":"#dd524d"}}');
-      w.insert(3, 4);
-    });
+MirrorTree _fillTree({String outer = '"width":200,"height":300'}) => _tree((w) {
+  // node 1 is only there to be the root: a ROOT child is expanded by the
+  // page-root rule whether or not it asked (see buildFlex's growChildren),
+  // which would hide what these tests are about
+  w.create(1, 'view');
+  w.props(1, '{"style":{}}');
+  w.insert(0, 1);
+  w.create(2, 'view');
+  w.props(2, '{"style":{$outer}}');
+  w.insert(1, 2);
+  w.create(3, 'view');
+  w.props(
+    3,
+    '{"style":{"width":"100%","height":"100%","backgroundColor":"#eef4ff"}}',
+  );
+  w.insert(2, 3);
+  w.create(4, 'view');
+  w.props(4, '{"style":{"flexGrow":1,"backgroundColor":"#dd524d"}}');
+  w.insert(3, 4);
+});
 
 /// A relative box with a full-cover overlay over its content — the pause mask.
 MirrorTree _overlayTree() => _tree((w) {
-      w.create(1, 'view');
-      w.props(1, '{"style":{}}');
-      w.insert(0, 1);
-      w.create(2, 'view');
-      w.props(2, '{"style":{"width":120,"height":80,"position":"relative"}}');
-      w.insert(1, 2);
-      w.create(3, 'view');
-      w.props(3, '{"style":{"height":20,"backgroundColor":"#eef4ff"}}');
-      w.insert(2, 3);
-      w.create(4, 'view');
-      w.props(
-        4,
-        '{"style":{"position":"absolute","left":0,"top":0,'
-            '"width":"100%","height":"100%","backgroundColor":"#dd524d"}}',
-      );
-      w.insert(2, 4);
-    });
+  w.create(1, 'view');
+  w.props(1, '{"style":{}}');
+  w.insert(0, 1);
+  w.create(2, 'view');
+  w.props(2, '{"style":{"width":120,"height":80,"position":"relative"}}');
+  w.insert(1, 2);
+  w.create(3, 'view');
+  w.props(3, '{"style":{"height":20,"backgroundColor":"#eef4ff"}}');
+  w.insert(2, 3);
+  w.create(4, 'view');
+  w.props(
+    4,
+    '{"style":{"position":"absolute","left":0,"top":0,'
+    '"width":"100%","height":"100%","backgroundColor":"#dd524d"}}',
+  );
+  w.insert(2, 4);
+});
 
-Widget _render(MirrorTree tree, {bool scrollable = false, Axis scrollAxis = Axis.vertical}) {
+Widget _render(
+  MirrorTree tree, {
+  bool scrollable = false,
+  Axis scrollAxis = Axis.vertical,
+}) {
   final node = FjsNodeRenderer(
     tree: tree,
     ids: tree.rootChildren,
@@ -125,52 +130,71 @@ Widget _render(MirrorTree tree, {bool scrollable = false, Axis scrollAxis = Axis
 }
 
 Rect _colored(WidgetTester tester, Color color) => tester.getRect(
-      find.byWidgetPredicate((w) =>
-          w is Container && (w.decoration as BoxDecoration?)?.color == color),
-    );
+  find.byWidgetPredicate(
+    (w) => w is Container && (w.decoration as BoxDecoration?)?.color == color,
+  ),
+);
 
 void main() {
-  testWidgets('height: 100% fills a column with a definite height',
-      (tester) async {
+  testWidgets('height: 100% fills a column with a definite height', (
+    tester,
+  ) async {
     await tester.pumpWidget(_render(_fillTree()));
     expect(tester.takeException(), isNull);
-    expect(_colored(tester, const Color(0xFFEEF4FF)).size, const Size(200, 300));
+    expect(
+      _colored(tester, const Color(0xFFEEF4FF)).size,
+      const Size(200, 300),
+    );
     // and the flex inside it got a bounded box to expand into
-    expect(_colored(tester, const Color(0xFFDD524D)).size, const Size(200, 300));
+    expect(
+      _colored(tester, const Color(0xFFDD524D)).size,
+      const Size(200, 300),
+    );
   });
 
-  testWidgets('calc() on the main axis resolves against the same box',
-      (tester) async {
-    await tester.pumpWidget(_render(_tree((w) {
-      w.create(1, 'view');
-      w.props(1, '{"style":{}}');
-      w.insert(0, 1);
-      w.create(2, 'view');
-      w.props(2, '{"style":{"width":200,"height":300}}');
-      w.insert(1, 2);
-      w.create(3, 'view');
-      w.props(3,
-          '{"style":{"height":"calc(100% - 60px)","backgroundColor":"#eef4ff"}}');
-      w.insert(2, 3);
-    })));
+  testWidgets('calc() on the main axis resolves against the same box', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _render(
+        _tree((w) {
+          w.create(1, 'view');
+          w.props(1, '{"style":{}}');
+          w.insert(0, 1);
+          w.create(2, 'view');
+          w.props(2, '{"style":{"width":200,"height":300}}');
+          w.insert(1, 2);
+          w.create(3, 'view');
+          w.props(
+            3,
+            '{"style":{"height":"calc(100% - 60px)","backgroundColor":"#eef4ff"}}',
+          );
+          w.insert(2, 3);
+        }),
+      ),
+    );
     expect(_colored(tester, const Color(0xFFEEF4FF)).height, 240);
   });
 
-  testWidgets('inside a scroller it still falls back to auto, as in CSS',
-      (tester) async {
+  testWidgets('inside a scroller it still falls back to auto, as in CSS', (
+    tester,
+  ) async {
     // No definite height to be a fraction of. The box takes its content's
     // height instead of throwing — and the flex inside must not assert.
-    await tester.pumpWidget(_render(
-      _fillTree(outer: '"width":200'),
-      scrollable: true,
-    ));
-    expect(tester.takeException(), isNull,
-        reason: 'a flex child in a shrink-wrapping column must not assert');
+    await tester.pumpWidget(
+      _render(_fillTree(outer: '"width":200'), scrollable: true),
+    );
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'a flex child in a shrink-wrapping column must not assert',
+    );
     expect(_colored(tester, const Color(0xFFEEF4FF)).height, 0);
   });
 
-  testWidgets('an absolute child covers the box it is positioned in',
-      (tester) async {
+  testWidgets('an absolute child covers the box it is positioned in', (
+    tester,
+  ) async {
     await tester.pumpWidget(_render(_overlayTree()));
     final box = tester.getRect(find.byType(Stack));
     expect(box.size, const Size(120, 80));
@@ -179,23 +203,25 @@ void main() {
   // ---- spec 044: % margin/padding in flex -------------------------------
 
   /// A row of a definite width with one child that spaces itself in `%`.
-  MirrorTree _rowSpacingTree(String rowWidth, String childMargin) =>
-      _tree((w) {
-        w.create(1, 'view');
-        w.props(1, '{"style":{}}');
-        w.insert(0, 1);
-        w.create(2, 'view');
-        w.props(2, '{"style":{"width":$rowWidth}}');
-        w.insert(1, 2);
-        w.create(3, 'view');
-        w.props(3,
-            '{"style":{"margin":"$childMargin","height":20,'
-            '"backgroundColor":"#dd524d"}}');
-        w.insert(2, 3);
-      });
+  MirrorTree _rowSpacingTree(String rowWidth, String childMargin) => _tree((w) {
+    w.create(1, 'view');
+    w.props(1, '{"style":{}}');
+    w.insert(0, 1);
+    w.create(2, 'view');
+    w.props(2, '{"style":{"width":$rowWidth}}');
+    w.insert(1, 2);
+    w.create(3, 'view');
+    w.props(
+      3,
+      '{"style":{"margin":"$childMargin","height":20,'
+      '"backgroundColor":"#dd524d"}}',
+    );
+    w.insert(2, 3);
+  });
 
-  testWidgets('a row child with % margin follows the container width',
-      (tester) async {
+  testWidgets('a row child with % margin follows the container width', (
+    tester,
+  ) async {
     // CSS: % margin measures the containing block WIDTH on every side, and
     // the row's main axis is unbounded for the child — _flexChild hands the
     // container's width down so the resolver has something to read.
@@ -206,70 +232,113 @@ void main() {
     expect(_colored(tester, const Color(0xFFDD524D)).left, 20);
   });
 
-  testWidgets('a column child with % padding measures the width, not the height',
-      (tester) async {
-    // CSS box model: vertical padding percentages ALSO reference the width.
-    await tester.pumpWidget(_render(_tree((w) {
-      w.create(1, 'view');
-      w.props(1, '{"style":{}}');
-      w.insert(0, 1);
-      w.create(2, 'view');
-      w.props(2, '{"style":{"width":200,"height":300}}');
-      w.insert(1, 2);
-      w.create(3, 'view');
-      w.props(3, '{"style":{"padding":"10%","backgroundColor":"#dd524d"}}');
-      w.insert(2, 3);
-      w.create(4, 'view');
-      w.props(4, '{"style":{"width":20,"height":20,'
-          '"backgroundColor":"#eef4ff"}}');
-      w.insert(3, 4);
-    })));
-    // the red box is the padding area: its content starts 20px in — 10% of
-    // the 200px width — on both axes
-    expect(_colored(tester, const Color(0xFFEEF4FF)).left,
-        _colored(tester, const Color(0xFFDD524D)).left + 20);
-    expect(_colored(tester, const Color(0xFFEEF4FF)).top,
-        _colored(tester, const Color(0xFFDD524D)).top + 20);
-  });
+  testWidgets(
+    'a column child with % padding measures the width, not the height',
+    (tester) async {
+      // CSS box model: vertical padding percentages ALSO reference the width.
+      await tester.pumpWidget(
+        _render(
+          _tree((w) {
+            w.create(1, 'view');
+            w.props(1, '{"style":{}}');
+            w.insert(0, 1);
+            w.create(2, 'view');
+            w.props(2, '{"style":{"width":200,"height":300}}');
+            w.insert(1, 2);
+            w.create(3, 'view');
+            w.props(
+              3,
+              '{"style":{"padding":"10%","backgroundColor":"#dd524d"}}',
+            );
+            w.insert(2, 3);
+            w.create(4, 'view');
+            w.props(
+              4,
+              '{"style":{"width":20,"height":20,'
+              '"backgroundColor":"#eef4ff"}}',
+            );
+            w.insert(3, 4);
+          }),
+        ),
+      );
+      // the red box is the padding area: its content starts 20px in — 10% of
+      // the 200px width — on both axes
+      expect(
+        _colored(tester, const Color(0xFFEEF4FF)).left,
+        _colored(tester, const Color(0xFFDD524D)).left + 20,
+      );
+      expect(
+        _colored(tester, const Color(0xFFEEF4FF)).top,
+        _colored(tester, const Color(0xFFDD524D)).top + 20,
+      );
+    },
+  );
 
-  testWidgets('an unbounded width (horizontal scroller) resolves % padding to 0',
-      (tester) async {
-    // a VERTICAL scroller bounds the width — % padding resolves normally
-    // there, exactly as in a browser. The genuinely indefinite case is the
-    // horizontal axis: no box to be a fraction of, so the side is 0 rather
-    // than throwing or being treated as a pixel value
-    await tester.pumpWidget(_render(_tree((w) {
-      w.create(1, 'view');
-      w.props(1, '{"style":{}}');
-      w.insert(0, 1);
-      w.create(2, 'view');
-      w.props(2, '{"style":{"padding":"10%","backgroundColor":"#dd524d"}}');
-      w.insert(1, 2);
-      w.create(3, 'view');
-      w.props(3, '{"style":{"width":20,"height":20,'
-          '"backgroundColor":"#eef4ff"}}');
-      w.insert(2, 3);
-    }), scrollable: true, scrollAxis: Axis.horizontal));
-    expect(_colored(tester, const Color(0xFFEEF4FF)).left,
-        _colored(tester, const Color(0xFFDD524D)).left);
-  });
+  testWidgets(
+    'an unbounded width (horizontal scroller) resolves % padding to 0',
+    (tester) async {
+      // a VERTICAL scroller bounds the width — % padding resolves normally
+      // there, exactly as in a browser. The genuinely indefinite case is the
+      // horizontal axis: no box to be a fraction of, so the side is 0 rather
+      // than throwing or being treated as a pixel value
+      await tester.pumpWidget(
+        _render(
+          _tree((w) {
+            w.create(1, 'view');
+            w.props(1, '{"style":{}}');
+            w.insert(0, 1);
+            w.create(2, 'view');
+            w.props(
+              2,
+              '{"style":{"padding":"10%","backgroundColor":"#dd524d"}}',
+            );
+            w.insert(1, 2);
+            w.create(3, 'view');
+            w.props(
+              3,
+              '{"style":{"width":20,"height":20,'
+              '"backgroundColor":"#eef4ff"}}',
+            );
+            w.insert(2, 3);
+          }),
+          scrollable: true,
+          scrollAxis: Axis.horizontal,
+        ),
+      );
+      expect(
+        _colored(tester, const Color(0xFFEEF4FF)).left,
+        _colored(tester, const Color(0xFFDD524D)).left,
+      );
+    },
+  );
 
-  testWidgets('a vertical scroller bounds the width, so % padding resolves',
-      (tester) async {
-    await tester.pumpWidget(_render(_tree((w) {
-      w.create(1, 'view');
-      w.props(1, '{"style":{}}');
-      w.insert(0, 1);
-      w.create(2, 'view');
-      w.props(2, '{"style":{"padding":"10%","backgroundColor":"#dd524d"}}');
-      w.insert(1, 2);
-      w.create(3, 'view');
-      w.props(3, '{"style":{"width":20,"height":20,'
-          '"backgroundColor":"#eef4ff"}}');
-      w.insert(2, 3);
-    }), scrollable: true));
+  testWidgets('a vertical scroller bounds the width, so % padding resolves', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _render(
+        _tree((w) {
+          w.create(1, 'view');
+          w.props(1, '{"style":{}}');
+          w.insert(0, 1);
+          w.create(2, 'view');
+          w.props(2, '{"style":{"padding":"10%","backgroundColor":"#dd524d"}}');
+          w.insert(1, 2);
+          w.create(3, 'view');
+          w.props(
+            3,
+            '{"style":{"width":20,"height":20,'
+            '"backgroundColor":"#eef4ff"}}',
+          );
+          w.insert(2, 3);
+        }),
+        scrollable: true,
+      ),
+    );
     // 10% of the test viewport's 800px width
-    expect(_colored(tester, const Color(0xFFEEF4FF)).left,
-        _colored(tester, const Color(0xFFDD524D)).left + 80);
+    expect(
+      _colored(tester, const Color(0xFFEEF4FF)).left,
+      _colored(tester, const Color(0xFFDD524D)).left + 80,
+    );
   });
 }

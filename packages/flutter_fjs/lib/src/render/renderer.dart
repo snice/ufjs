@@ -59,8 +59,13 @@ class FjsNodeRenderer extends StatelessWidget {
     final children = [
       for (final id in ids)
         if (tree.node(id) != null)
-          _nodeView(tree, id,
-              isRoot: grow, dispatch: dispatch, registry: registry)
+          _nodeView(
+            tree,
+            id,
+            isRoot: grow,
+            dispatch: dispatch,
+            registry: registry,
+          ),
     ];
     if (children.length == 1) return children.single;
     return Column(
@@ -127,9 +132,7 @@ Widget _nodeView(
     // A node the page named with `id` gets a global key so whatever refers
     // to it can find its render object (scroll-into-view). Everything else
     // keeps the cheap value key — see mirror_tree.dart's _globalKeys.
-    key: node.props['id'] != null
-        ? tree.globalKeyFor(id)
-        : ValueKey<int>(id),
+    key: node.props['id'] != null ? tree.globalKeyFor(id) : ValueKey<int>(id),
     tree: tree,
     nodeId: id,
     isRoot: isRoot,
@@ -187,16 +190,24 @@ class _FjsNodeView extends StatelessWidget {
     );
   }
 
-  Widget _view(int id) => _nodeView(tree, id,
-      isRoot: false, dispatch: dispatch, registry: registry);
+  Widget _view(int id) => _nodeView(
+    tree,
+    id,
+    isRoot: false,
+    dispatch: dispatch,
+    registry: registry,
+  );
 
   /// A node that paints while pressed — CSS `:active`, or a `button` with
   /// the default WeUI mask — gets a [_PressedNode] so the press lives in
   /// the widget tree. No round trip through JS, and no wait for a
   /// recognizer to win the arena (that delay is why a quick tap showed
   /// nothing).
-  Widget _buildNode(BuildContext context, MirrorNode node,
-      {bool isRoot = false}) {
+  Widget _buildNode(
+    BuildContext context,
+    MirrorNode node, {
+    bool isRoot = false,
+  }) {
     final style = FjsStyle.of(node);
     // a draggable node keeps its transform wrapper even before it has a
     // transform — see transitionNode's `stableTransform`
@@ -217,13 +228,7 @@ class _FjsNodeView extends StatelessWidget {
           : style;
       return transitionNode(
         s,
-        _buildStyledNode(
-          context,
-          node,
-          s,
-          pressed: pressed,
-          isRoot: isRoot,
-        ),
+        _buildStyledNode(context, node, s, pressed: pressed, isRoot: isRoot),
         key: 'fjs-transition-${tree.generation}-${node.id}',
         stableTransform: stable,
       );
@@ -239,9 +244,7 @@ class _FjsNodeView extends StatelessWidget {
         ),
       );
     } else if (tracksHover) {
-      built = _HoverNode(
-        builder: (hovered) => buildWithState(false, hovered),
-      );
+      built = _HoverNode(builder: (hovered) => buildWithState(false, hovered));
     } else if (tracksPress) {
       built = _PressedNode(
         builder: (pressed) => buildWithState(pressed, false),

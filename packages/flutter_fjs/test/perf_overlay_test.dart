@@ -28,11 +28,8 @@ String? _libPath() {
 }
 
 Widget _wrap(FjsEngine engine) => MaterialApp(
-      home: FjsPerfOverlay(
-        engine: engine,
-        child: const Text('app'),
-      ),
-    );
+  home: FjsPerfOverlay(engine: engine, child: const Text('app')),
+);
 
 void main() {
   final lib = _libPath();
@@ -60,8 +57,9 @@ void main() {
     expect(find.textContaining('nodes'), findsNothing);
   });
 
-  testWidgets('the heap row reads without collecting, or says n/a',
-      (tester) async {
+  testWidgets('the heap row reads without collecting, or says n/a', (
+    tester,
+  ) async {
     final engine = FjsEngine();
     addTearDown(engine.dispose);
     engine.perfOverlay.value = true;

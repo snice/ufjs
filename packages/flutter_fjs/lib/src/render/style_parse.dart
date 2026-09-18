@@ -371,10 +371,10 @@ Gradient? _parseGradientUncached(Object value) {
   final open = v.indexOf('(');
   if (open <= 0 || !v.endsWith(')')) return null;
   final fn = v.substring(0, open).trim();
-  final args = _splitTopLevel(v.substring(open + 1, v.length - 1), ',')
-      .map((s) => s.trim())
-      .where((s) => s.isNotEmpty)
-      .toList();
+  final args = _splitTopLevel(
+    v.substring(open + 1, v.length - 1),
+    ',',
+  ).map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
   if (fn == 'linear-gradient') return _parseLinear(args);
   if (fn == 'radial-gradient') return _parseRadial(args);
   return null;
@@ -392,9 +392,14 @@ Gradient? _parseLinear(List<String> args) {
     colors = args.sublist(1);
   }
   return _buildGradient(
-      colors,
-      (stops) => LinearGradient(
-          begin: begin, end: end, colors: stops.$1, stops: stops.$2));
+    colors,
+    (stops) => LinearGradient(
+      begin: begin,
+      end: end,
+      colors: stops.$1,
+      stops: stops.$2,
+    ),
+  );
 }
 
 Gradient? _parseRadial(List<String> args) {
@@ -405,7 +410,9 @@ Gradient? _parseRadial(List<String> args) {
   }
   if (colors.isEmpty) return null;
   return _buildGradient(
-      colors, (stops) => RadialGradient(colors: stops.$1, stops: stops.$2));
+    colors,
+    (stops) => RadialGradient(colors: stops.$1, stops: stops.$2),
+  );
 }
 
 Gradient? _buildGradient(
@@ -493,7 +500,9 @@ FjsBorderStyle? _parseBorderStyleUncached(Object value) {
 /// color and stroke style. Null means *no* border — `none`, `hidden`, or a
 /// zero width — which is what lets a page turn off a border a tag default
 /// gave it.
-({double width, Color color, FjsBorderStyle kind})? _parseBorderUncached(Object value) {
+({double width, Color color, FjsBorderStyle kind})? _parseBorderUncached(
+  Object value,
+) {
   if (value is num) {
     if (value <= 0) return null;
     return (
@@ -563,11 +572,23 @@ BorderRadius? _parseBorderRadiusUncached(Object value) {
   return switch (radii.length) {
     1 => BorderRadius.all(Radius.circular(radii[0]!)),
     2 => BorderRadius.only(
-        topLeft: r(0), topRight: r(1), bottomRight: r(0), bottomLeft: r(1)),
+      topLeft: r(0),
+      topRight: r(1),
+      bottomRight: r(0),
+      bottomLeft: r(1),
+    ),
     3 => BorderRadius.only(
-        topLeft: r(0), topRight: r(1), bottomRight: r(2), bottomLeft: r(1)),
+      topLeft: r(0),
+      topRight: r(1),
+      bottomRight: r(2),
+      bottomLeft: r(1),
+    ),
     4 => BorderRadius.only(
-        topLeft: r(0), topRight: r(1), bottomRight: r(2), bottomLeft: r(3)),
+      topLeft: r(0),
+      topRight: r(1),
+      bottomRight: r(2),
+      bottomLeft: r(3),
+    ),
     _ => null,
   };
 }
@@ -581,10 +602,7 @@ String? transformText(Object? value, String text) {
     case 'lowercase':
       return text.toLowerCase();
     case 'capitalize':
-      return text.replaceAllMapped(
-        RegExp(r'\b\w'),
-        (m) => m[0]!.toUpperCase(),
-      );
+      return text.replaceAllMapped(RegExp(r'\b\w'), (m) => m[0]!.toUpperCase());
     default:
       return null;
   }
@@ -787,12 +805,26 @@ Matrix4? parseTransform(Object? value) {
       case 'matrix':
         if (args.length < 6) continue;
         final v = [for (var i = 0; i < 6; i++) num_(i, 0)];
-        result.multiply(Matrix4(
-          v[0], v[1], 0, 0, //
-          v[2], v[3], 0, 0, //
-          0, 0, 1, 0, //
-          v[4], v[5], 0, 1,
-        ));
+        result.multiply(
+          Matrix4(
+            v[0],
+            v[1],
+            0,
+            0, //
+            v[2],
+            v[3],
+            0,
+            0, //
+            0,
+            0,
+            1,
+            0, //
+            v[4],
+            v[5],
+            0,
+            1,
+          ),
+        );
       default:
         continue;
     }
@@ -826,18 +858,15 @@ FjsTransitions? parseTransitions(Map<String, Object?> style) {
       .map(_normalizeTransitionProperty)
       .where((property) => property != 'none')
       .toList();
-  final durations = _cssValueList(durationValue)
-      .map(parseDuration)
-      .whereType<Duration>()
-      .toList();
-  final timings = _cssValueList(timingValue)
-      .map(parseTimingFunction)
-      .whereType<Curve>()
-      .toList();
-  final delays = _cssValueList(delayValue)
-      .map(parseDuration)
-      .whereType<Duration>()
-      .toList();
+  final durations = _cssValueList(
+    durationValue,
+  ).map(parseDuration).whereType<Duration>().toList();
+  final timings = _cssValueList(
+    timingValue,
+  ).map(parseTimingFunction).whereType<Curve>().toList();
+  final delays = _cssValueList(
+    delayValue,
+  ).map(parseDuration).whereType<Duration>().toList();
   final count = [
     properties.length,
     durations.length,
@@ -847,13 +876,18 @@ FjsTransitions? parseTransitions(Map<String, Object?> style) {
   ].reduce((a, b) => a > b ? a : b);
   final tracks = <FjsTransitionTrack>[];
   for (var i = 0; i < count; i++) {
-    tracks.add(FjsTransitionTrack(
-      property: properties.isEmpty ? 'all' : properties[i % properties.length],
-      duration:
-          durations.isEmpty ? Duration.zero : durations[i % durations.length],
-      curve: timings.isEmpty ? Curves.ease : timings[i % timings.length],
-      delay: delays.isEmpty ? Duration.zero : delays[i % delays.length],
-    ));
+    tracks.add(
+      FjsTransitionTrack(
+        property: properties.isEmpty
+            ? 'all'
+            : properties[i % properties.length],
+        duration: durations.isEmpty
+            ? Duration.zero
+            : durations[i % durations.length],
+        curve: timings.isEmpty ? Curves.ease : timings[i % timings.length],
+        delay: delays.isEmpty ? Duration.zero : delays[i % delays.length],
+      ),
+    );
   }
   return FjsTransitions(tracks);
 }
@@ -950,7 +984,7 @@ List<String> _cssValueList(Object? value) {
   if (value is Iterable) {
     return [
       for (final item in value)
-        if (item != null) ...splitCssList(item.toString())
+        if (item != null) ...splitCssList(item.toString()),
     ];
   }
   return splitCssList(value.toString());
@@ -1002,7 +1036,9 @@ String _normalizeTransitionProperty(String value) {
   final text = value.trim();
   if (text.isEmpty) return 'all';
   return text.replaceAllMapped(
-      RegExp(r'-+([a-zA-Z])'), (m) => m.group(1)!.toUpperCase());
+    RegExp(r'-+([a-zA-Z])'),
+    (m) => m.group(1)!.toUpperCase(),
+  );
 }
 
 /// `45deg` / `0.5turn` / `1.2rad` / `50grad`, and a bare number as degrees
@@ -1032,10 +1068,12 @@ extension _Let<T> on T {
 // only a handful of the ~60 properties FjsStyle can read).
 
 final _parseColorMemo = _memo<Color?>(_parseColorUncached);
-Color? parseColor(Object? value) => value == null ? null : _parseColorMemo(value);
+Color? parseColor(Object? value) =>
+    value == null ? null : _parseColorMemo(value);
 
 final _parseLengthMemo = _memo<double?>(_parseLengthUncached);
-double? parseLength(Object? value) => value == null ? null : _parseLengthMemo(value);
+double? parseLength(Object? value) =>
+    value == null ? null : _parseLengthMemo(value);
 
 /// A length that may be relative (`50%`, `calc(100% - 32px)`); see
 /// [FjsLength]. Properties that cannot wait for a layout pass keep using
@@ -1046,34 +1084,50 @@ FjsLength? parseLengthValue(Object? value) =>
     value == null ? null : _parseFjsLengthMemo(value);
 
 final _parseFontWeightMemo = _memo<FontWeight?>(_parseFontWeightUncached);
-FontWeight? parseFontWeight(Object? value) => value == null ? null : _parseFontWeightMemo(value);
+FontWeight? parseFontWeight(Object? value) =>
+    value == null ? null : _parseFontWeightMemo(value);
 
 final _parseFontStyleMemo = _memo<FontStyle?>(_parseFontStyleUncached);
-FontStyle? parseFontStyle(Object? value) => value == null ? null : _parseFontStyleMemo(value);
+FontStyle? parseFontStyle(Object? value) =>
+    value == null ? null : _parseFontStyleMemo(value);
 
-final _parseTextDecorationMemo = _memo<TextDecoration?>(_parseTextDecorationUncached);
-TextDecoration? parseTextDecoration(Object? value) => value == null ? null : _parseTextDecorationMemo(value);
+final _parseTextDecorationMemo = _memo<TextDecoration?>(
+  _parseTextDecorationUncached,
+);
+TextDecoration? parseTextDecoration(Object? value) =>
+    value == null ? null : _parseTextDecorationMemo(value);
 
 final _parseGradientMemo = _memo<Gradient?>(_parseGradientUncached);
-Gradient? parseGradient(Object? value) => value == null ? null : _parseGradientMemo(value);
+Gradient? parseGradient(Object? value) =>
+    value == null ? null : _parseGradientMemo(value);
 
 final _parseBorderStyleMemo = _memo<FjsBorderStyle?>(_parseBorderStyleUncached);
-FjsBorderStyle? parseBorderStyle(Object? value) => value == null ? null : _parseBorderStyleMemo(value);
+FjsBorderStyle? parseBorderStyle(Object? value) =>
+    value == null ? null : _parseBorderStyleMemo(value);
 
-final _parseBorderMemo = _memo<({double width, Color color, FjsBorderStyle kind})?>(_parseBorderUncached);
-({double width, Color color, FjsBorderStyle kind})? parseBorder(Object? value) => value == null ? null : _parseBorderMemo(value);
+final _parseBorderMemo =
+    _memo<({double width, Color color, FjsBorderStyle kind})?>(
+      _parseBorderUncached,
+    );
+({double width, Color color, FjsBorderStyle kind})? parseBorder(
+  Object? value,
+) => value == null ? null : _parseBorderMemo(value);
 
 final _parseBorderRadiusMemo = _memo<BorderRadius?>(_parseBorderRadiusUncached);
-BorderRadius? parseBorderRadius(Object? value) => value == null ? null : _parseBorderRadiusMemo(value);
+BorderRadius? parseBorderRadius(Object? value) =>
+    value == null ? null : _parseBorderRadiusMemo(value);
 
 final _parseDurationMemo = _memo<Duration?>(_parseDurationUncached);
-Duration? parseDuration(Object? value) => value == null ? null : _parseDurationMemo(value);
+Duration? parseDuration(Object? value) =>
+    value == null ? null : _parseDurationMemo(value);
 
 final _parseTimingFunctionMemo = _memo<Curve?>(_parseTimingFunctionUncached);
-Curve? parseTimingFunction(Object? value) => value == null ? null : _parseTimingFunctionMemo(value);
+Curve? parseTimingFunction(Object? value) =>
+    value == null ? null : _parseTimingFunctionMemo(value);
 
 final _parseAngleMemo = _memo<double?>(_parseAngleUncached);
-double? parseAngle(Object? value) => value == null ? null : _parseAngleMemo(value);
+double? parseAngle(Object? value) =>
+    value == null ? null : _parseAngleMemo(value);
 
 final _parseBoxShadowsMemo = _memo<List<BoxShadow>?>((value) {
   final parsed = _parseBoxShadowsUncached(value);

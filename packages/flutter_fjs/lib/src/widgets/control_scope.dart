@@ -113,9 +113,7 @@ class FjsControlScope extends InheritedWidget {
   /// The nearest enclosing registry, or null outside any group/label/form —
   /// a bare `<checkbox>` still works, it just registers nowhere.
   static FjsControlRegistry? of(BuildContext context) =>
-      context
-          .dependOnInheritedWidgetOfExactType<FjsControlScope>()
-          ?.registry;
+      context.dependOnInheritedWidgetOfExactType<FjsControlScope>()?.registry;
 
   @override
   bool updateShouldNotify(FjsControlScope oldWidget) =>

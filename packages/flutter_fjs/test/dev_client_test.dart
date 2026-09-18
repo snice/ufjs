@@ -2,7 +2,6 @@
 // — `fjs dev` restarted, wifi blinked, the device slept — HTTP keeps working
 // and the session looks connected while never reloading again. These cover
 // the push and the reconnect that follows a drop.
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -17,6 +16,7 @@ class FakeDevServer {
 
   final HttpServer _server;
   final List<WebSocket> sockets = [];
+
   /// Everything the client sent us — `fjs log` reads these off the server.
   final List<String> received = [];
 
@@ -62,7 +62,10 @@ class FakeDevServer {
 }
 
 /// Polls until [ready], so the test does not hard-code socket timing.
-Future<void> waitFor(bool Function() ready, {Duration timeout = const Duration(seconds: 10)}) async {
+Future<void> waitFor(
+  bool Function() ready, {
+  Duration timeout = const Duration(seconds: 10),
+}) async {
   final deadline = DateTime.now().add(timeout);
   while (!ready()) {
     if (DateTime.now().isAfter(deadline)) return;
@@ -81,18 +84,24 @@ void main() {
   DevReload? lastReload;
 
   setUp(() async {
-    HttpOverrides.global = null; // flutter_test's fake HttpClient breaks sockets
+    HttpOverrides.global =
+        null; // flutter_test's fake HttpClient breaks sockets
     server = await FakeDevServer.start();
     http = FjsHttp(dispatchEvent: (_, __, {String? text}) {});
     logs = [];
     reloads = 0;
     lastReload = null;
-    client = DevClient('127.0.0.1', server.port,
-        fetchUrl: http.fetch, onLog: logs.add)
-      ..onReload = (reload) async {
-        reloads++;
-        lastReload = reload;
-      };
+    client =
+        DevClient(
+            '127.0.0.1',
+            server.port,
+            fetchUrl: http.fetch,
+            onLog: logs.add,
+          )
+          ..onReload = (reload) async {
+            reloads++;
+            lastReload = reload;
+          };
   });
 
   tearDown(() async {
@@ -108,8 +117,11 @@ void main() {
     await waitFor(() => reloads > 0);
     expect(reloads, 1);
     expect(lastReload, isNotNull);
-    expect(lastReload!.isFull, isTrue,
-        reason: 'a bare reload means "everything"');
+    expect(
+      lastReload!.isFull,
+      isTrue,
+      reason: 'a bare reload means "everything"',
+    );
   });
 
   test('a page-scoped push names the chunks that changed', () async {
@@ -124,11 +136,15 @@ void main() {
   test('a unit hot-swap push names units and affected pages', () async {
     await client.listen();
     await waitFor(() => server.sockets.isNotEmpty);
-    server.push('reload units:src/utils/format.ts,src/components/panel.vue'
-        ' pages:about,index');
+    server.push(
+      'reload units:src/utils/format.ts,src/components/panel.vue'
+      ' pages:about,index',
+    );
     await waitFor(() => reloads > 0);
-    expect(lastReload!.units,
-        ['src/utils/format.ts', 'src/components/panel.vue']);
+    expect(lastReload!.units, [
+      'src/utils/format.ts',
+      'src/components/panel.vue',
+    ]);
     expect(lastReload!.pages, ['about', 'index']);
     expect(lastReload!.isFull, isFalse);
   });
@@ -154,15 +170,14 @@ void main() {
     expect(DevClient.parseReload('reload').isFull, isTrue);
     expect(DevClient.parseReload('reload pages:').isFull, isTrue);
     expect(DevClient.parseReload('reload pages:index').pages, ['index']);
-    expect(DevClient.parseReload('reload pages:a,b,c').pages,
-        ['a', 'b', 'c']);
+    expect(DevClient.parseReload('reload pages:a,b,c').pages, ['a', 'b', 'c']);
     final swap = DevClient.parseReload(
-        'reload units:src/a.ts,src/b.vue pages:index');
+      'reload units:src/a.ts,src/b.vue pages:index',
+    );
     expect(swap.units, ['src/a.ts', 'src/b.vue']);
     expect(swap.pages, ['index']);
     // pages are optional when nothing mounted is affected
-    expect(
-        DevClient.parseReload('reload units:src/a.ts').pages, isEmpty);
+    expect(DevClient.parseReload('reload units:src/a.ts').pages, isEmpty);
   });
 
   test('an eval push splits into id and source', () async {
@@ -208,8 +223,11 @@ void main() {
     // an edit during the outage is not replayed, so reconnecting reloads
     await waitFor(() => reloads > 0);
     expect(reloads, 1);
-    expect(lastReload!.isFull, isTrue,
-        reason: 'a reconnect cannot know what changed');
+    expect(
+      lastReload!.isFull,
+      isTrue,
+      reason: 'a reconnect cannot know what changed',
+    );
 
     // and the fresh socket carries pushes like the first one did
     server.push('reload');
@@ -241,15 +259,18 @@ void main() {
 
   test('bootstrap retries while the server cannot be reached', () async {
     var attempts = 0;
-    final retrying = DevClient('127.0.0.1', server.port,
-        fetchUrl: (url) async {
-          attempts++;
-          if (attempts < 3) {
-            throw const SocketException('No route to host');
-          }
-          return Uint8List.fromList(utf8.encode('ok'));
-        },
-        onLog: logs.add);
+    final retrying = DevClient(
+      '127.0.0.1',
+      server.port,
+      fetchUrl: (url) async {
+        attempts++;
+        if (attempts < 3) {
+          throw const SocketException('No route to host');
+        }
+        return Uint8List.fromList(utf8.encode('ok'));
+      },
+      onLog: logs.add,
+    );
     addTearDown(retrying.close);
 
     final bytes = await retrying.fetchForBootstrap('/bundle.js');
@@ -266,12 +287,15 @@ void main() {
     // fetchManifest falls back to null on it. Retrying that forever would
     // hang the app on exactly the servers the fallback exists for.
     var attempts = 0;
-    final answering = DevClient('127.0.0.1', server.port,
-        fetchUrl: (url) async {
-          attempts++;
-          throw const HttpException('404 for /manifest.json');
-        },
-        onLog: logs.add);
+    final answering = DevClient(
+      '127.0.0.1',
+      server.port,
+      fetchUrl: (url) async {
+        attempts++;
+        throw const HttpException('404 for /manifest.json');
+      },
+      onLog: logs.add,
+    );
     addTearDown(answering.close);
 
     await expectLater(

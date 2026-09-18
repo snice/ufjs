@@ -105,9 +105,11 @@ class MirrorTree {
   final Map<int, MirrorNode> _nodes = {};
   final List<int> _rootChildren = [];
   final Map<int, int> _parentOf = {};
+
   /// Interned styles, keyed by the id the JS writer assigned. Bounded by the
   /// writer's own table cap; see ui_ops.dart for why eviction is safe.
   final Map<int, FjsStyleEntry> _styles = {};
+
   /// Created lazily, only for nodes the widget layer actually renders.
   final Map<int, _NodeSignal> _signals = {};
 
@@ -119,6 +121,7 @@ class MirrorTree {
   /// `<label for>` activates it. See specs/009-scroll-swiper-props/plan.md
   /// §3.8.
   final Map<int, GlobalKey> _globalKeys = {};
+
   /// Ids touched by the frames applied since the last [flushDirty].
   final Set<int> _dirty = {};
   int _version = 0;
@@ -133,8 +136,7 @@ class MirrorTree {
 
   /// The change signal for one node. Listening per node is what lets a
   /// change rebuild its own subtree instead of the whole page.
-  Listenable listenableFor(int id) =>
-      _signals.putIfAbsent(id, _NodeSignal.new);
+  Listenable listenableFor(int id) => _signals.putIfAbsent(id, _NodeSignal.new);
 
   /// Fires the per-node signals for everything the applied frames touched.
   ///
@@ -201,8 +203,10 @@ class MirrorTree {
 
     void check(int need) {
       if (p + need > frame.length) {
-        throw UiOpException('truncated op frame at offset $p (need $need, '
-            'have ${frame.length - p})');
+        throw UiOpException(
+          'truncated op frame at offset $p (need $need, '
+          'have ${frame.length - p})',
+        );
       }
     }
 
@@ -340,8 +344,10 @@ class MirrorTree {
                 node.style = entry;
               } else {
                 assert(() {
-                  debugPrint('[fjs] SET_STYLE references undefined style '
-                      '$styleId; keeping the current style on node $id');
+                  debugPrint(
+                    '[fjs] SET_STYLE references undefined style '
+                    '$styleId; keeping the current style on node $id',
+                  );
                   return true;
                 }());
               }

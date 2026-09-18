@@ -4,7 +4,6 @@
 import 'dart:async' show Timer;
 
 import 'package:flutter/material.dart';
-import 'package:vector_math/vector_math_64.dart' show Matrix4;
 
 import 'dashed_border.dart';
 import 'length.dart';
@@ -17,6 +16,7 @@ Widget decorateNode(
   Widget content, {
   EdgeInsets? defaultPadding,
   BorderRadius? defaultBorderRadius,
+
   /// Used when the style carries no background / border of its own — how a
   /// built-in tag states its default look (button's variants) without
   /// overriding what the page wrote.
@@ -54,7 +54,8 @@ Widget decorateNode(
   final borders = style.boxBorders(defaultBorderColor: defaultBorderColor);
   final side = borders == null || borders.isNone ? null : borders;
   final borderRadius = style.borderRadius ?? defaultBorderRadius;
-  final radiusPainted = borderRadius != null && borderRadius != BorderRadius.zero;
+  final radiusPainted =
+      borderRadius != null && borderRadius != BorderRadius.zero;
   // Which of the three painters a non-uniform set needs:
   //   uniform solid           -> Border.all, inside the BoxDecoration
   //   uniform dashed/dotted   -> FjsDashedBorderPainter (the long-standing path)
@@ -66,15 +67,15 @@ Widget decorateNode(
   final border = side == null
       ? null
       : side.isUniform && !side.hasDashed
-          ? side.uniformBorder
-          : !side.hasDashed && !radiusPainted
-              ? Border(
-                  top: _borderSide(side.top),
-                  right: _borderSide(side.right),
-                  bottom: _borderSide(side.bottom),
-                  left: _borderSide(side.left),
-                )
-              : null;
+      ? side.uniformBorder
+      : !side.hasDashed && !radiusPainted
+      ? Border(
+          top: _borderSide(side.top),
+          right: _borderSide(side.right),
+          bottom: _borderSide(side.bottom),
+          left: _borderSide(side.left),
+        )
+      : null;
   // A painted-over border reserves its own room — BoxDecoration.border does
   // that for the decoration case.
   final paintedOver = side != null && border == null;
@@ -90,7 +91,8 @@ Widget decorateNode(
     );
   }
   final background = style.backgroundColor ?? defaultBackgroundColor;
-  final decorated = style.hasDecoration ||
+  final decorated =
+      style.hasDecoration ||
       border != null ||
       background != null ||
       foregroundDecoration != null;
@@ -120,10 +122,12 @@ Widget decorateNode(
     // pay nothing. track.delay is not honored (same gap as background).
     final widthTrack = style.transitions?.forProperty('width');
     final heightTrack = style.transitions?.forProperty('height');
-    final animatesWidth = width != null &&
+    final animatesWidth =
+        width != null &&
         widthTrack != null &&
         widthTrack.duration > Duration.zero;
-    final animatesHeight = height != null &&
+    final animatesHeight =
+        height != null &&
         heightTrack != null &&
         heightTrack.duration > Duration.zero;
     Widget animateSize(Widget sized) {
@@ -337,15 +341,19 @@ Widget transitionNode(
   final opacityTrack = transitions?.forProperty('opacity');
   final transform = style.transform ?? Matrix4.identity();
   final opacity = style.opacity ?? 1.0;
-  final wantsTransform = stableTransform ||
+  final wantsTransform =
+      stableTransform ||
       style.transform != null ||
       (transformTrack != null && transformTrack.duration > Duration.zero);
-  final wantsOpacity = style.opacity != null ||
+  final wantsOpacity =
+      style.opacity != null ||
       (opacityTrack != null && opacityTrack.duration > Duration.zero);
-  final animatesTransform = transformTrack != null &&
+  final animatesTransform =
+      transformTrack != null &&
       transformTrack.duration > Duration.zero &&
       wantsTransform;
-  final animatesOpacity = opacityTrack != null &&
+  final animatesOpacity =
+      opacityTrack != null &&
       opacityTrack.duration > Duration.zero &&
       wantsOpacity;
 
@@ -366,7 +374,8 @@ Widget transitionNode(
 }
 
 @Deprecated(
-    'Use transitionNode so CSS transition can animate transform/opacity.')
+  'Use transitionNode so CSS transition can animate transform/opacity.',
+)
 Widget transformNode(FjsStyle style, Widget content, {bool stable = false}) {
   final transform = style.transform;
   if (transform == null && !stable) return content;
@@ -529,10 +538,12 @@ class _TransitionNodeState extends State<_TransitionNode>
       setDelayTimer(null);
       return;
     }
-    setDelayTimer(Timer(track.delay, () {
-      if (!mounted) return;
-      if (controller.value == 0) controller.forward();
-    }));
+    setDelayTimer(
+      Timer(track.delay, () {
+        if (!mounted) return;
+        if (controller.value == 0) controller.forward();
+      }),
+    );
   }
 
   Matrix4 _currentTransform(Matrix4 fallback) {
