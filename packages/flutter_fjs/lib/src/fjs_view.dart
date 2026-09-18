@@ -151,6 +151,7 @@ class _FjsViewState extends State<FjsView> with WidgetsBindingObserver {
         return FjsAssetScope(
           devUri: engine.devUri,
           generation: tree.generation,
+          assetBundle: engine.assetBundle,
           child: Directionality(
             textDirection: TextDirection.ltr,
             // new tree generation → fresh Element/State under this key, so
@@ -183,6 +184,7 @@ class FjsAssetScope extends InheritedWidget {
     super.key,
     required this.devUri,
     this.generation = 0,
+    this.assetBundle,
     required super.child,
   });
 
@@ -198,10 +200,16 @@ class FjsAssetScope extends InheritedWidget {
   /// build (nothing is editable). See fjsResolveImageSource.
   final int generation;
 
+  /// The engine's [FjsEngine.assetBundle]: where release-build files are
+  /// read from. Null means the app's own assets.
+  final AssetBundle? assetBundle;
+
   static FjsAssetScope? of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<FjsAssetScope>();
 
   @override
   bool updateShouldNotify(FjsAssetScope oldWidget) =>
-      devUri != oldWidget.devUri || generation != oldWidget.generation;
+      devUri != oldWidget.devUri ||
+      generation != oldWidget.generation ||
+      assetBundle != oldWidget.assetBundle;
 }

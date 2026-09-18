@@ -69,13 +69,15 @@ class FjsIconmind {
 
   /// While `fjs dev` is connected the set comes from the dev server, so
   /// re-running the prepare hook shows the new icons without a rebuild;
-  /// otherwise it comes from the asset the build copied in. The engine
+  /// otherwise it comes from the asset the build copied in — read through
+  /// the engine's assetBundle, so a release build served from the network
+  /// finds it there too. The engine
   /// owns both the address and the HttpClient — this module needs neither.
   static Future<Map<String, List<IconShape>>> _fetch(int generation) async {
     final engine = _engine;
     final dev = engine?.devUri;
     final source = dev == null
-        ? await rootBundle.loadString(_assetPath)
+        ? await (engine?.assetBundle ?? rootBundle).loadString(_assetPath)
         : await engine!.fetchString(dev.replace(path: _devPath));
     final icons = _parse(source);
     // a reload — or the dev connection landing after register() warmed the

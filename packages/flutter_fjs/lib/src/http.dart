@@ -24,7 +24,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show FlutterError;
 import 'dart:ffi' as ffi;
 
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show AssetBundle, rootBundle;
 import 'package:ffi/ffi.dart' show malloc;
 
 import 'ffi.dart';
@@ -36,6 +36,7 @@ class FjsHttp {
   FjsHttp({
     required this.dispatchEvent,
     this.devUri,
+    this.assetBundle,
     this.vmHandle,
     HttpClient? client,
   }) : _client = client ?? HttpClient();
@@ -51,6 +52,10 @@ class FjsHttp {
   /// No dev server means there is nothing for a relative URL to mean; the
   /// request fails with that message rather than silently.
   final Uri? Function()? devUri;
+
+  /// Where a release build's public/ files are read from — the engine's
+  /// [FjsEngine.assetBundle]. Null means the app's own assets.
+  final AssetBundle Function()? assetBundle;
 
   /// The engine's FJSVM handle, for the binary-handle table (spec 038):
   /// response bodies go in once and travel to JS as an int. Null means the
@@ -346,7 +351,8 @@ class FjsHttp {
       return {'ok': true, 'status': 404, 'statusText': 'Not Found'};
     }
     try {
-      final data = await rootBundle.load('$fjsPublicAssetRoot/$path');
+      final data = await (assetBundle?.call() ?? rootBundle)
+          .load('$fjsPublicAssetRoot/$path');
       final bytes = data.buffer.asUint8List(
         data.offsetInBytes,
         data.lengthInBytes,

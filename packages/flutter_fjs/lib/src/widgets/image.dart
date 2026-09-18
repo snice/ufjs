@@ -79,6 +79,7 @@ ImageProvider<Object>? fjsResolveImageSource(
   String src, {
   Uri? devUri,
   int devGeneration = 0,
+  AssetBundle? assetBundle,
   void Function(String message)? warn,
 }) {
   if (src.isEmpty) return null;
@@ -136,7 +137,7 @@ ImageProvider<Object>? fjsResolveImageSource(
     final bust = devGeneration > 0 ? '?fjs=$devGeneration' : '';
     return CachedNetworkImageProvider('$base/$path$bust');
   }
-  return AssetImage('$fjsPublicAssetRoot/$path');
+  return AssetImage('$fjsPublicAssetRoot/$path', bundle: assetBundle);
 }
 
 class FjsImage extends StatefulWidget {
@@ -253,6 +254,7 @@ class _FjsImageState extends State<FjsImage> {
           _src,
           devUri: FjsAssetScope.of(context)?.devUri,
           devGeneration: FjsAssetScope.of(context)?.generation ?? 0,
+          assetBundle: FjsAssetScope.of(context)?.assetBundle,
           warn: (message) =>
               fjsWarnOnce('image-src:${widget.node.id}:$_src', message),
         );

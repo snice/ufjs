@@ -8,6 +8,7 @@ import 'dart:io' show Platform;
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart' show AssetBundle, rootBundle;
 
 import 'canvas/host_module.dart';
 import 'canvas/images.dart';
@@ -81,6 +82,7 @@ class FjsEngine extends ChangeNotifier {
     // root-relative fetch URLs resolve against the dev server, the same
     // closure the canvas image loader uses
     devUri: () => devUri,
+    assetBundle: () => assetBundle,
     // binary handles (spec 038): response/request bodies travel as ids
     vmHandle: () => _vm,
   );
@@ -443,6 +445,7 @@ class FjsEngine extends ChangeNotifier {
         dispatchEvent(id, type, text: text);
       },
       devUri: () => devUri,
+      assetBundle: () => assetBundle,
       // same cache-busting counter <image> uses on dev URLs (fjs_view.dart)
       devGeneration: () => tree.generation,
     );
@@ -1039,6 +1042,14 @@ class FjsEngine extends ChangeNotifier {
       // Expected to fail while the sheet is up, and irrelevant either way.
     }
   }
+
+  /// Where the release build's files (`assets/fjs/…`: public/ files,
+  /// module data) are read from. The app's own Flutter assets by default;
+  /// a host that runs a release build fetched from a web server swaps in a
+  /// bundle that reads the same keys from that server, so `<image
+  /// src="/x.png">`, a relative fetch() and module assets keep working
+  /// without the files being baked into the host.
+  AssetBundle assetBundle = rootBundle;
 
   /// True while a `fjs dev` connection is live.
   bool get isDevConnected => _dev != null;

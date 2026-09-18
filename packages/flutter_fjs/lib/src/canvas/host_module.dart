@@ -16,6 +16,7 @@ import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/painting.dart';
+import 'package:flutter/services.dart' show AssetBundle;
 
 import 'canvas_module.dart';
 import '../mirror_tree.dart';
@@ -33,6 +34,7 @@ void registerCanvasHostModules({
   required void Function(int id, int type, {String? text}) dispatch,
   required Uri? Function() devUri,
   required int Function() devGeneration,
+  AssetBundle Function()? assetBundle,
 }) {
   host
     ..register('fjs.canvas.measureText', (args) {
@@ -50,6 +52,7 @@ void registerCanvasHostModules({
           dispatch: dispatch,
           devUri: devUri(),
           devGeneration: devGeneration(),
+          assetBundle: assetBundle?.call(),
         ),
       );
       return null;
@@ -130,6 +133,7 @@ Future<void> _loadImage({
   required void Function(int id, int type, {String? text}) dispatch,
   required Uri? devUri,
   required int devGeneration,
+  AssetBundle? assetBundle,
 }) async {
   void report(Map<String, Object?> payload) {
     dispatch(handle, 30, text: jsonEncode({'t': 'image', ...payload}));
@@ -141,6 +145,7 @@ Future<void> _loadImage({
     src,
     devUri: devUri,
     devGeneration: devGeneration,
+    assetBundle: assetBundle,
   );
   if (provider == null) {
     report({'err': 'canvas image load failed'});
