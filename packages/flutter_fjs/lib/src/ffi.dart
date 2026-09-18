@@ -153,13 +153,17 @@ class FjsBindings {
 
   static FjsBindings? _instance;
 
-  /// Android loads the prebuilt libfjs.so shipped in jniLibs; iOS/macOS link
-  /// the static slices of fjs.xcframework straight into the app binary, so the
-  /// symbols are already in the process.
+  /// Android and ohos load the prebuilt libfjs.so shipped inside the app
+  /// (jniLibs / the ohos plugin HAR's libs); iOS/macOS link the static slices
+  /// of fjs.xcframework straight into the app binary, so the symbols are
+  /// already in the process. The ohos fork's Dart runtime reports
+  /// `Platform.operatingSystem == 'ohos'` and `isAndroid` false there, so
+  /// checking isAndroid alone would send ohos into process() and crash.
   static FjsBindings instance() {
     final cached = _instance;
     if (cached != null) return cached;
-    final lib = Platform.isAndroid
+    final os = Platform.operatingSystem;
+    final lib = (Platform.isAndroid || os == 'ohos')
         ? ffi.DynamicLibrary.open('libfjs.so')
         : ffi.DynamicLibrary.process();
     _instance = FjsBindings._(lib);

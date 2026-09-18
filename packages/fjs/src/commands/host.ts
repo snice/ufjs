@@ -90,8 +90,8 @@ function create(root: string, dir: string, argv: string[]): void {
 
 function open(dir: string, argv: string[]): void {
   const platform = argv[0];
-  if (platform !== 'android' && platform !== 'ios') {
-    throw new Error('fjs host open needs a platform: android or ios');
+  if (platform !== 'android' && platform !== 'ios' && platform !== 'ohos') {
+    throw new Error('fjs host open needs a platform: android, ios or ohos');
   }
   noOptions('open', argv.slice(1));
   requireHost(dir);
@@ -99,15 +99,21 @@ function open(dir: string, argv: string[]): void {
   const target =
     platform === 'android'
       ? path.join(dir, 'android')
-      : [
-          path.join(dir, 'ios', 'Runner.xcworkspace'),
-          path.join(dir, 'ios', 'Runner.xcodeproj'),
-        ].find((candidate) => fs.existsSync(candidate));
+      : platform === 'ohos'
+        ? path.join(dir, 'ohos')
+        : [
+            path.join(dir, 'ios', 'Runner.xcworkspace'),
+            path.join(dir, 'ios', 'Runner.xcodeproj'),
+          ].find((candidate) => fs.existsSync(candidate));
   if (!target || !fs.existsSync(target)) {
-    throw new Error(`no ${platform} project in ${dir} — run fjs host create first`);
+    const hint =
+      platform === 'ohos'
+        ? ' (created by the OpenHarmony fork: flutter create --platforms ohos .)'
+        : ' — run fjs host create first';
+    throw new Error(`no ${platform} project in ${dir}${hint}`);
   }
 
-  const [cmd, args] = opener(target);
+  const [cmd, args] = opener(target, platform);
   const result = spawnSync(cmd, args, { stdio: 'inherit' });
   if (result.error || result.status !== 0) {
     throw new Error(`could not open ${target} — open it manually`);
@@ -115,7 +121,12 @@ function open(dir: string, argv: string[]): void {
   console.log(`opened ${target}`);
 }
 
-function opener(target: string): [string, string[]] {
+function opener(target: string, platform?: string): [string, string[]] {
+  // the ohos host has no IDE-neutral project file; DevEco Studio is the only
+  // thing that understands an hvigor/ArkTS project tree
+  if (platform === 'ohos' && process.platform === 'darwin') {
+    return ['open', ['-a', 'DevEco-Studio', target]];
+  }
   if (process.platform === 'darwin') return ['open', [target]];
   if (process.platform === 'win32') return ['cmd', ['/c', 'start', '', target]];
   return ['xdg-open', [target]];

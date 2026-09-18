@@ -1,0 +1,10 @@
+{
+  "module": {
+    "name": "flutter_fjs",
+    "type": "har",
+    "deviceTypes": [
+      "default",
+      "tablet"
+    ]
+  }
+}

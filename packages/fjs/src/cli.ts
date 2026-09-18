@@ -6,7 +6,7 @@
 //   fjs create [dir] [--template vue3-vite]
 //   fjs create page|component|module <name>
 //   fjs add    <package>...
-//   fjs run    <android|ios>
+//   fjs run    <android|ios|ohos>
 //   fjs routes / fjs doctor / fjs devices / fjs clean / fjs host / fjs icon
 //   fjs log / fjs eval
 import { buildCommand } from './bundler/build.js';
@@ -49,6 +49,8 @@ commands:
                             .fjs/flutter/assets/fjs
       --profile             same assets, but flutter build --profile
       --apk                 with --release/--profile: also flutter build apk
+      --hap                 with --release/--profile: also flutter build hap
+                            (needs the OpenHarmony flutter fork)
       --flutter-dir <dir>    Flutter host dir for --release/--apk
                             (default: .fjs/flutter, or package.json
                             fjs.flutterDir once ejected)
@@ -111,11 +113,11 @@ commands:
       --platform <app|web>   only routes that target this platform
       --json                 machine-readable output
   fjs doctor                 check toolchain and project setup
-  fjs devices                android/ios devices fjs run can see
+  fjs devices                android/ios/ohos devices fjs run can see
       --json                 machine-readable output
   fjs host [status]          the Flutter host: where it is, who owns it
       create                 create it without running the app
-      open <android|ios>     open it in Android Studio / Xcode
+      open <android|ios|ohos>  open it in Android Studio / Xcode / DevEco Studio
       eject [dir]            move it into the repo (default: flutter/) and
                             stop regenerating its Dart and pubspec
       sync [--force]         re-apply the generated host files
@@ -133,7 +135,7 @@ commands:
       --flutter-dir <dir>    Flutter host dir (default: .fjs/flutter)
       --all                  also remove the Flutter host itself
       --dry-run              print what would be removed
-  fjs run <android|ios>      create/reuse .fjs/flutter and run on device
+  fjs run <android|ios|ohos> create/reuse .fjs/flutter and run on device
                             (default: debug + dev server, live JS)
       --release              build release assets, then flutter run --release
       --profile              same, but flutter run --profile (for measuring)

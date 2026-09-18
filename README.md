@@ -39,7 +39,7 @@ Flutter 的平台矩阵走，其中实测过的平台标 ✅：
 | iOS | ✅ 已测试 | App 端，Flutter 渲染（`fjs run ios`） |
 | macOS | ✅ 已测试 | App 端，Flutter 桌面 |
 | Windows / Linux | 理论支持 | App 端，Flutter 桌面可编译，未实测 |
-| 鸿蒙（HarmonyOS） | 理论支持 | App 端，随 Flutter 鸿蒙生态，未实测 |
+| 鸿蒙（HarmonyOS） | ✅ 已测试 | App 端，需 OpenHarmony fork 的 Flutter SDK（`fjs run ohos`），见 [toolchain.md](docs/toolchain.md) |
 
 ## 渲染层是框架无关的
 

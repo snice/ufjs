@@ -25,7 +25,7 @@ import {
 import type { FlutterMode } from '../bundler/build.js';
 import { lanAddresses } from '../dev/server.js';
 
-type Platform = 'android' | 'ios';
+type Platform = 'android' | 'ios' | 'ohos';
 
 interface RunOptions {
   platform: Platform;
@@ -67,6 +67,7 @@ export async function runCommand(argv: string[]): Promise<void> {
       mode: opts.mode,
       gz: opts.gz,
       apk: false,
+      hap: false,
       flutterDir: opts.flutterDir,
       flutterArgs: [],
     };
@@ -119,9 +120,9 @@ export async function runCommand(argv: string[]): Promise<void> {
 
 function parseRunArgs(argv: string[]): RunOptions {
   const first = argv.shift();
-  if (first !== 'android' && first !== 'ios') {
+  if (first !== 'android' && first !== 'ios' && first !== 'ohos') {
     throw new Error(
-      'usage: fjs run <android|ios> [--release|--profile] [--no-minify] [--gz] ' +
+      'usage: fjs run <android|ios|ohos> [--release|--profile] [--no-minify] [--gz] ' +
         '[--device <id>] [--port <n>] [--flutter-dir <dir>] [-- <flutter args>]',
     );
   }
@@ -183,7 +184,10 @@ export function ensureFlutterHost(
   if (!fs.existsSync(pubspec)) {
     fs.mkdirSync(path.dirname(dir), { recursive: true });
     const packageName = dartPackageName(name);
-    const result = spawnSync('flutter', ['create', '--platforms=android,ios', '--project-name', packageName, dir], {
+    // ohos only when the flutter on PATH is the OpenHarmony fork — the
+    // stock tool rejects the platform and would abort host creation
+    const platforms = `android,ios${flutterSupportsOhos() ? ',ohos' : ''}`;
+    const result = spawnSync('flutter', ['create', `--platforms=${platforms}`, '--project-name', packageName, dir], {
       stdio: 'inherit',
     });
     if (result.status !== 0) {
@@ -1194,7 +1198,11 @@ export function devicesFor(platform: Platform, devices = listDevices()): Flutter
         d.isSupported !== false &&
         (platform === 'android'
           ? (d.targetPlatform ?? '').startsWith('android')
-          : d.targetPlatform === 'ios'),
+          : // the ohos fork reports 'ohos-arm64' (and 'ohos-x64' for its x86
+            // emulator); prefix keeps both working
+            platform === 'ohos'
+            ? (d.targetPlatform ?? '').startsWith('ohos')
+            : d.targetPlatform === 'ios'),
     )
     .sort((a, b) => Number(b.emulator === true) - Number(a.emulator === true));
 }
@@ -1217,7 +1225,12 @@ export function resolveDevice(platform: Platform, explicit?: string): FlutterDev
   const onPlatform = devicesFor(platform, devices);
 
   if (onPlatform.length === 0) {
-    const label = platform === 'android' ? 'Android emulator or device' : 'iOS simulator or device';
+    const label =
+      platform === 'android'
+        ? 'Android emulator or device'
+        : platform === 'ohos'
+          ? 'HarmonyOS emulator or device'
+          : 'iOS simulator or device';
     throw new Error(
       `no ${platform} device found. Start an ${label} (\`flutter emulators\`, ` +
         `\`open -a Simulator\`), or pass one explicitly:\n` +
@@ -1237,8 +1250,16 @@ export function resolveDevice(platform: Platform, explicit?: string): FlutterDev
 }
 
 /** Where the app should look for `fjs dev`. An emulator reaches the host
- * through a fixed alias; a physical device has to come back over the LAN. */
+ * through a fixed alias; a physical device has to come back over the LAN.
+ * ohos gets no alias at all — its emulator dials the host like a physical
+ * device would, so the LAN address is the only answer there. */
 function deviceAddress(platform: Platform, port: number, device: FlutterDevice): string {
+  if (platform === 'ohos') {
+    const lan = lanAddresses()[0];
+    if (lan) return `${lan}:${port}`;
+    console.warn('fjs: no LAN address found; the ohos device may not reach the dev server');
+    return `127.0.0.1:${port}`;
+  }
   if (device.emulator === false) {
     const lan = lanAddresses()[0];
     if (lan) return `${lan}:${port}`;
@@ -1246,6 +1267,26 @@ function deviceAddress(platform: Platform, port: number, device: FlutterDevice):
   }
   if (platform === 'android') return `10.0.2.2:${port}`;
   return `127.0.0.1:${port}`;
+}
+
+/** True when the flutter on PATH is an OpenHarmony fork, i.e. understands
+ * `flutter create --platforms=ohos`. Detected from the tool's own source
+ * tree (only the fork adds packages/flutter_tools/lib/src/ohos) rather than
+ * by invoking flutter — that would bootstrap the whole tool just to answer
+ * a question about it. Anything unresolvable (version-manager shims, missing
+ * flutter) answers false and every existing platform behaves as before. */
+function flutterSupportsOhos(): boolean {
+  const cmd = process.platform === 'win32' ? 'where' : 'which';
+  const probe = spawnSync(cmd, ['flutter'], { encoding: 'utf8' });
+  const bin = probe.stdout?.split(/\r?\n/)[0]?.trim();
+  if (!bin) return false;
+  try {
+    let dir = path.dirname(fs.realpathSync(bin));
+    if (path.basename(dir) === 'bin') dir = path.dirname(dir);
+    return fs.existsSync(path.join(dir, 'packages', 'flutter_tools', 'lib', 'src', 'ohos'));
+  } catch {
+    return false;
+  }
 }
 
 function findFlutterFjsPackage(): string | null {

@@ -1,0 +1,9 @@
+{
+  "name": "flutter_fjs",
+  "version": "0.1.4",
+  "description": "JS/TS runtime for Flutter — QuickJS-ng engine, pure FFI, no platform channels.",
+  "main": "index.ets",
+  "author": "",
+  "license": "MIT",
+  "dependencies": {}
+}

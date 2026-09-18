@@ -49,3 +49,7 @@ flutter:
         pluginClass: FlutterFjsPlugin
       macos:
         pluginClass: FlutterFjsPlugin
+      # Only recognized by the OpenHarmony flutter fork; standard flutter
+      # ignores unknown platform keys, so the package still resolves there.
+      ohos:
+        pluginClass: FlutterFjsPlugin

@@ -195,6 +195,8 @@ export interface BuildOptions {
   gz: boolean;
   /** With --release, also run `flutter build apk`. */
   apk: boolean;
+  /** With --release, also run `flutter build hap` (OpenHarmony fork only). */
+  hap: boolean;
   /** Flutter host project dir used by --release/--apk. */
   flutterDir: string;
   /** Extra args passed to `flutter build apk` after `--`. */
@@ -242,6 +244,7 @@ export function parseBuildArgs(argv: string[]): BuildOptions {
     mode: 'release',
     gz: false,
     apk: false,
+    hap: false,
     flutterDir: configuredFlutterDir(),
     flutterArgs: [],
     analyze: false,
@@ -260,6 +263,7 @@ export function parseBuildArgs(argv: string[]): BuildOptions {
       opts.mode = 'profile';
     }
     else if (a === '--apk') opts.apk = true;
+    else if (a === '--hap') opts.hap = true;
     else if (a === '--minify') opts.minify = true;
     else if (a === '--no-minify') opts.minify = false;
     else if (a === '--gz') opts.gz = true;
@@ -1107,6 +1111,9 @@ export async function buildCommand(argv: string[]): Promise<void> {
   if (opts.apk && !opts.release) {
     throw new Error('--apk requires --release or --profile');
   }
+  if (opts.hap && !opts.release) {
+    throw new Error('--hap requires --release or --profile');
+  }
   if (opts.release) {
     if (opts.web) throw new Error('--release is for Flutter app builds; remove --web');
     opts.bytecode = true;
@@ -1231,6 +1238,14 @@ export function releaseBuild(opts: BuildOptions, res: BuildResult): void {
     const result = spawnSync('flutter', args, { cwd: flutterDir, stdio: 'inherit' });
     if (result.status !== 0) throw new Error('flutter build apk failed');
     console.log(`built APK under ${path.relative(root, path.join(flutterDir, 'build', 'app', 'outputs', 'flutter-apk'))}`);
+  }
+  if (opts.hap) {
+    // `build hap` is an OpenHarmony-fork subcommand; the stock tool would
+    // fail with an unknown-command error naming flutter, which reads fine
+    const args = ['build', 'hap', ...flutterModeArgs(opts.mode, opts.flutterArgs), ...opts.flutterArgs];
+    const result = spawnSync('flutter', args, { cwd: flutterDir, stdio: 'inherit' });
+    if (result.status !== 0) throw new Error('flutter build hap failed');
+    console.log(`built HAP under ${path.relative(root, path.join(flutterDir, 'ohos', 'entry', 'build', 'default', 'outputs', 'default'))}`);
   }
 }
 

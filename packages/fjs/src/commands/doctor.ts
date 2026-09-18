@@ -266,12 +266,12 @@ async function devicesCheck(): Promise<Result> {
   }
   const mobile = devices.filter((d) => {
     const target = d.targetPlatform ?? '';
-    return target.startsWith('android') || target === 'ios';
+    return target.startsWith('android') || target === 'ios' || target.startsWith('ohos');
   });
   if (mobile.length === 0) {
     return {
       status: 'warn',
-      detail: 'no android/ios device',
+      detail: 'no android/ios/ohos device',
       hint: 'start an emulator (flutter emulators) or a simulator before fjs run',
     };
   }

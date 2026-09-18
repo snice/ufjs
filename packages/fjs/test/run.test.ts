@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  devicesFor,
   patchAndroidAbiFilters,
   patchAndroidToolchain,
   patchHostMain,
@@ -710,5 +711,34 @@ describe('patchAndroidAbiFilters', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('devicesFor', () => {
+  const devices = [
+    { id: 'emulator-5554', name: 'Android Emulator', targetPlatform: 'android-x64', emulator: true },
+    { id: '00008110', name: 'iPhone', targetPlatform: 'ios', emulator: false },
+    // the ohos fork reports ohos-arm64 (emulator id 127.0.0.1:5555) and
+    // ohos-x64 for its x86 emulator; a prefix, not an exact match
+    { id: '127.0.0.1:5555', name: 'HarmonyOS Emulator', targetPlatform: 'ohos-arm64', emulator: true },
+    { id: 'connx-ohos-x64', name: 'ohos x64 Emulator', targetPlatform: 'ohos-x64', emulator: true },
+  ];
+
+  it('keeps every ohos target prefix', () => {
+    const ohos = devicesFor('ohos', devices);
+    expect(ohos.map((d) => d.id)).toEqual(['127.0.0.1:5555', 'connx-ohos-x64']);
+  });
+
+  it('does not let ohos leak into the android/ios lists', () => {
+    expect(devicesFor('android', devices).map((d) => d.id)).toEqual(['emulator-5554']);
+    expect(devicesFor('ios', devices).map((d) => d.id)).toEqual(['00008110']);
+  });
+
+  it('drops unsupported devices everywhere', () => {
+    const withDead = [
+      ...devices,
+      { id: 'dead-ohos', name: 'offline', targetPlatform: 'ohos-arm64', isSupported: false },
+    ];
+    expect(devicesFor('ohos', withDead).map((d) => d.id)).not.toContain('dead-ohos');
   });
 });

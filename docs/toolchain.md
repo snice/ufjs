@@ -348,6 +348,7 @@ dev server 的每次请求都报成 `SocketException: No route to host (errno = 
 fjs host                     # 在哪、归谁管、application id、flutter_fjs 从哪来
 fjs host create              # 只创建/更新宿主，不跑应用
 fjs host open android|ios    # 用 Android Studio / Xcode 打开
+fjs host open ohos           # 用 DevEco Studio 打开（需要 OpenHarmony fork 生成的宿主）
 fjs host id                  # 打印当前 application id
 fjs host id com.acme.app     # 改 applicationId 和 bundle identifier
 fjs host eject [dir]         # 移进仓库（默认 flutter/），从此归你管
@@ -517,13 +518,15 @@ FjsPerfOverlay(engine: engine, child: FjsView(engine: engine))
 ## 看设备
 
 ```bash
-fjs devices          # fjs run 能用的 android/ios 设备，带 * 的是默认选择
+fjs devices          # fjs run 能用的 android/ios/ohos 设备，带 * 的是默认选择
 fjs devices --json
 ```
 
-`flutter devices` 会把桌面端和 web 一起列出来，这条只留 fjs 真正能跑的两端，并且
+`flutter devices` 会把桌面端和 web 一起列出来，这条只留 fjs 真正能跑的平台，并且
 把 `-d` 要填的 id 单独成列。排序和 `fjs run` 的挑选规则一致：模拟器优先，因为它
-用主机本地地址就能连上 dev server，真机则依赖局域网可达。
+用主机本地地址就能连上 dev server，真机则依赖局域网可达。ohos 设备只有装了
+OpenHarmony fork 的 Flutter SDK 才会出现（标准 flutter 的设备发现看不见它们；
+fork 靠 `DEVECO_SDK_HOME` 定位 hdc）。
 
 ## 清理
 
@@ -589,6 +592,28 @@ fjs run android
 fjs run ios
 fjs run android --release --gz
 ```
+
+### 鸿蒙（OpenHarmony fork）
+
+`fjs run ohos` / `fjs devices` 的 ohos 列需要 **OpenHarmony fork 的 Flutter
+SDK**（如 [flutter_flutter](https://gitcode.com/CPF-Flutter/flutter_flutter)）
+和 DevEco Studio，标准 flutter 不认识 ohos 平台。前置条件：
+
+- `PATH` 上是 fork 的 `flutter`（`fjs` 探测 fork 的方式：SDK 源码里有
+  `packages/flutter_tools/lib/src/ohos`；探测不到时一切保持 android/ios 原样）；
+- `DEVECO_SDK_HOME` 指向 DevEco 的 sdk 目录 —— fork 靠它定位 `hdc`，不设的
+  话设备列表是空的；
+- ohos 宿主目录只能由 fork 生成：`flutter create --platforms ohos .`（在
+  `.fjs/flutter` 里）。`fjs run ohos` 不负责补建它，缺失时直接报错。
+
+debug 模式下模拟器/真机没有 Android 的 `10.0.2.2` 那种主机别名，`FJS_DEV`
+直接走宿主局域网地址（dev server 绑 `0.0.0.0`，模拟器 NAT 可达）；局域网不通
+时手动 `hdc fport tcp:<port> tcp:<port>` 再 `fjs run ohos --host 127.0.0.1`。
+release 模式与 Android 同一条链路（字节码烤进 assets），`fjs build --hap`
+出 `flutter build hap` 的包。
+
+引擎侧的 `libfjs.so`（arm64-v8a）是预编译入库的，重编 native 后跑
+`packages/flutter_fjs/tool/build-ohos.sh`（用 DevEco 自带的 llvm 交叉编译）。
 
 `fjs run` 会创建或复用 `.fjs/flutter`。这个 Flutter 宿主由 CLI 生成，包含：
 
@@ -731,6 +756,7 @@ pnpm --filter demo run build:apk -- --debug
 | `fjs build --release --apk` | release assets + APK | 纯 TS Android 打包 |
 | `fjs build --profile --apk` | release assets + profile APK | 量性能用的包 |
 | `fjs build --pages --release --apk` | release assets + APK | Vue pages Android 打包 |
+| `fjs build --pages --release --hap` | release assets + HAP | Vue pages 鸿蒙打包，需要 OpenHarmony fork |
 
 `--web` 和 `--pages` 互斥。`--mp` 必须单独使用（不能与 `--web` / `--pages` /
 `--release` 同给）。

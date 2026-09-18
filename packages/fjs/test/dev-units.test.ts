@@ -138,6 +138,7 @@ async function buildUnits(): Promise<{ result: Awaited<ReturnType<typeof buildBu
     mode: 'release',
     gz: false,
     apk: false,
+    hap: false,
     flutterDir: '',
     flutterArgs: [],
     analyze: false,
