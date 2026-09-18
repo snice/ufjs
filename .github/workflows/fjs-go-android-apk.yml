@@ -31,11 +31,14 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # 默认值 "tools platform-tools" 里的 tools 包已被新版 cmdline-tools 移除，会直接失败
+          packages: platform-tools
 
       - name: Install Android packages
         run: |
-          sdkmanager --install "platforms;android-34" "platforms;android-35" "build-tools;35.0.0"
           yes | sdkmanager --licenses >/dev/null
+          sdkmanager --install "platforms;android-34" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Flutter pub get
         working-directory: examples/fjs-go
