@@ -1,7 +1,17 @@
 # @ufjs/cli
 
-## Unreleased
+## 0.1.4
 
+- **鸿蒙（OpenHarmony/HarmonyOS NEXT）适配（specs/066）**：`fjs devices` /
+  `fjs run` 支持鸿蒙设备，`fjs build --hap` 生成鸿蒙应用包。
+- **微信小程序**：Vue SFC 编译为微信小程序，webview/skyline 双渲染器
+  （spec 046）；canvas 2d / WebGL 桥接，npm 依赖打包进产物；支持分包与
+  分包预下载（spec 063）；worker 三端统一为文件路径，支持 wx.createWorker
+  （spec 049）。
+- `app.config.ts` 新增 `version`（同步进生成宿主 pubspec）和 `orientation`
+  （锁定宿主屏幕方向）。
+- sticky-header / sticky-section、swiper-item 编译期校验、safe-area `edges`
+  等组件接入编译管线（组件本体记录在 @ufjs/runtime 0.1.4）。
 - 生成的 Flutter 宿主每次 `fjs run` 都会补到一条 Android 工具链基线上
   （Gradle 8.14 / AGP 8.11.1 / KGP 2.2.20 / Java 17），只升不降。宿主是
   `flutter create` 一次性生成的，不会自己跟着 Flutter 升级，之前会一路警告到

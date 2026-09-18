@@ -80,6 +80,35 @@ enum {
        params). Lets a page defer expensive first-paint work until the
        animation is over — see fjs-runtime/src/router onPageSettled. */
     FJS_EVENT_NAV_SETTLED      = 31,
+    /* one invokeHostAsync() call finished (nodeId = the call id JS allocated).
+       Payload is a fixed JSON string, "ok" first: success
+       {"ok":true,"value":<JSON>} (value absent when the handler returned
+       null/undefined), failure {"ok":false,"errMsg":"..."}. The call is
+       initiated synchronously through invokeHost('fjs.async.invoke', id,
+       name, argsJson) — the fetch paradigm, generalized; see
+       fjs-runtime/src/host-async.ts and engine.dart's built-in handler. */
+    FJS_EVENT_ASYNC_RESULT     = 32,
+    /* the Flutter window's logical size changed (nodeId = 0, no per-node
+       identity — the viewport belongs to the app). Payload is a fixed JSON
+       string {"width":n,"height":n}, one decimal place, logical pixels —
+       the same basis as a browser viewport's CSS pixels. The Dart side
+       pushes one right after every VM start (specs/043-media-queries),
+       so JS never has to ask. Consumed by the CSS engine's @media support;
+       web does not need this (the browser evaluates @media itself). */
+    FJS_EVENT_VIEWPORT_CHANGED = 33,
+    /* sticky-header's pin state flipped (specs/052). Payload is the JSON
+       {"isStickOnTop":boolean} — a string, like every event payload. */
+    FJS_EVENT_STICK_ON_TOP_CHANGE = 34,
+    /* page-container's transition lifecycle (specs/065). No params. The
+       leave chain fires on every close path, including a JS-driven
+       show=false, because the native side owns the animation clock. */
+    FJS_EVENT_BEFORE_ENTER     = 35,
+    FJS_EVENT_ENTER            = 36,
+    FJS_EVENT_AFTER_ENTER      = 37,
+    FJS_EVENT_BEFORE_LEAVE     = 38,
+    FJS_EVENT_LEAVE            = 39,
+    FJS_EVENT_AFTER_LEAVE      = 40,
+    FJS_EVENT_CLICK_OVERLAY    = 41,
 };
 
 /* Tagged value tags for the FJSValue C ABI struct. */

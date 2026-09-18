@@ -17,7 +17,13 @@
   "files": [
     "index.ts",
     "src",
-    "flutter",
+    "flutter/lib",
+    "flutter/pubspec.yaml",
+    "flutter/ohos/build-profile.json5",
+    "flutter/ohos/hvigorfile.ts",
+    "flutter/ohos/index.ets",
+    "flutter/ohos/oh-package.json5",
+    "flutter/ohos/src",
     "README.md"
   ],
   "publishConfig": {

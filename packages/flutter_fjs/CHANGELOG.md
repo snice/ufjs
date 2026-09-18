@@ -9,6 +9,31 @@
 - `ffi` 提到 `^2.2.0`；`cached_network_image` 放宽成 `>=3.4.1 <5.0.0`，这样在
   Flutter ≥3.44 上会自动用 4.x，而不必在这里锁死一个更高的 SDK 下限。
 - Android 侧固定 `ndkVersion`，避免宿主和插件解析到不同的 NDK。
+- **鸿蒙（OpenHarmony/HarmonyOS NEXT）平台适配**：新增 `ohos/` 平台目录，
+  `fjs devices` / `fjs run` 支持鸿蒙设备，`fjs build --hap` 打包（specs/066）。
+  WebGL 画布补 ohos 后端，官方 Flutter 用户不受影响。
+- **吸顶布局（specs 052/053/054）**：`<sticky-header>` / `<sticky-section>`
+  吸顶组件；样式级 `position: sticky` 全端生效；`scroll-into-view` 置空可重触发，
+  sticky 目标落在分组起点。
+- `<page-container>` 页面容器组件，三端同源（spec 065）。
+- **WebGL**：接 three.js / glTF（spec 023），iOS 真机黑屏修复（spec 026），
+  模型双指缩放（spec 029）；canvas/webgl 指令字节去掉 fromList 包 sublist
+  的双重拷贝。
+- `<rich-text>` 富文本组件，嵌套 text 变行内片段（spec 034）；一个段落一个
+  节点，长文节点 486 → 91（spec 035）。
+- **CSS（specs 040/041/043/044/045）**：`@media` 响应式样式，窗口尺寸通道
+  两端打通；伪类补全与单边边框；百分比扩展到盒模型间距与定位偏移；
+  transition 背景色/尺寸插值。
+- **safe-area**：`edges` 属性三端同源，NavBar 自带顶部安全区；Android 系统
+  栏透明可穿透，二级页内容可滚到指示条下。
+- **JSI**：二进制句柄跨越 JSI，fetch 请求/响应体告别 base64-in-JSON
+  （spec 038）；`invokeHostAsync` 异步宿主调用，fetch 范式通用化（spec 039）。
+- **导航**：`onPageSettled` + `<canvas defer-resize>`，重活不再压在路由转场
+  上（spec 027）；JS UI 帧上不再重建 Navigator.pages（spec 024）；
+  fjs-slide 底页视差跟随（spec 025）。
+- **dev**：模块级 HMR，共享模块热替换不再重建 VM（spec 037）；连接退避
+  重试与公网探测授权弹窗（spec 030）。
+- `<swiper>`：直接子节点必须是 swiper-item，三端编译期校验（spec 051）。
 
 ## 0.1.3
 

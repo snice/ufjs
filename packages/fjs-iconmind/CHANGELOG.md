@@ -1,5 +1,14 @@
 # @ufjs/iconmind
 
+## 0.1.4
+
+- Packaging fix: `files` used to allowlist the whole `flutter/` directory, and
+  npm's `files` list overrides `.gitignore` — so the first `flutter test` run
+  in this directory leaked `build/`, `.dart_tool/`, `pubspec.lock` and
+  `.flutter-plugins*` into the published tarball (45 MB in @ufjs/webview
+  0.1.3). Only `flutter/lib` and `flutter/pubspec.yaml` ship now.
+- `flutter_fjs` constraint bumped to `^0.1.4`.
+
 ## 0.1.3
 
 - First release. `<icon-mind>` renders an [IconMind](https://iconmind.dev) icon

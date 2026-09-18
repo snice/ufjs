@@ -1,7 +1,21 @@
 # @ufjs/runtime
 
-## Unreleased
+## 0.1.4
 
+- **微信小程序渲染器**：支撑 Vue SFC 编译为微信小程序的运行时侧，
+  webview/skyline 双渲染器（spec 046）；canvas 2d / WebGL 桥接、skyline 触摸
+  事件补齐 offsetLeft/Top、public 数据文件真机可 fetch（specs 046/063 及后续
+  修复）；分包产物去重。
+- **吸顶布局（specs 052/053/054）**：`<sticky-header>` / `<sticky-section>`
+  吸顶组件；样式级 `position: sticky` 全端生效；`scroll-into-view` 置空可重
+  触发，sticky 目标落在分组起点。
+- `<page-container>` 页面容器组件，三端同源（spec 065）。
+- **CSS（specs 040/041/042/043/044/045）**：`@media` 响应式样式，窗口尺寸
+  通道两端打通；伪类补全与单边边框；`el.style` shim，@vueuse/motion 两端可跑；
+  百分比扩展到盒模型间距与定位偏移；transition 背景色/尺寸插值。
+- WebGL：ArrayBuffer 直接上传，分包重复打包修复（specs 038/066 相关）。
+- safe-area `edges` 属性三端同源；`<swiper>` 直接子节点必须是 swiper-item，
+  编译期校验（spec 051）。
 - `@ufjs/runtime/ambient` now declares the static files a build turns into a
   URL — `import logo from '@/assets/logo.png'` and the other extensions in
   ASSET_LOADERS. A project's tsconfig says `"types": []`, so nothing else

@@ -1,6 +1,6 @@
 {
   "name": "@ufjs/webview",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "web-view for fjs — one <web-view /> tag, a WKWebView/WebView on the app and an iframe on the web",
   "license": "MIT",
   "repository": {
@@ -27,7 +27,8 @@
   "files": [
     "index.ts",
     "components",
-    "flutter",
+    "flutter/lib",
+    "flutter/pubspec.yaml",
     "public",
     "prepare.mjs",
     "README.md",

@@ -91,6 +91,16 @@ node 解析，其余的（组件注册、类型、autolink）两边共用一条�
 模块**以源码发布**：fjs 自己编译 TS 和 SFC，中间没有构建步骤，所以
 `npm publish` 前不需要 build。
 
+模板生成的 `files` 把 `flutter/` 枚举成 `flutter/lib` +
+`flutter/pubspec.yaml`，而不是整个目录——npm 的 `files` 白名单**优先于
+`.gitignore`**，写成 `'flutter'` 的话，第一次在这个目录里跑 `flutter test`，
+`.dart_tool/`、`build/`、`.flutter-plugins*` 这些工具残留就会被打进发布包
+（@ufjs/webview 0.1.3 踩过，发出去 45 MB 的测试缓存）。ohos 子目录同理：
+`ohos/build`、`oh_modules`、`oh-package-lock.json5`、`BuildProfile.ets` 都是
+构建产物（@ufjs/webgl 把 `flutter/ohos` 枚举到具体文件和 `src`）。包内的嵌套
+`.gitignore`（比如 `ohos/.gitignore`）npm 也会读，能兜一层底，但别依赖它——
+仓库根的 `.gitignore` 对 npm 是不可见的，显式枚举 `files` 才是契约。
+
 ## 代码提示是怎么来的
 
 工具链生成两个声明文件（`fjs build` / `fjs dev` / Vite 启动时都会刷新，

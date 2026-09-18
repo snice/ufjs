@@ -198,7 +198,16 @@ function manifest(opts: ManifestOptions): string {
       './components/*': './components/*',
       './package.json': './package.json',
     },
-    files: ['index.ts', 'components', ...(opts.flutter ? ['flutter'] : []), 'README.md'],
+    // `flutter` is enumerated instead of listed as a directory: the `files`
+    // allowlist overrides .gitignore, so a bare 'flutter' entry would ship
+    // flutter tool residue (.dart_tool/, build/, .flutter-plugins*) to npm
+    // the first time someone runs `flutter test` inside the module.
+    files: [
+      'index.ts',
+      'components',
+      ...(opts.flutter ? ['flutter/lib', 'flutter/pubspec.yaml'] : []),
+      'README.md',
+    ],
     peerDependencies: {
       '@ufjs/runtime': '>=0.1.0',
       vue: '^3.4.0',
@@ -341,7 +350,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_fjs: ^0.1.3
+  flutter_fjs: ^0.1.4
 `;
 }
 
