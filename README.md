@@ -1,5 +1,9 @@
 # ufjs
 
+[![@ufjs/cli](https://img.shields.io/npm/v/@ufjs/cli?label=%40ufjs%2Fcli)](https://www.npmjs.com/package/@ufjs/cli)
+[![@ufjs/runtime](https://img.shields.io/npm/v/@ufjs/runtime?label=%40ufjs%2Fruntime)](https://www.npmjs.com/package/@ufjs/runtime)
+[![flutter_fjs](https://img.shields.io/pub/v/flutter_fjs?label=flutter_fjs)](https://pub.dev/packages/flutter_fjs)
+
 **用 JS/TS 和 Vue 3 写界面，一套源码编译到 Flutter、Web 和微信小程序。**
 
 ufjs 把 JS 引擎嵌入 Flutter，用 npm/Vite 写业务界面，用 Flutter 负责原生

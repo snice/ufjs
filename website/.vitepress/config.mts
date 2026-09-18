@@ -10,6 +10,8 @@ export default defineConfig({
   title: 'ufjs',
   description: '用 Vue 3 / TypeScript 写界面，一套源码编译到 Flutter、Web 和微信小程序',
   base,
+  // README.md documents building/deploying this site; it is not a page
+  srcExclude: ['README.md'],
   cleanUrls: true,
   lastUpdated: true,
   // head links are not base-prefixed by VitePress, unlike themeConfig.logo
