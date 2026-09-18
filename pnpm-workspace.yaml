@@ -9,3 +9,4 @@ packages:
   - 'packages/fjs-spine'
   - 'demo'
   - 'examples/*'
+  - 'website'

@@ -1,0 +1,162 @@
+# CLI 命令
+
+`@ufjs/cli` 提供 `fjs` 命令。项目内用 `npx fjs <命令>` 或 package.json 脚本调用。`fjs --help` 打印完整帮助。
+
+## 创建
+
+### `fjs create [dir]`
+
+创建新项目。
+
+| 参数 | 说明 |
+|---|---|
+| `--template <name>` | 模板，默认 `vue3-vite`；另有 `ts`（纯 TypeScript + element API） |
+| `--list-templates` | 列出可用模板 |
+| `--name <name>` | package name |
+| `--yes` | 使用默认值，跳过交互 |
+
+### `fjs create page <name>`（别名 `fjs g page`）
+
+生成 `src/pages/<name>.vue`。名字可以嵌套（`comp/button`）和带动态段（`user/[id]`）。
+
+| 参数 | 说明 |
+|---|---|
+| `--title <text>` | 写进 `<route>` 的标题 |
+| `--tab <n>` | 写进 `<route>` 的 tab 序号 |
+| `--path <route>` | 覆盖推导出的路由路径 |
+| `--route-name <name>` | 覆盖推导出的路由名 |
+| `--platform <app\|web>` | 限定平台 |
+| `--dry-run` / `--force` | 只打印 / 覆盖 |
+
+### `fjs create component <Name>`
+
+生成 `src/components/<Name>.vue`。支持 `--dry-run` / `--force`。
+
+### `fjs create module <name>`
+
+生成 `src/modules/<name>`：可以直接 `npm publish` 的模块。见[创建模块](/guide/modules)。
+
+| 参数 | 说明 |
+|---|---|
+| `--component <Name>` | 生成的组件名 |
+| `--no-component` | 纯 API 模块 |
+| `--prefix <P>` | 全局组件前缀 |
+| `--flutter` | 生成 Dart 侧（宿主函数 + Widget + Web 替身）并写好 autolink |
+| `--widget <tag>` | Widget 标签名（隐含 `--flutter`） |
+| `--no-widget` | 只要宿主函数 |
+| `--dry-run` / `--force` | 只打印 / 覆盖 |
+
+### `fjs add <package>...`
+
+安装 JS 库并接进项目。见[添加插件](/guide/plugins)。
+
+| 参数 | 说明 |
+|---|---|
+| `--list` | 列出支持的库 |
+| `--dry-run` | 只打印改动 |
+| `--force` | 覆盖已存在的 `src/plugins/<name>.ts` |
+| `--no-install` | 只改 package.json，不执行安装 |
+| `--entry <file>` | 要修改的入口文件，默认 `src/main.ts` |
+
+## 开发
+
+### `fjs dev [entry]`
+
+启动 dev server。
+
+| 参数 | 说明 |
+|---|---|
+| `--pages` | App 端分包 dev server（fjs go / `fjs run` 用这个） |
+| `--web` | 以浏览器静态站点方式提供 |
+| `--mp` | 小程序：监听源码增量重建 `dist/mp` |
+| `--port <n>` | 端口，默认 38900（`--web` 为 5173）；被占用时自动递增 |
+| `--host <addr>` | 绑定地址，默认 `0.0.0.0` |
+| `--no-qr` | 不打印二维码 |
+| `--no-discovery` | 不在局域网广播（fjs go 的「附近的服务器」看不到） |
+
+运行时的终端快捷键：`r` 完整重建 · `l` 开关日志 · `d` 连接数 · `c` 地址和二维码 · `o` 打开浏览器 · `p` 性能面板 · `?` 帮助 · `q` 退出。
+
+### `fjs run <android|ios|ohos>`
+
+创建 / 复用 Flutter 宿主，启动 dev server，执行 `flutter run`。`--` 后面的参数透传给 `flutter run`。
+
+| 参数 | 说明 |
+|---|---|
+| `--release` | 构建 release 字节码，`flutter run --release` |
+| `--profile` | 同上，但 profile 模式（量性能） |
+| `--no-minify` | 配合 release / profile：不压缩 |
+| `--gz` | 配合 release / profile：gzip 资源 |
+| `--no-pages` | 配合 release / profile：单包构建 |
+| `--device <id>` | 设备 id |
+| `--port <n>` | dev server 端口 |
+| `--flutter-dir <dir>` | 宿主目录 |
+
+### `fjs devices`
+
+列出 `fjs run` 能用的 Android / iOS / 鸿蒙设备，`*` 标出默认选择。`--json` 机器可读。
+
+### `fjs log`
+
+实时查看 App 的 console 输出。`--port <n>` / `--host <addr>` 指定 dev server。
+
+### `fjs eval <expression>`
+
+在运行中的 JS 虚拟机里求值。`--timeout <ms>` 默认 5000。
+
+## 构建
+
+### `fjs build [entry]`
+
+| 参数 | 说明 |
+|---|---|
+| `--pages` | 分包：`shared.js` + `bundle.js` + `pages/<id>.js` |
+| `--bytecode` | 同时输出 `.fjsbundle` 字节码 |
+| `--release` | 字节码 + 同步到 Flutter 宿主 assets |
+| `--profile` | 同上，配合 `--apk` 出 profile 包 |
+| `--apk` | 配合 release / profile：`flutter build apk` |
+| `--hap` | 配合 release / profile：`flutter build hap`（鸿蒙） |
+| `--gz` | 配合 release：gzip 复制进宿主的字节码 |
+| `--web` | 浏览器静态站点 → `dist/web` |
+| `--mp` | 微信小程序 → `dist/mp` |
+| `--analyze` | 体积报告 |
+| `--no-minify` | 不压缩 |
+| `--out <dir>` | 输出根目录，默认 `dist` |
+| `--flutter-dir <dir>` | 宿主目录 |
+
+`--web` 与 `--pages` 互斥；`--mp` 必须单独使用。`--` 后面的参数透传给 `flutter build`。
+
+## 项目信息
+
+| 命令 | 说明 |
+|---|---|
+| `fjs routes [--platform app\|web] [--json]` | 打印路由表 |
+| `fjs modules [--json]` | 解析到的模块、标签和 autolink |
+| `fjs doctor` | 环境与项目体检 |
+
+## 宿主
+
+| 命令 | 说明 |
+|---|---|
+| `fjs host [status]` | 宿主在哪、归谁管、包名、`flutter_fjs` 来源 |
+| `fjs host create` | 创建 / 更新宿主，不运行 |
+| `fjs host open <android\|ios\|ohos>` | 用 Android Studio / Xcode / DevEco 打开 |
+| `fjs host eject [dir]` | 移进仓库（默认 `flutter/`），此后不再重写 |
+| `fjs host sync [--force]` | 重新应用生成版宿主文件 |
+| `fjs host id [<app.id>]` | 查看 / 设置 applicationId 和 bundle identifier |
+| `fjs icon <file.png> [--platform android\|ios] [--dry-run]` | 生成应用图标 |
+
+## 清理
+
+### `fjs clean`
+
+| 参数 | 说明 |
+|---|---|
+| `--all` | 连 Flutter 宿主一起删（eject 过的不删） |
+| `--dry-run` | 只打印 |
+| `--out <dir>` / `--flutter-dir <dir>` | 指定目录（必须在项目内） |
+
+## 环境变量
+
+| 变量 | 说明 |
+|---|---|
+| `FJSC_PATH` | 字节码编译器 fjsc 的路径 |

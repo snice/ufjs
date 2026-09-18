@@ -27,6 +27,21 @@
         "--strictPort"
       ],
       "port": 5180
+    },
+    {
+      "name": "website",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "website",
+        "exec",
+        "vitepress",
+        "dev",
+        "--port",
+        "5190",
+        "--strictPort"
+      ],
+      "port": 5190
     }
   ]
 }

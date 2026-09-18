@@ -1,0 +1,22 @@
+:root {
+  --vp-c-brand-1: #1f8a65;
+  --vp-c-brand-2: #26a176;
+  --vp-c-brand-3: #2fb585;
+  --vp-c-brand-soft: rgba(47, 181, 133, 0.14);
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: -webkit-linear-gradient(120deg, #42b883 30%, #027dfd);
+  --vp-home-hero-image-background-image: linear-gradient(-45deg, #42b88355 50%, #027dfd55 50%);
+  --vp-home-hero-image-filter: blur(56px);
+}
+
+.dark {
+  --vp-c-brand-1: #4fd1a1;
+  --vp-c-brand-2: #3bbd8d;
+  --vp-c-brand-3: #2fa87c;
+}
+
+/* ASCII diagrams in ```text blocks: keep them from wrapping */
+.vp-doc div[class*='language-text'] pre {
+  white-space: pre;
+}

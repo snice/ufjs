@@ -26,3 +26,8 @@ packages/*/flutter/pubspec.lock
 packages/*/flutter/.flutter-plugins
 packages/*/flutter/.flutter-plugins-dependencies
 .zcode/
+
+.flutter-plugins-dependencies
+
+# VitePress (website/)
+**/.vitepress/cache

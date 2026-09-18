@@ -9,7 +9,9 @@
     "build": "pnpm --filter @ufjs/cli run build",
     "typecheck": "pnpm -r --if-present run typecheck",
     "test": "pnpm -r --if-present run test",
-    "build:examples": "pnpm --filter \"./examples/**\" --if-present run build"
+    "build:examples": "pnpm --filter \"./examples/**\" --if-present run build",
+    "docs:dev": "pnpm --filter ufjs-website run dev",
+    "docs:build": "pnpm --filter ufjs-website run build"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

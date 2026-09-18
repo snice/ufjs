@@ -402,7 +402,13 @@ tool/build-apple.sh   # 需要 macOS + Xcode
 
 ## 文档
 
-文档按由浅入深分四层，入口是 [docs/README.md](docs/README.md)。
+**使用文档站**（由浅入深：创建项目 → 读懂项目 → 路由/组件/样式 → 插件与模块 → 发布 → 原理 → 源码导读）在 [website/](website/)（部署在 Cloudflare Pages），本地预览：
+
+```bash
+pnpm docs:dev
+```
+
+下面是面向框架开发者的技术文档，按由浅入深分四层，入口是 [docs/README.md](docs/README.md)。
 
 **用起来**
 - [工具链与创建/运行/测试/编译](docs/toolchain.md)
