@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fjs go 隐私政策 · Privacy Policy</title>
+<meta name="description" content="fjs go 隐私政策：不收集个人数据。">
+<style>
+  :root {
+    --bg: #f4f4f7; --card: #fff; --ink: #141414; --muted: #6e6e73;
+    --line: rgba(60, 60, 67, .14); --accent: #e55f00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0b0b0d; --card: #1c1c1f; --ink: #f5f5f7; --muted: #9a9aa0;
+            --line: rgba(235, 235, 245, .16); --accent: #ff9a3c; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.7 -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 20px 64px; }
+  .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+  .mark {
+    width: 40px; height: 40px; border-radius: 10px;
+    background: linear-gradient(135deg, #ff9500, #ff7a00 45%, #e83a6b);
+    display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 20px;
+  }
+  .brand b { font-size: 20px; letter-spacing: -.3px; }
+  h1 { font-size: 30px; line-height: 1.25; margin: 0 0 6px; letter-spacing: -.5px; }
+  .meta { color: var(--muted); font-size: 14px; margin: 0 0 24px; }
+  nav a { color: var(--accent); text-decoration: none; font-weight: 600; margin-right: 16px; }
+  section { background: var(--card); border-radius: 16px; padding: 8px 24px 20px; margin-top: 24px; }
+  h2 { font-size: 20px; margin: 20px 0 4px; }
+  h3 { font-size: 16px; margin: 20px 0 2px; }
+  p, li { margin: 6px 0; }
+  ul { padding-left: 20px; }
+  .note { color: var(--muted); font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; margin: 8px 0; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand"><div class="mark">F</div><b>fjs go</b></div>
+  <h1>隐私政策 · Privacy Policy</h1>
+  <p class="meta">生效日期 / Effective: 2026-09-18</p>
+  <nav><a href="#zh">简体中文</a><a href="#en">English</a></nav>
+
+  <section id="zh" lang="zh-Hans">
+    <h2>简体中文</h2>
+    <p>fjs go（下称「本 App」）是 ufjs 框架的开发调试客户端。<b>本 App 不收集、不存储、不出售任何可识别你身份的个人数据</b>，没有账号系统，不含广告、统计或追踪 SDK。</p>
+
+    <h3>1. 相机</h3>
+    <p>仅在你点击「扫码连接」时使用，用来识别 fjs dev 在电脑终端里显示的二维码。画面在设备本地解码，不会保存或上传。</p>
+
+    <h3>2. 本地网络</h3>
+    <p>用于发现同一 Wi-Fi 下运行的 fjs dev，并与你选择的服务器通信。本 App 只会连接你扫码、点选或手动输入的地址。</p>
+
+    <h3>3. 网络请求</h3>
+    <table>
+      <tr><th>去向</th><th>内容</th><th>何时</th></tr>
+      <tr><td>你自己的 fjs dev 服务器</td><td>下载你的工程代码；把工程运行时的 console 日志回传到你的电脑，便于调试</td><td>连接开发服务器时</td></tr>
+      <tr><td>fjs-showcase.zhuzhe.dev</td><td>下载官方示例工程</td><td>点击「在线演示」时</td></tr>
+      <tr><td>captive.apple.com（苹果）</td><td>一次无内容的连通性请求，用于唤起 iOS 的网络权限提示</td><td>在 iOS 上首次连接时</td></tr>
+    </table>
+    <p>与任何网站一样，上述服务器可能在访问日志中记录 IP 地址和请求时间，这些日志仅用于服务运行与安全，不用于识别或追踪个人。</p>
+
+    <h3>4. 保存在设备上的数据</h3>
+    <ul>
+      <li>最近连接过的服务器地址</li>
+      <li>在线演示的程序文件缓存，用于加快下次打开</li>
+    </ul>
+    <p>这些数据只保存在你的设备上，删除本 App 即一并删除。</p>
+
+    <h3>5. 你运行的工程</h3>
+    <p>本 App 运行的是你自己的工程或官方示例工程。你的工程若自行访问网络或处理数据，由工程的开发者负责，适用其自身的隐私政策。</p>
+
+    <h3>6. 儿童</h3>
+    <p>本 App 面向开发者，不面向 13 岁以下儿童，也不会有意收集儿童信息。</p>
+
+    <h3>7. 变更与联系</h3>
+    <p>本政策如有更新，会修改本页的生效日期。有任何问题，请在 <a href="https://github.com/snice/ufjs/issues">GitHub Issues</a> 联系我们。</p>
+  </section>
+
+  <section id="en" lang="en">
+    <h2>English</h2>
+    <p>fjs go (“the App”) is the development client of the ufjs framework. <b>The App does not collect, store or sell any personally identifiable data.</b> It has no accounts and contains no advertising, analytics or tracking SDKs.</p>
+
+    <h3>1. Camera</h3>
+    <p>Used only when you tap “Scan to connect”, to read the QR code that fjs dev shows on your computer. Frames are decoded on the device and are never stored or uploaded.</p>
+
+    <h3>2. Local network</h3>
+    <p>Used to discover fjs dev on the same Wi-Fi and to talk to the server you choose. The App only connects to addresses you scan, pick or type.</p>
+
+    <h3>3. Network requests</h3>
+    <table>
+      <tr><th>Destination</th><th>What</th><th>When</th></tr>
+      <tr><td>Your own fjs dev server</td><td>Downloads your project; sends your project's console output back to your computer for debugging</td><td>While connected to it</td></tr>
+      <tr><td>fjs-showcase.zhuzhe.dev</td><td>Downloads the official sample project</td><td>When you tap “Online Demo”</td></tr>
+      <tr><td>captive.apple.com (Apple)</td><td>One empty connectivity request that brings up iOS's network permission prompt</td><td>On first connection, on iOS</td></tr>
+    </table>
+    <p>Like any website, these servers may record IP addresses and request times in access logs, used only to operate and secure the service, never to identify or track individuals.</p>
+
+    <h3>4. Data kept on your device</h3>
+    <ul>
+      <li>Addresses of servers you connected to recently</li>
+      <li>A cache of the Online Demo's program files, so it opens faster next time</li>
+    </ul>
+    <p>This data never leaves your device and is removed when you delete the App.</p>
+
+    <h3>5. Projects you run</h3>
+    <p>The App runs your own project or the official sample. Any network access or data handling done by your project is the responsibility of its developer and subject to their own privacy policy.</p>
+
+    <h3>6. Children</h3>
+    <p>The App is intended for developers, is not directed at children under 13, and does not knowingly collect information from them.</p>
+
+    <h3>7. Changes and contact</h3>
+    <p>Updates to this policy change the effective date above. For questions, contact us via <a href="https://github.com/snice/ufjs/issues">GitHub Issues</a>.</p>
+  </section>
+  <p class="note">© 2026 fjs go</p>
+</main>
+</body>
+</html>
