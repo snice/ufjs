@@ -402,7 +402,7 @@ tool/build-apple.sh   # 需要 macOS + Xcode
 
 ## 文档
 
-**使用文档站**（由浅入深：创建项目 → 读懂项目 → 路由/组件/样式 → 插件与模块 → 发布 → 原理 → 源码导读）在 [website/](website/)（部署在 Cloudflare Pages），本地预览：
+**使用文档站**（由浅入深：创建项目 → 读懂项目 → 路由/组件/样式 → 插件与模块 → 发布 → 原理 → 源码导读）在 [website/](website/)（部署在 Cloudflare Workers），本地预览：
 
 ```bash
 pnpm docs:dev

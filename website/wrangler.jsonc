@@ -1,0 +1,16 @@
+// Cloudflare Workers static-assets deploy of the docs site.
+// Workers Builds runs from the repo root:
+//   build:  pnpm install --frozen-lockfile --filter ufjs-website && pnpm --filter ufjs-website run build
+//   deploy: npx wrangler deploy -c website/wrangler.jsonc
+{
+  "name": "ufjs",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    // relative to this file
+    "directory": "./.vitepress/dist",
+    // VitePress emits 404.html
+    "not_found_handling": "404-page",
+    // cleanUrls: /guide/introduction serves guide/introduction.html
+    "html_handling": "auto-trailing-slash"
+  }
+}

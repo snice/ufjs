@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitepress';
 
 const repo = 'https://github.com/snice/ufjs';
-// Cloudflare Pages serves the site at the domain root; set DOCS_BASE only
+// Cloudflare (Workers static assets) serves the site at the domain root; set DOCS_BASE only
 // when hosting under a sub-path (e.g. /ufjs/)
 const base = process.env.DOCS_BASE ?? '/';
 
