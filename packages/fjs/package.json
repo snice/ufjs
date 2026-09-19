@@ -10,7 +10,15 @@
   },
   "homepage": "https://github.com/snice/ufjs#readme",
   "bugs": "https://github.com/snice/ufjs/issues",
-  "keywords": ["flutter", "javascript", "typescript", "vue", "quickjs", "bundler", "fjs"],
+  "keywords": [
+    "flutter",
+    "javascript",
+    "typescript",
+    "vue",
+    "quickjs",
+    "bundler",
+    "fjs"
+  ],
   "type": "module",
   "engines": {
     "node": ">=18"
@@ -59,6 +67,7 @@
     "@vue/shared": "^3.5.42",
     "esbuild": "^0.23.0",
     "qrcode-generator": "^2.0.4",
+    "wawoff2": "^2.0.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {

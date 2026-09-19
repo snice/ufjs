@@ -11,7 +11,8 @@ import 'dart:collection' show HashMap;
 import 'dart:math' show cos, pi, sin;
 
 import 'package:flutter/animation.dart';
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, visibleForTesting;
 import 'package:flutter/painting.dart';
 import 'package:vector_math/vector_math_64.dart' show Matrix4;
 
@@ -500,20 +501,22 @@ FjsBorderStyle? _parseBorderStyleUncached(Object value) {
 /// color and stroke style. Null means *no* border — `none`, `hidden`, or a
 /// zero width — which is what lets a page turn off a border a tag default
 /// gave it.
-({double width, Color color, FjsBorderStyle kind})? _parseBorderUncached(
+({double width, Color? color, FjsBorderStyle kind})? _parseBorderUncached(
   Object value,
 ) {
   if (value is num) {
     if (value <= 0) return null;
     return (
       width: value.toDouble(),
-      color: const Color(0xFF000000),
+      color: null,
       kind: FjsBorderStyle.solid,
     );
   }
   final tokens = splitOutsideParens(value.toString());
   var width = 1.0;
-  var color = const Color(0xFF000000);
+  // null = no color in the shorthand: CSS's initial border-color is
+  // currentColor, which only the style (it knows `color`) can resolve
+  Color? color;
   var kind = FjsBorderStyle.solid;
   for (final t in tokens) {
     final word = t.toLowerCase();
@@ -556,7 +559,8 @@ List<String> splitOutsideParens(String value) {
 }
 
 /// Parses a border-radius shorthand: one to four lengths
-/// ("8px", "8px 16px", "8px 8px 0 0"). Percentage radii are not supported.
+/// ("8px", "8px 16px", "8px 8px 0 0"). Percentage radii are not supported
+/// here (they need the box's size — see [parseBorderRadiusParts]).
 BorderRadius? _parseBorderRadiusUncached(Object value) {
   if (value is num) return BorderRadius.circular(value.toDouble());
   final tokens = value
@@ -589,6 +593,56 @@ BorderRadius? _parseBorderRadiusUncached(Object value) {
       bottomRight: r(2),
       bottomLeft: r(3),
     ),
+    _ => null,
+  };
+}
+
+/// One parsed border-radius corner: an absolute px part plus a fraction of
+/// the box's width/height (`50%` → fraction 0.5).
+typedef BorderRadiusPart = ({double px, double fraction});
+
+final _parseBorderRadiusPartsMemo = _memo<List<BorderRadiusPart>?>(
+  _parseBorderRadiusPartsUncached,
+);
+
+/// Per-corner radius parts in Flutter corner order (top-left, top-right,
+/// bottom-right, bottom-left), shorthand-expanded from 1–4 values. Null when
+/// the value is absent or unsupported. Unlike [parseBorderRadius], this
+/// KEEPS percentages, because a percentage references the box's own size —
+// a quantity only a layout pass knows (decoration.dart resolves it there).
+/// The elliptical `a / b` form is outside the subset and nulls the value.
+List<BorderRadiusPart>? parseBorderRadiusParts(Object? value) {
+  if (value == null) return null;
+  return _parseBorderRadiusPartsMemo(value);
+}
+
+List<BorderRadiusPart>? _parseBorderRadiusPartsUncached(Object value) {
+  if (value is num) {
+    final p = (px: value.toDouble(), fraction: 0.0);
+    return [p, p, p, p];
+  }
+  final v = value.toString().trim();
+  if (v.isEmpty) return null;
+  if (v.contains('/')) return null; // elliptical `a / b`: not supported
+  final tokens = v.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+  if (tokens.isEmpty || tokens.length > 4) return null;
+  BorderRadiusPart? part(String t) {
+    if (t.endsWith('%')) {
+      final n = double.tryParse(t.substring(0, t.length - 1).trim());
+      return n == null ? null : (px: 0.0, fraction: n / 100);
+    }
+    final n = _parseLengthUncached(t);
+    return n == null ? null : (px: n, fraction: 0.0);
+  }
+
+  final parts = [for (final t in tokens) part(t)];
+  if (parts.any((p) => p == null)) return null;
+  BorderRadiusPart g(int i) => parts[i.clamp(0, parts.length - 1)]!;
+  return switch (parts.length) {
+    1 => [g(0), g(0), g(0), g(0)],
+    2 => [g(0), g(1), g(0), g(1)],
+    3 => [g(0), g(1), g(2), g(1)],
+    4 => [g(0), g(1), g(2), g(3)],
     _ => null,
   };
 }
@@ -835,6 +889,43 @@ Matrix4? parseTransform(Object? value) {
 
 final RegExp _transformFn = RegExp(r'([a-zA-Z0-9]+)\(([^)]*)\)');
 
+/// The percentage components of a transform's translations, as fractions of
+/// the box's own size (`translate(-50%, -50%)` → `Offset(-0.5, -0.5)`).
+/// [parseTransform] treats these as 0 — a matrix is built at parse time,
+/// before any size exists — and the renderer applies this part with
+/// [FractionalTranslation] outside the matrix. That ordering is exact when
+/// the `%` translations come first in the list (the centring idiom every
+/// component library uses); a `%` translation after a rotate/scale would
+/// be applied unrotated, the registered approximation.
+Offset? parseTransformFraction(Object? value) {
+  if (value == null) return null;
+  final text = value.toString();
+  if (!text.contains('%')) return null;
+  var dx = 0.0, dy = 0.0;
+  double pct(String? arg) {
+    if (arg == null) return 0;
+    final a = arg.trim();
+    if (!a.endsWith('%')) return 0;
+    return (double.tryParse(a.substring(0, a.length - 1)) ?? 0) / 100;
+  }
+
+  for (final m in _transformFn.allMatches(text)) {
+    final name = m.group(1)!.toLowerCase();
+    final args = m.group(2)!.split(',');
+    switch (name) {
+      case 'translate':
+      case 'translate3d':
+        dx += pct(args[0]);
+        dy += pct(args.length > 1 ? args[1] : null);
+      case 'translatex':
+        dx += pct(args[0]);
+      case 'translatey':
+        dy += pct(args[0]);
+    }
+  }
+  return dx == 0 && dy == 0 ? null : Offset(dx, dy);
+}
+
 FjsTransitions? parseTransitions(Map<String, Object?> style) {
   final shorthand = style['transition'];
   final propertyValue = style['transitionProperty'];
@@ -842,17 +933,32 @@ FjsTransitions? parseTransitions(Map<String, Object?> style) {
   final timingValue = style['transitionTimingFunction'];
   final delayValue = style['transitionDelay'];
 
+  List<FjsTransitionTrack>? fromShorthand;
   if (shorthand != null) {
     final tracks = <FjsTransitionTrack>[];
     for (final part in splitCssList(shorthand.toString())) {
       final track = _parseTransitionShorthand(part);
       if (track != null) tracks.add(track);
     }
-    if (tracks.isNotEmpty) return FjsTransitions(tracks);
+    if (tracks.isNotEmpty) fromShorthand = tracks;
   }
 
-  if (propertyValue == null && durationValue == null && timingValue == null) {
-    return null;
+  if (propertyValue == null &&
+      durationValue == null &&
+      timingValue == null &&
+      delayValue == null) {
+    return fromShorthand == null ? null : FjsTransitions(fromShorthand);
+  }
+  if (fromShorthand != null) {
+    return FjsTransitions(
+      _overrideLonghands(
+        fromShorthand,
+        propertyValue,
+        durationValue,
+        timingValue,
+        delayValue,
+      ),
+    );
   }
   final properties = _cssValueList(propertyValue)
       .map(_normalizeTransitionProperty)
@@ -890,6 +996,60 @@ FjsTransitions? parseTransitions(Map<String, Object?> style) {
     );
   }
   return FjsTransitions(tracks);
+}
+
+/// A `transition` shorthand refined by `transition-*` longhands. The computed
+/// map keeps both as declared, and the idioms that mix them declare the
+/// longhand AFTER the shorthand — vant's `.van-dialog { transition: .3s;
+/// transition-property: transform, opacity }`, and its enter/leave classes
+/// that swap only `transition-timing-function` (ease-out in, ease-in out).
+/// As in CSS, the property list sets the layer count and the other lists
+/// repeat to fill it.
+List<FjsTransitionTrack> _overrideLonghands(
+  List<FjsTransitionTrack> base,
+  Object? propertyValue,
+  Object? durationValue,
+  Object? timingValue,
+  Object? delayValue,
+) {
+  final properties = propertyValue == null
+      ? null
+      : _cssValueList(propertyValue)
+            .map(_normalizeTransitionProperty)
+            .where((property) => property != 'none')
+            .toList();
+  final durations = durationValue == null
+      ? null
+      : _cssValueList(durationValue)
+            .map(parseDuration)
+            .whereType<Duration>()
+            .toList();
+  final timings = timingValue == null
+      ? null
+      : _cssValueList(timingValue)
+            .map(parseTimingFunction)
+            .whereType<Curve>()
+            .toList();
+  final delays = delayValue == null
+      ? null
+      : _cssValueList(delayValue)
+            .map(parseDuration)
+            .whereType<Duration>()
+            .toList();
+  final count = properties != null && properties.isNotEmpty
+      ? properties.length
+      : base.length;
+  T pick<T>(List<T>? list, int i, T fallback) =>
+      list == null || list.isEmpty ? fallback : list[i % list.length];
+  return [
+    for (var i = 0; i < count; i++)
+      FjsTransitionTrack(
+        property: pick(properties, i, base[i % base.length].property),
+        duration: pick(durations, i, base[i % base.length].duration),
+        curve: pick(timings, i, base[i % base.length].curve),
+        delay: pick(delays, i, base[i % base.length].delay),
+      ),
+  ];
 }
 
 FjsTransitionTrack? _parseTransitionShorthand(String value) {
@@ -963,8 +1123,38 @@ Curve? _parseTimingFunctionUncached(Object value) {
       return Curves.easeOut;
     case 'ease-in-out':
       return Curves.easeInOut;
+    case 'step-start':
+      return const FjsStepsCurve(1, jumpStart: true);
+    case 'step-end':
+      return const FjsStepsCurve(1);
     default:
-      return _parseCubicBezier(text);
+      return _parseSteps(text) ?? _parseCubicBezier(text);
+  }
+}
+
+/// `steps(n[, jump-start | start | jump-end | end])`. The other two jump
+/// terms (none / both) change the step count's meaning and fall back to end.
+Curve? _parseSteps(String text) {
+  if (!text.startsWith('steps(') || !text.endsWith(')')) return null;
+  final args = text.substring(6, text.length - 1).split(',');
+  final n = int.tryParse(args[0].trim());
+  if (n == null || n < 1) return null;
+  final term = args.length > 1 ? args[1].trim() : 'end';
+  return FjsStepsCurve(n, jumpStart: term == 'start' || term == 'jump-start');
+}
+
+/// CSS `steps()`: holds each of [steps] levels for an equal share of the
+/// interval — the spinner's twelve spokes advance one notch at a time.
+class FjsStepsCurve extends Curve {
+  const FjsStepsCurve(this.steps, {this.jumpStart = false});
+
+  final int steps;
+  final bool jumpStart;
+
+  @override
+  double transformInternal(double t) {
+    final step = (t * steps).floor() + (jumpStart ? 1 : 0);
+    return (step / steps).clamp(0.0, 1.0);
   }
 }
 
@@ -1106,10 +1296,10 @@ FjsBorderStyle? parseBorderStyle(Object? value) =>
     value == null ? null : _parseBorderStyleMemo(value);
 
 final _parseBorderMemo =
-    _memo<({double width, Color color, FjsBorderStyle kind})?>(
+    _memo<({double width, Color? color, FjsBorderStyle kind})?>(
       _parseBorderUncached,
     );
-({double width, Color color, FjsBorderStyle kind})? parseBorder(
+({double width, Color? color, FjsBorderStyle kind})? parseBorder(
   Object? value,
 ) => value == null ? null : _parseBorderMemo(value);
 
@@ -1140,3 +1330,52 @@ List<BoxShadow>? parseBoxShadows(Object? value) =>
 // parseTransform is deliberately NOT memoized: a transform string is usually
 // a per-frame animated value, so the hit rate would be near zero while the
 // cache churned.
+
+
+/// Names meaning "the platform's default" — Flutter's own behavior with no
+/// family, so a stack stops at the first one (see FjsStyle.fontFamily).
+const _systemFamilies = {
+  '-apple-system',
+  '-apple-system-font',
+  'blinkmacsystemfont',
+  'system-ui',
+  'ui-sans-serif',
+  'ui-serif',
+  'ui-rounded',
+  'sans-serif',
+  'serif',
+  'cursive',
+  'fantasy',
+  'emoji',
+  'math',
+  'fangsong',
+};
+
+/// A CSS `font-family` value as the family names Flutter should try, in
+/// order: quotes stripped, cut at the first system/generic name, the
+/// generic `monospace` mapped to this platform's monospaced font.
+List<String> parseFontFamilyStack(Object? value) {
+  if (value == null) return const [];
+  final out = <String>[];
+  for (final raw in value.toString().split(',')) {
+    var name = raw.trim();
+    if (name.length >= 2 &&
+        (name[0] == '"' || name[0] == "'") &&
+        name[name.length - 1] == name[0]) {
+      name = name.substring(1, name.length - 1).trim();
+    }
+    if (name.isEmpty) continue;
+    final low = name.toLowerCase();
+    if (low == 'monospace' || low == 'ui-monospace') {
+      out.add(switch (defaultTargetPlatform) {
+        TargetPlatform.iOS || TargetPlatform.macOS => 'Menlo',
+        TargetPlatform.windows => 'Courier New',
+        _ => 'monospace',
+      });
+      break;
+    }
+    if (_systemFamilies.contains(low)) break;
+    out.add(name);
+  }
+  return out;
+}

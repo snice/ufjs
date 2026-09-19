@@ -141,4 +141,38 @@ void main() {
       lessThan(1),
     );
   });
+
+  // vant 的 `.van-field { flex-wrap: wrap }` 没写方向，在 fjs 默认 column 下
+  // 变成纵向 Wrap；Flutter 的纵向 Wrap 只约束高度，里面的 TextField 拿到无限
+  // 宽度直接断言，整页白屏（specs/068）。
+  testWidgets('an input in a column wrap is bounded by the container width', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.physicalSize = const Size(400, 640);
+    addTearDown(tester.view.reset);
+    final w = _W();
+    w.create(1, 'view');
+    w.define(10, {'flexWrap': 'wrap'});
+    w.style(1, 10);
+    w.create(2, 'input');
+    w.insert(1, 2, 0);
+    w.insert(0, 1, 0);
+    final tree = MirrorTree()..applyFrame(Uint8List.fromList(w.b));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FjsNodeRenderer(
+            tree: tree,
+            ids: tree.rootChildren,
+            dispatch: (_, __, {String? text}) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    final field = tester.renderObject<RenderBox>(find.byType(TextField));
+    expect(field.size.width, lessThanOrEqualTo(400));
+  });
 }

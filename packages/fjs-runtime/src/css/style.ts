@@ -4,7 +4,9 @@
 // element tree). The Vue renderer feeds element state (tag/class/scopes/
 // inline style) and applies computed styles back through setProps, so the
 // native bridge keeps receiving exactly one merged `style` map per element.
-import { normalizeValue, parseInlineCss, parseStylesheet, warnOnce, type CssRule, type Selector, mediaMatches } from './parser';
+import { DISABLED_CLASS, normalizeValue, parseInlineCss, parseStylesheet, warnOnce, type ClassAttrTest, type CssRule, type Selector, mediaMatches } from './parser';
+import { registerFontFace, type FontFaceDecl } from './font-face';
+import type { KeyframesDecl } from './animation';
 
 /** The viewport assumed before the host reports one. `fjsrun` never gets a
  * viewport event and web never feeds this engine (real CSS there), so the
@@ -13,8 +15,14 @@ import { normalizeValue, parseInlineCss, parseStylesheet, warnOnce, type CssRule
  * way a page author expects. */
 export const FALLBACK_VIEWPORT = { width: 390, height: 844 };
 
+/** One resolved `@keyframes` frame as the peer receives it. */
+interface AnimationFrame {
+  offset: number;
+  style: Record<string, unknown>;
+}
+
 /** Properties that inherit from parent to child, as in CSS. */
-const INHERITABLE = new Set([
+export const INHERITABLE = new Set([
   'color',
   'fontSize',
   'fontFamily',
@@ -26,6 +34,193 @@ const INHERITABLE = new Set([
   'textTransform',
   'whiteSpace',
 ]);
+
+/** Displays that make an element a flex container (the -webkit- prefix on
+ * the VALUE, unlike property names, is not stripped by camelize). */
+const FLEX_DISPLAYS = new Set(['flex', 'inline-flex', '-webkit-flex']);
+/** CSS initial font-size; em lengths chain up to this through inheritance. */
+const INITIAL_FONT_PX = 16;
+/** Pseudo-style comparison for the notification decision: both kinds
+ * compared shallowly — values are normalized scalars by the time they get
+ * here (numbers, strings, resolved var()/em output). */
+function pseudoChanged(next: PseudoStyles, prev: PseudoStyles | null | undefined): boolean {
+  const kind = (a: Record<string, unknown> | undefined, b: Record<string, unknown> | undefined) => {
+    if (a === undefined || b === undefined) return a !== b;
+    for (const k in a) if (a[k] !== b[k]) return true;
+    for (const k in b) if (!(k in a)) return true;
+    return false;
+  };
+  return kind(next.before, prev?.before) || kind(next.after, prev?.after);
+}
+
+// CSS allows a leading-dot decimal without an integer part (`.8em`) —
+// vant uses it for every icon glyph size.
+const EM_LENGTH = /^(-?\d*\.?\d+)em$/;
+const EM_TOKEN = /(-?\d*\.?\d+)em\b/g;
+
+/**
+ * One `[class<op>value]` test against an element's class list. The class
+ * ATTRIBUTE string is rebuilt from the list in source order (the set keeps
+ * insertion order), so `^=`/`$=`/`=` see what the markup said, modulo
+ * whitespace and duplicate classes.
+ */
+const DISABLEABLE_TAGS = new Set(['input', 'textarea', 'button', 'select', 'option', 'fieldset']);
+
+function matchClassAttr(t: ClassAttrTest, all: Set<string>): boolean {
+  const v = t.value;
+  // the `:disabled` state token is not part of the class attribute
+  const classes = all.has(DISABLED_CLASS) ? new Set([...all].filter((c) => c !== DISABLED_CLASS)) : all;
+  switch (t.op) {
+    case '~=':
+      return classes.has(v);
+    case '|=':
+      for (const c of classes) if (c === v || c.startsWith(`${v}-`)) return true;
+      return false;
+  }
+  const attr = [...classes].join(' ');
+  switch (t.op) {
+    case '=':
+      return attr === v;
+    case '^=':
+      return v !== '' && attr.startsWith(v);
+    case '$=':
+      return v !== '' && attr.endsWith(v);
+    default: // '*='
+      return v !== '' && attr.includes(v);
+  }
+}
+
+/**
+ * The CSS-wide `inherit` keyword: the property takes the parent's computed
+ * value, for ANY property — not just the inheritable ones. The peer has no
+ * notion of it (it would read "inherit" as an unparseable value and drop
+ * the declaration), so it is resolved here; with nothing to inherit the
+ * declaration goes, leaving the property at its initial value, as in CSS.
+ *
+ * `color: currentColor` is the same resolution for one property: the keyword
+ * names the color itself, i.e. the inherited value. Left in place it would
+ * ship the literal string and the peer's parser would fall back to black —
+ * van-button's loading spinner paints in it (`.van-loading__spinner {
+ * color: currentColor }`). `fill`/`stroke: currentColor` stay verbatim: the
+ * svg painter resolves those against the node's color on purpose.
+ */
+function resolveInheritKeyword(
+  target: Record<string, unknown>,
+  parent: Record<string, unknown> | undefined,
+): void {
+  for (const k in target) {
+    const v = target[k];
+    const isInherit =
+      v === 'inherit' || (k === 'color' && typeof v === 'string' && v.toLowerCase() === 'currentcolor');
+    if (!isInherit) continue;
+    const p = parent?.[k];
+    if (p === undefined) delete target[k];
+    else target[k] = p;
+  }
+}
+
+/** A computed font-size declaration resolved to px. Numbers are already px
+ * (the parser normalized them); strings may still carry a unit because they
+ * arrived inline or through a var(). */
+function fontSizePx(value: unknown, parentPx: number): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const v = value.trim();
+    if (/^-?\d*\.?\d+(px)?$/.test(v)) return parseFloat(v);
+    if (/^-?\d*\.?\d+rem$/.test(v)) return parseFloat(v) * 16;
+    if (/^-?\d*\.?\d+%$/.test(v)) return (parentPx * parseFloat(v)) / 100;
+    if (EM_LENGTH.test(v)) return parentPx * parseFloat(v);
+  }
+  return parentPx;
+}
+
+/** Folds a calc() whose terms are all px into the resulting length.
+ * Percent terms abort the fold — the peer's length parser resolves those at
+ * layout time. The point of folding: contexts that parse plain lengths but
+ * not calc() (a `translate(calc(…))` inside transform, for one). */
+function foldAbsoluteCalc(value: string): string {
+  // nested calc() unwraps innermost-first; a few passes cover any realistic
+  // var()-substituted expression
+  for (let pass = 0; pass < 4; pass++) {
+    if (!value.includes('calc(')) return value;
+    const next = foldAbsoluteCalcOnce(value);
+    if (next === value) break;
+    value = next;
+  }
+  return value;
+}
+
+function foldAbsoluteCalcOnce(value: string): string {
+  return value.replace(/calc\(([^()]*)\)/g, (whole: string, expr: string) => {
+    const re = /([+-]?)\s*(\d*\.?\d+)\s*(px|%)/g;
+    let px = 0;
+    let percent = 0;
+    let consumed = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(expr)) !== null) {
+      // the operator lands either between matches (`a - b`, the gap) or in
+      // the optional sign group when it abuts the space before the number
+      // (the regex eats `- ` into m[1]) — read both, or `50.8px - 26px`
+      // silently turns into an addition (van-switch's knob flew off)
+      const op = (expr.slice(consumed, m.index) + m[1]).replace(/\s+/g, '');
+      consumed = m.index + m[0].length;
+      const sign = op === '' || op === '+' ? 1 : op === '-' ? -1 : NaN;
+      if (Number.isNaN(sign)) return whole;
+      const n = parseFloat(m[2]) * sign;
+      if (m[3] === '%') percent += n;
+      else px += n;
+    }
+    if (consumed !== expr.trim().length) return whole;
+    if (percent !== 0) {
+      // a percent term stays in the expression for the peer's resolver, but
+      // the px terms can still collapse into one
+      return `calc(${percent * 100}% ${px < 0 ? '-' : '+'} ${Math.abs(px)}px)`;
+    }
+    return `${Math.round(px * 100) / 100}px`;
+  });
+}
+
+/** The em unit resolves against the element's own computed font-size, so it
+ * cannot be folded at parse time the way px/rem are: the font-size may come
+ * from a var() or an inline declaration the parser never sees. vant sizes
+ * whole components in em (van-switch is 2em × 1em), and a bare "2em" string
+ * reaching the peer parses as an invalid length — the property is dropped
+ * and the switch collapses to nothing. Runs after var() resolution, on the
+ * object resolveVars returned (fresh whenever anything upstream changed).
+ * lineHeight is left a string: the peer tells multipliers (a bare number)
+ * from absolute heights ("Npx") apart. */
+function resolveEm(style: Record<string, unknown>, parentPx: number): void {
+  let own: number | undefined;
+  for (const k in style) {
+    const v = style[k];
+    if (typeof v !== 'string') continue;
+    let m = EM_LENGTH.exec(v);
+    if (m !== null) {
+      if (k === 'fontSize') {
+        // fontSizePx already scaled the em against the parent; the same
+        // resolved value feeds every other em declaration on this element
+        own = fontSizePx(v, parentPx);
+        style[k] = Math.round(own * 100) / 100;
+        continue;
+      }
+      own ??= fontSizePx(style.fontSize, parentPx);
+      const px = parseFloat(m[1]) * own;
+      style[k] = k === 'lineHeight' ? `${Math.round(px * 100) / 100}px` : Math.round(px * 100) / 100;
+      continue;
+    }
+    EM_TOKEN.lastIndex = 0;
+    if (v.length < 6 || !EM_TOKEN.test(v)) continue;
+    EM_TOKEN.lastIndex = 0;
+    own ??= fontSizePx(style.fontSize, parentPx);
+    style[k] = v.replace(EM_TOKEN, (_, n: string) => {
+      const px = parseFloat(n) * own!;
+      return `${Math.round(px * 100) / 100}px`;
+    });
+    // em folding can turn a calc into pure-absolute terms; collapsing those
+    // keeps calc-averse contexts (transform function args) parseable
+    if ((style[k] as string).includes('calc(')) style[k] = foldAbsoluteCalc(style[k] as string);
+  }
+}
 
 interface ElementState {
   tag: string;
@@ -62,10 +257,23 @@ interface ElementState {
   customId?: number; // identity token of `custom`
   selfSig?: string; // cached `tag|classes|scopes` part of the chain key
   structBits?: number; // last seen first/last bits (selfSig embeds them)
+  /** Last seen signature of the previous participating sibling — only
+   * tracked while some `A + B` rule exists, and part of the chain key. */
+  prevSig?: string;
   dirtyEpoch?: number; // which pending set this element is already in
   applied?: Record<string, unknown>; // last style actually pushed to native
   appliedActive?: Record<string, unknown>; // last :active style pushed to native
   appliedHover?: Record<string, unknown>; // last :hover style pushed to native
+  pseudo?: PseudoStyles; // current computed pseudo-element styles
+  pseudoApplied?: PseudoStyles | null; // last pseudo styles pushed to the renderer
+}
+
+/** Computed `::before` / `::after` styles for one element, each already
+ * var()-resolved and em-folded, with the element's inheritable properties as
+ * the base (a pseudo-element inherits from its originating element). */
+export interface PseudoStyles {
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
 }
 
 interface MatchResult {
@@ -76,6 +284,14 @@ interface MatchResult {
   activeDecls?: Record<string, unknown>;
   /** Same shape for `:hover` rules. */
   hoverDecls?: Record<string, unknown>;
+  /** Cascaded `::before` / `::after` declarations, present only when the
+   * stylesheet set contains pseudo-element rules at all (the common page
+   * pays nothing). Matched by the same selectors; the declarations style
+   * the synthesized decoration box, never the element. State variants
+   * (`:active::before`) stay out — the plain variant is the supported
+   * subset, registered in css-compat.md. */
+  beforeDecls?: Record<string, unknown>;
+  afterDecls?: Record<string, unknown>;
   id: number; // identity token for the compute cache key
   /** Computed styles for this rule set, keyed by the PARENT's computed-style
    * id. That one number is a complete key: a parent's computed style and its
@@ -97,6 +313,7 @@ interface ComputeResult {
   hoverStyle?: Record<string, unknown>;
   hoverKeys?: string[];
   custom?: Record<string, string>;
+  pseudo?: PseudoStyles;
   styleId: number;
   customId: number;
   defaultsId: number;
@@ -135,6 +352,10 @@ export class StyleEngine {
   private rules: CssRule[] = [];
   private nextOrder = 0;
   private states = new Map<number, ElementState>();
+  /** `::before` / `::after` rules, kept out of `rules` so their declarations
+   * can never style the element itself. */
+  private pseudoRules: CssRule[] | undefined;
+  private hasPseudo = false;
   /** True once a registered stylesheet contains `@media` rules. Viewport
    * changes then invalidate the whole match cache; with the flag off
    * `setViewport` is an equality check and nothing else. */
@@ -144,6 +365,21 @@ export class StyleEngine {
    * Sibling position is then part of the match key and every tree mutation
    * re-marks siblings; with the flag off both costs stay at zero. */
   private hasStructural = false;
+  /** Some registered selector uses `A + B`: matching then depends on the
+   * previous sibling too, which the chain key and the dirty marks must
+   * reflect. Off until the first such rule shows up, so pages without one
+   * pay nothing. */
+  private hasSiblingRules = false;
+  /** Custom properties declared on `:root` / `:host`, in source order. They
+   * seed the inheritance chain wherever a parent has nothing to pass down
+   * (the top of each page tree), which is how a browser sees them: every
+   * element inherits from the document root. */
+  private rootCustom: Record<string, string> | undefined;
+  /** `@keyframes` by name; a later block of the same name replaces it. */
+  private keyframes = new Map<string, KeyframesDecl>();
+  /** Resolved frames per name, for blocks with no var() in them — shared,
+   * so every element running the animation compares equal by identity. */
+  private keyframesStatic = new Map<string, AnimationFrame[]>();
   /** Dirty elements as a plain array, deduplicated by stamping the element
    * rather than hashing it. A Set here grew to the size of the tree on every
    * restyle and was then copied out again to be sorted; on a device the
@@ -194,14 +430,44 @@ export class StyleEngine {
       // undefined = the element never had a hover variant (send nothing);
       // null = clear the variant the host is holding
       hoverStyle?: Record<string, unknown> | null,
+      // same convention as hoverStyle: undefined = unchanged since the last
+      // push, null = the element stopped matching any pseudo-element rule,
+      // an object = the current ::before/::after styles (either kind may be
+      // absent)
+      pseudo?: PseudoStyles | null,
     ) => void,
   ) {}
 
   /** Registers a <style> block. scope=null means global (non-scoped). */
   register(scope: string | null, cssText: string): void {
-    const parsed = parseStylesheet(cssText, scope, this.nextOrder);
-    if (parsed.length === 0) return;
-    this.nextOrder = parsed[parsed.length - 1].order + 1;
+    const fontFaces: FontFaceDecl[] = [];
+    const keyframes: KeyframesDecl[] = [];
+    const all = parseStylesheet(cssText, scope, this.nextOrder, fontFaces, keyframes);
+    for (const face of fontFaces) registerFontFace(face);
+    for (const k of keyframes) {
+      this.keyframes.set(k.name, k);
+      this.keyframesStatic.delete(k.name);
+    }
+    if (all.length === 0) return;
+    this.nextOrder = all[all.length - 1].order + 1;
+    const parsed: CssRule[] = [];
+    for (const r of all) {
+      if (r.root !== true) {
+        // pseudo-element rules cascade in their own bucket: their selectors
+        // match the element, but the declarations must never style it
+        if (r.pseudo !== undefined) {
+          (this.pseudoRules ??= []).push(r);
+          this.hasPseudo = true;
+        } else {
+          parsed.push(r);
+        }
+        continue;
+      }
+      for (const [k, v] of Object.entries(r.decls)) {
+        if (k.startsWith('--')) (this.rootCustom ??= {})[normalizeVarKey(k)] = String(v);
+        else warnOnce(`":root" declaration "${k}" is not supported (only custom properties), skipped`);
+      }
+    }
     this.rules.push(...parsed);
     if (!this.hasMedia) {
       for (const r of parsed) {
@@ -215,6 +481,14 @@ export class StyleEngine {
       for (const r of parsed) {
         if (r.selectors.some((s) => s.compounds.some((c) => c.first || c.last))) {
           this.hasStructural = true;
+          break;
+        }
+      }
+    }
+    if (!this.hasSiblingRules) {
+      for (const r of parsed) {
+        if (r.selectors.some((s) => s.combinators.includes('nextSibling'))) {
+          this.hasSiblingRules = true;
           break;
         }
       }
@@ -280,11 +554,13 @@ export class StyleEngine {
 
   /** Sibling structure changed under `parentId` (insert / remove / v-for
    * move): every child's `:first-child`/`:last-child` position may have
-   * flipped. Marks the registered children; each recompute compares fresh
-   * position bits against the cached ones and only elements that actually
-   * moved pay for a subtree re-key. No-op while no structural rules exist. */
+   * flipped, and with `A + B` rules in play so may everyone's "previous
+   * sibling". Marks the registered children; each recompute compares fresh
+   * position bits / sibling signature against the cached ones and only
+   * elements that actually moved pay for a subtree re-key. No-op while no
+   * structural or sibling rules exist. */
   noteStructureChange(parentId: number): void {
-    if (!this.hasStructural) return;
+    if (!this.hasStructural && !this.hasSiblingRules) return;
     const kids = this.childrenOf.get(parentId);
     if (kids === undefined) return;
     for (let i = 0; i < kids.length; i++) this.mark(kids[i]);
@@ -314,10 +590,48 @@ export class StyleEngine {
     const s = this.states.get(id);
     if (!s) return;
     const classes = parseClassValue(value);
+    // the state token follows setDisabled, never the class value (a caller
+    // may echo classesOf() back)
+    classes.delete(DISABLED_CLASS);
+    if (s.classes.has(DISABLED_CLASS)) classes.add(DISABLED_CLASS);
+    this.replaceClasses(id, s, classes);
+  }
+
+  /** `:disabled` state of a form control (the renderer's `disabled` prop).
+   * CSS only lets form controls be `:disabled`; a `disabled` attribute on a
+   * div matches nothing, so other tags are ignored here too. */
+  setDisabled(id: number, disabled: boolean): void {
+    const s = this.states.get(id);
+    if (!s || !DISABLEABLE_TAGS.has(s.tag) || s.classes.has(DISABLED_CLASS) === disabled) return;
+    const classes = new Set(s.classes);
+    if (disabled) classes.add(DISABLED_CLASS);
+    else classes.delete(DISABLED_CLASS);
+    this.replaceClasses(id, s, classes);
+  }
+
+  private replaceClasses(id: number, s: ElementState, classes: Set<string>): void {
     if (sameSet(classes, s.classes)) return;
     s.classes = classes;
     s.selfSig = undefined;
     this.markDirty(id, true);
+    // `.a + .b` reads this element's classes: the next sibling must re-match
+    this.markNextSibling(id);
+  }
+
+  /** The element's current class list. The Transition shim reads it to add /
+   * remove its `-enter-*` / `-leave-*` classes without losing whatever the
+   * renderer last patched in (setClasses replaces the list). */
+  classesOf(id: number): string[] {
+    const s = this.states.get(id);
+    return s ? [...s.classes].filter((c) => c !== DISABLED_CLASS) : [];
+  }
+
+  /** The element's computed style, or undefined before the first compute.
+   * The Transition shim reads `animationDuration` / `animationDelay` off it
+   * to time the class removal — there are no DOM transitionend events on
+   * this side to listen for. */
+  computedOf(id: number): Record<string, unknown> | undefined {
+    return this.states.get(id)?.computed;
   }
 
   setInlineStyle(id: number, value: unknown): void {
@@ -429,6 +743,7 @@ export class StyleEngine {
     s.scopes.add(scope);
     s.selfSig = undefined;
     this.markDirty(id, true);
+    this.markNextSibling(id);
   }
 
   /** Merges a useCssVars() batch into the element's inline custom props
@@ -563,12 +878,26 @@ export class StyleEngine {
     s.computed = merged;
     const active = s.activeComputed;
     const hover = s.hoverComputed;
+    // Pseudo styles ride the same notification with the hover convention:
+    // undefined = unchanged, null = the element stopped matching any
+    // pseudo-element rule (clear the synthesized boxes), object = current.
+    // Computed BEFORE the early returns below: a class change can add or
+    // drop a pseudo match while leaving the element's own style identical.
+    let pseudoNote: PseudoStyles | null | undefined;
+    if (s.pseudo !== s.pseudoApplied) {
+      if (s.pseudo === undefined) pseudoNote = null;
+      else if (s.pseudoApplied === undefined || pseudoChanged(s.pseudo, s.pseudoApplied)) {
+        pseudoNote = s.pseudo;
+      }
+    }
+    s.pseudoApplied = s.pseudo;
     // Identity first. compute() hands every element that resolved to the same
     // style the same object, so "nothing changed" is usually a pointer
     // compare — and the `?? {}` spelling below allocated two objects per
     // element for the common case of no pressed variant at all.
-    if (merged === s.applied && active === s.appliedActive && hover === s.appliedHover) return;
+    if (merged === s.applied && active === s.appliedActive && hover === s.appliedHover && pseudoNote === undefined) return;
     if (
+      pseudoNote === undefined &&
       s.applied !== undefined &&
       sameStyle(merged, s.computedKeys!, s.applied, s.appliedKeys!) &&
       sameOptionalStyle(active, s.activeKeys, s.appliedActive, s.appliedActiveKeys) &&
@@ -585,7 +914,35 @@ export class StyleEngine {
     s.appliedHoverKeys = s.hoverKeys;
     // null, not undefined: an element that stops matching every :active rule
     // has to clear the one the native side is still holding
-    this.applyStyle(id, merged, active ?? null, s.hadHover ? hover ?? null : undefined);
+    this.applyStyle(id, merged, active ?? null, s.hadHover ? hover ?? null : undefined, pseudoNote);
+  }
+
+  /** Hands the peer the frames of every animation the style names, as
+   * `animationKeyframes: {name: [{offset, style}]}` — it runs them natively
+   * (css/animation.ts). A name with no `@keyframes` block is left out, which
+   * the peer reads as "no animation", as CSS does. */
+  private attachKeyframes(style: Record<string, unknown>, custom: Record<string, string> | undefined): void {
+    const names = style.animationName;
+    if (typeof names !== 'string' || this.keyframes.size === 0) return;
+    let out: Record<string, AnimationFrame[]> | undefined;
+    for (const raw of names.split(',')) {
+      const name = raw.trim();
+      if (!name || name === 'none') continue;
+      const block = this.keyframes.get(name);
+      if (!block) continue;
+      let frames = this.keyframesStatic.get(name);
+      if (!frames) {
+        let dynamic = false;
+        frames = block.frames.map(({ offset, decls }) => {
+          const resolved = resolveVars(decls, custom);
+          if (resolved !== decls) dynamic = true;
+          return { offset, style: resolved };
+        });
+        if (!dynamic) this.keyframesStatic.set(name, frames);
+      }
+      (out ??= {})[name] = frames;
+    }
+    if (out) style.animationKeyframes = out;
   }
 
   private compute(id: number): Record<string, unknown> {
@@ -597,7 +954,7 @@ export class StyleEngine {
     const pid = this.parentOf.get(id);
     const parent = pid != null ? this.states.get(pid) : undefined;
     const parentComputed = parent?.computed;
-    const parentCustom = parentComputed ? parent!.custom : undefined;
+    const parentCustom = parentComputed ? parent!.custom : this.rootCustom;
     const matched = this.matchRules(id, s);
     // Elements with no inline style of their own see a style that depends
     // only on (parent style, parent custom props, matched rules, tag
@@ -618,6 +975,7 @@ export class StyleEngine {
         s.activeKeys = hit.activeKeys;
         s.hoverComputed = hit.hoverStyle;
         s.hoverKeys = hit.hoverKeys;
+        s.pseudo = hit.pseudo;
         if (hit.hoverStyle) s.hadHover = true;
         return hit.style;
       }
@@ -644,7 +1002,39 @@ export class StyleEngine {
       ...matched.decls,
       ...(s.inline ?? {}),
     };
+    // CSS initial flex-direction is row; the peer's unstyled default is
+    // column (fjs's mobile-view convention), so the engine pins the CSS
+    // value wherever a rule asked for a flex container without saying which
+    // way — van-cell/van-grid/van-divider declare display:flex and rely on
+    // the default, and every real browser gives them a row.
+    // The cross axis is the same story: the peer centers a row's children,
+    // CSS's initial align-items is stretch. van-cell leaves it unset, and a
+    // centered row dropped the value/arrow below the title whenever the
+    // title carried a label.
+    if (merged.flexDirection === undefined && FLEX_DISPLAYS.has(merged.display as string)) {
+      merged.flexDirection = 'row';
+      if (merged.alignItems === undefined) merged.alignItems = 'stretch';
+    }
+    // Inline-level boxes have no inline formatting context on the native
+    // side; unmapped they collapse to stacked blocks, the one shape web
+    // never shows for them. Map to the closest thing that exists — a
+    // wrapping row (van-stepper's minus/input/plus, rows of tags). The
+    // display VALUE stays `inline-block`/`inline` on purpose: the peer reads
+    // it to skip cross-axis stretch for the box (shrink-to-fit), which is
+    // the other half of the inline behavior.
+    if (
+      (merged.display === 'inline-block' || merged.display === 'inline') &&
+      merged.flexDirection === undefined &&
+      merged.flexWrap === undefined
+    ) {
+      merged.flexDirection = 'row';
+      merged.flexWrap = 'wrap';
+    }
+    resolveInheritKeyword(merged, parentComputed);
+    const parentFontPx = fontSizePx(parentComputed?.fontSize, INITIAL_FONT_PX);
     const style = resolveVars(merged, custom);
+    resolveEm(style, parentFontPx);
+    this.attachKeyframes(style, custom);
     // the pressed variant is the same pipeline over the pressed cascade, so
     // inline styles and inherited values keep winning where they should.
     // :hover computes the same way; both state variants keep custom
@@ -660,6 +1050,7 @@ export class StyleEngine {
           custom,
         )
       : undefined;
+    if (s.activeComputed) resolveEm(s.activeComputed, parentFontPx);
     s.hoverComputed = matched.hoverDecls
       ? resolveVars(
           {
@@ -671,6 +1062,45 @@ export class StyleEngine {
           custom,
         )
       : undefined;
+    if (s.hoverComputed) resolveEm(s.hoverComputed, parentFontPx);
+    // Pseudo-element styles: the element's inheritable computed properties
+    // are the base (a pseudo-element inherits from its originating element —
+    // its own width/background must NOT leak into the decoration box), the
+    // matched pseudo declarations layer on top, and both var() and em go
+    // through the same resolution as the element's own style.
+    if (matched.beforeDecls !== undefined || matched.afterDecls !== undefined) {
+      const inheritable: Record<string, unknown> = {};
+      for (const k of INHERITABLE) {
+        const v = style[k];
+        if (v !== undefined) inheritable[k] = v;
+      }
+      const build = (decls: Record<string, unknown>) => {
+        const merged0 = resolveVars({ ...inheritable, ...decls }, custom);
+        resolveEm(merged0, parentFontPx);
+        // a pseudo-element's parent is its originating element (vant's
+        // divider lines: `border-style: inherit` picks up --dashed)
+        resolveInheritKeyword(merged0, style);
+        // currentColor on a decoration box means the inherited text color
+        // (vant paints the stepper +/- lines with it); the peer has no
+        // currentColor, so substitute the resolved value here
+        const color = merged0.color;
+        if (typeof color === 'string') {
+          for (const k in merged0) {
+            const v = merged0[k];
+            if (typeof v === 'string' && v.includes('currentColor')) {
+              merged0[k] = v.replace(/currentcolor/gi, color);
+            }
+          }
+        }
+        return merged0;
+      };
+      const pseudo: PseudoStyles = {};
+      if (matched.beforeDecls !== undefined) pseudo.before = build(matched.beforeDecls);
+      if (matched.afterDecls !== undefined) pseudo.after = build(matched.afterDecls);
+      s.pseudo = pseudo;
+    } else {
+      s.pseudo = undefined;
+    }
     if (s.hoverComputed) s.hadHover = true;
     s.computedId = this.nextObjId++;
     s.customId = custom ? this.nextObjId++ : 0;
@@ -689,6 +1119,7 @@ export class StyleEngine {
         hoverStyle: s.hoverComputed,
         hoverKeys: s.hoverKeys,
         custom,
+        pseudo: s.pseudo,
         styleId: s.computedId,
         customId: s.customId,
         defaultsId: s.defaultsId ?? 0,
@@ -713,6 +1144,10 @@ export class StyleEngine {
       if (this.hasStructural) sig += `\u0004${this.structuralBits(id, s)}`;
       s.selfSig = sig;
     }
+    // The previous sibling joins per build (never cached on selfSig): a
+    // class change on the neighbor must re-key this element without
+    // touching its own signature
+    if (this.hasSiblingRules) sig += `\u0005${this.prevSiblingSig(id)}`;
     return `${parentId}\u0003${sig}`;
   }
 
@@ -745,6 +1180,65 @@ export class StyleEngine {
     return bits;
   }
 
+  /** The previous sibling that participates in structural position
+   * (registered, not raw text) — the element an `A + B` selector matches
+   * against. Null when there is none. */
+  private prevElementSibling(id: number): number | null {
+    const pid = this.parentOf.get(id);
+    if (pid == null) return null;
+    const kids = this.childrenOf.get(pid);
+    if (kids === undefined) return null;
+    let at = -1;
+    for (let i = 0; i < kids.length; i++) {
+      if (kids[i] === id) {
+        at = i;
+        break;
+      }
+    }
+    if (at < 0) return null;
+    for (let i = at - 1; i >= 0; i--) {
+      const k = this.states.get(kids[i]);
+      if (k !== undefined && !k.rawText) return kids[i];
+    }
+    return null;
+  }
+
+  /** The previous sibling's matching signature ('' when there is none) —
+   * what a `+` combinator compares and the chain key embeds. */
+  private prevSiblingSig(id: number): string {
+    const prev = this.prevElementSibling(id);
+    if (prev == null) return '';
+    const ps = this.states.get(prev);
+    if (!ps) return '';
+    let sig = `${ps.tag}\u0001${joinSorted(ps.classes)}\u0001${joinSorted(ps.scopes)}`;
+    if (this.hasStructural) sig += `\u0004${this.structuralBits(prev, ps)}`;
+    return sig;
+  }
+
+  /** Wakes the next participating sibling: `.a + .b` makes this element's
+   * classes matching-relevant for the neighbor that follows. */
+  private markNextSibling(id: number): void {
+    if (!this.hasSiblingRules) return;
+    const pid = this.parentOf.get(id);
+    if (pid == null) return;
+    const kids = this.childrenOf.get(pid);
+    if (kids === undefined) return;
+    let past = false;
+    for (let i = 0; i < kids.length; i++) {
+      if (kids[i] === id) {
+        past = true;
+        continue;
+      }
+      if (!past) continue;
+      const k = this.states.get(kids[i]);
+      if (k !== undefined && !k.rawText) {
+        this.mark(kids[i]);
+        return;
+      }
+    }
+    this.scheduleFlush();
+  }
+
   private matchRules(id: number, s: ElementState): MatchResult {
     // The match depends on this element's own signature and its ancestors',
     // and nothing else. A theme change touches neither, so on a restyle the
@@ -766,6 +1260,19 @@ export class StyleEngine {
         s.selfSig = undefined;
         this.releaseChain(s);
         if (!firstBuild) this.markDirty(id, true);
+      }
+    }
+    if (this.hasSiblingRules) {
+      // Same story for `A + B`: the previous sibling's identity is not in
+      // the parent chain, so whoever got marked rechecks it here. A change
+      // re-keys this element (buildChainKey embeds the signature); unlike
+      // the structural case descendants are unaffected — no subtree work.
+      const sig = this.prevSiblingSig(id);
+      if (s.prevSig !== sig) {
+        const firstBuild = s.selfSig === undefined && s.prevSig === undefined;
+        s.prevSig = sig;
+        this.releaseChain(s);
+        if (!firstBuild) this.markDirty(id, false);
       }
     }
     if (
@@ -851,8 +1358,7 @@ export class StyleEngine {
       a: { rule: CssRule; spec: number },
       b: { rule: CssRule; spec: number },
     ) => a.spec - b.spec || a.rule.order - b.rule.order;
-    plain.sort(byCascade);
-    const decls: Record<string, unknown> = {};
+    plain.sort(byCascade);    const decls: Record<string, unknown> = {};
     const custom: Record<string, string> = {};
     for (const m of plain) {
       for (const [k, v] of Object.entries(m.rule.decls)) {
@@ -885,11 +1391,52 @@ export class StyleEngine {
         }
       }
     }
+    // Pseudo-element cascade: pseudo rules matched by the same selectors,
+    // cascaded per pseudo kind in source order. State variants stay out
+    // (`:active::before` is not the supported subset — see MatchResult).
+    let beforeDecls: Record<string, unknown> | undefined;
+    let afterDecls: Record<string, unknown> | undefined;
+    if (this.hasPseudo) {
+      const before: Array<{ rule: CssRule; spec: number }> = [];
+      const after: Array<{ rule: CssRule; spec: number }> = [];
+      for (const rule of this.pseudoRules!) {
+        if (rule.media !== undefined && !mediaMatches(rule.media, this.viewport.width, this.viewport.height)) {
+          continue;
+        }
+        let best = -1;
+        for (const sel of rule.selectors) {
+          if (rule.scope != null) {
+            const has = sel.deep ? this.hasScopeUp(id, rule.scope) : s.scopes.has(rule.scope);
+            if (!has) continue;
+          }
+          if (!this.matchSelector(sel, id)) continue;
+          best = Math.max(best, sel.specificity);
+        }
+        if (best < 0) continue;
+        const spec = best + (rule.scope != null ? 10 : 0);
+        (rule.pseudo === 'before' ? before : after).push({ rule, spec });
+      }
+      const fold = (bucket: Array<{ rule: CssRule; spec: number }>) => {
+        if (bucket.length === 0) return undefined;
+        bucket.sort(byCascade);
+        const out: Record<string, unknown> = {};
+        for (const m of bucket) {
+          for (const [k, v] of Object.entries(m.rule.decls)) {
+            if (!k.startsWith('--')) out[k] = v;
+          }
+        }
+        return out;
+      };
+      beforeDecls = fold(before);
+      afterDecls = fold(after);
+    }
     const result: MatchResult = {
       decls,
       custom,
       activeDecls,
       hoverDecls,
+      beforeDecls,
+      afterDecls,
       id: this.nextObjId++,
       byParent: new Map(),
     };
@@ -935,6 +1482,7 @@ export class StyleEngine {
     for (const cls of c.classes) {
       if (!s.classes.has(cls)) return false;
     }
+    if (c.classAttr && !c.classAttr.every((t) => matchClassAttr(t, s.classes))) return false;
     if (c.first || c.last) {
       const bits = this.structuralBits(id, s);
       if (c.first && !(bits & 2)) return false;
@@ -945,6 +1493,12 @@ export class StyleEngine {
     const pid = this.parentOf.get(id);
     if (pid == null) return false;
     if (comb === 'child') return this.matchCompoundFrom(sel, idx - 1, pid);
+    if (comb === 'nextSibling') {
+      // one candidate, no backtracking: `a + b + c` chains through the
+      // same walk one compound at a time
+      const prev = this.prevElementSibling(id);
+      return prev != null && this.matchCompoundFrom(sel, idx - 1, prev);
+    }
     // descendant: try every ancestor (backtracking across mixed combinators)
     let cur: number | null | undefined = pid;
     while (cur != null) {
@@ -1084,8 +1638,14 @@ function resolveVars(style: Record<string, unknown>, custom?: Record<string, str
         changed = true; // declaration becomes invalid — drop it
         continue;
       }
-      out[k] = normalizeValue(k, resolved.trim());
+      // no trim: normalizeValue matches the `font`/`animation` pending-
+      // substitution markers (" font …"), which start with a space; it
+      // trims before its own checks anyway
+      const value = normalizeValue(k, resolved);
       changed = true;
+      // a `font` shorthand that turned out invalid after substitution
+      // drops its longhands (normalizeValue warned)
+      if (value !== undefined) out[k] = value;
     } else {
       out[k] = v;
     }
@@ -1144,6 +1704,11 @@ function normalizeInline(value: unknown): {
   } else if (value && typeof value === 'object') {
     style = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      // DOM patchStyle semantics: a null/undefined/'' entry sets nothing.
+      // Kept as a key it would spread over the matched CSS in compute() and
+      // erase it — vant's stepper binds `{ width: undefined }` when no
+      // input-width is given, which wiped `.van-stepper__input { width }`.
+      if (v == null || v === '') continue;
       if (k.startsWith('--')) (custom ??= {})[normalizeVarKey(k)] = String(v);
       else style[k] = v;
     }

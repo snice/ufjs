@@ -597,9 +597,19 @@ WebGL 扩展（`getExtension`）、`readPixels`、GL 指令去重、
 - ✅ hello-fjs「过渡演示」页；web 采样渐变中途色（rgb(19,117,110) 介于
   绿蓝之间）与 iOS 模拟器两端一致
 
+- ✅ `@font-face` 自定义字体 / iconfont（specs/071）：构建期 WOFF2/WOFF → TTF
+  内联，运行时 `fjs.font.load` 注册进 Flutter；`font` 简写展开、`font-family`
+  字体栈；vant 全部图标两端一致。远程字体源、`unicode-range` 顺延
+
+- ✅ `@keyframes` / `animation` + 内联 `<svg>`（vant 两端兼容收尾）：引擎解析
+  简写与 keyframes（`var()` 替换后展开），原生侧每动画节点一个 ticker 逐帧跑
+  ——任意节点动 `transform` / `opacity`，svg 形状另加描边/填充族（vant
+  loading 转圈两端一致）。同批落地：相邻兄弟 `+` 组合器（带缓存失效）、
+  `color: currentColor` 消解。伪元素上的动画、其余属性的帧插值顺延
+
 ## 近期计划
 - **CSS 扩展收尾项**：`color` / `border-color` / 布局属性的过渡、
-  `@keyframes` / `animation`（独立引擎）、`gap`/`border-radius`/`font-size`
+  `gap`/`border-radius`/`font-size`
   的 `%`——均按需另立 spec。当前支持范围见 [css-compat.md](css-compat.md)，
   加一条要改的 7 个地方也在那里
   （dashed / dotted 边框自绘已完成，见 `render/dashed_border.dart`）

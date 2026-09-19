@@ -19,6 +19,7 @@
   "dependencies": {
     "@ufjs/iconmind": "workspace:*",
     "pinia": "^3.0.3",
+    "vant": "^4.10.2",
     "vue": "^3.5.42"
   },
   "devDependencies": {
@@ -34,7 +35,8 @@
       "pinia"
     ],
     "shared": [
-      "pinia"
+      "pinia",
+      "vant"
     ]
   }
 }

@@ -117,7 +117,29 @@ void main() {
       expect(two.bottomRight, const Radius.circular(8));
       final four = parseBorderRadius('1px 2px 3px 4px')!;
       expect(four.bottomLeft, const Radius.circular(4));
-      expect(parseBorderRadius('50%'), isNull); // percent unsupported
+      expect(parseBorderRadius('50%'), isNull); // percent unsupported here
+    });
+  });
+
+  group('parseBorderRadiusParts', () {
+    test('shorthand expansion keeps absolute parts', () {
+      final one = parseBorderRadiusParts('10px')!;
+      expect(one, hasLength(4));
+      expect(one.every((p) => p.px == 10 && p.fraction == 0), isTrue);
+      final four = parseBorderRadiusParts('1px 2px 3px 4px')!;
+      expect(four[0].px, 1);
+      expect(four[3].px, 4);
+      // percentages are KEPT as fractions of the box
+      final half = parseBorderRadiusParts('50%')!;
+      expect(half[0].fraction, 0.5);
+      expect(half[0].px, 0);
+      // the elliptical `a / b` form is outside the subset
+      expect(parseBorderRadiusParts('50% / 20%'), isNull);
+      // mixed absolute + percentage
+      final mixed = parseBorderRadiusParts('4px 50%')!;
+      expect(mixed[0].px, 4);
+      expect(mixed[1].fraction, 0.5);
+      expect(mixed[3].fraction, 0.5); // 2-value shorthand: BL mirrors TR
     });
   });
 
@@ -255,6 +277,32 @@ void main() {
       expect(
         transitions.forProperty('transform')!.duration,
         const Duration(milliseconds: 100),
+      );
+    });
+
+    test('longhands declared after the shorthand refine it', () {
+      // vant: `.van-dialog { transition: .3s; transition-property: transform,
+      // opacity }`, and enter/leave classes that swap only the curve
+      final dialog = parseTransitions({
+        'transition': '.3s',
+        'transitionProperty': 'transform,opacity',
+        'transitionTimingFunction': 'ease-in',
+      })!;
+      for (final p in ['transform', 'opacity']) {
+        expect(
+          dialog.forProperty(p)!.duration,
+          const Duration(milliseconds: 300),
+        );
+        expect(dialog.forProperty(p)!.curve, Curves.easeIn);
+      }
+      final popup = parseTransitions({
+        'transition': 'transform .3s',
+        'transitionTimingFunction': 'ease-out',
+      })!;
+      expect(popup.forProperty('transform')!.curve, Curves.easeOut);
+      expect(
+        popup.forProperty('transform')!.duration,
+        const Duration(milliseconds: 300),
       );
     });
   });

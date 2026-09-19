@@ -103,3 +103,61 @@ describe('handler prop names', () => {
     warn.mockRestore();
   });
 });
+
+describe('Vue event option modifiers', () => {
+  // `@touchstart.passive` compiles to `onTouchstartPassive`, and vant's
+  // Slider writes that key by hand: kept whole, it named no event and the
+  // drag never started
+  it('peels Passive / Capture / Once off the event name', (): void => {
+    const el = create('view');
+    const props = sentProps(() => patchProp(el, 'onTouchstartPassive', null, () => {}));
+    expect(props.onTouchstart).toBe(true);
+    expect(props.onTouchstartPassive).toBeUndefined();
+  });
+
+  it('Once fires the handler a single time', (): void => {
+    const el = create('view');
+    let calls = 0;
+    patchProp(el, 'onClickOnce', null, () => calls++);
+    dispatchEvent()(el.id, 1, null);
+    dispatchEvent()(el.id, 1, null);
+    expect(calls).toBe(1);
+    // a re-render re-patches an inline handler with a new function: still once
+    patchProp(el, 'onClickOnce', null, () => calls++);
+    dispatchEvent()(el.id, 1, null);
+    expect(calls).toBe(1);
+  });
+});
+
+describe('getBoundingClientRect', () => {
+  it('answers an all-zero rect without a host, never throws', (): void => {
+    const el = create('view');
+    expect(el.getBoundingClientRect()).toMatchObject({ left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 });
+  });
+
+});
+
+describe('addEventListener', () => {
+  const TOUCH_MOVE = 16;
+  const move = JSON.stringify({ ts: 1, touches: [[1, 10, 20]] });
+
+  it('marks the node once and fires alongside the prop handler', (): void => {
+    const el = create('view');
+    const seen: string[] = [];
+    const props = sentProps(() => el.addEventListener('touchmove', () => seen.push('listener')));
+    expect(props.onTouchmove).toBe(true);
+    setProps(el, { onTouchmove: () => seen.push('prop') });
+    dispatchEvent()(el.id, TOUCH_MOVE, move);
+    expect(seen).toEqual(['prop', 'listener']);
+  });
+
+  it('keeps the native marker while either side still listens', (): void => {
+    const el = create('view');
+    const fn = (): void => {};
+    setProps(el, { onTouchmove: () => {} });
+    el.addEventListener('touchmove', fn);
+    // the prop handler goes, the listener stays: no `false` to the peer
+    expect(sentProps(() => setProps(el, { onTouchmove: null })).onTouchmove).toBeUndefined();
+    expect(sentProps(() => el.removeEventListener('touchmove', fn)).onTouchmove).toBe(false);
+  });
+});

@@ -32,6 +32,7 @@ Uint8List _frame(
   String background,
   String transition, {
   String? gradient,
+  String? border,
   int width = 100,
 }) {
   final w = _W();
@@ -42,9 +43,10 @@ Uint8List _frame(
   final style = StringBuffer('{"style":{"width":$width,"height":40');
   if (gradient != null) {
     style.write(',"backgroundImage":$gradient');
-  } else {
+  } else if (background.isNotEmpty) {
     style.write(',"backgroundColor":"$background"');
   }
+  if (border != null) style.write(',"border":"1px solid $border"');
   if (transition.isNotEmpty) style.write(',"transition":"$transition"');
   style.write('}}');
   final json = utf8.encode(style.toString());
@@ -191,5 +193,40 @@ void main() {
       (gradient.colors.first.toARGB32() & 0xffffff),
       const Color(0xFF00FF00).toARGB32() & 0xffffff,
     );
+  });
+
+  testWidgets('a background that appears fades in from transparent', (
+    tester,
+  ) async {
+    // vant's checkbox: unchecked has no background at all, checked is blue;
+    // the tween must already be in the tree before the first color arrives
+    final tree = MirrorTree()
+      ..applyFrame(_frame('', 'background-color 1s linear'));
+    await tester.pumpWidget(_render(tree));
+    expect(_background(tester), isNull);
+
+    tree.applyFrame(_frame('#1989fa', 'background-color 1s linear'));
+    tree.flushDirty();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    final mid = _background(tester)!;
+    expect(mid.a, inInclusiveRange(0.4, 0.6), reason: 'half faded in');
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(_background(tester), const Color(0xFF1989FA));
+  });
+
+  testWidgets('border-color interpolates through the change', (tester) async {
+    final tree = MirrorTree()
+      ..applyFrame(_frame('', 'border-color 1s linear', border: '#000000'));
+    await tester.pumpWidget(_render(tree));
+
+    tree.applyFrame(_frame('', 'border-color 1s linear', border: '#ffffff'));
+    tree.flushDirty();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    final mid = (_deco(tester).border! as Border).top.color;
+    expect((mid.r * 255).round(), inInclusiveRange(115, 140));
+    await tester.pump(const Duration(milliseconds: 600));
+    expect((_deco(tester).border! as Border).top.color, Colors.white);
   });
 }

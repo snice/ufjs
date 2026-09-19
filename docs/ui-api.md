@@ -50,6 +50,7 @@ fjs 用 HTML 风格的语义标签构建 UI，由 Dart 侧映射为 Flutter Widg
 | `picker-view` | ListWheelScrollView 行 | 内嵌滚轮；`value` 是每列选中下标数组；`item-height` 默认 44；`indicator-style` 覆盖选中框；`onValueChanged` 载荷是下标数组 JSON 串 |
 | `picker-view-column` | picker-view 的一列 | 只在 `picker-view` 内有滚轮语义；子节点即选项 |
 | `modal` | BottomSheet | `visible` 驱动：true 打开、置回 false 关闭；原生手势关闭回派 `onModalClosed`；打开期间内容保持响应式更新（事件仍回派）|
+| `fjs-overlay-host` | **运行时保留，页面不要手写**：`OverlayPortal`，子树渲染在根 Overlay 上（specs/069 contract.md）| 由 renderer 在第一次遇到 `position: fixed` 元素时惰性创建（页面根下的全屏盒），fixed 元素整体挪进来：全屏、不随页面滚动、盖在宿主 chrome 之上，子节点按插入顺序叠放。没有 op 变更——旧宿主不认识这个标签时按普通 `view` 兜底，退化成页面内的全屏盒。误写也只是得到一个空盒 |
 | `page-container` | 原生标签：route 级透明路由（遮罩 + 面板），返回手势关闭的是容器 | `show` / `duration`(300) / `z-index`(100) / `overlay`(true) / `position`(bottom/top/right/center) / `round` / `close-on-slide-down`；生命周期 `@before-enter` → `@enter` → `@after-enter`，离场链 `@before-leave` → `@leave` → `@after-leave`（**所有**关闭路径都走完），点遮罩派 `@clickoverlay`（不自动关）。详见下表 |
 | 自定义标签 | `engine.registerComponent` 注册的 Dart 组件（platform view 也经此接入）| 任意 props；未注册回落 `view` |
 
@@ -552,6 +553,21 @@ Web 两端取同一组数值。新增或改默认样式时先看：
 
 处理器函数留在 JS 侧注册表，跨桥只发送 `onTap: true` 标记。
 
+经 Vue 模板绑定的处理器拿到 DOM 形状的事件对象：`detail` 是上表的载荷，
+`target` / `currentTarget` 是元素本身。`input` / `textarea` 元素另有 DOM 式的
+`value` 属性——读取得到当前文本（最近一次输入事件或写入），写入会推到原生
+输入框；还有空操作的 `setSelectionRange()`。vant Field 等按 DOM 写法
+（`event.target.value`、`inputRef.value.value = text`）实现 v-model 的库因此
+两端可用（specs/070）。
+
+所有元素（经 ref 拿到的、或作为事件 `target` 的）都有 DOM 式的
+`contains(other)`：`other` 是该元素本身或其后代时为 true，`null`、非元素、已
+卸载的节点为 false。vant Checkbox / Radio 点击时用它判断是否点在图标上
+（`icon.contains(event.target)`），App 上此前因缺这个方法抛
+`TypeError: not a function`、勾选无反应（specs/072）。Web 端即原生
+`Node.contains`。`position: fixed` 的元素在 App 上挂到弹层宿主下，与 DOM 里
+Teleport 到 body 一样不再算作逻辑父元素的后代。
+
 ## 触摸事件（对齐 DOM）
 
 任何标签都可以监听 `touchstart` / `touchmove` / `touchend` / `touchcancel`，
@@ -613,7 +629,9 @@ function onMove(e: FjsTouchEvent) {
 与浏览器的差别（都是有意为之）：
 
 - 没有深层 target：`target` 就是挂监听的那个节点，`currentTarget` 是同一个
-  对象。没有 DOM 那种事件委托。
+  对象。没有 DOM 那种事件委托。因此靠 `target` 判断点中哪个子节点的写法在
+  App 上只认得监听节点本身——例如 vant Checkbox / Radio 设了 `label-disabled`
+  时，App 上点图标也不会切换（默认不设时点哪都切换，两端一致）。
 - 事件由内向外派发到路径上每个监听节点（相当于冒泡），但
   `stopPropagation()` 在 Flutter 上是空实现；`preventDefault()` 同理——原生
   默认行为要用 `touch-action` 关，那条两端都生效。
@@ -716,6 +734,24 @@ class 匹配（选择器范围与层叠规则见 docs/vue3.md）。CSS 自定义
 （`--x` + `var()`，含 fallback/链式/循环安全）与 Vue 的 `v-bind()`
 CSS 绑定（响应式值注入）均受支持：变量在 JS 侧解析完成后才跨桥，
 `--x` 定义本身不会出现在原生样式里。
+
+### 自定义字体（`@font-face`）
+
+样式表里的 `@font-face` 两端都生效（specs/071），iconfont 写法照 web：
+
+```css
+@font-face {
+  font-family: "my-icons";
+  src: url("./fonts/my-icons.woff2") format("woff2");
+}
+.icon-home::before { font-family: "my-icons"; content: "\e601"; }
+```
+
+App 端的链路：`fjs build` / `fjs dev` 把 WOFF2 / WOFF / 本地字体文件转成
+TrueType 内联进样式；运行时样式引擎解析 `@font-face`，调用宿主方法
+`fjs.font.load(family, dataUrl)`（走 `invokeHost`，同步返回、不回派事件）；
+Dart 侧 `font_loader.dart` 用 `loadFontFromList` 注册，已显示的文字自动重排。
+远程字体地址不支持，限制清单见 [css-compat.md](css-compat.md)。
 
 ## element API（无框架）
 

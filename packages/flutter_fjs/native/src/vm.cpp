@@ -302,21 +302,40 @@ int32_t fjs_vm_pump(FJSVM *vm, int64_t now_ms_) {    if (!vm) return -1;
             ran_timer = true;
             if (JS_IsException(ret)) {
                 JS_FreeValue(vm->ctx, ret);
-                fjs::fail_with_pending_exception(vm, "timer");
-                return executed > 0 ? executed : -1;
+                /* A throwing timer must not skip the rest of the pump: the
+                 * early return also abandoned the pending-job drain, i.e.
+                 * every microtask queued behind it — Vue's scheduler flush
+                 * among them. One vant `useRect` throw per tick used to
+                 * freeze whole pages mid-mount (specs/070 D1). Report like
+                 * a browser would and move on. */
+                JSValue exc = JS_GetException(vm->ctx);
+                std::string msg = format_exception(vm, exc);
+                JS_FreeValue(vm->ctx, exc);
+                std::string out = "[fjs/timer] " + msg;
+                log_line(vm, FJS_LOG_ERROR, out.c_str(), (int32_t)out.size());
+            } else {
+                JS_FreeValue(vm->ctx, ret);
             }
-            JS_FreeValue(vm->ctx, ret);
             break; /* restart scan: vector was mutated */
         }
     }
 
-    /* 2) promise jobs, bounded so a job storm can't wedge the frame */
+    /* 2) promise jobs, bounded so a job storm can't wedge the frame.
+     * A throwing job must not starve the jobs queued behind it — browsers
+     * report the rejection and keep draining. One dropped Vue-scheduler
+     * flush used to blank the whole page with no error surfaced anywhere
+     * (vant Tabs throws `window is not defined` from a nextTick chain). */
     for (int i = 0; i < 10000; i++) {
         JSContext *ctx1 = nullptr;
         int r = JS_ExecutePendingJob(vm->rt, &ctx1);
         if (r < 0) {
-            fjs::fail_with_pending_exception(vm, "job");
-            break;
+            JSValue exc = JS_GetException(ctx1);
+            std::string msg = format_exception(vm, exc);
+            JS_FreeValue(ctx1, exc);
+            std::string out = "[fjs] unhandled rejection in a microtask job: " + msg;
+            log_line(vm, FJS_LOG_ERROR, out.c_str(), (int32_t)out.size());
+            executed++;
+            continue;
         }
         if (r == 0) break;
         executed++;

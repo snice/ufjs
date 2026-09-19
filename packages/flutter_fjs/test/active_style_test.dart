@@ -160,10 +160,15 @@ void main() {
         ),
       ),
     );
+    // a press-tracking node keeps its wrapper at identity while unpressed:
+    // adding it on pointer-down would remount the gesture detectors below
+    // and drop the tap (specs/069, vant stepper)
     expect(
-      tester.widgetList<Transform>(find.byType(Transform)).isEmpty,
+      tester
+          .widgetList<Transform>(find.byType(Transform))
+          .every((t) => t.transform.isIdentity()),
       isTrue,
-      reason: 'unpressed, no base transform: no wrapper value',
+      reason: 'unpressed, no base transform: identity only',
     );
 
     final press = await tester.startGesture(

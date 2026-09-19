@@ -32,6 +32,7 @@ import {
   sharedStubPlugin,
   srcAliasPlugin,
 } from './vue-plugin.js';
+import { loadViteAppHooks, viteAppHooksPlugin } from '../project/vite-plugins.js';
 import { pageChunkSource, pagesFor, writeRouteTypes, type PageRoute } from '../project/pages.js';
 import { writeAssetTypes } from '../project/assets.js';
 import { pluginsFor } from '../project/plugins.js';
@@ -401,6 +402,7 @@ export async function buildBundle(opts: BuildOptions): Promise<BuildResult> {
   const jsPath = path.join(outDir, `${baseName}.js`);
   const entry = path.resolve(opts.entry ?? 'src/main.ts');
   const modules = scanModules(root);
+  const appHooks = await loadViteAppHooks(root);
   // single bundle: every page is imported straight into it
   const plugins = [
     nodeBuiltinStubs(),
@@ -408,6 +410,7 @@ export async function buildBundle(opts: BuildOptions): Promise<BuildResult> {
     pluginsPlugin(pluginsFor(root, 'app'), modules),
     vueSfcPlugin({ nativeTags: widgetNativeTags(modules, 'app') }),
     vuePinPlugin(),
+    viteAppHooksPlugin(appHooks),
     srcAliasPlugin(root),
     moduleDataPlugin(root, modules),
   ];
@@ -514,6 +517,7 @@ async function appModuleGraph(
   fjsModules: FjsModule[],
 ): Promise<Map<string, string>> {
   const pageFiles = new Set(pages.map((p) => p.file));
+  const appHooks = await loadViteAppHooks(root);
   const probe = await esbuild.build({
     entryPoints: [entry, ...pages.map((p) => p.file)],
     bundle: true,
@@ -535,6 +539,7 @@ async function appModuleGraph(
       pluginsPlugin(pluginsFor(root, 'app'), fjsModules),
       vueSfcPlugin({ nativeTags: widgetNativeTags(fjsModules, 'app') }),
       vuePinPlugin(),
+      viteAppHooksPlugin(appHooks),
       srcAliasPlugin(root),
       moduleDataPlugin(root, fjsModules),
     ],
@@ -597,6 +602,7 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
   const pages = pagesFor(root, 'app');
   const warnings: string[] = [];
   const modules = scanModules(root);
+  const appHooks = await loadViteAppHooks(root);
   const unitsMode = opts.units === true;
 
   // 1) which of the app's modules belong in the shared chunk
@@ -638,6 +644,7 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
   const stubbed = (): esbuild.Plugin[] => [
     nodeBuiltinStubs(),
     vueSfcPlugin({ nativeTags: widgetNativeTags(modules, 'app') }),
+    viteAppHooksPlugin(appHooks),
     sharedStubPlugin(appModules, shared, unitsMode ? { record: recordStub } : undefined),
     srcAliasPlugin(root),
     moduleDataPlugin(root, modules),
@@ -668,6 +675,7 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
       pluginsPlugin(pluginsFor(root, 'app'), modules),
       vueSfcPlugin({ nativeTags: widgetNativeTags(modules, 'app') }),
       vuePinPlugin(),
+      viteAppHooksPlugin(appHooks),
       srcAliasPlugin(root),
       moduleDataPlugin(root, modules),
     ],
@@ -821,6 +829,7 @@ async function buildDevUnits(args: {
   ownerFallback: { current: string };
 }): Promise<DevUnitsInfo> {
   const { opts, root, outDir, pages, appModules, shared, modules, warnings, depsOf, ownerFallback } = args;
+  const appHooks = await loadViteAppHooks(root);
   const unitsDir = path.join(outDir, 'units');
   fs.mkdirSync(unitsDir, { recursive: true });
   const files: Record<string, string> = {};
@@ -861,6 +870,7 @@ async function buildDevUnits(args: {
       plugins: [
         nodeBuiltinStubs(),
         vueSfcPlugin({ nativeTags: widgetNativeTags(modules, 'app') }),
+        viteAppHooksPlugin(appHooks),
         sharedStubPlugin(others, shared, { record: (importer, dep) => records.push({ importer, id: dep }) }),
         srcAliasPlugin(root),
         moduleDataPlugin(root, modules),

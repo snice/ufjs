@@ -40,7 +40,9 @@ jobs:
       - name: Install Android packages
         run: |
           yes | sdkmanager --licenses >/dev/null
-          sdkmanager --install "platforms;android-36" "build-tools;35.0.0" "ndk;28.2.13676358"
+          # flutter_angle 0.4.2 的 build.gradle 钉死 cmake 3.31.4；AGP 只会自动装默认的 3.22.1，
+          # 缺 3.31.4 时 :flutter_angle:configureCMakeDebug 报 CXX1300
+          sdkmanager --install "platforms;android-36" "build-tools;35.0.0" "ndk;28.2.13676358" "cmake;3.31.4"
 
       - name: Flutter pub get
         working-directory: examples/fjs-go

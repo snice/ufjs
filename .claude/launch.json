@@ -42,6 +42,33 @@
         "--strictPort"
       ],
       "port": 5190
+    },
+    {
+      "name": "demo-web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "demo",
+        "exec",
+        "vite",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "5175",
+        "--strictPort"
+      ],
+      "port": 5175
+    },
+    {
+      "name": "demo-dev",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "demo",
+        "run",
+        "dev:pages"
+      ],
+      "port": 38900
     }
   ]
 }

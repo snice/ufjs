@@ -67,6 +67,11 @@ Widget _render(MirrorTree tree, {bool scrollable = false}) {
 
 Finder get _mask => find.byKey(fjsButtonPressMaskKey);
 
+/// A fade (`opacity < 1`). State-tracking nodes keep an Opacity wrapper at
+/// 1.0 so a press/hover can change it without remounting their gesture
+/// detectors (renderer.dart), so "is there an Opacity" is not the question.
+final _faded = find.byWidgetPredicate((w) => w is Opacity && w.opacity < 1);
+
 void main() {
   const filled =
       '{"onTap":true,"style":{"backgroundColor":"#007aff","color":"#ffffff"}}';
@@ -180,7 +185,7 @@ void main() {
       await press.up();
       await tester.pump();
       expect(events, isEmpty);
-      expect(tester.widget<Opacity>(find.byType(Opacity)).opacity, 0.5);
+      expect(tester.widget<Opacity>(_faded).opacity, 0.5);
     });
 
     testWidgets('loading is inert but not faded', (tester) async {
@@ -201,20 +206,80 @@ void main() {
       await tester.tap(find.byType(TextButton), warnIfMissed: false);
       await tester.pump();
       expect(events, isEmpty);
-      expect(find.byType(Opacity), findsNothing);
+      expect(_faded, findsNothing);
     });
 
     testWidgets('a button with no handler stays a plain static button', (
       tester,
     ) async {
       await tester.pumpWidget(_render(_buttonTree('{}')));
-      expect(find.byType(Opacity), findsNothing);
+      expect(_faded, findsNothing);
       final press = await tester.startGesture(
         tester.getCenter(find.byType(TextButton)),
       );
       await tester.pump();
       expect(_mask, findsNothing);
       await press.up();
+    });
+  });
+
+  // The cursor is how a stylesheet says "not clickable" on both ends —
+  // vant's loading button is `cursor: default`, its disabled one
+  // `not-allowed`, and web shows no press feedback for either. The chrome
+  // mask follows suit; a pointer cursor (or no cursor rule at all) keeps it.
+  group('cursor-gated press mask', () {
+    testWidgets('default (vant loading) takes no mask', (tester) async {
+      await tester.pumpWidget(
+        _render(
+          _buttonTree(
+            '{"onTap":true,"style":{"backgroundColor":"#007aff",'
+            '"color":"#ffffff","cursor":"default"}}',
+          ),
+        ),
+      );
+      final press = await tester.startGesture(
+        tester.getCenter(find.byType(TextButton)),
+      );
+      await tester.pump();
+      expect(_mask, findsNothing);
+      await press.up();
+      await tester.pump();
+    });
+
+    testWidgets('not-allowed (vant disabled) takes no mask', (tester) async {
+      await tester.pumpWidget(
+        _render(
+          _buttonTree(
+            '{"onTap":true,"style":{"backgroundColor":"#007aff",'
+            '"color":"#ffffff","cursor":"not-allowed"}}',
+          ),
+        ),
+      );
+      final press = await tester.startGesture(
+        tester.getCenter(find.byType(TextButton)),
+      );
+      await tester.pump();
+      expect(_mask, findsNothing);
+      await press.up();
+      await tester.pump();
+    });
+
+    testWidgets('pointer keeps the mask', (tester) async {
+      await tester.pumpWidget(
+        _render(
+          _buttonTree(
+            '{"onTap":true,"style":{"backgroundColor":"#007aff",'
+            '"color":"#ffffff","cursor":"pointer"}}',
+          ),
+        ),
+      );
+      final press = await tester.startGesture(
+        tester.getCenter(find.byType(TextButton)),
+      );
+      await tester.pump();
+      expect(_mask, findsOneWidget);
+      await press.up();
+      await tester.pump();
     });
   });
 
@@ -314,4 +379,72 @@ void main() {
     expect(_mask, findsNothing);
     await press.up();
   });
+
+  // The label a component library leaves: van-button renders
+  // `<button><span class="van-button__text">label</span></button>`, so the
+  // text lives one shape deeper than a page's own
+  // `<button>label</button>` — a text node that has no text of its own,
+  // holding a child text node (specs/068-demo-vant).
+  group('label extraction', () {
+    testWidgets('reads a string child off the node itself', (tester) async {
+      await tester.pumpWidget(_render(_buttonTree('{"onTap":true}')));
+      expect(find.text('tap'), findsOneWidget);
+    });
+
+    testWidgets('follows the slot wrapper a library button adds', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_render(_vanButtonTree()));
+      expect(find.text('主要'), findsOneWidget);
+    });
+  });
 }
+
+/// The label a component library leaves: van-button renders
+/// `<button><div class="van-button__content"><span class="van-button__text">
+/// label</span></div></button>`, so the text lives under a `view` and a
+/// text node that has no text of its own (specs/068-demo-vant).
+MirrorTree _vanButtonTree() {
+  final w = _W();
+  w.u8(UiOpCode.create);
+  w.u32(1);
+  w.u16(6);
+  w.str('button');
+  w.u8(UiOpCode.insert);
+  w.u32(0);
+  w.u32(1);
+  w.u32(0x7fffffff);
+  w.u8(UiOpCode.create);
+  w.u32(4);
+  w.u16(4);
+  w.str('view');
+  w.u8(UiOpCode.insert);
+  w.u32(1);
+  w.u32(4);
+  w.u32(0x7fffffff);
+  w.u8(UiOpCode.create);
+  w.u32(2);
+  w.u16(4);
+  w.str('text');
+  w.u8(UiOpCode.insert);
+  w.u32(4);
+  w.u32(2);
+  w.u32(0x7fffffff);
+  w.u8(UiOpCode.create);
+  w.u32(3);
+  w.u16(4);
+  w.str('text');
+  w.u8(UiOpCode.setText);
+  w.u32(3);
+  final t = utf8.encode('主要');
+  w.u32(t.length);
+  w.raw(t);
+  w.u8(UiOpCode.insert);
+  w.u32(2);
+  w.u32(3);
+  w.u32(0x7fffffff);
+  final tree = MirrorTree();
+  tree.applyFrame(Uint8List.fromList(w.b));
+  return tree;
+}
+

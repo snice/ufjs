@@ -1,9 +1,12 @@
 // Minimal CSS subset parser for Vue SFC <style> blocks.
 //
-// Supported: class/tag/universal selectors, descendant (space) and child (>)
-// combinators, :deep(...) / ::v-deep(...) / :global(...) wrappers, the
-// `:active` pseudo-class on the subject compound, comments. Unsupported
-// constructs (at-rules, attribute selectors, other pseudo classes, id
+// Supported: class/tag/universal selectors, descendant (space), child (>)
+// and next-sibling (+) combinators, :deep(...) / ::v-deep(...) / :global(...)
+// wrappers, the
+// `:active` pseudo-class on the subject compound, `:disabled` (a state class,
+// see DISABLED_CLASS), `[class<op>value]`
+// attribute tests, comments. Unsupported constructs (at-rules, other
+// attribute selectors, other pseudo classes, id
 // selectors) make the offending selector (or block) be skipped with a
 // one-time warning instead of failing the build.
 //
@@ -11,7 +14,26 @@
 // normalized: pure numbers and px/rem lengths become JS numbers so the
 // Dart side keeps receiving the same shapes as the inline style API.
 
-export type Combinator = 'descendant' | 'child';
+import type { FontFaceDecl } from './font-face';
+import {
+  ANIMATION_LONGHANDS,
+  ANIMATION_PENDING,
+  parseAnimationShorthand,
+  parseKeyframes,
+  type AnimationLonghand,
+  type KeyframesDecl,
+} from './animation';
+import { FONT_LONGHANDS, FONT_PENDING, parseFontShorthand, type FontLonghand } from './font-shorthand';
+
+/** `:disabled` rides the element's class set as this token: the renderer
+ * adds it while a form control is disabled (StyleEngine.setDisabled), and a
+ * compound's `:disabled` becomes a required class. Matching, specificity (a
+ * pseudo-class weighs like a class) and the per-element match cache then
+ * need nothing of their own. No authored class can collide — `:` is not a
+ * class-name character. */
+export const DISABLED_CLASS = ':disabled';
+
+export type Combinator = 'descendant' | 'child' | 'nextSibling';
 
 export interface Compound {
   tag: string | null; // null = universal ('*')
@@ -20,7 +42,20 @@ export interface Compound {
    * siblings excluded, see StyleEngine). Set by `:first-child`/`:last-child`. */
   first?: boolean;
   last?: boolean;
+  /** `[class<op>value]` tests — the one attribute the engine knows (an
+   * element's class list). Component libraries hang shared decoration on
+   * them: vant's hairlines are `[class*=van-hairline]::after`. */
+  classAttr?: ClassAttrTest[];
 }
+
+export interface ClassAttrTest {
+  op: '=' | '~=' | '|=' | '^=' | '$=' | '*=';
+  value: string;
+}
+
+/** `[class*=x]`, `[class^="x"]`, … — every attribute selector the engine
+ * supports. Anything else in brackets stays unsupported syntax. */
+const CLASS_ATTR_RE = /\[\s*class\s*([~|^$*]?=)\s*(?:"([^"]*)"|'([^']*)'|([\w-]+))\s*\]/g;
 
 export interface Selector {
   compounds: Compound[]; // source order; the last one is the subject
@@ -28,6 +63,9 @@ export interface Selector {
   deep: boolean; // matched via :deep() — scope checked on an ancestor
   active: boolean; // subject carries :active — only applies while pressed
   hover: boolean; // subject carries :hover — only applies while hovered
+  /** Subject carries `::before` / `::after` (single-colon spellings too).
+   * The rule styles the synthesized decoration box, not the element. */
+  pseudo?: 'before' | 'after';
   specificity: number; // classes*10 + tags (+10 per pseudo-class)
 }
 
@@ -40,6 +78,14 @@ export interface CssRule {
    * Matched against the viewport at style time; a rule whose condition
    * fails never enters the cascade. */
   media?: MediaCondition;
+  /** `:root` / `:host` block (component libraries declare their whole
+   * token set there — vant's `--van-*`). Carries no selectors: the engine
+   * lifts its custom properties to the base of the inheritance chain. */
+  root?: true;
+  /** Every selector of this rule styles the same pseudo-element. Rules that
+   * mix pseudo and non-pseudo selectors are split at parse time, so one
+   * rule never spans two worlds. */
+  pseudo?: 'before' | 'after';
 }
 
 // ---- @media conditions ------------------------------------------------------
@@ -205,10 +251,19 @@ export function warnOnce(msg: string): void {
   console.warn(`[fjs css] ${msg}`);
 }
 
+/** The document root. There is one tree per page here, not a document, so
+ * `:host` (the shadow root's host) means the same thing. */
+const ROOT_SELECTOR = /^:(?:root|host)$/;
+
+/** `@font-face` blocks are not rules; the caller that wants them passes
+ * [fontFaces] and gets each one's declarations (StyleEngine.register hands
+ * them to css/font-face.ts). Without it they stay an unsupported at-rule. */
 export function parseStylesheet(
   css: string,
   scope: string | null,
   startOrder: number,
+  fontFaces?: FontFaceDecl[],
+  keyframes?: KeyframesDecl[],
 ): CssRule[] {
   const text = stripComments(css);
   const rules: CssRule[] = [];
@@ -227,6 +282,16 @@ export function parseStylesheet(
         if (condition !== null) {
           parseMediaBlock(block, scope, condition, rules, () => order++);
         }
+      } else if (fontFaces && /^@font-face$/i.test(selectorText)) {
+        const d = parseDeclarations(block);
+        fontFaces.push({
+          family: String(d.fontFamily ?? ''),
+          src: String(d.src ?? ''),
+          ...(d.unicodeRange !== undefined ? { unicodeRange: String(d.unicodeRange) } : {}),
+        });
+      } else if (keyframes && /^@(?:-webkit-)?keyframes\s/i.test(selectorText)) {
+        const name = selectorText.replace(/^@(?:-webkit-)?keyframes\s+/i, '');
+        keyframes.push(parseKeyframes(name, block, parseDeclarations));
       } else {
         warnOnce(`at-rule "${selectorText.split(/[\s{]/)[0]}" is not supported, skipped`);
       }
@@ -235,12 +300,31 @@ export function parseStylesheet(
     const decls = parseDeclarations(block);
     if (Object.keys(decls).length === 0) continue;
     const selectors: Selector[] = [];
+    const pseudoSelectors: Selector[] = [];
+    let root = false;
     for (const part of selectorText.split(',')) {
-      const sel = parseSelector(part.trim());
-      if (sel) selectors.push(sel);
+      const trimmed = part.trim();
+      if (ROOT_SELECTOR.test(trimmed)) {
+        root = true;
+        continue;
+      }
+      const sel = parseSelector(trimmed);
+      if (!sel) continue;
+      // a pseudo-element rule styles the decoration box; it must never ride
+      // along with plain selectors or it would style the element itself
+      if (sel.pseudo) pseudoSelectors.push(sel);
+      else selectors.push(sel);
     }
-    if (selectors.length === 0) continue;
-    rules.push({ selectors, decls, order: order++, scope });
+    // `:root, .x { … }` splits in two: the root half never matches an
+    // element, so it cannot ride along in `selectors`
+    if (root) rules.push({ selectors: [], decls, order: order++, scope, root: true });
+    if (selectors.length !== 0) rules.push({ selectors, decls, order: order++, scope });
+    for (const kind of ['before', 'after'] as const) {
+      const group = pseudoSelectors.filter((s) => s.pseudo === kind);
+      if (group.length !== 0) {
+        rules.push({ selectors: group, decls, order: order++, scope, pseudo: kind });
+      }
+    }
   }
   return rules;
 }
@@ -321,9 +405,51 @@ function parseDeclarations(block: string): Record<string, unknown> {
       continue;
     }
     const key = camelize(rawKey);
+    if (key === 'font') {
+      expandFont(value, out);
+      continue;
+    }
+    if (key === 'animation') {
+      // expanded here so a later `animation-duration` (same rule or a rule
+      // further down) overrides just that part — see css/animation.ts
+      if (value.includes('var(')) {
+        for (const k of ANIMATION_LONGHANDS) out[k] = ANIMATION_PENDING + value;
+      } else {
+        Object.assign(out, parseAnimationShorthand(value));
+      }
+      continue;
+    }
     out[key] = normalizeValue(key, value);
   }
   return out;
+}
+
+/** Writes the `font` shorthand's longhands into [out] at this point of the
+ * block, so later declarations in the same rule still override them (see
+ * font-shorthand.ts for why expansion happens here). */
+function expandFont(value: string, out: Record<string, unknown>): void {
+  const keyword = value.trim().toLowerCase();
+  if (keyword === 'inherit' || keyword === 'unset') {
+    // every font longhand inherits, so both mean inherit here (vant
+    // resets its buttons and fields with `font: inherit`)
+    for (const k of FONT_LONGHANDS) out[k] = 'inherit';
+    return;
+  }
+  if (keyword === 'initial') {
+    for (const k of ['fontStyle', 'fontWeight', 'lineHeight'] as const) out[k] = 'normal';
+    return;
+  }
+  if (value.includes('var(')) {
+    // split after substitution: normalizeValue unpacks the marker
+    for (const k of FONT_LONGHANDS) out[k] = FONT_PENDING + value;
+    return;
+  }
+  const parts = parseFontShorthand(value);
+  if (!parts) {
+    warnOnce(`font shorthand "${value}" is not supported (system fonts / missing size or family), skipped`);
+    return;
+  }
+  for (const k of FONT_LONGHANDS) out[k] = normalizeValue(k, parts[k]);
 }
 
 /** Splits on `sep` occurrences that are not inside parentheses. */
@@ -353,6 +479,20 @@ function camelize(key: string): string {
 /** Converts a substituted CSS value into the shape the bridge expects
  * (numbers for lengths, strings otherwise). Exported for var() resolution. */
 export function normalizeValue(key: string, raw: string): unknown {
+  if (raw.startsWith(FONT_PENDING)) {
+    // a `font` shorthand longhand whose var() just got substituted
+    const shorthand = raw.slice(FONT_PENDING.length);
+    const parts = parseFontShorthand(shorthand);
+    if (!parts) {
+      warnOnce(`font shorthand "${shorthand}" is not supported (system fonts / missing size or family), skipped`);
+      return undefined;
+    }
+    return normalizeValue(key, parts[key as FontLonghand]);
+  }
+  if (raw.startsWith(ANIMATION_PENDING)) {
+    // an `animation` shorthand longhand whose var() just got substituted
+    return parseAnimationShorthand(raw.slice(ANIMATION_PENDING.length))[key as AnimationLonghand];
+  }
   const v = raw.trim();
   // keep lineHeight units so Dart can tell multipliers (1.5) from
   // absolute heights ("24px") apart
@@ -391,10 +531,20 @@ export function parseSelector(raw: string): Selector | null {
     warnOnce(`selector "${raw.trim()}" puts :hover on something other than its last compound, skipped`);
     return null;
   }
+  // A trailing ::before / ::after (the single-colon legacy spelling too)
+  // makes this selector style a synthesized decoration box instead of the
+  // element itself. CSS allows them only on the subject; anything earlier
+  // falls through to the unsupported-syntax check below.
+  let pseudo: 'before' | 'after' | undefined;
+  const pm = /::?(before|after)$/.exec(text);
+  if (pm) {
+    pseudo = pm[1] as 'before' | 'after';
+    text = text.slice(0, -pm[0].length).trim();
+  }
   // :first-child / :last-child are structural — computable for any compound
   // in the chain — so they survive into parseCompound. What is left here has
   // to be plain compound syntax.
-  if (/[([:]/.test(text.replace(/:(?:first|last)-child/g, ''))) {
+  if (/[([:]/.test(text.replace(/:(?:first|last)-child|:disabled(?![\w-])/g, '').replace(CLASS_ATTR_RE, ''))) {
     warnOnce(`selector "${raw.trim()}" uses unsupported syntax (attr/pseudo/id), skipped`);
     return null;
   }
@@ -411,10 +561,20 @@ export function parseSelector(raw: string): Selector | null {
     pending = null;
     compounds.push(compound);
   };
+  // brackets may hold spaces (`[class *= x]`) — they must not split the
+  // compound, so combinators are only read outside them
+  let bracket = 0;
   for (const ch of text) {
-    if (ch === '>') {
+    if (ch === '[') bracket++;
+    else if (ch === ']') bracket--;
+    if (bracket > 0 || ch === ']') {
+      buf += ch;
+    } else if (ch === '>') {
       flush();
       pending = 'child';
+    } else if (ch === '+') {
+      flush();
+      pending = 'nextSibling';
     } else if (/\s/.test(ch)) {
       flush();
       if (pending == null) pending = 'descendant';
@@ -427,12 +587,15 @@ export function parseSelector(raw: string): Selector | null {
   let specificity = 0;
   let pseudos = (active ? 1 : 0) + (hover ? 1 : 0);
   for (const c of compounds) {
-    specificity += c.classes.length * 10 + (c.tag ? 1 : 0);
+    // an attribute selector weighs like a class
+    specificity += (c.classes.length + (c.classAttr?.length ?? 0)) * 10 + (c.tag ? 1 : 0);
     if (c.first) pseudos++;
     if (c.last) pseudos++;
   }
   specificity += pseudos * 10; // a pseudo-class weighs as much as a class
-  return { compounds, combinators, deep, active, hover, specificity };
+  // a pseudo-element weighs like an element (CSS specificity rules)
+  if (pseudo) specificity += 1;
+  return pseudo ? { compounds, combinators, deep, active, hover, pseudo, specificity } : { compounds, combinators, deep, active, hover, specificity };
 }
 
 /** Unwraps :deep(...) / ::v-deep(...) / :global(...) around the selector,
@@ -482,10 +645,17 @@ function parseCompound(text: string): Compound | null {
   let tag: string | null = null;
   let first = false;
   let last = false;
+  const classAttr: ClassAttrTest[] = [];
   let i = 0;
   while (i < text.length) {
     const ch = text[i];
-    if (ch === '.') {
+    if (ch === '[') {
+      CLASS_ATTR_RE.lastIndex = i;
+      const m = CLASS_ATTR_RE.exec(text);
+      if (!m || m.index !== i) return null; // unreachable via parseSelector
+      classAttr.push({ op: m[1] as ClassAttrTest['op'], value: m[2] ?? m[3] ?? m[4] });
+      i += m[0].length;
+    } else if (ch === '.') {
       let j = i + 1;
       while (j < text.length && /[\w-]/.test(text[j])) j++;
       if (j === i + 1) return null;
@@ -499,6 +669,7 @@ function parseCompound(text: string): Compound | null {
       const name = text.slice(i + 1, j);
       if (name === 'first-child') first = true;
       else if (name === 'last-child') last = true;
+      else if (name === 'disabled') classes.push(DISABLED_CLASS);
       else return null; // unreachable via parseSelector, defensive
       i = j;
     } else if (ch === '*') {
@@ -520,5 +691,6 @@ function parseCompound(text: string): Compound | null {
     classes,
     ...(first ? { first: true } : {}),
     ...(last ? { last: true } : {}),
+    ...(classAttr.length ? { classAttr } : {}),
   };
 }

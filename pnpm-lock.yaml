@@ -16,6 +16,9 @@ importers:
       pinia:
         specifier: ^3.0.3
         version: 3.0.4(typescript@5.9.3)(vue@3.5.42(typescript@5.9.3))
+      vant:
+        specifier: ^4.10.2
+        version: 4.10.2(vue@3.5.42(typescript@5.9.3))
       vue:
         specifier: ^3.5.42
         version: 3.5.42(typescript@5.9.3)
@@ -176,6 +179,9 @@ importers:
       qrcode-generator:
         specifier: ^2.0.4
         version: 2.0.4
+      wawoff2:
+        specifier: ^2.0.1
+        version: 2.0.1
       ws:
         specifier: ^8.18.0
         version: 8.21.3
@@ -1631,6 +1637,14 @@ packages:
   '@ungap/structured-clone@1.4.0':
     resolution: {integrity: sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ==}
 
+  '@vant/popperjs@1.3.0':
+    resolution: {integrity: sha512-hB+czUG+aHtjhaEmCJDuXOep0YTZjdlRR+4MSmIFnkCQIxJaXLQdSsR90XWvAI2yvKUI7TCGqR8pQg2RtvkMHw==}
+
+  '@vant/use@1.6.0':
+    resolution: {integrity: sha512-PHHxeAASgiOpSmMjceweIrv2AxDZIkWXyaczksMoWvKV2YAYEhoizRuk/xFnKF+emUIi46TsQ+rvlm/t2BBCfA==}
+    peerDependencies:
+      vue: ^3.0.0
+
   '@vitejs/plugin-vue@5.2.4':
     resolution: {integrity: sha512-7Yx/SXSOcQq5HiiV3orevHUFn+pmMB4cgbEkDYgnkUWb0WfeQ/wa2yFv6D5ICiCQOVpjA7vYDXrC7AGO8yjDHA==}
     engines: {node: ^18.0.0 || >=20.0.0}
@@ -1818,6 +1832,9 @@ packages:
         optional: true
       three:
         optional: true
+
+  argparse@2.0.1:
+    resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
 
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
@@ -2457,6 +2474,11 @@ packages:
     resolution: {integrity: sha512-oCwdVC7mTuWiPyjLUz/COz5TLk6wgp0RCsN+wHZ2Ekneac9w8uuV0njcbbie2ME+Vs+d6duwmYuR3HgQXs1fOg==}
     engines: {node: '>= 0.4'}
 
+  vant@4.10.2:
+    resolution: {integrity: sha512-7lm1KtFub11ozleFqQ6rL8oa3Z8i33G3IUEuJGWBXlQwPTRfu8BYWGGZ/GhA5QdWhERp5mtBq6TjpYEmLcwwow==}
+    peerDependencies:
+      vue: ^3.0.0
+
   vfile-message@4.0.3:
     resolution: {integrity: sha512-QTHzsGd1EhbZs4AsQ20JX1rC3cOlt/IWJruk893DfLRr57lcnOeMaWG4K0JrRta4mIJZKth2Au3mM3u03/JWKw==}
 
@@ -2611,6 +2633,10 @@ packages:
     peerDependenciesMeta:
       typescript:
         optional: true
+
+  wawoff2@2.0.1:
+    resolution: {integrity: sha512-r0CEmvpH63r4T15ebFqeOjGqU4+EgTx4I510NtK35EMciSdcTxCw3Byy3JnBonz7iyIFZ0AbVo0bbFpEVuhCYA==}
+    hasBin: true
 
   webpack-virtual-modules@0.6.2:
     resolution: {integrity: sha512-66/V2i5hQanC51vBQKPH4aI8NMAcBW59FVBs+rC7eGHupMyfn34q7rZIE+ETlJ+XTevqfUhVVBgSUNSW2flEUQ==}
@@ -4025,6 +4051,12 @@ snapshots:
 
   '@ungap/structured-clone@1.4.0': {}
 
+  '@vant/popperjs@1.3.0': {}
+
+  '@vant/use@1.6.0(vue@3.5.42(typescript@5.9.3))':
+    dependencies:
+      vue: 3.5.42(typescript@5.9.3)
+
   '@vitejs/plugin-vue@5.2.4(vite@5.4.21(@types/node@26.4.0)(lightningcss@1.33.0))(vue@3.5.42(typescript@7.0.2))':
     dependencies:
       vite: 5.4.21(@types/node@26.4.0)(lightningcss@1.33.0)
@@ -4255,6 +4287,8 @@ snapshots:
     optionalDependencies:
       '@types/three': 0.170.0
       three: 0.170.0
+
+  argparse@2.0.1: {}
 
   assertion-error@2.0.1: {}
 
@@ -5026,6 +5060,13 @@ snapshots:
       punycode: 1.4.1
       qs: 6.16.0
 
+  vant@4.10.2(vue@3.5.42(typescript@5.9.3)):
+    dependencies:
+      '@vant/popperjs': 1.3.0
+      '@vant/use': 1.6.0(vue@3.5.42(typescript@5.9.3))
+      '@vue/shared': 3.5.42
+      vue: 3.5.42(typescript@5.9.3)
+
   vfile-message@4.0.3:
     dependencies:
       '@types/unist': 3.0.3
@@ -5174,6 +5215,10 @@ snapshots:
       '@vue/shared': 3.5.42
     optionalDependencies:
       typescript: 7.0.2
+
+  wawoff2@2.0.1:
+    dependencies:
+      argparse: 2.0.1
 
   webpack-virtual-modules@0.6.2:
     optional: true

@@ -1,6 +1,4 @@
 // Style resolution for the widget layer. Property reference: docs/ui-api.md.
-import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../mirror_tree.dart';
@@ -202,6 +200,13 @@ class FjsStyle {
   /// property is absent or unparseable.
   FjsLength? get widthLength => parseLengthValue(_v('width'));
   FjsLength? get heightLength => parseLengthValue(_v('height'));
+
+  /// Per-corner border-radius parts, percentages KEPT (`50%` → fraction
+  /// 0.5). Null when no border-radius is declared. A fraction references
+  /// the box's own size, which only exists at layout time — decoration.dart
+  /// resolves it there.
+  List<BorderRadiusPart>? get borderRadiusParts =>
+      _v('borderRadius') == null ? null : parseBorderRadiusParts(_v('borderRadius'));
   double? get fontSize => _num('fontSize');
   int? get maxLines => _v('maxLines') is int ? _v('maxLines') as int : null;
   TextOverflow? get overflow {
@@ -238,7 +243,10 @@ class FjsStyle {
     if (width == null || width <= 0) return null;
     return (
       width: width,
-      color: declaredColor ?? shorthand?.color ?? _defaultBorderColor,
+      color:
+          declaredColor ??
+          (shorthand != null ? shorthand.color ?? currentColor : null) ??
+          _defaultBorderColor,
       kind:
           parseBorderStyle(declaredKind) ??
           shorthand?.kind ??
@@ -277,12 +285,16 @@ class FjsStyle {
   /// global `border` / `border-width` pair already makes.
   FjsBoxBorders? boxBorders({Color? defaultBorderColor}) {
     final gShort = borderShorthand;
-    final gWidth = declaredBorderWidth;
-    final gColor = declaredBorderColor;
-    final gKindRaw = _v('borderStyle');
-    final gKind = parseBorderStyle(gKindRaw);
 
     FjsBorderSide? resolve(String s) {
+      // `border-width` / `-color` / `-style` take 1–4 values like margin
+      // does (`border-width: 1px 0 0` is vant's divider line); read this
+      // side's component. A single value is every side's.
+      final i = const {'Top': 0, 'Right': 1, 'Bottom': 2, 'Left': 3}[s]!;
+      final gWidth = parseLength(_boxSideValue(_v('borderWidth'), i));
+      final gColor = parseColor(_boxSideValue(_v('borderColor'), i));
+      final gKindRaw = _boxSideValue(_v('borderStyle'), i);
+      final gKind = parseBorderStyle(gKindRaw);
       final sWidth = _num('border${s}Width');
       final sColor = _color('border${s}Color');
       final sKindRaw = _v('border${s}Style');
@@ -329,9 +341,9 @@ class FjsStyle {
         width: width,
         color:
             sColor ??
-            sShort?.color ??
+            (sShort != null ? sShort.color ?? currentColor : null) ??
             gColor ??
-            gShort?.color ??
+            (gShort != null ? gShort.color ?? currentColor : null) ??
             _defaultBorderColor,
         kind: kind,
       );
@@ -366,29 +378,59 @@ class FjsStyle {
 
   Color? _color(String key) => parseColor(_v(key));
 
+  /// Side [i] (top, right, bottom, left) of a 1–4 value box shorthand
+  /// string; anything else (a number, a single value) is returned as is.
+  static Object? _boxSideValue(Object? v, int i) {
+    if (v is! String) return v;
+    final parts = _splitShorthand(v.trim());
+    return switch (parts.length) {
+      0 || 1 => v,
+      2 => parts[i % 2],
+      3 => parts[i == 3 ? 1 : i],
+      _ => parts[i],
+    };
+  }
+
   Color? get backgroundColor =>
       _color('backgroundColor') ?? _color('background');
   Color? get color => _color('color');
 
+  /// CSS `currentColor`: the element's (inherited, already resolved) text
+  /// color — what a border shorthand without a color paints with (vant's
+  /// plain tag: `border: 1px solid` on a `::before` inheriting the tag's
+  /// blue). Black when no color reached the element.
+  Color get currentColor => color ?? const Color(0xFF000000);
+
   FontWeight? get fontWeight => parseFontWeight(_v('fontWeight'));
   FontStyle? get fontStyle => parseFontStyle(_v('fontStyle'));
 
-  /// The declared family, with the generic `monospace` turned into a font
-  /// this platform actually has. Flutter resolves a family by NAME, and no
-  /// iOS font is called "monospace": the lookup fails quietly and the text
-  /// falls back to the system font — a `<pre>` that looks like a `<p>` on the
-  /// app while the browser shows it monospaced. Only this one generic name is
-  /// mapped; rich-text's `pre` / `code` / `tt` defaults are what need it.
+  /// The primary family of the declared `font-family` stack, with the
+  /// generic `monospace` turned into a font this platform actually has.
+  /// Flutter resolves a family by NAME, and no iOS font is called
+  /// "monospace": the lookup fails quietly and the text falls back to the
+  /// system font — a `<pre>` that looks like a `<p>` on the app while the
+  /// browser shows it monospaced. rich-text's `pre` / `code` / `tt` defaults
+  /// are what need it.
+  ///
+  /// The stack is read the CSS way (specs/071): quotes stripped, split at
+  /// commas — `"vant-icon"` used to reach Flutter WITH its quotes and match
+  /// nothing. A system or generic name (`-apple-system`, `system-ui`,
+  /// `sans-serif`, …) ends the stack: it means "the platform's default",
+  /// which is what Flutter draws without a family. Stopping there keeps
+  /// vant's `-apple-system-font, helvetica neue, arial, sans-serif` on the
+  /// system font, as Safari shows it, instead of dropping to Helvetica Neue.
   String? get fontFamily {
-    final v = _v('fontFamily')?.toString();
-    if (v == null) return null;
-    if (v.trim().toLowerCase() != 'monospace') return v;
-    return switch (defaultTargetPlatform) {
-      TargetPlatform.iOS || TargetPlatform.macOS => 'Menlo',
-      TargetPlatform.windows => 'Courier New',
-      _ => 'monospace',
-    };
+    final stack = fontFamilyStack;
+    return stack.isEmpty ? null : stack.first;
   }
+
+  /// The rest of [fontFamily]'s stack, for glyphs the primary lacks.
+  List<String>? get fontFamilyFallback {
+    final stack = fontFamilyStack;
+    return stack.length < 2 ? null : stack.sublist(1);
+  }
+
+  List<String> get fontFamilyStack => parseFontFamilyStack(_v('fontFamily'));
 
   /// `sub` / `super` on a span nested in a text (widgets/text.dart); any
   /// other value is ignored.
@@ -568,7 +610,7 @@ class FjsStyle {
 
   /// `border: 1px solid #ccc` shorthand fills in width/color when the
   /// longhand props are absent.
-  ({double width, Color color, FjsBorderStyle kind})? get borderShorthand =>
+  ({double width, Color? color, FjsBorderStyle kind})? get borderShorthand =>
       parseBorder(_v('border'));
 
   Gradient? get gradient =>
@@ -586,6 +628,59 @@ class FjsStyle {
   /// makes a drag cheap.
   Matrix4? get transform => parseTransform(_v('transform'));
 
+  /// The `%` part of `transform`'s translations, as a fraction of the box's
+  /// own size — CSS resolves `translate(-50%, -50%)` against the element
+  /// itself, which the matrix above cannot know at parse time (it drops
+  /// these components). Null when there is none.
+  Offset? get transformFraction => parseTransformFraction(_v('transform'));
+
+  /// Which axes have BOTH margins `auto` (`margin: 0 auto`). An
+  /// out-of-flow box acts on it: with both edges and a size declared, CSS
+  /// splits the leftover space between the auto margins — how vant centres
+  /// its dialog (`left: 0; right: 0; width: 320px; margin: 0 auto`).
+  ({bool horizontal, bool vertical}) get marginAuto {
+    final a = marginAutoSides;
+    return (horizontal: a.left && a.right, vertical: a.top && a.bottom);
+  }
+
+  /// Which individual margins are `auto`. A flex item acts on each side
+  /// (see buildFlex): main-axis auto margins soak up the free space, so
+  /// `margin-left: auto` pushes an item to the end and `margin: 0 auto`
+  /// centres it (vant's nav-bar title). The edge-inset getters drop a
+  /// shorthand containing `auto`, so this reads the raw values.
+  ({bool top, bool right, bool bottom, bool left}) get marginAutoSides {
+    bool isAuto(Object? v) => v is String && v.trim() == 'auto';
+    var top = false, right = false, bottom = false, left = false;
+    final m = _v('margin');
+    if (m is String) {
+      final p = _splitShorthand(m).map((s) => s == 'auto').toList();
+      switch (p.length) {
+        case 1:
+          top = right = bottom = left = p[0];
+        case 2:
+          top = bottom = p[0];
+          right = left = p[1];
+        case 3:
+          top = p[0];
+          right = left = p[1];
+          bottom = p[2];
+        case 4:
+          top = p[0];
+          right = p[1];
+          bottom = p[2];
+          left = p[3];
+      }
+    }
+    // a longhand overrides the side the shorthand set (see [_edge])
+    final t = _v('marginTop'), r = _v('marginRight');
+    final b = _v('marginBottom'), l = _v('marginLeft');
+    if (t != null) top = isAuto(t);
+    if (r != null) right = isAuto(r);
+    if (b != null) bottom = isAuto(b);
+    if (l != null) left = isAuto(l);
+    return (top: top, right: right, bottom: bottom, left: left);
+  }
+
   /// CSS transition support for paint-only wrappers. The native renderer
   /// currently animates `transform` and `opacity`; layout properties still
   /// jump to their new value.
@@ -597,6 +692,9 @@ class FjsStyle {
   Object? get touchAction => _v('touchAction');
 
   String? get display => _v('display')?.toString();
+
+  /// `pointer-events: none` — the node never takes a hit (see the renderer).
+  bool get pointerEventsNone => _v('pointerEvents') == 'none';
   bool get overflowHidden => _v('overflow')?.toString() == 'hidden';
 
   double? get gap => _num('gap');
@@ -658,6 +756,28 @@ class FjsStyle {
     return null;
   }
 
+  /// `flex-shrink` as declared, from the longhand or the `flex` shorthand
+  /// (`flex: none` is 0; a one-number `flex: 2` does not say). Null when
+  /// neither says — the default is per tag, see flex.dart.
+  double? get flexShrink {
+    final v = _v('flexShrink');
+    if (v is num) return v.toDouble();
+    if (v is String) {
+      final n = double.tryParse(v.trim());
+      if (n != null) return n;
+    }
+    final f = _v('flex');
+    if (f is String) {
+      final parts = f.trim().split(RegExp(r'\s+'));
+      if (parts.length == 1 && parts[0] == 'none') return 0;
+      if (parts.length >= 2) {
+        final n = double.tryParse(parts[1]);
+        if (n != null) return n;
+      }
+    }
+    return null;
+  }
+
   /// min/max sizes -> box constraints for the widget subtree. Relative
   /// values (`max-width: 100%`) read as absent here; [constraintsIn] is the
   /// one that resolves them, and [hasRelativeConstraints] says which to ask.
@@ -674,6 +794,14 @@ class FjsStyle {
       _lengthOf('maxHeight')?.isRelative == true;
 
   FjsLength? _lengthOf(String key) => parseLengthValue(_v(key));
+
+  /// `flex-basis` as declared (a percentage stays relative to the flex
+  /// container's main size); null for `auto`/`content` or when absent.
+  FjsLength? get flexBasisLength => parseLengthValue(_v('flexBasis'));
+
+  /// `max-width` / `max-height` as declared, keeping a percentage relative.
+  FjsLength? get maxWidthLength => _lengthOf('maxWidth');
+  FjsLength? get maxHeightLength => _lengthOf('maxHeight');
 
   BoxConstraints? _constraints(BoxConstraints? outer) {
     double? side(String key, double reference) {
@@ -730,6 +858,26 @@ class FjsStyle {
         return CrossAxisAlignment.start;
       case 'flex-end':
       case 'end':
+        return CrossAxisAlignment.end;
+      case 'stretch':
+        return CrossAxisAlignment.stretch;
+      default:
+        return null;
+    }
+  }
+
+  /// `align-self`, or null for `auto` / unset (the parent's align-items).
+  CrossAxisAlignment? get alignSelf {
+    switch (_v('alignSelf')?.toString()) {
+      case 'center':
+        return CrossAxisAlignment.center;
+      case 'flex-start':
+      case 'start':
+      case 'self-start':
+        return CrossAxisAlignment.start;
+      case 'flex-end':
+      case 'end':
+      case 'self-end':
         return CrossAxisAlignment.end;
       case 'stretch':
         return CrossAxisAlignment.stretch;

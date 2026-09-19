@@ -115,6 +115,22 @@ int main() {
     ran = fjs_vm_pump(vm, now + 2000);
     CHECK(g_logs.back().find("then 7") != std::string::npos, "promise jobs execute");
 
+    /* regression (specs/070 D1): a throwing timer must not starve the
+     * promise jobs queued behind it — the error is reported and the pump
+     * still drains. vant's useRect throws `window is not defined` from a
+     * timer; one dropped Vue-scheduler flush used to blank whole pages. */
+    eval_ok(vm,
+            "__fjs.fns.setTimeout(function(){ throw new ReferenceError('window is not defined') }, 10);"
+            "Promise.resolve().then(function(){ console.log('job survived the throwing timer') });");
+    ran = fjs_vm_pump(vm, now + 3000);
+    bool job_ran = false, err_logged = false;
+    for (const auto &l : g_logs) {
+        if (l.find("job survived the throwing timer") != std::string::npos) job_ran = true;
+        if (l.find("window is not defined") != std::string::npos) err_logged = true;
+    }
+    CHECK(job_ran, "throwing timer does not starve queued jobs");
+    CHECK(err_logged, "throwing timer's error is reported");
+
     /* ---- exceptions ---- */
     const char *bad_src = "undefinedFn()";
     int32_t rc = fjs_vm_eval_source(vm, (const uint8_t *)bad_src,

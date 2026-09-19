@@ -239,6 +239,16 @@ import '@ufjs/runtime/vue-global';
   [toolchain.md 的「添加三方库」](toolchain.md#添加三方库)
 - vue-router：不可用，路由走 `fjs/router`（web 构建内部才用 vue-router）
 - `vue` 包被 alias 到 `@vue/runtime-core`，避免拉入 DOM 运行时
+- 元素上有一小组 DOM 形状的 API，供组件库直接调用（vant 依赖它们）：
+  `el.style`、`el.getBoundingClientRect()`（同步，读**上一帧**的布局，
+  没有强制重排；未布局时返回全零）、`el.addEventListener/removeEventListener`
+  （事件名同 `on<Name>` prop，`passive/capture` 选项忽略）。click 事件带
+  `clientX/clientY`（按需读取）。`@x.passive/.capture/.once` 修饰符按 Vue
+  的规则处理，`.once` 生效
+- App 端**没有** `window` / `document` 全局，runtime 也不模拟：组件库里不带浏览器
+  判断直接用它们的地方，由该库的 vite 插件打补丁处理，见
+  [toolchain.md](toolchain.md#ui-组件库适配vite-插件的-fjsapp-钩子)（vant 的在
+  `demo/vite/vant.ts`）
 
 ## 性能：长列表要放进自己的组件
 

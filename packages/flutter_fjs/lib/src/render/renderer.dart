@@ -29,8 +29,10 @@ import '../node/node_adapter.dart';
 import '../node/node_adapters.dart';
 import '../registry/component.dart';
 import '../widgets/dispatch.dart';
+import 'animation.dart' show keyframeNode;
 import 'decoration.dart' show decorateNode, transitionNode;
 import 'gesture.dart';
+import 'overflow_hit.dart';
 import 'touch.dart' show needsTouchNode;
 import 'style.dart';
 
@@ -67,11 +69,17 @@ class FjsNodeRenderer extends StatelessWidget {
             registry: registry,
           ),
     ];
-    if (children.length == 1) return children.single;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: children,
+    // the page root: out-of-flow boxes that overflow their parents still
+    // take the pointer there (overflow_hit.dart)
+    if (children.length == 1) {
+      return FjsOverflowHitScope(child: children.single);
+    }
+    return FjsOverflowHitScope(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: children,
+      ),
     );
   }
 
@@ -185,6 +193,8 @@ class _FjsNodeView extends StatelessWidget {
         final node = tree.node(nodeId);
         // removed between the signal firing and this rebuild
         if (node == null) return const SizedBox.shrink();
+        // the geometry module measures the node through this (geometry.dart)
+        node.element = context;
         return _buildNode(context, node, isRoot: isRoot);
       },
     );
@@ -226,11 +236,25 @@ class _FjsNodeView extends StatelessWidget {
       final s = tracksPress || tracksHover
           ? FjsStyle.stateOf(node, pressed: pressed, hovered: hovered)
           : style;
-      return transitionNode(
+      final transitioned = transitionNode(
         s,
         _buildStyledNode(context, node, s, pressed: pressed, isRoot: isRoot),
         key: 'fjs-transition-${tree.generation}-${node.id}',
-        stableTransform: stable,
+        // A press/hover state may bring a transform or an opacity the base
+        // style lacks (vant's `.van-haptics-feedback:active { opacity: .6 }`).
+        // Adding the wrapper mid-press changes the widget chain ABOVE the
+        // node's gesture detectors, which remounts them on pointer-down and
+        // disposes the recognizers already in the arena — the tap is lost.
+        // State-tracking nodes therefore keep both wrappers throughout.
+        stableTransform: stable || tracksPress || tracksHover,
+        stableOpacity: tracksPress || tracksHover,
+      );
+      // `@keyframes` wrap outside the transition layer: while an animation
+      // runs, its transform/opacity is what the node shows (animation.dart)
+      return keyframeNode(
+        node.styleMap,
+        transitioned,
+        key: 'fjs-keyframes-${tree.generation}-${node.id}',
       );
     }
 
@@ -252,6 +276,12 @@ class _FjsNodeView extends StatelessWidget {
     } else {
       built = buildWithState(false, false);
     }
+    // `pointer-events: none`: the box paints but is transparent to hits,
+    // so whatever lies beneath receives them — vant's decoration boxes
+    // (stepper +/- lines, hairlines) sit ON TOP of their button and would
+    // otherwise swallow every tap. A descendant re-enabling hits with
+    // `pointer-events: auto` is not honoured (css-compat.md).
+    if (style.pointerEventsNone) built = IgnorePointer(child: built);
     // node identity already lives in this view's key, so a reorder matches
     // by id rather than by position without a second KeyedSubtree
     return built;

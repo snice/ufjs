@@ -150,6 +150,8 @@ roadmap 里的 `fjs/react` 要做的事，按顺序：
 把 `parentOf` / `childrenOf` 从 `vue/renderer.ts` 提到一个共享模块
 （例如 `ui/tree.ts`），Vue 和 React 两个适配层共用，StyleEngine 也从那里
 取树结构。这是接 React 时第一件要做的重构。
+`vue/renderer.ts` 里挂在元素上的 DOM 式 `contains()`（specs/072）读的就是
+这份簿记，抽取时随之下沉到框架无关层。
 
 ### 3. 事件适配
 

@@ -31,7 +31,7 @@ import {
   type Component,
 } from '@vue/runtime-core';
 // createApp here is the fjs custom renderer's, not runtime-dom's
-import { createApp as createVueApp, flutterRoot } from '../vue/renderer';
+import { createApp as createVueApp, flutterRoot, releaseRoot } from '../vue/renderer';
 import { remove, setProps, registerSystemHandler, type Element } from '../ui/element';
 import { hasNativeHost, invokeHost } from '../host';
 import { Matcher } from './match';
@@ -444,7 +444,10 @@ class FlutterRouter implements Router {
     entry.waiting = [];
     entry.app?.unmount();
     entry.app = null;
-    if (entry.root) remove(entry.root);
+    if (entry.root) {
+      releaseRoot(entry.root);
+      remove(entry.root);
+    }
     entry.root = null;
   }
 }

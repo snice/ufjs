@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import '../mirror_tree.dart';
 import '../render/renderer.dart';
 import '../render/style.dart';
+import '../render/flex.dart' show isOutOfFlowPosition, stackOutOfFlow;
 import '../render/style_parse.dart';
 
 // Default line height. Flutter would otherwise use the font's own metrics
@@ -47,6 +48,7 @@ TextStyle fjsTextStyle(FjsStyle style, {bool span = false}) {
     fontWeight: style.fontWeight,
     fontStyle: style.fontStyle,
     fontFamily: style.fontFamily,
+    fontFamilyFallback: style.fontFamilyFallback,
     height: lineHeight ?? _defaultLineHeight,
     // CSS puts the extra leading half above / half below the text; Flutter
     // puts all of it above unless told otherwise.
@@ -82,6 +84,7 @@ TextStyle fjsSpanStyle(FjsStyle style) {
     fontWeight: style.fontWeight,
     fontStyle: style.fontStyle,
     fontFamily: style.fontFamily,
+    fontFamilyFallback: style.fontFamilyFallback,
     height: lineHeight,
     letterSpacing: style.letterSpacing,
     // `underline line-through` is parsed into a combined decoration already
@@ -130,12 +133,54 @@ Widget buildText(
     );
   }
 
+  // An absolutely positioned child (a `::before` decoration box: vant's
+  // plain-tag border is `position: absolute; inset: 0` on a span) is not
+  // part of the paragraph — as an inline span it drew a dot before the
+  // text. Build the paragraph from the in-flow children and lay the rest
+  // over it, the containing block a positioned box is on web.
+  if (buildNode != null &&
+      style.isPositioningContext &&
+      childNodes.any((k) => isOutOfFlowPosition(FjsStyle.of(k).position))) {
+    final inFlow = <MirrorNode>[];
+    final over = <(MirrorNode?, Widget)>[];
+    for (final k in childNodes) {
+      if (isOutOfFlowPosition(FjsStyle.of(k).position)) {
+        over.add((k, buildNode(k)));
+      } else {
+        inFlow.add(k);
+      }
+    }
+    return stackOutOfFlow(
+      style,
+      buildText(
+        node,
+        style,
+        tree: tree,
+        childNodes: inFlow,
+        buildNode: buildNode,
+      ),
+      over,
+    );
+  }
+
   // The common case — `<text>{{ x }}</text>` compiles to element text, no
   // child nodes — stays a plain Text.
+  //
+  // The strut pins every line to the paragraph's own line-height, laid out
+  // with the primary font. CSS sizes a line box from the element's first
+  // available font only; a glyph the primary lacks (`∅`, CJK under a Latin
+  // system font) borrows the fallback's outline but not its metrics. In
+  // Flutter each fallback run brings its own ascent/descent split of the
+  // same 1.4em, and the line took the max of both sides — `选中 = ∅` stood
+  // 2px taller than `选中 = a`, shifting the whole card. Only the single-run
+  // paragraph gets it: a nested span with a larger size must still grow its
+  // line, as its inline box does on the web.
   if (childNodes.isEmpty || tree == null) {
+    final textStyle = fjsTextStyle(style);
     return Text(
       _transformed(style, node.text ?? ''),
-      style: fjsTextStyle(style),
+      style: textStyle,
+      strutStyle: StrutStyle.fromTextStyle(textStyle, forceStrutHeight: true),
       textAlign: textAlign,
       maxLines: maxLines,
       overflow: overflow,

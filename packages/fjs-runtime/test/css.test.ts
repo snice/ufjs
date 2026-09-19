@@ -90,10 +90,12 @@ function makeEngine() {
   const applied = new Map<number, Record<string, unknown>>();
   const appliedActive = new Map<number, Record<string, unknown> | null>();
   const appliedHover = new Map<number, Record<string, unknown> | null>();
-  const engine = new StyleEngine(parentOf, childrenOf, (id, style, activeStyle, hoverStyle) => {
+  const appliedPseudo = new Map<number, import('../src/css/style').PseudoStyles | null>();
+  const engine = new StyleEngine(parentOf, childrenOf, (id, style, activeStyle, hoverStyle, pseudo) => {
     applied.set(id, style);
     if (activeStyle !== undefined) appliedActive.set(id, activeStyle);
     if (hoverStyle !== undefined) appliedHover.set(id, hoverStyle);
+    if (pseudo !== undefined) appliedPseudo.set(id, pseudo);
   });
   const add = (id: number, tag: string, parent: number | null) => {
     parentOf.set(id, parent);
@@ -102,7 +104,7 @@ function makeEngine() {
     engine.ensure(id, tag);
     return id;
   };
-  return { engine, applied, appliedActive, appliedHover, parentOf, childrenOf, add };
+  return { engine, applied, appliedActive, appliedHover, appliedPseudo, parentOf, childrenOf, add };
 }
 
 describe(':active', () => {
@@ -352,6 +354,195 @@ describe('StyleEngine', () => {
     expect(applied.get(child)).toMatchObject({ color: '#0000ff' });
   });
 
+  it(':root / :host custom properties seed every tree', async () => {
+    const { engine, applied, add } = makeEngine();
+    const top = add(1, 'view', null);
+    const child = add(2, 'text', 1);
+    engine.setClasses(1, 'btn');
+    engine.setClasses(2, 'label');
+    // vant's shape: tokens on `:root,:host`, chained, overridden lower down
+    engine.register(
+      null,
+      `:root,:host { --blue: #1989fa; --primary: var(--blue); --size: 14px; color: red }
+       .btn { background-color: var(--primary) }
+       .label { --size: 16px; font-size: var(--size) }`,
+    );
+    await styleTick();
+    expect(applied.get(top)).toMatchObject({ backgroundColor: '#1989fa' });
+    // a non-custom :root declaration is not applied to the tree
+    expect(applied.get(top)?.color).toBeUndefined();
+    expect(applied.get(child)).toMatchObject({ fontSize: 16 });
+  });
+
+  it('a later :root block re-resolves styles already on screen', async () => {
+    const { engine, applied, add } = makeEngine();
+    const el = add(1, 'view', null);
+    engine.setClasses(1, 'a');
+    engine.register(null, `.a { color: var(--c, #000000) }`);
+    await styleTick();
+    expect(applied.get(el)).toMatchObject({ color: '#000000' });
+    engine.register(null, `:root { --c: #00ff00 }`);
+    await styleTick();
+    expect(applied.get(el)).toMatchObject({ color: '#00ff00' });
+  });
+
+  it('an undefined / null / empty :style entry leaves the CSS value alone', async () => {
+    const { engine, applied, add } = makeEngine();
+    const el = add(1, 'input', null);
+    engine.setClasses(1, 'box');
+    engine.register(null, `.box { width: 32px; height: 28px; color: red }`);
+    // vant's stepper: `:style="{ width: addUnit(undefined), height: ... }"`
+    engine.patchInlineStyle(1, undefined, { width: undefined, height: null, color: '' });
+    await styleTick();
+    expect(applied.get(el)).toMatchObject({ width: 32, height: 28, color: 'red' });
+  });
+
+  it('display:flex without an explicit direction pins the CSS initial (row)', async () => {
+    const { engine, applied, add } = makeEngine();
+    const cell = add(1, 'view', null);
+    const mine = add(2, 'view', null);
+    engine.setClasses(1, 'cell');
+    engine.setClasses(2, 'mine');
+    engine.register(
+      null,
+      // van-cell relies on the flex-direction initial value; the peer's
+      // unstyled default is column, which is why the engine must pin it
+      `.cell { display: flex }
+       .mine { display: flex; flex-direction: column }`,
+    );
+    await styleTick();
+    expect(applied.get(cell)).toMatchObject({ display: 'flex', flexDirection: 'row' });
+    // an explicit direction is never overridden — inline display:flex alone
+    // does not erase the matched flex-direction: column
+    expect(applied.get(mine)).toMatchObject({ flexDirection: 'column' });
+    // a container that only sets display inline gets the initial too
+    engine.patchInlineStyle(cell, undefined, { display: 'inline-flex' });
+    await styleTick();
+    expect(applied.get(cell)).toMatchObject({ display: 'inline-flex', flexDirection: 'row' });
+  });
+
+  it('em lengths resolve against the element font-size', async () => {
+    const { engine, applied, add } = makeEngine();
+    const sw = add(1, 'view', null); // van-switch: em everywhere, font from --van-*
+    const label = add(2, 'text', sw);
+    engine.setClasses(1, 'switch');
+    engine.setClasses(2, 'icon');
+    engine.register(
+      null,
+      `:root { --size: 15px }
+       .switch { width: 2em; height: 1em; font-size: var(--size);
+                 border-radius: 1em; transform: translateX(1em) }
+       .icon { font-size: 20px; width: 1em; height: 1em }`,
+    );
+    await styleTick();
+    expect(applied.get(sw)).toMatchObject({
+      width: 30,
+      height: 15,
+      fontSize: 15,
+      borderRadius: 15,
+      // a compound keeps its shape, the em token becomes px
+      transform: 'translateX(15px)',
+    });
+    // the child resolves its own em against its own font-size, not the parent's
+    expect(applied.get(label)).toMatchObject({ width: 20, height: 20, fontSize: 20 });
+  });
+
+  it('em font-size chains through inheritance like in a browser', async () => {
+    const { engine, applied, add } = makeEngine();
+    const parent = add(1, 'view', null);
+    const child = add(2, 'view', 1);
+    const grand = add(3, 'view', 2);
+    engine.setClasses(1, 'a');
+    engine.setClasses(2, 'b');
+    engine.setClasses(3, 'c');
+    engine.register(
+      null,
+      `.a { font-size: 20px }
+       .b { font-size: 1.5em; width: 3em }
+       .c { width: 1em }`,
+    );
+    await styleTick();
+    expect(applied.get(child)).toMatchObject({ fontSize: 30, width: 90 });
+    // the grandchild inherits the already-resolved 30px, not the raw em
+    expect(applied.get(grand)).toMatchObject({ fontSize: 30, width: 30 });
+  });
+
+  it('a leading-dot decimal em (`.8em`) folds like 0.8em', async () => {
+    const { engine, applied, add } = makeEngine();
+    add(1, 'view', null);
+    const icon = add(2, 'view', 1);
+    engine.setClasses(1, 'icon');
+    engine.setClasses(2, 'van-icon');
+    engine.register(
+      null,
+      `.icon { font-size: 20px; height: 1em }
+       .van-icon { width: 1.25em; height: 1.25em; font-size: .8em }`,
+    );
+    await styleTick();
+    // vant writes icon glyph sizes as `.8em`; a missed fold left the raw
+    // string on the element and sized the box off the parent font (25px in a
+    // 20px row — the checkbox overflow stripes)
+    expect(applied.get(icon)).toMatchObject({ fontSize: 16, width: 20, height: 20 });
+  });
+
+  it('synthesizes ::before / ::after styles with the element as inheritance base', async () => {
+    const { engine, applied, appliedPseudo, add } = makeEngine();
+    const cell = add(1, 'view', null);
+    engine.setClasses(1, 'cell');
+    engine.register(
+      null,
+      `:root { --line: #ebedf0 }
+       .cell { position: relative; color: #323233; font-size: 14px }
+       .cell::after { content: ''; position: absolute; left: 0; right: 0;
+                      bottom: 0; height: 1px; background: var(--line) }`,
+    );
+    await styleTick();
+    // the element itself is untouched by the pseudo rule
+    expect(applied.get(cell)).toMatchObject({ position: 'relative' });
+    expect(applied.get(cell)?.background).toBeUndefined();
+    const note = appliedPseudo.get(cell);
+    expect(note).toBeDefined();
+    const after = note?.after;
+    expect(after).toBeDefined();
+    // var() resolved, inheritable properties carried in from the element,
+    // non-inheritable ones (position/width) not invented
+    expect(after).toMatchObject({ background: '#ebedf0', color: '#323233', fontSize: 14 });
+    expect(after?.height).toBe(1);
+    expect(after?.position).toBe('absolute');
+  });
+
+  it('notifies pseudo removal when a class stops matching', async () => {
+    const { engine, appliedPseudo, add } = makeEngine();
+    const el = add(1, 'view', null);
+    engine.setClasses(1, 'checked');
+    engine.register(null, `.checked::after { content: ''; width: 10px }`);
+    await styleTick();
+    expect(appliedPseudo.get(el)?.after).toMatchObject({ width: 10 });
+    engine.setClasses(1, '');
+    await styleTick();
+    expect(appliedPseudo.get(el)).toBeNull();
+  });
+
+  it('maps inline-level displays to a wrapping row, keeping the value', async () => {
+    const { engine, applied, add } = makeEngine();
+    const stepper = add(1, 'view', null);
+    engine.setClasses(1, 'stepper');
+    engine.register(null, `.stepper { display: inline-block }`);
+    await styleTick();
+    // the value survives so the peer can apply the shrink-to-fit half
+    expect(applied.get(stepper)).toMatchObject({
+      display: 'inline-block',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+    });
+    // an explicit direction/wrap is never overridden
+    const mine = add(2, 'view', null);
+    engine.setClasses(2, 'mine');
+    engine.register(null, `.mine { display: inline; flex-direction: column }`);
+    await styleTick();
+    expect(applied.get(mine)).toMatchObject({ flexDirection: 'column' });
+  });
+
   it('merges useCssVars batches without clobbering earlier props', async () => {
     const { engine, applied, add } = makeEngine();
     const el = add(1, 'div', null);
@@ -568,6 +759,93 @@ describe('structural pseudos: matching and invalidation', () => {
     engine.noteStructureChange(1);
     await styleTick();
     expect(applied.get(3)).not.toHaveProperty('color');
+  });
+});
+
+// ---- next-sibling (+) combinator --------------------------------------------
+// vant hangs its component spacing on it (`.van-button__loading +
+// .van-button__text { margin-left: 4px }`), so matching and — because the
+// match now depends on a neighbor — the cache invalidation have to hold.
+describe('next-sibling (+) combinator', () => {
+  it('parses into its own combinator and weighs like other combinators', () => {
+    const sel = parseSelector('.loading+.text')!;
+    expect(sel.combinators).toEqual(['nextSibling']);
+    expect(sel.compounds).toEqual([
+      { tag: null, classes: ['loading'] },
+      { tag: null, classes: ['text'] },
+    ]);
+    // two classes, no pseudo classes: combinators themselves weigh nothing
+    expect(sel.specificity).toBe(20);
+    // compact, spaced and mixed spellings all parse
+    expect(parseSelector('a + .b')!.combinators).toEqual(['nextSibling']);
+    expect(parseSelector('.a+.b>.c')!.combinators).toEqual(['nextSibling', 'child']);
+  });
+
+  it('styles the follower but not the leader', async () => {
+    const { engine, applied, add } = makeEngine();
+    engine.register(null, '.loading+.text { margin-left: 4px }');
+    add(1, 'view', null);
+    add(2, 'view', 1);
+    engine.setClasses(2, 'loading');
+    add(3, 'view', 1);
+    engine.setClasses(3, 'text');
+    add(4, 'view', 1);
+    engine.setClasses(4, 'text'); // no .loading before this one
+    await styleTick();
+    expect(applied.get(3)).toMatchObject({ marginLeft: 4 });
+    expect(applied.get(2)).not.toHaveProperty('marginLeft');
+    expect(applied.get(4)).not.toHaveProperty('marginLeft');
+  });
+
+  it('re-styles the follower when the leader toggles class', async () => {
+    const { engine, applied, add } = makeEngine();
+    engine.register(null, '.on+.badge { color: red }');
+    add(1, 'view', null);
+    add(2, 'view', 1);
+    add(3, 'view', 1);
+    engine.setClasses(3, 'badge');
+    await styleTick();
+    expect(applied.get(3)).not.toHaveProperty('color');
+    // the loading spinner case: the leader gains its class after mount
+    engine.setClasses(2, 'on');
+    await styleTick();
+    expect(applied.get(3)).toMatchObject({ color: 'red' });
+    engine.setClasses(2, '');
+    await styleTick();
+    expect(applied.get(3)).not.toHaveProperty('color');
+  });
+
+  it('re-styles the follower when a leader is inserted before it', async () => {
+    const { engine, applied, parentOf, childrenOf, add } = makeEngine();
+    engine.register(null, '.loading+.text { margin-left: 4px }');
+    add(1, 'view', null);
+    add(2, 'view', 1);
+    engine.setClasses(2, 'text');
+    await styleTick();
+    expect(applied.get(2)).not.toHaveProperty('marginLeft');
+    // a loading spinner mounts in front
+    add(3, 'view', 1);
+    engine.setClasses(3, 'loading');
+    childrenOf.set(1, [3, 2]);
+    engine.noteStructureChange(1);
+    await styleTick();
+    expect(applied.get(2)).toMatchObject({ marginLeft: 4 });
+  });
+
+  it('skips raw-text siblings, like structural position does', async () => {
+    const { engine, applied, parentOf, childrenOf, add } = makeEngine();
+    engine.register(null, '.loading+.text { color: red }');
+    add(1, 'view', null);
+    add(2, 'view', 1);
+    engine.setClasses(2, 'loading');
+    // renderer-synthesized bare text between them is no element in the DOM
+    engine.ensure(3, 'text', undefined, true);
+    childrenOf.get(1)!.push(3);
+    parentOf.set(3, 1);
+    add(4, 'view', 1);
+    engine.setClasses(4, 'text');
+    await styleTick();
+    expect(applied.get(4)).toMatchObject({ color: 'red' });
   });
 });
 
@@ -846,5 +1124,80 @@ describe('@media in the style engine', () => {
     engine.setViewport(390, 844); // equal to the fallback: still no match
     await styleTick();
     expect(applied.get(box)).toMatchObject({ color: 'red' });
+  });
+});
+
+// specs/069 验证期：vant 在 iOS 上逐屏对拍时暴露的引擎缺口
+describe('[class<op>value] attribute selectors', () => {
+  it('parses the class attribute tests and weighs them as a class', () => {
+    const sel = parseSelector('[class*=van-hairline]::after')!;
+    expect(sel.pseudo).toBe('after');
+    expect(sel.compounds[0].classAttr).toEqual([{ op: '*=', value: 'van-hairline' }]);
+    expect(sel.specificity).toBe(11); // attribute (10) + pseudo-element (1)
+    const quoted = parseSelector('.a[class^="van-"]')!;
+    expect(quoted.compounds[0]).toMatchObject({ classes: ['a'], classAttr: [{ op: '^=', value: 'van-' }] });
+  });
+
+  it('still skips other attributes', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(parseSelector('input[type=search]')).toBeNull();
+    warn.mockRestore();
+  });
+
+  it('matches substrings, prefixes and words of the class list', async () => {
+    const { engine, appliedPseudo, applied, add } = makeEngine();
+    const cell = add(1, 'view', null);
+    const tag = add(2, 'view', null);
+    engine.register(
+      null,
+      `[class*=van-hairline]::after { content: ''; border: 0 solid #ebedf0 }
+       [class~=plain] { color: red }
+       [class|=van] { opacity: 0.5 }`,
+    );
+    engine.setClasses(cell, 'van-cell van-hairline--bottom');
+    engine.setClasses(tag, 'van-tag plain');
+    await styleTick();
+    expect(appliedPseudo.get(cell)?.after).toMatchObject({ border: '0 solid #ebedf0' });
+    expect(appliedPseudo.get(tag)).toBeFalsy();
+    expect(applied.get(tag)).toMatchObject({ color: 'red' });
+    // |= is "exactly van, or van- then anything"
+    expect(applied.get(cell)).toMatchObject({ opacity: 0.5 });
+  });
+});
+
+describe('the inherit keyword', () => {
+  it('takes the parent value for any property, pseudo-elements included', async () => {
+    const { engine, applied, appliedPseudo, add } = makeEngine();
+    const divider = add(1, 'view', null);
+    const child = add(2, 'view', divider);
+    engine.register(
+      null,
+      `.d { border-color: #ebedf0; border-style: dashed }
+       .d::before { content: ''; border-style: inherit; border-color: inherit }
+       .c { border-style: inherit; width: inherit }`,
+    );
+    engine.setClasses(divider, 'd');
+    engine.setClasses(child, 'c');
+    await styleTick();
+    expect(appliedPseudo.get(divider)?.before).toMatchObject({ borderStyle: 'dashed', borderColor: '#ebedf0' });
+    expect(applied.get(child)).toMatchObject({ borderStyle: 'dashed' });
+    // nothing to inherit: the declaration goes (initial value)
+    expect(applied.get(child)).not.toHaveProperty('width');
+  });
+});
+
+describe('absolute calc folding', () => {
+  it('keeps the sign of a term that follows a nested calc (van-switch knob)', async () => {
+    const { engine, applied, add } = makeEngine();
+    const node = add(1, 'view', null);
+    engine.register(
+      null,
+      `:root { --w: calc(1.8em + 4px); --n: 1em }
+       .knob { font-size: 26px; transform: translate(calc(var(--w) - var(--n) - 4px)) }`,
+    );
+    engine.setClasses(node, 'knob');
+    await styleTick();
+    // 1.8 × 26 + 4 − 26 − 4 = 20.8
+    expect(applied.get(node)).toMatchObject({ transform: 'translate(20.8px)' });
   });
 });

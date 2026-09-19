@@ -61,6 +61,12 @@ class MirrorNode {
   /// mechanism behind per-node rebuilds.
   Object? view;
 
+  /// The mounted element (a BuildContext) that last built this node, set by
+  /// the widget layer. Opaque here like [view]; the geometry host module
+  /// (geometry.dart) reads the node's render box through it to answer
+  /// `getBoundingClientRect()`.
+  Object? element;
+
   /// The style map to read, preferring the interned one. The [props]
   /// fallback keeps hand-encoded frames, replayed logs and Dart-registered
   /// components working.
@@ -102,6 +108,13 @@ class _NodeSignal extends ChangeNotifier {
 /// Applies op frames and notifies listeners (the engine wires this to
 /// setState). ids: node handles from JS; 0 is the root container.
 class MirrorTree {
+  MirrorTree({void Function(String message)? debugLog}) : _debugLog = debugLog;
+
+  /// Optional sink for op-stream diagnostics (specs/070). The engine wires
+  /// it to its log channel so the device-side log sheet can show what the
+  /// op stream actually contained — debugPrint dies with the attach.
+  final void Function(String message)? _debugLog;
+
   final Map<int, MirrorNode> _nodes = {};
   final List<int> _rootChildren = [];
   final Map<int, int> _parentOf = {};
@@ -169,14 +182,23 @@ class MirrorTree {
   /// built from its spans' MirrorNodes, not from their views
   /// (widgets/text.dart), so a change three spans deep has to rebuild the
   /// root or the app keeps showing the old words while the web updates.
-  /// Outside nested text this stops after one step, as before.
+  /// Outside nested text this stops after one step, as before. An HTML
+  /// block box built as one paragraph is a root the same way.
   void _markParent(int? parent) {
     var id = parent;
     while (id != null && id != 0) {
       _dirty.add(id);
       if (_nodes[id]?.tag != 'text') return;
       final up = _parentOf[id];
-      if (up == null || up == 0 || _nodes[up]?.tag != 'text') return;
+      if (up == null || up == 0) return;
+      final upNode = _nodes[up];
+      // an HTML block box can be the paragraph root too (node_adapters.dart
+      // _ViewNodeAdapter): its inline runs are spans of ITS paragraph
+      if (upNode?.tag == 'view' && upNode?.props['htmlBlock'] == true) {
+        _dirty.add(up);
+        return;
+      }
+      if (upNode?.tag != 'text') return;
       id = up;
     }
   }

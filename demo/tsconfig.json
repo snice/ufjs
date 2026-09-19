@@ -15,5 +15,5 @@
     "plugins": ["@ufjs/runtime/volar"],
     "strictTemplates": true
   },
-  "include": ["vite.config.ts", "src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue"]
+  "include": ["vite.config.ts", "vite/**/*.ts", "src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue"]
 }

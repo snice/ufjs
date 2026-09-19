@@ -18,10 +18,10 @@
 // and `changed` (changedTouches) are omitted when they are the same list as
 // `touches` — the single-finger case, which is every frame of a drag.
 // `o` is the LISTENING NODE'S origin, which is what turns those page
-// coordinates into the DOM's offsetX/offsetY. A canvas needs it and nothing
-// else can supply it: the page cannot ask an fjs element where it is
-// (there is no getBoundingClientRect), and hit-testing a drawing against
-// page coordinates is meaningless. Absent from an older host's payload, in
+// coordinates into the DOM's offsetX/offsetY. A canvas needs it on every
+// move, and asking with getBoundingClientRect (a sync host call, see
+// ui/geometry.ts) per event would cost a bridge round trip each time;
+// hit-testing a drawing against page coordinates is meaningless. Absent from an older host's payload, in
 // which case the offsets fall back to the client coordinates.
 
 /** One contact point. Mirrors the DOM `Touch`, minus the radius/force

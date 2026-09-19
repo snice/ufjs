@@ -49,6 +49,7 @@
 // half needs `list-view` (or specs/002's slots). The two are complementary.
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'stretch_flex.dart';
 
 // One thing culling across viewports HAS to do, and did not: invalidate
 // itself. Every scroll viewport is a repaint boundary
@@ -118,8 +119,21 @@ class FjsCullingFlex extends Flex {
     super.mainAxisSize,
     super.crossAxisAlignment,
     super.textBaseline,
+    this.measureCross = false,
     super.children,
   });
+
+  /// See [FjsShrinkStretchFlex.measureCross].
+  final bool measureCross;
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    covariant RenderFjsCullingFlex renderObject,
+  ) {
+    super.updateRenderObject(context, renderObject);
+    renderObject.measureCross = measureCross;
+  }
 
   @override
   RenderFlex createRenderObject(BuildContext context) {
@@ -132,13 +146,13 @@ class FjsCullingFlex extends Flex {
       verticalDirection: verticalDirection,
       textBaseline: textBaseline,
       clipBehavior: clipBehavior,
-    );
+    )..measureCross = measureCross;
   }
 }
 
 /// [RenderFlex] with the paint loop of [RenderBoxContainerDefaultsMixin],
 /// minus the children the clip says nobody can see.
-class RenderFjsCullingFlex extends RenderFlex {
+class RenderFjsCullingFlex extends RenderFlex with FjsShrinkStretchFlex {
   RenderFjsCullingFlex({
     super.direction,
     super.mainAxisAlignment,

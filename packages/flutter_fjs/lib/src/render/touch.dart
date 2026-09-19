@@ -119,7 +119,15 @@ Widget touchNode(
   final action = parseTouchAction(style.touchAction);
   if (!hasTouchEvents(node) && action == TouchAction.auto) return content;
   return FjsTouchNode(
-    key: ValueKey<int>(node.id),
+    // A global key, so a gesture survives its ancestors changing shape. A
+    // style flip mid-drag adds or drops a wrapper above this node — vant's
+    // Slider sets `transition: none` on the bar the moment a drag starts,
+    // and the transition layer goes with it — which used to remount the
+    // listener: the pointer stayed routed to the disposed one and every
+    // move after the first was lost. With a global key Flutter moves this
+    // state and its render object into the new chain instead. Only nodes
+    // with touch handlers get one, so the registry cost stays small.
+    key: GlobalObjectKey(node),
     node: node,
     action: action,
     dispatch: dispatch,
@@ -256,10 +264,10 @@ class _FjsTouchNodeState extends State<FjsTouchNode> {
   }) {
     final buffer = StringBuffer('{"ts":');
     buffer.write(_round(stamp ?? _moveStamp));
-    // The node's own origin. Points are reported in page coordinates, and a
-    // page cannot convert them itself — there is no getBoundingClientRect
-    // here — so the one side that knows the box sends it, and ui/touch.ts
-    // turns it into the DOM's offsetX/offsetY. A `<canvas>` hit-tests
+    // The node's own origin. Points are reported in page coordinates; the
+    // page could ask getBoundingClientRect (geometry.dart) but that is a
+    // bridge call per event, so the side that knows the box sends it with
+    // every one, and ui/touch.ts turns it into the DOM's offsetX/offsetY. A `<canvas>` hit-tests
     // against exactly that.
     final origin = _lastOrigin;
     if (origin != null) {
@@ -324,6 +332,7 @@ class _FjsTouchNodeState extends State<FjsTouchNode> {
   /// teardown cancel) runs against a defunct element, where asking for the
   /// render object throws — that path uses the cached value instead.
   void _captureOrigin() {
+    if (!mounted) return;
     final box = context.findRenderObject();
     if (box is RenderBox && box.hasSize) {
       _lastOrigin = box.localToGlobal(Offset.zero);

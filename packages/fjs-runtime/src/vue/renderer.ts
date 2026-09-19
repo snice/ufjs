@@ -11,9 +11,12 @@ import {
   createRenderer,
   type RendererOptions,
 } from '@vue/runtime-core';
-import { create, forgetHandlers, insert, remove, setHoverStyle, setText, setProps, setStyle, setElementStyleBridge, forgetElementStyle, createRoot, registerSystemHandler, type Element } from '../ui/element';
+import { create, forgetHandlers, forgetElementStyle, insert, remove, setHoverStyle, setText, setProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setOffsetParentResolver, type Element, type EventPayload } from '../ui/element';
+import { transitionClassesOf } from './transition-classes';
+import { lastPointer } from '../ui/geometry';
 import { hasNativeHost, invokeHost } from '../host';
-import { StyleEngine } from '../css/style';
+import { usesDeclaredFont } from '../css/font-face';
+import { INHERITABLE, StyleEngine, type PseudoStyles } from '../css/style';
 
 type HostNode = Element;
 
@@ -57,8 +60,241 @@ const htmlDefaults = new Map<number, Record<string, unknown>>();
 // ---- style engine (<style> blocks: cascade + inheritance) ----
 
 const elementsById = new Map<number, Element>();
+
+// ---- position: fixed hoisting (CSS `fixed` without a DOM viewport) ----
+//
+// The native side has no viewport-anchored positioning: `position: fixed`
+// would fall back to flow layout exactly where the element was authored,
+// which is why a vant popup showed up in the middle of the page. Web keeps
+// these in the viewport via real CSS, so the whole feature is App-side.
+//
+// The engine hands `position: fixed` through untouched; the style callback
+// below re-parents such elements into a dedicated overlay host box (a
+// viewport-filling sibling of the page content under the page root). Vue's
+// vnode tree is not touched — nodeOps.insert/remove translate the logical
+// parent to the host symmetrically, so diffing, anchors and teardown keep
+// working (constitution V: a lopsided translation here would silently
+// corrupt the shadow tree).
+//
+// Step 2 (specs/069) re-targets this hoist at the Dart-side top-level
+// overlay (`fjs-overlay-host`, see contract.md); the translation point is
+// the same.
+
+/** Hoisted element id → the logical parent Vue put it under. The element
+ * physically lives in its page's overlay host, but it still belongs to that
+ * parent: when Vue removes an ancestor, the hoisted element must go too (a
+ * DOM Teleport's content leaves with its owner), and nothing else would
+ * ever tell us — Vue names only the root of a removed subtree. */
+const hoistedFrom = new Map<number, number | null>();
+/** Live page roots by id (flutterRoot → releaseRoot), in mount order. Pages
+ * share this module: a page further down the stack stays alive while
+ * another is pushed on top, so every root keeps its own overlay host. */
+const pageRoots = new Map<number, HostNode>();
+/** Page root id → the viewport box its `fixed` elements live in. */
+const overlayHosts = new Map<number, HostNode>();
+
+/** The page root an element is mounted under; the most recently mounted
+ * root when it is not attached yet (a subtree styled before its insert). */
+function pageRootOf(id: number): HostNode | undefined {
+  for (let cur: number | null | undefined = id; cur != null; cur = parentOf.get(cur)) {
+    const root = pageRoots.get(cur);
+    if (root) return root;
+  }
+  let last: HostNode | undefined;
+  for (const root of pageRoots.values()) last = root;
+  return last;
+}
+
+function ensureOverlayHost(pageRoot: HostNode): HostNode {
+  const existing = overlayHosts.get(pageRoot.id);
+  if (existing) return existing;
+  // the reserved tag (specs/069 contract.md): a Dart adapter renders this
+  // subtree in the root Overlay, so popups float above the shell chrome and
+  // stay put while the page scrolls. Unknown-tag hosts degrade to a plain
+  // view — the step-1 behaviour.
+  const host = create('fjs-overlay-host');
+  track(host);
+  // plain inline style, not engine-registered: the host is a fixture, its
+  // style never cascades and never changes (same reasoning as the v-if
+  // anchors above)
+  setProps(host, {
+    style: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 },
+  });
+  insert(pageRoot, host);
+  const at = childrenOf.get(pageRoot.id)?.length ?? 0;
+  trackInsert(pageRoot, host, at);
+  overlayHosts.set(pageRoot.id, host);
+  return host;
+}
+
+function hoistIfNeeded(el: Element, style: Record<string, unknown>): void {
+  if (style.position !== 'fixed' || hoistedFrom.has(el.id)) return;
+  const pageRoot = pageRootOf(el.id);
+  if (!pageRoot) return; // no page root mounted yet — nothing to hoist into
+  const host = ensureOverlayHost(pageRoot);
+  const logical = parentOf.get(el.id) ?? null;
+  hoistedFrom.set(el.id, logical === host.id ? null : logical);
+  if (logical === host.id) return;
+  trackDetach(el);
+  const at = childrenOf.get(host.id)?.length ?? 0;
+  insert(host, el, at);
+  trackInsert(host, el, at);
+  // the element changed parents: its inheritance chain is now the host (a
+  // clean root), which is what web achieves by teleporting to <body>
+  styleEngine.recomputeSubtree(el.id);
+}
+
+// ---- pseudo-element decoration boxes (::before / ::after) ----
+//
+// The engine computes their styles from the same cascade (selector match,
+// var(), em, inheritance from the originating element) and reports them
+// through the style callback below; this layer materializes each one as a
+// real mirror child — first position for ::before, last for ::after — so
+// layout, painting and hit-testing reuse the existing pipeline (constitution
+// VII: no Dart-side re-implementation of the cascade).
+//
+// The boxes are engine-owned: they are NOT in the Vue-facing shadow
+// childrenOf/parentOf lists, and nodeOps.insert corrects real-child indexes
+// by the number of ::before boxes. In CSS, pseudo-elements never take part
+// in structural pseudo-class counting either, so the exclusion is exact.
+
+const pseudoBoxes = new Map<number, { before?: Element; after?: Element }>();
+
+/** CSS escape sequences (`\e728`, `\e 728`) decode to their code points —
+ * the same transformation a browser applies to `content` before rendering. */
+function unescapeCssContent(text: string): string {
+  return text.replace(/\\(?:([0-9a-fA-F]{1,6})\s?|(.))/g, (_, hex: string | undefined, ch: string | undefined) =>
+    hex ? String.fromCodePoint(parseInt(hex, 16)) : ch!,
+  );
+}
+
+/** Icon fonts put their glyph code points in the private-use areas. A peer
+ * without the icon font cannot render them — a literal "\e728" (or tofu)
+ * inside a 20px box overflows it, which is strictly worse than the empty
+ * decoration box web draws when the font is missing. So the glyph only goes
+ * through when the box's font stack names a family some `@font-face`
+ * declared (specs/071 loads those into the Flutter font table). */
+function isPrivateUseOnly(text: string): boolean {
+  if (text.length === 0) return false;
+  return [...text].every((ch) => {
+    const c = ch.codePointAt(0)!;
+    return (c >= 0xe000 && c <= 0xf8ff) || (c >= 0xf0000 && c <= 0xffffd) || (c >= 0x100000 && c <= 0x10fffd);
+  });
+}
+
+/** `content` values: '' / "text" produce the box (empty or with a text
+ * child); none / normal produce nothing; attr()/counter() are outside the
+ * supported subset (warned, treated as none — constitution V). */
+function pseudoContent(value: unknown, fontFamily?: unknown): string | null {
+  if (value === undefined || value === null) return '';
+  const v = value.toString().trim();
+  if (v === 'none' || v === 'normal') return null;
+  const quoted = /^(["'])(.*)\1$/s.exec(v);
+  if (!quoted) {
+    if (/^[a-z-]+\(/.test(v)) {
+      console.warn(
+        `[fjs css] pseudo-element content "${v}" is not supported (only quoted strings / empty); box skipped`,
+      );
+      return null;
+    }
+    return v;
+  }
+  const text = unescapeCssContent(quoted[2]);
+  // `content: " "` is vant's hairline idiom: the space collapses away in a
+  // browser, leaving a box as tall as its border. A real text child here
+  // gave the box a full line box, and scaleY(.5) then lifted the cell's
+  // bottom hairline ~6px above the cell's edge.
+  if (/^[ \t\n\r\f]*$/.test(text)) return '';
+  return isPrivateUseOnly(text) && !usesDeclaredFont(fontFamily) ? '' : text;
+}
+
+/** The text child of each decoration box that has content, by box id. */
+const pseudoTexts = new Map<number, Element>();
+
+/** A decoration box's text is created here, not by the style engine, and
+ * the peer's text reads only its OWN style — so it gets the box's
+ * inheritable text properties explicitly. Without them an icon glyph drew
+ * in the default font at 14px #333 (a `?` box on iOS, specs/071). */
+function pseudoTextStyle(style: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of INHERITABLE) {
+    if (style[k] !== undefined) out[k] = style[k];
+  }
+  return out;
+}
+
+/** Brings a box's text child in line with [content]: created, updated or
+ * removed. A box is reused across restyles, and its content changes with
+ * the class (vant's Rate and Checkbox swap `content` between glyphs). */
+function syncPseudoText(box: Element, content: string, style: Record<string, unknown>): void {
+  const existing = pseudoTexts.get(box.id);
+  if (!content) {
+    if (existing) {
+      remove(existing);
+      elementsById.delete(existing.id);
+      pseudoTexts.delete(box.id);
+    }
+    return;
+  }
+  if (existing) {
+    setText(existing, content);
+    setStyle(existing, pseudoTextStyle(style));
+    return;
+  }
+  const text = create('text');
+  setText(text, content);
+  setStyle(text, pseudoTextStyle(style));
+  elementsById.set(text.id, text);
+  insert(box, text);
+  pseudoTexts.set(box.id, text);
+}
+
+function dropPseudoBox(box: Element): void {
+  pseudoTexts.delete(box.id);
+  remove(box);
+}
+
+function syncPseudoBoxes(el: Element, styles: PseudoStyles | null): void {
+  if (styles === null) {
+    for (const box of [pseudoBoxes.get(el.id)?.before, pseudoBoxes.get(el.id)?.after]) {
+      if (box) dropPseudoBox(box);
+    }
+    pseudoBoxes.delete(el.id);
+    return;
+  }
+  let entry = pseudoBoxes.get(el.id);
+  if (!entry) pseudoBoxes.set(el.id, (entry = {}));
+  for (const kind of ['before', 'after'] as const) {
+    const decls = styles[kind];
+    const existing = entry[kind];
+    if (decls === undefined) {
+      if (existing) {
+        dropPseudoBox(existing);
+        delete entry[kind];
+      }
+      continue;
+    }
+    const content = pseudoContent(decls.content, decls.fontFamily);
+    const style = { ...decls };
+    delete style.content;
+    if (!existing) {
+      const box = create('view');
+      elementsById.set(box.id, box);
+      setStyle(box, style);
+      syncPseudoText(box, content ?? '', style);
+      // ::before leads the Dart child list (real children shift by one —
+      // nodeOps.insert corrects), ::after trails it (append)
+      insert(el, box, kind === 'before' ? 0 : undefined);
+      entry[kind] = box;
+    } else {
+      setStyle(existing, style);
+      syncPseudoText(existing, content ?? '', style);
+    }
+  }
+}
+
 /** Shared engine instance; css-vars.ts also drives it (useCssVars). */
-export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, activeStyle, hoverStyle) => {
+export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, activeStyle, hoverStyle, pseudo) => {
   const el = elementsById.get(id);
   if (!el) return;
   // `activeStyle` only rides along for elements that some `:active` rule
@@ -74,6 +310,8 @@ export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, act
   // elements that never matched a hover rule (the common case — no bytes at
   // all) and null to clear one the native side may still hold.
   if (hoverStyle !== undefined) setHoverStyle(el, hoverStyle);
+  if (pseudo !== undefined) syncPseudoBoxes(el, pseudo);
+  if (style.position === 'fixed') hoistIfNeeded(el, style);
 });
 
 // The DOM-shaped `el.style` writes funnel into the same engine: libraries
@@ -108,6 +346,55 @@ const hadActiveStyle = new Set<number>();
 
 /** The whole style a v-if / fragment anchor ever needs. */
 const ANCHOR_STYLE = { display: 'none' };
+
+/** DOM `Node.contains` over the shadow tree: true when `other` is this node
+ * or one of its descendants. vant's Checker does
+ * `icon === target || icon.contains(target)` on every tap, so without it the
+ * tap threw `not a function` and Checkbox/Radio never toggled (specs/072).
+ *
+ * It lives here rather than on `Element` in ui/element.ts because that layer
+ * holds no tree — `appendChild` writes an op and forgets. When the React
+ * adapter moves parentOf/childrenOf into a shared ui/tree.ts
+ * (docs/custom-renderer.md), this moves with them.
+ *
+ * One shared function reading `this`, not a closure per node: a page has
+ * thousands of nodes and almost none is ever asked.
+ *
+ * A `position: fixed` element hoisted into the overlay host is, like a
+ * teleported node in the DOM, no longer inside its logical parent. */
+function hostContains(this: HostNode, other: unknown): boolean {
+  let id = (other as { id?: unknown } | null | undefined)?.id;
+  // not one of ours, or already unmounted (forgetSubtree drops it) — the
+  // DOM's answer for a node outside this tree is false too
+  if (typeof id !== 'number' || !elementsById.has(id)) return false;
+  while (id != null) {
+    if (id === this.id) return true;
+    id = parentOf.get(id as number);
+  }
+  return false;
+}
+
+const POSITIONED = new Set(['relative', 'absolute', 'fixed', 'sticky']);
+
+// offsetParent (ui/element.ts): the nearest positioned ancestor, else the
+// page root the element hangs under — the DOM's `<body>` fallback.
+setOffsetParentResolver((id) => {
+  let cur = parentOf.get(id);
+  let last: number | null = null;
+  while (cur != null) {
+    const position = styleEngine.computedOf(cur)?.position;
+    if (typeof position === 'string' && POSITIONED.has(position)) return elementsById.get(cur) ?? null;
+    last = cur;
+    cur = parentOf.get(cur);
+  }
+  return last == null ? null : (elementsById.get(last) ?? null);
+});
+
+/** Registers a renderer-created node and gives it the DOM-shaped members. */
+function track(el: HostNode): void {
+  elementsById.set(el.id, el);
+  (el as HostNode & { contains: typeof hostContains }).contains = hostContains;
+}
 
 /** Takes the child out of its current parent's child list, keeping its own
  * subtree bookkeeping (this is half of a move, not a removal). */
@@ -144,6 +431,8 @@ function forgetSubtree(id: number) {
     elementsById.delete(current);
     hadActiveStyle.delete(current);
     htmlDefaults.delete(current);
+    textValues.delete(current);
+    if (onceFired.size) for (const key of onceFired) if (key.startsWith(`${current}:`)) onceFired.delete(key);
     forgetElementStyle(current);
     // event handlers too, and for the same reason the engine state goes:
     // Vue names only the subtree root, so nothing else would ever drop the
@@ -235,9 +524,16 @@ const H: Record<string, HtmlTagMapping> = {
   label: { tag: 'label', style: { margin: 4, fontSize: 14, color: '#666666' } },
   // `textarea` used to be an alias for `input multiline`. It is a real
   // component now (components/textarea.ts); an alias here would rewrite the
-  // tag before the component is ever instantiated.
+  // tag before the component is ever instantiated. A render function that
+  // asks for the ELEMENT (`h('textarea')`, vant's Field) never meets the
+  // component — createElement turns that one into the same multiline input.
   hr: { tag: 'divider' },
 };
+
+const HTML_BLOCK_TAGS = new Set([
+  'div', 'section', 'main', 'article', 'aside', 'nav', 'header', 'footer', 'li', 'td', 'th',
+  'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+]);
 
 const htmlTagCache = new Map<string, { tag: string; defaults: Record<string, unknown> } | null>();
 
@@ -259,17 +555,77 @@ export function resolveHtmlTag(
 
 // ---- nodeOps ---------------------------------------------------------------
 
+/** Removes one element and its subtree, native side and bookkeeping. */
+function dropElement(child: HostNode): void {
+  // Vue removes only the ROOT of a subtree — the descendants go with it
+  // implicitly, and it never tells us about them. Their engine state does
+  // not go anywhere on its own: forgetting just this node leaves every
+  // element of every unmounted page registered forever, and a later
+  // restyle keeps walking and recomputing them. Measured on the theme
+  // page: one switch between two list containers took `elements` from
+  // 3510 to 6798.
+  const parentId = parentOf.get(child.id);
+  // pseudo-element boxes of the subtree are real mirror nodes the shadow
+  // lists never tracked — drop them explicitly or they outlive their
+  // element (constitution V: silent leaks are still leaks).
+  const stack = [child.id];
+  while (stack.length) {
+    const current = stack.pop()!;
+    const boxes = pseudoBoxes.get(current);
+    if (boxes) {
+      if (boxes.before) remove(boxes.before);
+      if (boxes.after) remove(boxes.after);
+      pseudoBoxes.delete(current);
+    }
+    for (const kid of childrenOf.get(current) ?? []) stack.push(kid);
+  }
+  hoistedFrom.delete(child.id);
+  forgetSubtree(child.id);
+  trackRemove(child);
+  remove(child);
+  if (parentId != null) styleEngine.noteStructureChange(parentId);
+}
+
+/** Hoisted elements whose logical parent is inside the subtree at [id],
+ * nested ones included (a popup inside a popup). */
+function hoistedUnder(id: number): number[] {
+  if (!hoistedFrom.size) return [];
+  const out: number[] = [];
+  const stack = [id];
+  while (stack.length) {
+    const current = stack.pop()!;
+    for (const kid of childrenOf.get(current) ?? []) stack.push(kid);
+    for (const [el, from] of hoistedFrom) {
+      if (from === current && el !== id) {
+        out.push(el);
+        stack.push(el);
+      }
+    }
+  }
+  return out;
+}
+
 const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
   createElement: (rawTag) => {
     const mapped = resolveHtmlTag(rawTag);
-    const el = create(mapped ? mapped.tag : rawTag);
+    // the textarea ELEMENT (see the H table): an unknown tag on the Dart
+    // side rendered nothing at all
+    const el = create(mapped ? mapped.tag : rawTag === 'textarea' ? 'input' : rawTag);
+    if (rawTag === 'textarea') setProps(el, { multiline: true });
+    // An HTML block box keeps its inline content on one line (`<div><span>0
+    // </span>/50</div>`, vant's word limit), where an fjs view stacks its
+    // children. The marker lets the Dart view tell the two apart
+    // (node_adapters.dart, _ViewNodeAdapter); `p` / `h1`… carry it too, so
+    // they are never taken for inline runs inside such a box.
+    if (HTML_BLOCK_TAGS.has(rawTag)) setProps(el, { htmlBlock: true });
     if (mapped) {
       // remember defaults; the style engine merges them ahead of matched
       // rules and user style
       htmlDefaults.set(el.id, mapped.defaults);
       if (rawTag === 'br') setText(el, '\n');
     }
-    elementsById.set(el.id, el);
+    track(el);
+    if (TEXT_CONTROL_TAGS.has(el.tag)) installTextControlValue(el);
     styleEngine.ensure(el.id, rawTag, mapped?.defaults.style as Record<string, unknown> | undefined);
     childrenOf.set(el.id, []);
     parentOf.set(el.id, null);
@@ -279,12 +635,29 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
   createText: (text) => {
     const el = create('text');
     if (text) setText(el, text);
-    elementsById.set(el.id, el);
+    track(el);
     // raw = renderer-synthesized bare text: excluded from structural-pseudo
     // sibling position (in the browser DOM this child is a text node, not an
     // element — an explicit <text> the page wrote IS one on both ends)
     styleEngine.ensure(el.id, 'text', undefined, true);
     return el;
+  },
+
+  insertStaticContent: (content) => {
+    // Only reachable from hand-written render functions that call
+    // createStaticVNode: the app build compiles with hoistStatic:false
+    // (specs/070) precisely because this contract is DOM-innerHTML — a
+    // browser clones template nodes between el and anchor. Fail with the
+    // remedy in the message rather than "not a function" from deep inside
+    // vue's mount (which used to blank the whole page, silently).
+    void content;
+    throw new Error(
+      '[fjs] createStaticVNode is not supported by the fjs renderer: ' +
+        'static content mounts through DOM innerHTML semantics. ' +
+        'Hand-written render functions must build regular vnodes (h/crea' +
+        'teVNode); SFC templates are already compiled with hoistStatic:f' +
+        'alse.',
+    );
   },
 
   createComment: (text) => {
@@ -302,7 +675,7 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     // misses.
     void text;
     const el = create('view');
-    elementsById.set(el.id, el);
+    track(el);
     setProps(el, { style: ANCHOR_STYLE });
     return el;
   },
@@ -324,42 +697,51 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     // lands one slot too far, and the shadow list ends up holding its id
     // twice.
     trackDetach(child);
-    const siblings = childrenOf.get(parent.id) ?? [];
+    // A `position: fixed` element lives in the overlay host, whatever Vue's
+    // vnode tree says; moves redirect there so the translation stays
+    // symmetric with remove() (see the hoisting block above).
+    let target = parent;
+    if (hoistedFrom.has(child.id)) {
+      // Vue moved it: it now belongs to `parent`, and lives in the overlay
+      // host of whatever page that parent is on
+      hoistedFrom.set(child.id, parent.id);
+      const pageRoot = pageRootOf(parent.id);
+      if (pageRoot) target = ensureOverlayHost(pageRoot);
+    }
+    const siblings = childrenOf.get(target.id) ?? [];
     let index = siblings.length;
-    if (anchor) {
+    if (target === parent && anchor) {
       const ai = siblings.indexOf(anchor.id);
       if (ai >= 0) index = ai;
     }
-    insert(parent, child, index);
-    trackInsert(parent, child, index);
+    // ::before decoration boxes lead the native child list but are not in
+    // the shadow list Vue indexes against — shift real children past them.
+    const beforeBoxes = target === parent ? (pseudoBoxes.get(parent.id)?.before ? 1 : 0) : 0;
+    insert(target, child, index + beforeBoxes);
+    trackInsert(target, child, index);
     // the child just gained an ancestor chain: recompute inheritance and
     // descendant/:deep selectors for its subtree
     styleEngine.recomputeSubtree(child.id);
     // the child also landed between siblings: first/last positions may have
     // flipped for the neighbors it displaced (structural pseudos)
-    styleEngine.noteStructureChange(parent.id);
+    styleEngine.noteStructureChange(target.id);
   },
 
   remove: (child) => {
-    // Vue removes only the ROOT of a subtree — the descendants go with it
-    // implicitly, and it never tells us about them. Their engine state does
-    // not go anywhere on its own: forgetting just this node leaves every
-    // element of every unmounted page registered forever, and a later
-    // restyle keeps walking and recomputing them. Measured on the theme
-    // page: one switch between two list containers took `elements` from
-    // 3510 to 6798.
-    const parentId = parentOf.get(child.id);
-    forgetSubtree(child.id);
-    trackRemove(child);
-    remove(child);
-    if (parentId != null) styleEngine.noteStructureChange(parentId);
+    // hoisted descendants first: they are not under `child` in the lists
+    // below (they live in the overlay host), but they leave with it
+    for (const id of hoistedUnder(child.id)) {
+      const el = elementsById.get(id);
+      if (el) dropElement(el);
+    }
+    dropElement(child);
   },
 
   parentNode: (node) => {
     const parentId = parentOf.get(node.id);
     if (parentId == null) return null;
-    // reconstruct a lightweight handle for the parent
-    return makeHandle(parentId);
+    // the REAL element, not a fresh wrapper — see nextSibling
+    return elementsById.get(parentId) ?? makeHandle(parentId);
   },
 
   nextSibling: (node) => {
@@ -368,7 +750,13 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     const list = childrenOf.get(parentId) ?? [];
     const idx = list.indexOf(node.id);
     if (idx < 0 || idx + 1 >= list.length) return null;
-    return makeHandle(list[idx + 1]);
+    // the REAL element, not a fresh wrapper: vue's removeFragment walks
+    // siblings until `cur === end`, comparing by IDENTITY against the anchor
+    // element it stored at mount. A fresh handle never equals it, the walk
+    // runs off the child list, and the next call hands us null — vant's
+    // click-to-loading button unmounts a fragment exactly this way and took
+    // the whole patch down with it.
+    return elementsById.get(list[idx + 1]) ?? makeHandle(list[idx + 1]);
   },
 
   querySelector: () => null, // not supported (no DOM)
@@ -432,6 +820,93 @@ function aliasEvent(tag: string, prop: string): string {
   return HTML_EVENT_ALIASES[prop] ?? prop;
 }
 
+/** Wraps the raw payload string in the DOM-shaped event object Vue-authored
+ * code expects (vant's onClick starts with `event.stopPropagation()`). Touch
+ * payloads are already objects and pass through untouched; `detail` carries
+ * the payload string, matching the DOM event's shape. A payload-less event
+ * (a tap) still gets the object — a DOM click handler always receives one,
+ * and vant's stepper calls `preventDefault(event)` on it first thing.
+ *
+ * `target` / `currentTarget` are the element itself, as in the DOM. On a
+ * text control the event's text is also its `value` — the DOM input's
+ * `value` property is the live text — because that is where DOM code reads
+ * it: vant's Field does `if (!event.target.composing)
+ * updateValue(event.target.value)`, and without a target every keystroke
+ * threw and v-model never updated (specs/070). */
+function asDomEvent(el: HostNode, payload: EventPayload): unknown {
+  if (payload !== undefined && typeof payload === 'object') return payload;
+  // the native side already shows this text: record it, do not echo it back
+  if (typeof payload === 'string' && textValues.has(el.id)) textValues.set(el.id, payload);
+  const event = {
+    detail: payload,
+    target: el,
+    currentTarget: el,
+    stopPropagation() {},
+    stopImmediatePropagation() {},
+    preventDefault() {},
+  };
+  // A click's position, read lazily (a sync host call) because almost no
+  // handler wants it — vant's Slider does: `clientX - rect.left` on a tap
+  // of the track is the new value.
+  let point: { x: number; y: number } | null | undefined;
+  const at = (): { x: number; y: number } | null => (point === undefined ? (point = lastPointer()) : point);
+  for (const [key, axis] of [['clientX', 'x'], ['clientY', 'y'], ['pageX', 'x'], ['pageY', 'y']] as const) {
+    Object.defineProperty(event, key, { enumerable: true, get: () => at()?.[axis] ?? 0 });
+  }
+  return event;
+}
+
+/** Vue compiles event modifiers into the prop name (`@touchstart.passive`
+ * → `onTouchstartPassive`, and vant writes that key by hand); runtime-dom
+ * peels them off before registering the listener. Passive and capture mean
+ * nothing on this side — there is no default action to protect and no
+ * capture phase — so only `once` changes behaviour. */
+const OPTION_MODIFIER = /(?:Once|Passive|Capture)$/;
+
+/** `${elementId}:${event}` of every `.once` handler that already ran. */
+const onceFired = new Set<string>();
+
+function parseEventName(prop: string): { name: string; once: boolean } {
+  let name = prop;
+  let once = false;
+  let m: RegExpMatchArray | null;
+  while ((m = name.match(OPTION_MODIFIER))) {
+    if (m[0] === 'Once') once = true;
+    name = name.slice(0, name.length - m[0].length);
+  }
+  return { name, once };
+}
+
+/** Tags whose string event payload is the control's current text. */
+const TEXT_CONTROL_TAGS = new Set(['input', 'textarea']);
+
+/** Live text of each text control, keyed by element id. */
+const textValues = new Map<number, string>();
+
+/** Gives a text control the DOM input's `value` property. Reading returns
+ * the live text (the last input event, or the last write); writing pushes
+ * the text to the native control — vant's Field shows its v-model value,
+ * clears, and applies formatters exclusively through
+ * `inputRef.value.value = text`, so a plain data property there left the
+ * App input stuck on whatever was typed (specs/070). */
+function installTextControlValue(el: HostNode): void {
+  textValues.set(el.id, '');
+  Object.defineProperty(el, 'value', {
+    configurable: true,
+    get: () => textValues.get(el.id) ?? '',
+    set: (v: unknown) => {
+      const next = v == null ? '' : String(v);
+      if (next === textValues.get(el.id)) return;
+      textValues.set(el.id, next);
+      setProps(el, { value: next });
+    },
+  });
+  // The caret is native-side state with no bridge; vant calls this right
+  // after rewriting the value while focused. A no-op leaves the caret where
+  // the native control puts it (at the end) instead of throwing.
+  (el as HostNode & { setSelectionRange?: () => void }).setSelectionRange = () => {};
+}
+
 export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
   el,
   key,
@@ -441,8 +916,11 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
   const prop = camelize(key);
   if (prop === 'class') {
     // Vue hands us the normalized class string; the style engine matches
-    // CSS rules against it
-    styleEngine.setClasses(el.id, nextValue);
+    // CSS rules against it. Classes a running <Transition> put on the
+    // element ride outside Vue's value — merge them back or the class patch
+    // would drop them mid-animation (runtime-dom does the same via `_vtc`).
+    const vtc = transitionClassesOf(el);
+    styleEngine.setClasses(el.id, vtc.length ? `${nextValue ?? ''} ${vtc.join(' ')}` : nextValue);
     return;
   }
   if (prop === 'href' || prop === 'srcset') {
@@ -454,19 +932,58 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
     setProps(el, { id: nextValue == null ? null : String(nextValue) });
     return;
   }
+  if (prop === 'value' && textValues.has(el.id)) {
+    // keep the DOM-shaped `el.value` in step with a `:value` binding
+    textValues.set(el.id, nextValue == null ? '' : String(nextValue));
+  }
   if (prop === 'src' || prop === 'value' || prop === 'placeholder') {
     setProps(el, { [prop]: nextValue });
     return;
   }
   if (prop.startsWith('on')) {
-    const native = aliasEvent(el.tag, prop);
+    const { name, once } = parseEventName(prop);
+    const native = aliasEvent(el.tag, name);
     if (nextValue == null) {
       // detach: marker false + drop registry entry (handled in setProps util)
+      onceFired.delete(`${el.id}:${native}`);
       setProps(el, { [native]: null });
     } else {
-      setProps(el, { [native]: nextValue });
+      // Vue-authored handlers speak DOM: vant's onClick calls
+      // event.stopPropagation() before anything else, so handing them the
+      // raw payload string (the element-API convention) crashes on the
+      // first tap. Wrap once here: the handler gets a DOM-shaped event
+      // whose `detail` carries the original payload. The raw element API
+      // (ui/element.ts dispatch) keeps passing the payload unchanged.
+      //
+      // A component that binds its own onClick and also lets the parent's
+      // `@click` fall through gets both merged into an array (mergeProps):
+      // vant's Cell is `[route, userHandler]`. The DOM renderer calls each in
+      // turn; calling the array itself threw and the user's handler never ran.
+      const handlers = (Array.isArray(nextValue) ? nextValue : [nextValue]) as ((
+        e: unknown,
+      ) => void)[];
+      // `.once` is remembered per element and event, not per closure: an
+      // inline handler is a new function every render, and Vue re-patches
+      // the prop each time — a closure flag would re-arm on every render
+      const onceKey = `${el.id}:${native}`;
+      setProps(el, {
+        [native]: (payload?: EventPayload) => {
+          if (once) {
+            if (onceFired.has(onceKey)) return;
+            onceFired.add(onceKey);
+          }
+          const event = asDomEvent(el, payload);
+          for (const h of handlers) h(event);
+        },
+      });
     }
     return;
+  }
+  if (prop === 'disabled') {
+    // `:disabled` rules (vant greys a disabled field's text with one); the
+    // prop still reaches the native control below. Vue hands a boolean
+    // attribute over as '' when present.
+    styleEngine.setDisabled(el.id, nextValue != null && nextValue !== false);
   }
   if (prop === 'style') {
     // object or inline CSS string; the engine merges tag defaults, matched
@@ -516,7 +1033,26 @@ export function flutterRoot(tag = 'view'): HostNode {
   const root = createRoot(tag);
   childrenOf.set(root.id, []);
   parentOf.set(root.id, null);
+  pageRoots.set(root.id, root);
   return root;
+}
+
+/** Retires a page root after its app unmounted (the router's teardown). Its
+ * Dart subtree — the overlay host and everything left in it — goes with the
+ * page; keeping the ids here would let a later write target a parent the
+ * host already dropped ("op references unknown parent": a blank page after
+ * a hot swap). */
+export function releaseRoot(root: HostNode): void {
+  const host = overlayHosts.get(root.id);
+  if (host) {
+    for (const id of childrenOf.get(host.id) ?? []) hoistedFrom.delete(id);
+    forgetSubtree(host.id);
+    overlayHosts.delete(root.id);
+  }
+  forgetSubtree(root.id);
+  parentOf.delete(root.id);
+  childrenOf.delete(root.id);
+  pageRoots.delete(root.id);
 }
 
 /** Registers a SFC <style> block with the style engine (called by the code

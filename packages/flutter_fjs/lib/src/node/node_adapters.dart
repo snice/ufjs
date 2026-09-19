@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../ffi.dart' show FjsEvent;
+import '../mirror_tree.dart' show MirrorNode;
+import '../render/style.dart' show FjsStyle;
 import '../render/decoration.dart';
 import '../render/flex.dart';
 import '../widgets/button.dart';
@@ -11,6 +13,7 @@ import '../widgets/group.dart';
 import '../widgets/image.dart';
 import '../widgets/input.dart';
 import '../widgets/label.dart';
+import 'overlay_host_adapter.dart';
 import '../widgets/list_view.dart';
 import '../widgets/modal.dart';
 import '../widgets/page_container.dart';
@@ -21,6 +24,7 @@ import '../widgets/scroll_behavior.dart';
 import '../widgets/scroll_view.dart';
 import '../widgets/slider.dart';
 import '../widgets/sticky.dart';
+import '../widgets/svg.dart';
 import '../widgets/swiper.dart';
 import '../widgets/switch.dart';
 import '../widgets/text.dart';
@@ -33,6 +37,7 @@ const builtInNodeAdapters = <FjsNodeAdapter>[
   _TextNodeAdapter(),
   _ImageNodeAdapter(),
   _CanvasNodeAdapter(),
+  _SvgNodeAdapter(),
   _ButtonNodeAdapter(),
   _InputNodeAdapter(),
   _ScrollViewNodeAdapter(),
@@ -56,6 +61,7 @@ const builtInNodeAdapters = <FjsNodeAdapter>[
   _PageContainerNodeAdapter(),
   _StickyHeaderNodeAdapter(),
   _StickySectionNodeAdapter(),
+  OverlayHostNodeAdapter(),
 ];
 
 final builtInNodeAdapterByTag = Map<String, FjsNodeAdapter>.unmodifiable({
@@ -109,6 +115,20 @@ class _CanvasNodeAdapter extends FjsNodeAdapter {
   }
 }
 
+/// Inline `<svg>`: the node paints its whole shape subtree itself, so the
+/// children are never built as widgets (widgets/svg.dart).
+class _SvgNodeAdapter extends FjsNodeAdapter {
+  const _SvgNodeAdapter();
+
+  @override
+  String get tag => 'svg';
+
+  @override
+  Widget build(FjsNodeAdapterContext context) {
+    return FjsSvg(tree: context.tree, nodeId: context.node.id);
+  }
+}
+
 class _ButtonNodeAdapter extends FjsNodeAdapter {
   const _ButtonNodeAdapter();
 
@@ -117,18 +137,33 @@ class _ButtonNodeAdapter extends FjsNodeAdapter {
 
   @override
   Widget build(FjsNodeAdapterContext context) {
-    return buildButton(
+    final button = buildButton(
       context.tree,
       context.node,
       context.style,
       context.dispatch,
+      buildChildren: context.buildChildren,
     );
+    // The button draws its label, not its children — except absolutely
+    // positioned ones, which are decoration over the box: vant's stepper
+    // +/- signs are `::before`/`::after` lines centred on a bare <button>.
+    // Lay those over it like any positioned box does.
+    final over = <(MirrorNode?, Widget)>[
+      for (final child in context.childNodes)
+        if (context.style.isPositioningContext &&
+            isOutOfFlowPosition(FjsStyle.of(child).position))
+          (child, context.buildNode(context.flutterContext, child)),
+    ];
+    if (over.isEmpty) return button;
+    return stackOutOfFlow(context.style, button, over);
   }
 
   @override
   Widget decorate(FjsNodeAdapterContext context, Widget content) {
     final chrome = fjsButtonChrome(context.node, context.style);
-    final active = context.pressed && fjsButtonIsInteractive(context.node);
+    final active = context.pressed &&
+        fjsButtonIsInteractive(context.node) &&
+        fjsButtonCursorAllowsPress(context.node);
     return decorateNode(
       context.style,
       content,
@@ -643,8 +678,51 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
   @override
   String get tag => 'view';
 
+  /// An HTML block box (`div`, marked `htmlBlock` by the Vue renderer)
+  /// whose content is only inline text — spans and bare text nodes — is
+  /// ONE paragraph in the browser: vant's word limit is `<div><span>0</span>
+  /// /50</div>`, and laying the three out as a column stood them on three
+  /// lines. An fjs view has no marker and keeps stacking its children, as
+  /// its web adapter does. Any child that is a box of its own (a view, an
+  /// image, a block/flex/positioned text) keeps the ordinary layout: there
+  /// is no general inline formatting context (css-compat.md).
+  static bool _isInlineParagraph(FjsNodeAdapterContext context) {
+    final node = context.node;
+    if (node.props['htmlBlock'] != true) return false;
+    final display = context.style.display;
+    if (display != null && display != 'block') return false;
+    final kids = context.childNodes;
+    final ownText = node.text != null && node.text!.isNotEmpty;
+    if (kids.isEmpty || (kids.length < 2 && !ownText)) return false;
+    for (final kid in kids) {
+      if (kid.tag != 'text' || kid.props['htmlBlock'] == true) return false;
+      final style = FjsStyle.of(kid);
+      final d = style.display;
+      if (d != null && d != 'inline') return false;
+      if (isOutOfFlowPosition(style.position)) return false;
+    }
+    return true;
+  }
+
   @override
   Widget build(FjsNodeAdapterContext context) {
+    if (_isInlineParagraph(context)) {
+      return buildBox(
+        context.style,
+        [
+          buildText(
+            context.node,
+            context.style,
+            tree: context.tree,
+            childNodes: context.childNodes,
+            buildNode: (child) =>
+                context.buildNode(context.flutterContext, child),
+          ),
+        ],
+        const [null],
+        growChildren: context.isRoot,
+      );
+    }
     var kids = context.buildChildren();
     // A view whose content is a bare string (`<view>文字</view>`, `{{ x }}`)
     // carries it as the node's own element text: Vue hands it over through

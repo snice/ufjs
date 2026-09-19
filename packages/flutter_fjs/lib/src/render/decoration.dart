@@ -10,6 +10,29 @@ import 'length.dart';
 import 'style.dart';
 import 'style_parse.dart';
 
+
+/// Resolves a percentage border-radius against the box's own definite
+/// width/height (`van-radio`'s `border-radius: 100%` circle). Null when any
+/// corner carries a fraction but the box size is not definite — content-sized
+/// boxes keep square corners, registered in css-compat.md. Absolute px parts
+/// always apply.
+BorderRadius? _fractionRadius(FjsStyle style) {
+  final parts = style.borderRadiusParts;
+  if (parts == null || !parts.any((p) => p.fraction != 0)) return null;
+  double? absPx(FjsLength? l) => l == null || l.isRelative ? null : l.px;
+  final w = absPx(style.widthLength);
+  final h = absPx(style.heightLength);
+  if (w == null || h == null) return null;
+  Radius corner(BorderRadiusPart p) =>
+      Radius.elliptical(p.px + p.fraction * w, p.px + p.fraction * h);
+  return BorderRadius.only(
+    topLeft: corner(parts[0]),
+    topRight: corner(parts[1]),
+    bottomRight: corner(parts[2]),
+    bottomLeft: corner(parts[3]),
+  );
+}
+
 /// Applies [style]'s box properties to [content].
 Widget decorateNode(
   FjsStyle style,
@@ -53,7 +76,14 @@ Widget decorateNode(
   // hairline fills in only the sides the page said nothing about.
   final borders = style.boxBorders(defaultBorderColor: defaultBorderColor);
   final side = borders == null || borders.isNone ? null : borders;
-  final borderRadius = style.borderRadius ?? defaultBorderRadius;
+  // A percentage radius references the box's own size. When the box's
+  // width/height are definite (absolute px as authored) the corners resolve
+  // right here — van-radio's circle, van-switch's knob. A content-sized box
+  // with a percentage radius keeps square corners (css-compat.md); pulling
+  // the size out of an arbitrary layout would need the whole decorated-box
+  // build deferred behind a LayoutBuilder.
+  final borderRadius =
+      style.borderRadius ?? _fractionRadius(style) ?? defaultBorderRadius;
   final radiusPainted =
       borderRadius != null && borderRadius != BorderRadius.zero;
   // Which of the three painters a non-uniform set needs:
@@ -100,20 +130,32 @@ Widget decorateNode(
   // out because a percentage size only becomes pixels inside a layout pass
   // (below); everything else about the box is the same either way.
   //
-  // `transition: background-color …` (or `all`, spec 045): a solid
-  // background then animates through a TweenAnimationBuilder, whose
-  // semantics are exactly the CSS transition's — the first frame takes the
-  // value as-is, a changed target interpolates from wherever the previous
-  // animation was. track.delay is NOT honored here: TweenAnimationBuilder
-  // has no delay hook (transform/opacity keep their Timer-based delay in
-  // _TransitionNode); the gap is registered in css-compat.md.
-  final backgroundTrack = background != null && style.gradient == null
-      // track property names are camelized by _normalizeTransitionProperty
-      // (`background-color` in CSS arrives as `backgroundColor`)
-      ? style.transitions?.forProperty('backgroundColor')
-      : null;
-  final animatesBackground =
-      backgroundTrack != null && backgroundTrack.duration > Duration.zero;
+  // `transition: background-color …` / `border-color …` (or `all`, spec
+  // 045): the decoration then animates through a TweenAnimationBuilder,
+  // whose semantics are exactly the CSS transition's — the first frame takes
+  // the value as-is, a changed target interpolates from wherever the
+  // previous animation was. The builder stays in the tree whenever the
+  // track is declared, not only while a background is set: vant's checkbox
+  // goes from NO background to blue on check, and a builder that appears
+  // together with its first color has nothing to animate from (the flip
+  // snapped). BoxDecoration.lerp fades a missing color from transparent.
+  // track.delay is NOT honored here: TweenAnimationBuilder has no delay hook
+  // (transform/opacity keep their Timer-based delay in _TransitionNode); the
+  // gap is registered in css-compat.md.
+  //
+  // track property names are camelized by _normalizeTransitionProperty
+  // (`background-color` in CSS arrives as `backgroundColor`)
+  FjsTransitionTrack? liveTrack(String name) {
+    final track = style.transitions?.forProperty(name);
+    return track != null && track.duration > Duration.zero ? track : null;
+  }
+
+  final decorationTrack = style.gradient != null
+      ? null
+      : liveTrack('backgroundColor') ??
+            (border is Border ? liveTrack('borderColor') : null);
+  // declared track keeps the box even while it paints nothing yet
+  final animatesDecoration = decorationTrack != null;
   Widget box(Widget child, double? width, double? height) {
     // width/height (or `all`) tracks animate the resolved size the same way
     // (spec 045 追加). Size is a LAYOUT property: every animation frame
@@ -153,35 +195,36 @@ Widget decorateNode(
       return out;
     }
 
-    Widget buildBox(Color? color) {
+    final decoration = BoxDecoration(
+      color: background,
+      gradient: style.gradient,
+      borderRadius: borderRadius,
+      border: border,
+      boxShadow: style.boxShadows,
+    );
+    Widget buildBox(Decoration decoration, Widget? inner) {
       return Container(
         key: foregroundKey,
         // the animated axes move to the outer animated SizedBox — a tight
         // constraint the decorated box fills, so background/border track it
         width: animatesWidth ? null : width,
         height: animatesHeight ? null : height,
-        decoration: BoxDecoration(
-          color: color,
-          gradient: style.gradient,
-          borderRadius: borderRadius,
-          border: border,
-          boxShadow: style.boxShadows,
-        ),
+        decoration: decoration,
         foregroundDecoration: foregroundDecoration,
-        child: child,
+        child: inner,
       );
     }
 
-    if (decorated) {
+    if (decorated || animatesDecoration) {
       Widget out;
-      if (!animatesBackground) {
-        out = buildBox(background);
+      if (!animatesDecoration) {
+        out = buildBox(decoration, child);
       } else {
-        out = TweenAnimationBuilder<Color?>(
-          tween: ColorTween(end: background),
-          duration: backgroundTrack.duration,
-          curve: backgroundTrack.curve,
-          builder: (_, color, inner) => buildBox(color ?? background),
+        out = TweenAnimationBuilder<Decoration>(
+          tween: DecorationTween(end: decoration),
+          duration: decorationTrack.duration,
+          curve: decorationTrack.curve,
+          builder: (_, value, inner) => buildBox(value, inner),
           child: child,
         );
       }
@@ -209,7 +252,12 @@ Widget decorateNode(
       ),
     );
   } else {
-    w = box(w, style.width, style.height);
+    // widthLength covers every absolute form including calc() — a
+    // pure-absolute calc folds to px here, e.g. vant's
+    // `--van-switch-width: calc(1.8em + 4px)` (em already rewritten by the
+    // engine). style.width's parseLength would drop the calc silently and
+    // the box collapsed to auto.
+    w = box(w, widthLength?.px, heightLength?.px);
   }
   if (paintedOver) {
     w = CustomPaint(
@@ -335,6 +383,7 @@ Widget transitionNode(
   Widget content, {
   required Object? key,
   bool stableTransform = false,
+  bool stableOpacity = false,
 }) {
   final transitions = style.transitions;
   final transformTrack = transitions?.forProperty('transform');
@@ -346,6 +395,7 @@ Widget transitionNode(
       style.transform != null ||
       (transformTrack != null && transformTrack.duration > Duration.zero);
   final wantsOpacity =
+      stableOpacity ||
       style.opacity != null ||
       (opacityTrack != null && opacityTrack.duration > Duration.zero);
   final animatesTransform =
@@ -357,18 +407,31 @@ Widget transitionNode(
       opacityTrack.duration > Duration.zero &&
       wantsOpacity;
 
+  // `%` translations resolve against the box's own size, known only at
+  // layout — FractionalTranslation does exactly that. It wraps OUTSIDE the
+  // matrix: CSS applies the list left to right, and `%` translations lead
+  // in the idioms that use them (see [parseTransformFraction]). When the
+  // transform track animates, the node owns the fraction and tweens it with
+  // the matrix (one CSS transform, one transition) — vant's popup slide IS
+  // a fraction flip (`enter-from: translate3d(0, 100%, 0)`), and a static
+  // wrapper here would jump instead of slide.
+  final fraction = style.transformFraction;
   if (transitions?.hasAnimatedTrack != true &&
       !wantsTransform &&
       !wantsOpacity) {
-    return content;
+    return fraction == null
+        ? content
+        : FractionalTranslation(translation: fraction, child: content);
   }
   return _TransitionNode(
     key: key == null ? null : ValueKey<Object>(key),
     transform: transform,
     opacity: opacity,
+    fraction: fraction,
     transformTrack: animatesTransform ? transformTrack : null,
     opacityTrack: animatesOpacity ? opacityTrack : null,
     stableTransform: wantsTransform,
+    stableOpacity: stableOpacity,
     child: content,
   );
 }
@@ -391,15 +454,22 @@ class _TransitionNode extends StatefulWidget {
     super.key,
     required this.transform,
     required this.opacity,
-    required this.stableTransform,
-    required this.child,
+    this.fraction,
     this.transformTrack,
     this.opacityTrack,
+    required this.stableTransform,
+    this.stableOpacity = false,
+    required this.child,
   });
 
   final Matrix4 transform;
   final double opacity;
+
+  /// The `%` part of the transform list, tweened with the matrix by the
+  /// transform track (see [transitionNode]).
+  final Offset? fraction;
   final bool stableTransform;
+  final bool stableOpacity;
   final FjsTransitionTrack? transformTrack;
   final FjsTransitionTrack? opacityTrack;
   final Widget child;
@@ -420,12 +490,15 @@ class _TransitionNodeState extends State<_TransitionNode>
   Matrix4? _transformEnd;
   double? _opacityBegin;
   double? _opacityEnd;
+  Offset? _fractionBegin;
+  Offset? _fractionEnd;
 
   @override
   void initState() {
     super.initState();
     _transformEnd = widget.transform.clone();
     _opacityEnd = widget.opacity;
+    _fractionEnd = widget.fraction ?? Offset.zero;
     _syncControllers(oldWidget: null);
   }
 
@@ -433,7 +506,8 @@ class _TransitionNodeState extends State<_TransitionNode>
   void didUpdateWidget(covariant _TransitionNode oldWidget) {
     super.didUpdateWidget(oldWidget);
     _syncControllers(oldWidget: oldWidget);
-    if (!_sameMatrix(widget.transform, oldWidget.transform)) {
+    if (!_sameMatrix(widget.transform, oldWidget.transform) ||
+        widget.fraction != oldWidget.fraction) {
       _retargetTransform(oldWidget);
     }
     if (widget.opacity != oldWidget.opacity) {
@@ -448,6 +522,8 @@ class _TransitionNodeState extends State<_TransitionNode>
       _transformAnimation = null;
       _transformBegin = null;
       _transformEnd = widget.transform.clone();
+      _fractionBegin = null;
+      _fractionEnd = widget.fraction ?? Offset.zero;
     }
     if (widget.opacityTrack == null) {
       _opacityDelay?.cancel();
@@ -491,11 +567,16 @@ class _TransitionNodeState extends State<_TransitionNode>
     final controller = _transformController;
     if (controller == null) {
       _transformEnd = widget.transform.clone();
+      _fractionEnd = widget.fraction ?? Offset.zero;
       _transformBegin = null;
       return;
     }
     _transformBegin = _currentTransform(oldWidget.transform).clone();
     _transformEnd = widget.transform.clone();
+    // `transform: none` is the identity — a dropped fraction tweens to zero,
+    // it does not disappear mid-flight
+    _fractionBegin = oldWidget.fraction ?? Offset.zero;
+    _fractionEnd = widget.fraction ?? Offset.zero;
     _transformDelay?.cancel();
     _run(
       controller,
@@ -554,6 +635,16 @@ class _TransitionNodeState extends State<_TransitionNode>
     return Matrix4Tween(begin: begin, end: end).transform(animation.value);
   }
 
+  /// The tweened `%` translation while the transform track runs; the
+  /// element's own fraction otherwise.
+  Offset? _currentFraction() {
+    final animation = _transformAnimation;
+    if (_fractionBegin == null || _fractionEnd == null || animation == null) {
+      return widget.fraction;
+    }
+    return Offset.lerp(_fractionBegin, _fractionEnd, animation.value);
+  }
+
   double _currentOpacity(double fallback) {
     final begin = _opacityBegin;
     final end = _opacityEnd;
@@ -585,6 +676,12 @@ class _TransitionNodeState extends State<_TransitionNode>
       child: widget.child,
       builder: (context, child) {
         Widget w = child!;
+        // `%` translations lead the transform list: translation outside the
+        // matrix, tweened with it
+        final fraction = _currentFraction();
+        if (fraction != null) {
+          w = FractionalTranslation(translation: fraction, child: w);
+        }
         if (widget.stableTransform) {
           w = Transform(
             transform: _currentTransform(widget.transform),
@@ -593,7 +690,7 @@ class _TransitionNodeState extends State<_TransitionNode>
           );
         }
         final opacity = _currentOpacity(widget.opacity).clamp(0.0, 1.0);
-        if (opacity < 1 || widget.opacityTrack != null) {
+        if (opacity < 1 || widget.opacityTrack != null || widget.stableOpacity) {
           w = Opacity(opacity: opacity, child: w);
         }
         return w;

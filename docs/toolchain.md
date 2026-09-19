@@ -204,6 +204,36 @@ export default (app: App) => app.use(pinia);
 `fjs add pinia` 生成的文件已经是这个形状。`fjs build --pages` 下 `fjs/plugins` 走
 共享 chunk，页面 chunk 通过 `__FJS_SHARED` 引用同一个 store 模块。
 
+### UI 组件库适配：vite 插件的 `fjs.app` 钩子
+
+App 端打包（`fjs dev` / `fjs build`）走 esbuild，不跑 Vite。但组件库的适配仍然写在
+项目的 `vite.config` 里：一处声明，两端生效。一个 Vite 插件只要带上 `fjs.app`
+钩子，App 端打包就会加载 `vite.config`，并对匹配的文件执行这个钩子：
+
+```ts
+import { fjs } from '@ufjs/cli/vite';
+import { vant } from './vite/vant';   // 项目本地的插件文件
+
+export default defineConfig({ plugins: [fjs(), vant(), vue()] });
+```
+
+```ts
+// 插件作者：钩子的形状（类型见 @ufjs/cli/vite 的 FjsAppHook）
+{ name: 'my-ui', fjs: { app: {
+    filter: /\/my-ui\/dist\/.*\.mjs$/,   // 绝对路径、`/` 分隔、Go 正则（esbuild onLoad）
+    transform(code, id) { return patched },  // 返回 null 表示不改
+} } }
+```
+
+- 只有声明了 `fjs.app` 的插件会在 App 端执行；plugin-vue、`fjs()` 等仍只作用于 web。
+- 多个钩子命中同一文件时，按 config 里的顺序串联；`.vue` / `.css` 仍由 fjs 自己编译。
+- `vite.config` 每个进程只加载一次，改了之后要重启 `fjs dev`。
+- 组件库特有的处理（源码补丁这类）一律放进这种插件，**不进** `@ufjs/cli` 和
+  `@ufjs/runtime`；runtime 只提供通用的 DOM/CSS 兼容，也不模拟 `window` /
+  `document`——库里没做浏览器判断就直接用它们的地方，同样在插件里打补丁。
+- 这类插件放在项目本地（和 `vite.config` 放在一起，如 `vite/vant.ts`），不单独发
+  npm 包。参考 demo 的 [`demo/vite/vant.ts`](../demo/vite/vant.ts)。
+
 ### 共享 chunk：`fjs.shared`
 
 `fjs build --pages` 会把 vue / fjs 运行时放进 `shared.js`，页面 chunk 通过
@@ -234,6 +264,18 @@ demo 里实测：about 页加一行 `storeToRefs` 后，`dist/app/pages/about.js
 能力归 `fjs native add <capability>`（见 [roadmap](roadmap.md)），它们生命周期不同：
 原生能力要能 list/remove/sync 对着可 eject 的宿主收敛。JS 库用 registry 里的
 `requires` 声明依赖哪个 capability，缺了就提示先装它，而不是等到运行时报错。
+
+## 字体（`@font-face`）
+
+App 构建（`fjs build` / `fjs dev` 的 Flutter 路径）会处理样式里的 `@font-face`
+（specs/071）：`src` 中的 WOFF2 / WOFF——无论是 `data:` 内联还是相对 CSS 文件的
+本地文件——统一解码成 TrueType 并内联为 `data:font/ttf`，因为 Flutter 只保证
+TTF/OTF。WOFF2 解码用 `wawoff2`（wasm，首次用到时才加载），WOFF 由 CLI 自带的
+解码器处理；远程 `http(s)` 源原样保留（App 运行时跳过）。
+
+构建日志里会出现两类提示：字体文件找不到 / 解码失败（该 src 保持原样，运行时
+会再告警一次），以及内联字体超过 1 MB 的体积提醒——字体进的是 JS 包，大的正文
+字体（中日韩全字库）会明显拖慢加载。Web 构建不做任何改写，浏览器直接读 WOFF2。
 
 ## 查看路由表
 

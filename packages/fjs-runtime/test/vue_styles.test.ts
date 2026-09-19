@@ -242,6 +242,69 @@ describe('Vue renderer + scoped styles', () => {
     expect(finalProps().props.get(spanId)).toMatchObject({ style: { color: '#c62828' } });
   });
 
+  it('matches :disabled on a form control while its disabled prop is set', async () => {
+    // vant greys a disabled field's text through `.van-field__control:disabled`
+    registerStyles(
+      'data-v-dis',
+      `.ctl { color: #111111; }
+       .ctl:disabled { color: #c8c9cc; }
+       .box:disabled { color: #ff0000; }
+       [class*=disabled] { font-weight: bold; }`,
+    );
+    const off = ref(true);
+    const App: any = defineComponent(() => {
+      return () =>
+        h('view', null, [
+          h('input', { class: 'ctl', disabled: off.value ? '' : false }),
+          h('div', { class: 'box', disabled: true }, 'x'),
+        ]) as VNode;
+    });
+    App.__scopeId = 'data-v-dis';
+    const root = flutterRoot();
+    createApp(App).mount(root);
+    await flush();
+    const input = root.id + 2;
+    const box = root.id + 3;
+    let props = finalProps().props;
+    expect((props.get(input) as { style: Record<string, unknown> }).style).toMatchObject({ color: '#c8c9cc' });
+    // the state is not part of the class attribute
+    expect((props.get(input) as { style: Record<string, unknown> }).style.fontWeight).toBeUndefined();
+    // only form controls can be :disabled
+    expect((props.get(box) as { style: Record<string, unknown> }).style.color).not.toBe('#ff0000');
+
+    off.value = false;
+    await flush();
+    props = finalProps().props;
+    expect((props.get(input) as { style: Record<string, unknown> }).style).toMatchObject({ color: '#111111' });
+  });
+
+  it('maps the textarea element to a multiline input and marks HTML blocks', async () => {
+    // render functions ask for the ELEMENT (vant's Field: h('textarea')); the
+    // Dart side has no `textarea` tag and used to render nothing
+    const App: any = defineComponent(() => {
+      return () =>
+        h('view', null, [
+          h('textarea', { rows: 2 }),
+          h('div', null, [h('span', null, '0'), '/50']),
+          h('p', null, 'para'),
+        ]) as VNode;
+    });
+    const root = flutterRoot();
+    createApp(App).mount(root);
+    await flush();
+    const frame = finalProps();
+    const area = root.id + 2;
+    expect(frame.tag.get(area)).toBe('input');
+    expect(frame.props.get(area)).toMatchObject({ multiline: true });
+    const div = root.id + 3;
+    expect(frame.tag.get(div)).toBe('view');
+    expect(frame.props.get(div)).toMatchObject({ htmlBlock: true });
+    // the span inside is an inline run: no marker
+    expect(frame.props.get(div + 1)?.htmlBlock).toBeUndefined();
+    // the outer fjs view is not an HTML block
+    expect(frame.props.get(root.id + 1)?.htmlBlock).toBeUndefined();
+  });
+
   it('resolves CSS variables defined in scoped styles down the tree', async () => {
     registerStyles(
       'data-v-var1',

@@ -6,5 +6,6 @@ import { plugins } from 'fjs/plugins';
 createFjsApp({
   plugins,
   routes,
+  transition: 'fjs-slide',
   shell: Shell,
 }).mount();

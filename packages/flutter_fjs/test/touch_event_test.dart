@@ -239,6 +239,65 @@ void main() {
     ]);
   });
 
+  testWidgets('a drag survives its parent dropping a transition mid-gesture', (
+    tester,
+  ) async {
+    // vant's Slider: the bar carries `transition: all .2s`, and the drag's
+    // touchstart sets `transition: none` on it. The transition layer above
+    // the button went away with it, the button's listener remounted, and
+    // every move after that was routed to the disposed one.
+    Uint8List props(int id, String json) {
+      final w = _W()
+        ..u8(UiOpCode.setProps)
+        ..u32(id);
+      final bytes = utf8.encode(json);
+      w
+        ..u32(bytes.length)
+        ..raw(bytes);
+      return Uint8List.fromList(w.b);
+    }
+
+    final w = _W();
+    for (final id in [1, 2]) {
+      w
+        ..u8(UiOpCode.create)
+        ..u32(id)
+        ..u16(4)
+        ..str('view');
+    }
+    w
+      ..u8(UiOpCode.insert)
+      ..u32(0)
+      ..u32(1)
+      ..u32(0)
+      ..u8(UiOpCode.insert)
+      ..u32(1)
+      ..u32(2)
+      ..u32(0);
+    final tree = MirrorTree()..applyFrame(Uint8List.fromList(w.b));
+    const bar = '"width":200,"height":100';
+    tree
+      ..applyFrame(props(1, '{"style":{$bar,"transition":"all .2s"}}'))
+      ..applyFrame(props(2, '{$_box,$_listens}'));
+    final log = <_Event>[];
+    await tester.pumpWidget(_render(tree, log));
+
+    final finger = await tester.startGesture(
+      tester.getCenter(find.byType(Container).last),
+    );
+    expect(log.single.type, FjsEvent.touchStart);
+
+    tree.applyFrame(props(1, '{"style":{$bar,"transition":"none"}}'));
+    tree.flushDirty();
+    await tester.pump();
+
+    log.clear();
+    await finger.moveBy(const Offset(20, 0));
+    await tester.pump();
+    expect(log.map((e) => e.type), [FjsEvent.touchMove]);
+    await finger.up();
+  });
+
   testWidgets('the payload carries the node origin, so JS can offset', (
     tester,
   ) async {

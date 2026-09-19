@@ -11,6 +11,7 @@ import type { FjsCanvasRenderingContext2D } from '../canvas/context-2d';
  * name. */
 const INNER_CANVAS_TAG = 'inner-canvas';
 import { decodeTouchEvent, isTouchEvent, type FjsTouchEvent } from './touch';
+import { boundingRectOf, type FjsRect } from './geometry';
 
 /** Event names accepted in props; handlers never cross the JSI boundary —
  * only their existence is sent (e.g. onTap: true) and native dispatches
@@ -113,8 +114,13 @@ const CANONICAL_EVENT_PROP: Record<string, string> = {
 };
 
 let nextId = 1;
-type EventPayload = string | FjsTouchEvent | undefined;
+export type EventPayload = string | FjsTouchEvent | undefined;
 const eventHandlers = new Map<string, (payload?: EventPayload) => void>();
+/** addEventListener registrations, next to (not instead of) the one prop
+ * handler per event: a library attaches its own listener to an element a
+ * template also binds (vant's Slider button has `@touchstart` from its
+ * render function and a touchmove from useEventListener). */
+const domListeners = new Map<string, Set<(event: unknown) => void>>();
 const workerHandlers = new Map<number, (data: string) => void>();
 /** Events that address a subsystem instead of a node (worker messages,
  * navigator callbacks). `id` is that subsystem's own handle. */
@@ -207,6 +213,7 @@ const EVENT_TYPES: number[] = [...new Set(Object.values(EventType))];
 export function forgetHandlers(nodeId: number): void {
   for (let i = 0; i < EVENT_TYPES.length; i++) {
     eventHandlers.delete(handlerKey(nodeId, EVENT_TYPES[i]));
+    domListeners.delete(handlerKey(nodeId, EVENT_TYPES[i]));
   }
   fieldNames.delete(nodeId);
   fieldFormTypes.delete(nodeId);
@@ -253,14 +260,22 @@ export function installEventDispatcher(): void {
       if (eventType === 3 || eventType === 5) {
         fieldValues.set(nodeId, payload ?? '');
       }
-      const handler = eventHandlers.get(handlerKey(nodeId, eventType));
-      if (!handler) return;
+      const key = handlerKey(nodeId, eventType);
+      const handler = eventHandlers.get(key);
+      const listeners = domListeners.get(key);
+      if (!handler && !listeners) return;
       if (isTouchEvent(eventType)) {
         const event = decodeTouchEvent(eventType, payload);
-        if (event) handler(event);
+        if (!event) return;
+        handler?.(event);
+        if (listeners) for (const fn of [...listeners]) fn(event);
         return;
       }
-      handler(payload ?? undefined);
+      handler?.(payload ?? undefined);
+      if (listeners) {
+        const event = { detail: payload ?? undefined, preventDefault() {}, stopPropagation() {} };
+        for (const fn of [...listeners]) fn(event);
+      }
     };
 }
 
@@ -276,7 +291,71 @@ export interface Element {
   removeChild(child: Element): Element;
   setText(text: string): Element;
   setProps(props: Record<string, unknown>): Element;
+  /** The laid-out box in window coordinates, like the DOM's — as of the
+   * last frame (ui/geometry.ts). All zeros before layout. */
+  getBoundingClientRect(): FjsRect;
+  /** DOM-shaped listener registration, for libraries that attach their own
+   * listeners (`el.addEventListener('touchmove', fn)`). The DOM event name
+   * maps onto the same event as the `on<Name>` prop; options (passive,
+   * capture) mean nothing here and are ignored. */
+  addEventListener(type: string, listener: (event: any) => void, options?: unknown): void;
+  removeEventListener(type: string, listener: (event: any) => void, options?: unknown): void;
+  /** DOM offset geometry, read from the same last-frame layout as
+   * getBoundingClientRect: the border box's size, and its position against
+   * the offsetParent's box (the nearest positioned ancestor, resolved by
+   * the renderer — null without one, as for a detached DOM node). vant's
+   * Tabs centres its underline on `title.offsetLeft + offsetWidth / 2`. */
+  readonly offsetWidth: number;
+  readonly offsetHeight: number;
+  readonly offsetLeft: number;
+  readonly offsetTop: number;
+  readonly offsetParent: Element | null;
 }
+
+/** Finds an element's offsetParent. The Vue renderer owns the tree and the
+ * computed `position`, so it injects this; the raw element API has no tree
+ * to walk and answers null. */
+let offsetParentResolver: ((id: number) => Element | null) | null = null;
+
+export function setOffsetParentResolver(resolver: ((id: number) => Element | null) | null): void {
+  offsetParentResolver = resolver;
+}
+
+function offsetOf(el: { id: number }, axis: 'left' | 'top'): number {
+  const own = boundingRectOf(el.id)[axis];
+  const parent = offsetParentResolver?.(el.id);
+  return parent ? own - boundingRectOf(parent.id)[axis] : own;
+}
+
+/** Shared getters: one descriptor set for every element, `this` is the
+ * element — no closures allocated per node. */
+const OFFSET_DESCRIPTORS: PropertyDescriptorMap = {
+  offsetWidth: {
+    get(this: { id: number }) {
+      return boundingRectOf(this.id).width;
+    },
+  },
+  offsetHeight: {
+    get(this: { id: number }) {
+      return boundingRectOf(this.id).height;
+    },
+  },
+  offsetLeft: {
+    get(this: { id: number }) {
+      return offsetOf(this, 'left');
+    },
+  },
+  offsetTop: {
+    get(this: { id: number }) {
+      return offsetOf(this, 'top');
+    },
+  },
+  offsetParent: {
+    get(this: { id: number }) {
+      return offsetParentResolver?.(this.id) ?? null;
+    },
+  },
+};
 
 /** An `inner-canvas` element — the drawing surface inside the `canvas`
  * component. Pages reach these members through a `ref` on `<canvas>`, which
@@ -322,6 +401,12 @@ function makeElement(id: number, tag: string): Element {
     // page has hundreds of elements and almost none is ever touched by a
     // DOM-style library.
     style: null as unknown as FjsElementStyle,
+    // replaced by the OFFSET_DESCRIPTORS getters below
+    offsetWidth: 0,
+    offsetHeight: 0,
+    offsetLeft: 0,
+    offsetTop: 0,
+    offsetParent: null,
     appendChild(child) {
       insert(el, child);
       return child;
@@ -344,6 +429,15 @@ function makeElement(id: number, tag: string): Element {
       setProps(el, props);
       return el;
     },
+    getBoundingClientRect() {
+      return boundingRectOf(id);
+    },
+    addEventListener(type, listener) {
+      addDomListener(el, type, listener);
+    },
+    removeEventListener(type, listener) {
+      removeDomListener(el, type, listener);
+    },
   };
   // Fresh object per access (no per-element cache to clean up on removal) —
   // the allocation is trivial next to the bridge write it wraps.
@@ -352,6 +446,7 @@ function makeElement(id: number, tag: string): Element {
       return createElementStyle(id);
     },
   });
+  Object.defineProperties(el, OFFSET_DESCRIPTORS);
   return el;
 }
 
@@ -476,7 +571,7 @@ export function setProps(el: Element, props: Record<string, unknown>): void {
       const type = EventType[key];
       if (type !== undefined) {
         const registryKey = handlerKey(el.id, type);
-        const had = eventHandlers.has(registryKey);
+        const had = eventHandlers.has(registryKey) || domListeners.has(registryKey);
         eventHandlers.set(registryKey, value as (payload?: EventPayload) => void);
         if (!had) {
           clean[CANONICAL_EVENT_PROP[key] ?? key] = true;
@@ -497,7 +592,8 @@ export function setProps(el: Element, props: Record<string, unknown>): void {
     } else if (value === null && key.startsWith(EVENT_PREFIX) && EventType[key] !== undefined) {
       // detach: drop the JS handler and clear the native marker
       const registryKey = handlerKey(el.id, EventType[key]);
-      if (eventHandlers.delete(registryKey)) {
+      // an addEventListener listener still wants the event: keep the marker
+      if (eventHandlers.delete(registryKey) && !domListeners.has(registryKey)) {
         clean[CANONICAL_EVENT_PROP[key] ?? key] = false;
         changed = true;
       }
@@ -510,6 +606,46 @@ export function setProps(el: Element, props: Record<string, unknown>): void {
   if (!changed) return; // nothing the peer can observe
   getWriter().setProps(el.id, clean);
   scheduleFlush();
+}
+
+/** `touchmove` → the `onTouchmove` prop's event. Undefined for a DOM event
+ * this side has no equivalent of. */
+function domEventProp(type: string): string | undefined {
+  const prop = `on${type.charAt(0).toUpperCase()}${type.slice(1)}`;
+  return EventType[prop] !== undefined ? prop : undefined;
+}
+
+function addDomListener(el: Element, type: string, listener: (event: unknown) => void): void {
+  const prop = domEventProp(type);
+  if (!prop) {
+    warnOnce(
+      `unknown-listener:${type}`,
+      `<${el.tag}> addEventListener('${type}'): fjs has no such event; the listener will never fire.`,
+    );
+    return;
+  }
+  const key = handlerKey(el.id, EventType[prop]);
+  const marked = eventHandlers.has(key) || domListeners.has(key);
+  let set = domListeners.get(key);
+  if (!set) domListeners.set(key, (set = new Set()));
+  set.add(listener);
+  if (!marked) {
+    getWriter().setProps(el.id, { [CANONICAL_EVENT_PROP[prop] ?? prop]: true });
+    scheduleFlush();
+  }
+}
+
+function removeDomListener(el: Element, type: string, listener: (event: unknown) => void): void {
+  const prop = domEventProp(type);
+  if (!prop) return;
+  const key = handlerKey(el.id, EventType[prop]);
+  const set = domListeners.get(key);
+  if (!set?.delete(listener) || set.size) return;
+  domListeners.delete(key);
+  if (!eventHandlers.has(key)) {
+    getWriter().setProps(el.id, { [CANONICAL_EVENT_PROP[prop] ?? prop]: false });
+    scheduleFlush();
+  }
 }
 
 /** Style-only fast path used by the style engine: no handler extraction

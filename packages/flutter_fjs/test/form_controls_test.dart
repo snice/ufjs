@@ -118,6 +118,11 @@ Future<void> tapAt(WidgetTester tester, Finder finder) async {
   await tester.pump();
 }
 
+/// A fade (`opacity < 1`). State-tracking nodes keep an Opacity wrapper at
+/// 1.0 so a press/hover can change it without remounting their gesture
+/// detectors (renderer.dart), so "is there an Opacity" is not the question.
+final _faded = find.byWidgetPredicate((w) => w is Opacity && w.opacity < 1);
+
 void main() {
   setUp(resetFjsWarnOnce);
 
@@ -288,7 +293,7 @@ void main() {
       await tester.pumpWidget(render(tree, log));
       await tapAt(tester, find.text('go'));
       expect(log, isEmpty);
-      expect(tester.widget<Opacity>(find.byType(Opacity)).opacity, 0.5);
+      expect(tester.widget<Opacity>(_faded).opacity, 0.5);
     });
 
     testWidgets('an explicit false stays false', (tester) async {
@@ -318,6 +323,61 @@ void main() {
       FocusManager.instance.primaryFocus?.unfocus();
       await tester.pump();
       expect(log, [(focusEvent, 'hi'), (blurEvent, 'hi')]);
+    });
+
+    testWidgets('the first change of the value prop reaches the field', (
+      tester,
+    ) async {
+      // vant's stepper: `value` starts at 1 and `+` sets 2. The field used to
+      // stay on 1 and only caught up — straight to 3 — on the second press.
+      final tree = treeOf([
+        N('input', props: {'value': '1'}),
+      ]);
+      await tester.pumpWidget(render(tree, []));
+      expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, '1');
+
+      final w = _W()..u8(UiOpCode.setProps);
+      w.u32(1);
+      final json = utf8.encode(jsonEncode({'value': '2'}));
+      w.u32(json.length);
+      w.raw(json);
+      tree.applyFrame(Uint8List.fromList(w.b));
+      tree.flushDirty();
+      await tester.pump();
+      expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, '2');
+    });
+
+    testWidgets('a single-line field centres its line in a taller box', (
+      tester,
+    ) async {
+      // vant's stepper input: `height: 28px; padding: 0; line-height:
+      // normal` — the browser centres the text, Material pinned it on top
+      final tree = treeOf([
+        N(
+          'view',
+          props: {
+            'style': {'flexDirection': 'row', 'alignItems': 'flex-start'},
+          },
+          children: [
+            N(
+              'input',
+              props: {
+                'value': '1',
+                'style': {'width': 32, 'height': 28, 'padding': 0},
+              },
+            ),
+          ],
+        ),
+      ]);
+      await tester.pumpWidget(render(tree, []));
+      final box = tester.getRect(
+        find
+            .ancestor(of: find.byType(TextField), matching: find.byType(Align))
+            .first,
+      );
+      final text = tester.getRect(find.byType(EditableText));
+      expect(box.height, 28);
+      expect((text.center.dy - box.center.dy).abs(), lessThan(1));
     });
 
     testWidgets('caps the text at maxlength and treats -1 as no limit', (

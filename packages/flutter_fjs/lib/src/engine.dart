@@ -14,6 +14,8 @@ import 'canvas/host_module.dart';
 import 'canvas/images.dart';
 import 'dev_client.dart';
 import 'ffi.dart';
+import 'font_loader.dart';
+import 'geometry.dart';
 import 'http.dart';
 import 'mirror_tree.dart';
 import 'registry/component.dart';
@@ -66,9 +68,13 @@ class FjsEngine extends ChangeNotifier {
     _setupWorkerModules();
     _setupPlatformModule();
     _setupViewportModule();
+    // @font-face fonts (specs/071); log reads onLog at call time, a host
+    // may attach it after construction
+    FjsFontLoader.register(host, log: (level, m) => onLog?.call(level, m));
     _setupNavModules();
     _setupAnimationFrameModule();
     _setupCanvasModule();
+    registerGeometryHostModules(host: host, tree: tree);
     _http.register(host);
     _setupAsyncInvokeModule();
   }
@@ -190,7 +196,11 @@ class FjsEngine extends ChangeNotifier {
   }
 
   final FjsBindings bind = FjsBindings.instance();
-  final MirrorTree tree = MirrorTree();
+  /// Op-stream diagnostics route to the same log channel as engine errors,
+  /// so the device-side log sheet shows what actually arrived (specs/070).
+  late final MirrorTree tree = MirrorTree(
+    debugLog: (message) => onLog?.call(3, message),
+  );
   final HostRegistry host = HostRegistry();
 
   /// Whether the dev performance overlay is showing. [FjsApp] watches it;

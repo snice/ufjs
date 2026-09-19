@@ -123,6 +123,6 @@ export function createFjsCanvas(
  * flow would leave the box with nothing to measure — the canvas ends up
  * 0x0, never reports a size, and the page never gets its first `@resize`.
  * The cross axis is handled by the box's `align-items: stretch` rather than
- * `align-self`, which is not in the supported subset
- * (docs/css-compat.md). */
+ * `align-self`: a self-aligned item makes the app side lay its box out in
+ * two passes (render/flex.dart), a cost the surface has no reason to add. */
 const SURFACE_STYLE = { flexGrow: 1 } as const;

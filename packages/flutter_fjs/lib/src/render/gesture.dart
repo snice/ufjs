@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../ffi.dart' show FjsEvent;
+import '../geometry.dart' show lastTapPosition;
 import '../mirror_tree.dart';
 import '../widgets/dispatch.dart';
 import 'style.dart';
@@ -52,6 +53,10 @@ Widget gestureNode(
       : null;
   if (onTap == null && onLongPress == null) return withTouch;
   return GestureDetector(
+    // the click's clientX/clientY, fetched lazily by the JS event (geometry.dart)
+    onTapUp: onTap == null
+        ? null
+        : (details) => lastTapPosition = details.globalPosition,
     onTap: onTap,
     onLongPress: onLongPress,
     behavior: HitTestBehavior.opaque,

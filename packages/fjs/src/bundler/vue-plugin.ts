@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'esbuild';
 import { parse, compileScript, compileTemplate, compileStyle } from '@vue/compiler-sfc';
+import { inlineFontFaces } from './font-face';
 import { isHTMLTag, isSVGTag, isMathMLTag } from '@vue/shared';
 import { routeTableSource, type PageRoute, type Platform } from '../project/pages.js';
 import { pluginTableSource, type AppPlugin } from '../project/plugins.js';
@@ -85,6 +86,44 @@ export interface SfcOptions {
   nativeTags?: readonly string[];
 }
 
+/** Compiler options for the SFC template → render function step, shared by
+ * the esbuild plugin and pinned by test (specs/070): a change here is
+ * silent — the page compiles, then dies at mount, or renders nothing. */
+export function templateCompilerOptions({
+  web = false,
+  moduleTags = new Set<string>(),
+  bindings = {},
+}: {
+  web?: boolean;
+  moduleTags?: Set<string>;
+  bindings?: Record<string, unknown>;
+}): Record<string, unknown> {
+  return {
+    bindingMetadata: bindings,
+    // Static hoisting emits `createStaticVNode`, whose mount path calls the
+    // renderer's insertStaticContent — a DOM-innerHTML contract a non-DOM
+    // host node cannot implement (specs/070: pages died at mountStaticNode
+    // with "not a function" and no other symptom). The op-stream renderer
+    // gains little from hoisting, so the app build turns it off entirely;
+    // the renderer keeps a loud fallback for hand-written static vnodes.
+    // The web build keeps the default: vue's runtime-dom implements it.
+    hoistStatic: web,
+    // Flutter: the fjs tags are elements the custom renderer handles, never
+    // components. Saying so matters beyond codegen tidiness: compiler-dom
+    // would otherwise treat <divider/> in pages/comp/divider.vue as a
+    // *self reference* (it derives a component name from the filename) and
+    // the page would render itself forever.
+    // Web: the same tags must go the other way — through
+    // resolveComponent(), to reach the DOM adapter.
+    // A tag this runtime implements as a component is never native — the
+    // check has to come FIRST, because some of them (`form`) are also HTML
+    // tag names and isHTMLTag would drag them back to being elements.
+    isNativeTag: (tag: string) => isNativeTagFor(tag, { web, moduleTags }),
+    // <swiper> children must be <swiper-item> (specs/051)
+    nodeTransforms: [swiperChildrenTransform],
+  };
+}
+
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** Absolute path of the @ufjs/runtime package source dir. */
@@ -109,6 +148,24 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
   return {
     name: 'fjs-vue-sfc',
     setup(build) {
+      // Plain `import 'x.css'` (component libraries ship their styles this
+      // way — vant/es/<comp>/style/index.mjs). esbuild's default css loader
+      // would emit a sibling .css file the Flutter host never reads, so the
+      // page renders with no styles and no error. Route the text into the
+      // same engine an SFC <style> block feeds; the web build keeps real CSS.
+      if (!web) {
+        build.onLoad({ filter: /\.css$/, namespace: 'file' }, async (args) => {
+          // @font-face sources become TrueType data URLs (font-face.ts)
+          const css = await inlineFontFaces(fs.readFileSync(args.path, 'utf8'), path.dirname(args.path));
+          return {
+            contents:
+              "import { registerStyles } from 'fjs/vue';\n" +
+              `registerStyles(null, ${JSON.stringify(css)});`,
+            resolveDir: path.dirname(args.path),
+            loader: 'js',
+          };
+        });
+      }
       build.onLoad({ filter: /\.vue$/, namespace: 'file' }, async (args) => {
         const source = fs.readFileSync(args.path, 'utf8');
         const filename = path.basename(args.path);
@@ -147,25 +204,11 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
             source: descriptor.template.content,
             filename: args.path,
             id,
-            compilerOptions: {
-              bindingMetadata: bindings,
-              // Flutter: the fjs tags are elements the custom renderer
-              // handles, never components. Saying so matters beyond codegen
-              // tidiness: compiler-dom would otherwise treat <divider/> in
-              // pages/comp/divider.vue as a *self reference* (it derives a
-              // component name from the filename) and the page would render
-              // itself forever.
-              // Web: the same tags must go the other way — through
-              // resolveComponent(), to reach the DOM adapter.
-              // A tag this runtime implements as a component is never
-              // native — the check has to come FIRST, because some of them
-              // (`form`) are also HTML tag names and isHTMLTag would drag
-              // them back to being elements.
-              isNativeTag: (tag: string) =>
-                isNativeTagFor(tag, { web, moduleTags }),
-              // <swiper> children must be <swiper-item> (specs/051)
-              nodeTransforms: [swiperChildrenTransform],
-            },
+            compilerOptions: templateCompilerOptions({
+              web,
+              moduleTags,
+              bindings,
+            }),
           });
           if (tpl.errors.length) {
             return {
@@ -226,9 +269,10 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
         } else if (styles.length) {
           code += `\nimport { registerStyles as __fjsRegisterStyles } from 'fjs/vue';`;
           for (const s of styles) {
-            const css = descriptor.cssVars.length
-              ? rewriteCssVBind(s.content, shortId)
-              : s.content;
+            const css = await inlineFontFaces(
+              descriptor.cssVars.length ? rewriteCssVBind(s.content, shortId) : s.content,
+              path.dirname(args.path),
+            );
             code += `\n__fjsRegisterStyles(${s.scoped ? JSON.stringify(id) : 'null'}, ${JSON.stringify(css)});`;
           }
         }

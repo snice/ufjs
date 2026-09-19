@@ -215,6 +215,11 @@ class _FjsInputState extends State<FjsInput>
   void initState() {
     super.initState();
     final props = widget.node.props;
+    // The controller already starts from this value: record it, or the
+    // first CHANGE of the prop looks like its first appearance, which only
+    // fills an empty field — vant's stepper kept showing 1 after `+`, and
+    // only caught up (jumping to 3) on the second press.
+    _lastPropValue = props['value']?.toString();
     if (props['focus'] != null) _lastPropFocus = fjsBool(props['focus']);
     if (_lastPropFocus == true || fjsBool(props['autoFocus'])) {
       // After the first frame: a FocusNode cannot take focus before it is
@@ -298,6 +303,7 @@ class _FjsInputState extends State<FjsInput>
       fontWeight: style.fontWeight,
       fontStyle: style.fontStyle,
       fontFamily: style.fontFamily,
+      fontFamilyFallback: style.fontFamilyFallback,
       letterSpacing: style.letterSpacing,
       height: style.lineHeightMultiplier ?? 1.4,
       leadingDistribution: TextLeadingDistribution.even,
@@ -309,7 +315,7 @@ class _FjsInputState extends State<FjsInput>
     final style = widget.style;
     final maxLength = _maxLength;
     final expands = _expands;
-    final field = TextField(
+    final textField = TextField(
       controller: _controller,
       focusNode: _focusNode,
       obscureText: fjsBool(widget.node.props['secure']),
@@ -354,17 +360,40 @@ class _FjsInputState extends State<FjsInput>
         widget.dispatch(widget.node.id, FjsEvent.textSubmitted, text: text);
       },
     );
-    if (!_multiline) return field;
-    // The line count depends on the width the text lays out at, and only
-    // the parent knows it.
+    // A single-line <input> in a box taller than its line (vant's stepper:
+    // `height: 28px; line-height: normal`) shows the line centred; the
+    // decorator itself is only as tall as the line and would sit at the top
+    // of the forced height. heightFactor 1 keeps an unforced box at the
+    // line's own height, so only a min/fixed height adds the centring room.
+    final field = _multiline
+        ? textField
+        : Align(
+            alignment: AlignmentDirectional.centerStart,
+            heightFactor: 1,
+            child: textField,
+          );
+    // One LayoutBuilder for both shapes. The line count depends on the width
+    // the text lays out at, and only the parent knows it. And a browser
+    // <input> is never laid out at an unbounded width: a percentage with no
+    // definite containing block (vant's `width: 100%` inside a
+    // shrink-to-fit flex item, say) falls back to the field's intrinsic
+    // size — `size=20` characters — not to infinity. Material's
+    // InputDecorator asserts on infinite width instead, so substitute the
+    // intrinsic size the CSS resolver fell through on.
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        if (width.isFinite && width > 0 && width != _measuredWidth) {
-          _measuredWidth = width;
-          _scheduleMeasure();
+        if (width.isFinite) {
+          if (_multiline && width > 0 && width != _measuredWidth) {
+            _measuredWidth = width;
+            _scheduleMeasure();
+          }
+          return field;
         }
-        return field;
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 178),
+          child: field,
+        );
       },
     );
   }
