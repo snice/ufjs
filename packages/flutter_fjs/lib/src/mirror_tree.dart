@@ -156,13 +156,17 @@ class MirrorTree {
   /// Deliberately not fired from inside [applyFrame]: a single JS event can
   /// drain several op frames, and a listener must never see a half-applied
   /// one. The host calls this once, when it is ready to rebuild.
-  void flushDirty() {
-    if (_dirty.isEmpty) return;
+  ///
+  /// Returns the ids it signalled (empty when nothing was dirty) — the
+  /// geometry module's forced reflow needs to know which views to chase.
+  List<int> flushDirty() {
+    if (_dirty.isEmpty) return const [];
     final ids = List<int>.of(_dirty);
     _dirty.clear();
     for (final id in ids) {
       _signals[id]?.ping();
     }
+    return ids;
   }
 
   /// Marks a node as needing a rebuild. Its PARENT is marked too, because a

@@ -5,6 +5,7 @@ import '../mirror_tree.dart' show MirrorNode;
 import '../render/style.dart' show FjsStyle;
 import '../render/decoration.dart';
 import '../render/flex.dart';
+import '../render/stretch_flex.dart' show FjsShrinkCross;
 import '../widgets/button.dart';
 import '../widgets/canvas.dart';
 import '../widgets/checkbox.dart';
@@ -161,7 +162,8 @@ class _ButtonNodeAdapter extends FjsNodeAdapter {
   @override
   Widget decorate(FjsNodeAdapterContext context, Widget content) {
     final chrome = fjsButtonChrome(context.node, context.style);
-    final active = context.pressed &&
+    final active =
+        context.pressed &&
         fjsButtonIsInteractive(context.node) &&
         fjsButtonCursorAllowsPress(context.node);
     return decorateNode(
@@ -704,6 +706,127 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
     return true;
   }
 
+  /// A block box's children in the browser's block formatting context:
+  /// a run of consecutive INLINE-LEVEL children (`inline-block` /
+  /// `inline-flex` boxes and plain text runs — van-card's tags after its
+  /// block title, the price + origin price) shares one anonymous line box,
+  /// block children stack. An fjs view would stack every one of them
+  /// stretched full width, so such a run becomes one wrapping line here;
+  /// runs of pure text went to [_isInlineParagraph] (real text layout), and
+  /// a lone inline box keeps the ordinary shrink-to-fit item (flex.dart).
+  /// Not a general inline formatting context (css-compat.md): the line
+  /// aligns the boxes' bottoms, the nearest native shape of a baseline.
+  ///
+  /// `float: right` children (van-card's num) leave the flow and pin to the
+  /// right edge, top-down, beside the in-flow content — the one float the
+  /// engine knows; `float: left` and text wrapping round a float stay
+  /// unsupported.
+  static Widget? _buildBlockFlow(
+    FjsNodeAdapterContext context,
+    List<Widget> kids,
+  ) {
+    final nodes = context.childNodes;
+    if (kids.length != nodes.length) return null;
+    final flow = <Widget>[];
+    final flowNodes = <MirrorNode?>[];
+    final floated = <Widget>[];
+    final run = <Widget>[];
+    final runNodes = <MirrorNode>[];
+    var runBoxes = 0;
+    var changed = false;
+    final align = switch (context.style.textAlign) {
+      TextAlign.center => WrapAlignment.center,
+      TextAlign.right => WrapAlignment.end,
+      _ => WrapAlignment.start,
+    };
+    void flush() {
+      if (run.length >= 2 && runBoxes > 0) {
+        flow.add(
+          Wrap(
+            alignment: align,
+            crossAxisAlignment: WrapCrossAlignment.end,
+            children: List.of(run),
+          ),
+        );
+        flowNodes.add(null);
+        changed = true;
+      } else {
+        flow.addAll(run);
+        flowNodes.addAll(runNodes);
+      }
+      run.clear();
+      runNodes.clear();
+      runBoxes = 0;
+    }
+
+    for (var i = 0; i < kids.length; i++) {
+      final kid = nodes[i];
+      final style = FjsStyle.of(kid);
+      final inFlow = !isOutOfFlowPosition(style.position);
+      if (inFlow &&
+          (kid.styleMap['float'] ?? kid.props['float'])?.toString() ==
+              'right') {
+        floated.add(kids[i]);
+        changed = true;
+        continue;
+      }
+      final d = style.display;
+      // a text run is a text node WITHOUT an inline-level display of its
+      // own; a text node styled inline-block/inline-flex is a BOX (van-tag).
+      // `htmlBlock` only says the tag is a div: its display decides (the
+      // price is an inline-block div)
+      final textRun =
+          kid.tag == 'text' &&
+          kid.props['htmlBlock'] != true &&
+          (d == null || d == 'inline');
+      final box =
+          d == 'inline-block' ||
+          d == 'inline-flex' ||
+          (d == 'inline' && kid.tag != 'text');
+      if (inFlow && (textRun || box)) {
+        // shrink-to-fit (CSS): an inline box holding block content (the
+        // price's inner div) would otherwise take the whole line
+        run.add(box ? FjsShrinkCross(child: kids[i]) : kids[i]);
+        runNodes.add(kid);
+        if (box) runBoxes++;
+        continue;
+      }
+      flush();
+      flow.add(kids[i]);
+      flowNodes.add(kid);
+    }
+    flush();
+    if (!changed) return null;
+    if (floated.isEmpty) {
+      return buildBox(
+        context.style,
+        flow,
+        flowNodes,
+        growChildren: context.isRoot,
+      );
+    }
+    return buildBox(
+      context.style,
+      [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: buildBox(FjsStyle(const {'style': {}}), flow, flowNodes),
+            ),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: floated,
+            ),
+          ],
+        ),
+      ],
+      const [null],
+      growChildren: context.isRoot,
+    );
+  }
+
   @override
   Widget build(FjsNodeAdapterContext context) {
     if (_isInlineParagraph(context)) {
@@ -723,7 +846,7 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
         growChildren: context.isRoot,
       );
     }
-    var kids = context.buildChildren();
+    final kids = context.buildChildren();
     // A view whose content is a bare string (`<view>文字</view>`, `{{ x }}`)
     // carries it as the node's own element text: Vue hands it over through
     // setElementText and the browser paints it as a text node inside the
@@ -743,6 +866,11 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
         [null, ...context.childNodes],
         growChildren: context.isRoot,
       );
+    }
+    if (context.node.props['htmlBlock'] == true &&
+        (context.style.display == null || context.style.display == 'block')) {
+      final flow = _buildBlockFlow(context, kids);
+      if (flow != null) return flow;
     }
     return buildBox(
       context.style,

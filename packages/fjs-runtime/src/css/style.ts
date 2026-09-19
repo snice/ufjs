@@ -479,7 +479,7 @@ export class StyleEngine {
     }
     if (!this.hasStructural) {
       for (const r of parsed) {
-        if (r.selectors.some((s) => s.compounds.some((c) => c.first || c.last))) {
+        if (r.selectors.some((s) => s.compounds.some((c) => c.first || c.last || c.notFirst || c.notLast))) {
           this.hasStructural = true;
           break;
         }
@@ -987,6 +987,18 @@ export class StyleEngine {
         const v = parentComputed[k];
         if (v !== undefined) inherited[k] = v;
       }
+      // text-decoration does not inherit, but it PROPAGATES: the box's
+      // line is drawn through its inline text (van-card's origin price is
+      // `<div style="text-decoration: line-through">¥ 10.00</div>`). The
+      // native text run is a node of its own, so it takes the line here —
+      // text nodes and plain spans only; inline-blocks stop propagation
+      const deco = parentComputed.textDecoration;
+      if (deco !== undefined && (s.rawText || s.tag === 'span')) inherited.textDecoration = deco;
+      // text-overflow belongs to the block container but clips ITS inline
+      // text; the text run is the native node that can draw the ellipsis
+      // (van-ellipsis: nowrap + overflow hidden + text-overflow: ellipsis)
+      const clip = parentComputed.textOverflow;
+      if (clip !== undefined && s.rawText) inherited.textOverflow = clip;
     }
     // CSS custom properties: cascade like normal declarations and inherit
     // down the tree, then var() references resolve against them
@@ -1014,6 +1026,12 @@ export class StyleEngine {
     if (merged.flexDirection === undefined && FLEX_DISPLAYS.has(merged.display as string)) {
       merged.flexDirection = 'row';
       if (merged.alignItems === undefined) merged.alignItems = 'stretch';
+      // inline-flex is an inline-LEVEL box: runs of them wrap like the
+      // inline flow would (rows of van-tags), where a block-level flex
+      // would push past the container edge
+      if (merged.display === 'inline-flex' && merged.flexWrap === undefined) {
+        merged.flexWrap = 'wrap';
+      }
     }
     // Inline-level boxes have no inline formatting context on the native
     // side; unmapped they collapse to stacked blocks, the one shape web
@@ -1483,10 +1501,12 @@ export class StyleEngine {
       if (!s.classes.has(cls)) return false;
     }
     if (c.classAttr && !c.classAttr.every((t) => matchClassAttr(t, s.classes))) return false;
-    if (c.first || c.last) {
+    if (c.first || c.last || c.notFirst || c.notLast) {
       const bits = this.structuralBits(id, s);
       if (c.first && !(bits & 2)) return false;
       if (c.last && !(bits & 1)) return false;
+      if (c.notFirst && bits & 2) return false;
+      if (c.notLast && bits & 1) return false;
     }
     if (idx === 0) return true;
     const comb = sel.combinators[idx - 1];

@@ -113,11 +113,11 @@ CSS 文本里用 kebab-case（`font-size: 16px`），内联对象用 camelCase
 | 属性 | 支持 | 说明 |
 |---|---|---|
 | `position: relative` | ✅ | 成为定位上下文；配 top/left 只挪画面不动布局 |
-| `position: absolute` | ✅ | 脱流，按最近定位祖先摆；偏移从定位祖先的 **padding 边**量起（CSS 包含块，specs/069 修正——以前从内容边量，vant `.van-cell::after` 发丝线缩进一个 padding）。`margin: auto` + 对边 + 尺寸在该轴居中（vant 对话框 `left: 0; right: 0; width: 320px; margin: 0 auto`）。**溢出部分可点**：带点击/触摸处理的绝对定位盒超出祖先边界的部分照样接收按下（同 web 的 `overflow: visible`；vant Slider 24px 圆钮挂在 2px 轨道上，以前只有轨道那 2px 能按中，其余落到 scroll-view）。纯装饰的定位盒不参与 |
+| `position: absolute` | ✅ | 脱流，按最近定位祖先摆；偏移从定位祖先的 **padding 边**量起（CSS 包含块，specs/069 修正——以前从内容边量，vant `.van-cell::after` 发丝线缩进一个 padding）。`margin: auto` + 对边 + 尺寸在该轴居中（vant 对话框 `left: 0; right: 0; width: 320px; margin: 0 auto`）。绝对定位盒自身的 margin 折进 inset 偏移（`top: 0; margin-top: 4px` ⇒ 盒顶 4，声明尺寸不被缩小——vant badge 圆点，specs/073）；**百分比 margin 在 abs 盒上暂不生效**（margin 按盒宽参照、top/bottom inset 按盒高，参照系不同折不进去，needs a spec）。**溢出部分可点**：带点击/触摸处理的绝对定位盒超出祖先边界的部分照样接收按下（同 web 的 `overflow: visible`；vant Slider 24px 圆钮挂在 2px 轨道上，以前只有轨道那 2px 能按中，其余落到 scroll-view）。纯装饰的定位盒不参与 |
 | `position: sticky` | ✅ | web / 小程序 webview 原生 CSS；Flutter 端按「滚动容器直接子节点（或 sticky-section 内）」语义走 sliver 吸顶，`top` 即 pin 线（specs/052/053）。深层嵌套 Flutter 端不吸顶并告警（web 会吸顶于最近滚动祖先）；小程序 skyline 的 wxss sticky 未承诺，请用组件 |
 | `position: fixed` | ⚠️ | 元素被运行时整体挪进页面的**置顶 overlay 宿主**（保留标签 `fjs-overlay-host`，Dart 侧经 `OverlayPortal` 渲染在根 Overlay 上），全屏、不随页面滚动、盖在宿主 chrome 之上（specs/069）。偏移与 `%` 尺寸参照整屏。**不是通用的视口定位**：上下层级只看插入顺序（`z-index` 仍不支持）；从原父元素继承的样式断开（同 web 上 teleport 到 `<body>`）；弹层动画时序由 Flutter 侧驱动，可能与 web 有出入；**不经宿主 safe-area 包裹**，`top: 0` 会顶进状态栏区域，宿主要自行留出安全区。旧宿主不认识保留标签时退化为页面内的全屏盒（会随滚动带走）。**诊断**：hoist 由样式引擎回调触发（解析结果 `position === 'fixed'`）；`createStaticVNode`（静态提升 vnode）在本 renderer 没有 DOM innerHTML 语义，app 构建以 `hoistStatic: false` 规避（specs/070），手写静态 vnode 会得到指名报错 |
 | `top` / `right` / `bottom` / `left` | ✅ | |
-| `z-index` | ❌ | 顺序即层级。例外：`sticky-header` 组件自带的 `z-index: 1`（web 端）是组件默认外观的一部分，不开放给页面 CSS |
+| `z-index` | ⚠️ | 只在**同一包含块的绝对定位兄弟之间**生效：按 z-index 排序（相等保持树序，`auto` 记 0），负值画在文档流内容之下（specs/073，vant 步骤条圆点的白底盖住连接线靠它）。不建模层叠上下文——跨包含块、文档流元素之间仍是顺序即层级。例外：`sticky-header` 组件自带的 `z-index: 1`（web 端）是组件默认外观的一部分，不开放给页面 CSS |
 
 ### 文字
 
@@ -154,7 +154,7 @@ width / height——Flutter 的 `TextSpan` 没有盒子，web 侧用 `!important
 | `box-shadow` | ✅ | 字符串或数组 |
 | `background` / `background-image` | ⚠️ | 仅 `linear-gradient` / `radial-gradient`；不支持位图 url（用 `<image>` 标签）|
 | `transform` | ✅ | translate / translateX / translateY / translate3d / scale / scaleX / scaleY / rotate(deg\|rad\|turn\|grad) / matrix(a,b,c,d,e,f)，从左到右复合 |
-| `transition` | ⚠️ | `transform` / `opacity` / `background-color`（实色，无背景 ↔ 有背景按透明渐入渐出）/ `border-color`（实线统一边框）/ `width` / `height` 两端渐变（spec 045；简写与长手、duration/curve/delay 同一套解析）。尺寸是布局属性：逐帧重排，与 web 成本一致，别在大子树上用。**App 端差异**：`transition-delay` 对 background-color / border-color / 尺寸不生效（transform/opacity 有）；gradient 背景跳变不动画；文字 `color` / 虚线或分边不同的边框 / 其余布局属性 App 端瞬时跳变，web 原生渐变。页面转场用 `<Transition>`，见 [routing.md](routing.md) |
+| `transition` | ⚠️ | `transform` / `opacity` / `background-color`（实色，无背景 ↔ 有背景按透明渐入渐出）/ `border-color`（实线统一边框）/ `width` / `height` 两端渐变（spec 045；简写与长手、duration/curve/delay 同一套解析），以及绝对/固定定位盒的 `left` / `top` / `right` / `bottom`（spec 073——vant Progress 的 portion `width` 与 pivot `left` 都靠它；`FjsLength` 是 px+百分比线性对，两端插值等价于 calc() 插值，被 delegate 解析的百分比因此逐帧跟随盒子）。尺寸与 inset 是布局属性：逐帧重排，与 web 成本一致，别在大子树上用。**App 端差异**：`transition-delay` 对 background-color / border-color / 尺寸 / inset 不生效（transform/opacity 有）；gradient 背景跳变不动画；inset 的 transitionend 不派发（width/height 照旧，由尺寸动画派发）；文字 `color` / 虚线或分边不同的边框 / 其余布局属性 App 端瞬时跳变，web 原生渐变。页面转场用 `<Transition>`，见 [routing.md](routing.md) |
 | `<Transition>`（组件） | ⚠️ | vue-shim 里的 fjs 版（BaseTransition + 引擎类操作）：enter/leave 的 `-from/-active/-to` 类照常落地，组件库里 animation 型的 enter/leave 规则（vant 的 `van-fade-enter-active { animation: … }`）由 keyframes 引擎原生播放；transition 型的类切换（vant 弹层滑入滑出、Dialog 缩放）由 App 端按上表 `transition` 的支持范围补间。类移除时机取元素计算样式里 animation 与 transition 的「时长 + 延迟」较长者（本端没有 DOM end 事件）；`transition-*` 长写覆盖在简写之上。`v-show` 在 `<Transition>` 内走钩子（离场动画放完才 `display: none`）。**App 端差异**：`<TransitionGroup>` 是纯透传（vant 弹层不用） |
 | `animation` / `@keyframes` | ⚠️ | 引擎解析、原生执行，无逐帧桥往返；支持范围与差异见下方「动画」小节 |
 | `filter` / `backdrop-filter` | ❌ | |

@@ -8,6 +8,7 @@
 // cross-axis size), which Flutter expresses through parent-side wrappers
 // (Expanded, Align, Positioned) rather than on the child itself.
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../mirror_tree.dart';
 import '../widgets/control_scope.dart' show fjsWarnOnce;
@@ -15,10 +16,11 @@ import 'cull.dart';
 import 'gesture.dart' show hasTapEvent;
 import 'overflow_hit.dart';
 import 'touch.dart' show needsTouchNode;
-import 'decoration.dart' show resolveEdgeLengths;
+import 'decoration.dart' show FjsClipScope, resolveEdgeLengths;
 import 'length.dart';
 import 'stretch_flex.dart';
 import 'style.dart';
+import 'style_parse.dart' show FjsTransitionTrack;
 
 /// `position: fixed` is authored by CSS but handled exactly like
 /// `absolute` relative to the overlay host (specs/069): both are
@@ -193,6 +195,14 @@ Widget buildFlex(
         crossAxisAlignment: flexAlignment,
         measureCross: measureCross,
         textBaseline: TextBaseline.alphabetic,
+        // CSS overflow:hidden absorbs content that runs past the box — the
+        // children keep their natural layout and the paint clips (decoration
+        // wraps the box in a ClipRect), which is exactly the geometry web
+        // reports as scrollWidth > clientWidth. Flutter's debug paint would
+        // still flag it as an overflow error on every frame; the scope also
+        // covers boxes higher up that clip us (vant's swipe track sits in
+        // the swipe's overflow:hidden). See [RenderFjsFlex.cssOverflowClip].
+        cssOverflowClip: style.overflowHidden || FjsClipScope.of(context),
         children: children,
       );
     },
@@ -330,11 +340,51 @@ Widget _wrapChildMain({
       child: child,
     );
   }
-  return UnconstrainedBox(
-    alignment: AlignmentDirectional.topStart,
-    constrainedAxis: horizontal ? Axis.vertical : Axis.horizontal,
-    child: child,
-  );
+  // Not UnconstrainedBox: it sizes itself past the run and paints its debug
+  // "overflowed" stripes when the child's natural size exceeds the slot —
+  // CSS inline content paints the same surplus silently (a 1px font-metric
+  // surplus on CJK runs, nowrap text), clipped only where an ancestor
+  // clips. The proxy below keeps the box at the run's size so the Wrap sees
+  // no overflow, and lets the child paint from the leading edge.
+  return FjsFreeMainAxis(horizontal: horizontal, child: child);
+}
+
+/// Frees a wrap item's MAIN axis: the child lays out at its natural size
+/// even when that runs past the run, and paints from the box's leading
+/// edge. The box itself reports the run's size — the surplus is paint-only,
+/// exactly like an overflowing inline box on web.
+class FjsFreeMainAxis extends SingleChildRenderObjectWidget {
+  const FjsFreeMainAxis({super.key, required this.horizontal, super.child});
+
+  /// Whether the freed axis is the width (a row wrap's main axis).
+  final bool horizontal;
+
+  @override
+  RenderFjsFreeMainAxis createRenderObject(BuildContext context) =>
+      RenderFjsFreeMainAxis(horizontal);
+
+  @override
+  void updateRenderObject(BuildContext context, RenderFjsFreeMainAxis ro) {
+    ro.horizontal = horizontal;
+  }
+}
+
+class RenderFjsFreeMainAxis extends RenderProxyBox {
+  RenderFjsFreeMainAxis(this.horizontal);
+
+  bool horizontal;
+
+  @override
+  void performLayout() {
+    final c = constraints;
+    final freed = horizontal
+        // free the width, keep the height (a row wrap's main axis)
+        ? BoxConstraints(minHeight: c.minHeight, maxHeight: c.maxHeight)
+        // free the height, keep the width (a column wrap's main axis)
+        : BoxConstraints(minWidth: c.minWidth, maxWidth: c.maxWidth);
+    child?.layout(freed, parentUsesSize: true);
+    size = c.constrain(child?.size ?? c.smallest);
+  }
 }
 
 /// The main-axis size `flex-basis` gives a non-growing item that has no
@@ -414,7 +464,10 @@ Widget _flexChild({
   // gets absorbs the parent's tight cross constraint, so the box sizes to
   // its content. (The engine maps these displays to a wrapping row so the
   // CHILDREN lay out horizontally — see css/style.ts.)
-  final shrinkBox = s.display == 'inline-block' || s.display == 'inline';
+  final shrinkBox =
+      s.display == 'inline-block' ||
+      s.display == 'inline' ||
+      s.display == 'inline-flex';
   // CSS `align-items: stretch` only stretches items that have no size of
   // their own on the cross axis, but Flutter's CrossAxisAlignment.stretch
   // passes a tight cross constraint to every child. An Align absorbs that
@@ -617,15 +670,12 @@ Widget buildBox(
     flow.add(kids[i]);
     if (childNode != null) flowNodes.add(childNode);
   }
-  if (over.isEmpty) {
-    return buildFlex(
-      style,
-      kids,
-      kidNodes,
-      growChildren: growChildren,
-      cull: cull,
-    );
-  }
+  // A positioning context keeps the Stack even with no absolute child
+  // (a one-child passthrough Stack lays out exactly like its child): an
+  // absolute child that comes and goes — vant's expanded-title `::after`
+  // hairline — would otherwise swap the widget above the in-flow content
+  // and remount all of it, dropping every running transition inside (the
+  // collapse arrow snapped instead of rotating).
   return stackOutOfFlow(
     style,
     buildFlex(style, flow, flowNodes, growChildren: growChildren, cull: cull),
@@ -650,6 +700,18 @@ Widget stackOutOfFlow(
   List<(MirrorNode?, Widget)> over,
 ) {
   final padding = (lengths: style.paddingLengths, base: style.padding);
+  // stable: equal z-index keeps tree order
+  final indexed = [
+    for (var i = 0; i < over.length; i++) (i, _zIndexOf(over[i].$1), over[i]),
+  ]..sort((a, b) => a.$2 != b.$2 ? a.$2.compareTo(b.$2) : a.$1.compareTo(b.$1));
+  final below = [
+    for (final e in indexed)
+      if (e.$2 < 0) e.$3,
+  ];
+  final above = [
+    for (final e in indexed)
+      if (e.$2 >= 0) e.$3,
+  ];
   return Stack(
     // the box sizes to its in-flow content, and a positioned child may
     // hang outside it (`top: -4px`) exactly like it does on web
@@ -660,13 +722,28 @@ Widget stackOutOfFlow(
     // positioned box (vant's grid item) stopped centring
     fit: StackFit.passthrough,
     children: [
+      for (final entry in below)
+        positionedChild(entry.$1, entry.$2, padding: padding, container: style),
       // a positioned child may hang outside the flow box, so the flow
       // half keeps culling but the Stack as a whole is left alone
       flow,
-      for (final entry in over)
-        positionedChild(entry.$1, entry.$2, padding: padding),
+      for (final entry in above)
+        positionedChild(entry.$1, entry.$2, padding: padding, container: style),
     ],
   );
+}
+
+/// `z-index` among the absolute children of one containing block: CSS
+/// paints them by z-index, tree order breaking ties (`auto` counts as 0),
+/// negative ones under the in-flow content. vant's steps lean on it — the
+/// dot's white `z-index: 1` box masks the connecting line that follows it
+/// in the tree. Stacking contexts across containing blocks are not modelled
+/// (css-compat.md).
+int _zIndexOf(MirrorNode? node) {
+  if (node == null) return 0;
+  final v = FjsStyle.of(node).style['zIndex'];
+  if (v is num) return v.toInt();
+  return int.tryParse(v?.toString() ?? '') ?? 0;
 }
 
 /// A containing block's padding as the style declared it: [lengths] may
@@ -694,6 +771,7 @@ Widget positionedChild(
   MirrorNode? childNode,
   Widget child, {
   FjsPaddingSpec? padding,
+  FjsStyle? container,
 }) {
   final s = childNode != null ? FjsStyle.of(childNode) : null;
   if (s == null || !isOutOfFlowPosition(s.position)) return child;
@@ -702,13 +780,37 @@ Widget positionedChild(
   if (hasTapEvent(childNode!) || needsTouchNode(childNode, s)) {
     child = FjsOverflowHitTarget(child: child);
   }
+  // Shrink-to-fit (CSS 10.3.7) is min(max(min-content, available),
+  // max-content), and a nowrap line's min-content IS the whole line: an
+  // absolute nowrap box with no width of its own is as wide as its text and
+  // overflows its containing block (vant's marquee content, 577px in a
+  // 314px bar — the marquee measures that width to know how far to run).
+  // Flutter's Positioned would cap it at the Stack's width. A max-width
+  // still clamps the shrink-to-fit result (van-ellipsis: `max-width: 100%`
+  // keeps the static bar inside and lets its ellipsis show).
+  if (s.whiteSpaceNowrap &&
+      s.widthLength == null &&
+      s.maxWidthLength == null &&
+      (s.leftLength == null || s.rightLength == null)) {
+    child = _UncappedWidth(
+      alignEnd: s.leftLength == null && s.rightLength != null,
+      child: FjsShrinkCross(child: child),
+    );
+  }
   final key = ValueKey<int>(childNode.id);
   final auto = s.marginAuto;
+  final m = s.margin ?? EdgeInsets.zero;
   final geometry = _AbsGeometry(
-    left: s.leftLength,
-    top: s.topLength,
-    right: s.rightLength,
-    bottom: s.bottomLength,
+    // the node's own margins offset the box from its inset (CSS resolves
+    // `top: 0; margin-top: 4px` to a border box at 4); folding them in here
+    // keeps the tight Positioned slot at the DECLARED size — a margin
+    // Padding inside the slot would squeeze the box instead (vant's badge
+    // dot came out 8x4). decoration skips the margin Padding for out-of-flow
+    // boxes to match.
+    left: _inset(s.leftLength, m.left),
+    top: _inset(s.topLength, m.top),
+    right: _inset(s.rightLength, m.right),
+    bottom: _inset(s.bottomLength, m.bottom),
     width: s.widthLength,
     height: s.heightLength,
     autoX: auto.horizontal,
@@ -725,43 +827,119 @@ Widget positionedChild(
   if (geometry.needsLayoutSize) {
     return Positioned.fill(
       key: key,
-      child: CustomSingleChildLayout(
-        delegate: _AbsLayoutDelegate(geometry),
-        child: child,
+      child: _animateAbsGeometry(
+        style: s,
+        geometry: geometry,
+        build: (g) => CustomSingleChildLayout(
+          delegate: _AbsLayoutDelegate(g),
+          child: child,
+        ),
       ),
     );
   }
-  // All-absolute: plain Positioned, resolved now.
-  final pad = _resolvePadding(padding, 0);
-  var left = s.leftLength?.px;
-  var right = s.rightLength?.px;
-  var top = s.topLength?.px;
-  var bottom = s.bottomLength?.px;
-  final width = s.widthLength?.px;
-  final height = s.heightLength?.px;
-  // padding edge -> the Stack's (content-box) coordinates
-  if (left != null) left -= pad.left;
-  if (right != null) right -= pad.right;
-  if (top != null) top -= pad.top;
-  if (bottom != null) bottom -= pad.bottom;
-  // CSS over-constrains without complaint — vant sets `left: 0; right: 0;
-  // width: 100%` on its bottom popups — and resolves LTR by keeping
-  // left+width. Flutter's Positioned ASSERTS on the same trio, so drop the
-  // edge CSS would have discarded.
-  if (left != null && width != null) right = null;
-  if (right != null && width != null) left = null;
-  if (top != null && height != null) bottom = null;
-  if (bottom != null && height != null) top = null;
-  return Positioned(
-    key: key,
-    left: left,
-    top: top,
-    right: right,
-    bottom: bottom,
-    width: width,
-    height: height,
-    child: child,
+  // All-absolute: plain Positioned, resolved now — through the same
+  // animation helper as the delegate path, so a CSS transition on a px
+  // inset interpolates too (web does).
+  Widget buildPlain(_AbsGeometry g) {
+    final pad = _resolvePadding(padding, 0);
+    var left = g.left?.px;
+    var right = g.right?.px;
+    var top = g.top?.px;
+    var bottom = g.bottom?.px;
+    final width = g.width?.px;
+    final height = g.height?.px;
+    // padding edge -> the Stack's (content-box) coordinates
+    if (left != null) left -= pad.left;
+    if (right != null) right -= pad.right;
+    if (top != null) top -= pad.top;
+    if (bottom != null) bottom -= pad.bottom;
+    // CSS over-constrains without complaint — vant sets `left: 0; right: 0;
+    // width: 100%` on its bottom popups — and resolves LTR by keeping
+    // left+width. Flutter's Positioned ASSERTS on the same trio, so drop the
+    // edge CSS would have discarded.
+    if (left != null && width != null) right = null;
+    if (right != null && width != null) left = null;
+    if (top != null && height != null) bottom = null;
+    if (bottom != null && height != null) top = null;
+    // Static position (CSS Flexbox §4.1): an absolute child of a flex
+    // container with both cross-axis insets `auto` sits where it would as
+    // the container's sole item — `align-items`/`align-self` place it on the
+    // cross axis. vant's notice bar centres its absolute marquee text in the
+    // 40px bar this way; the Stack would pin it to the top. Only center/end
+    // are handled: start is where the Stack puts it already.
+    final cross = _staticCrossAlignment(container, s);
+    if (cross != null) {
+      final row = container!.flexDirection == 'row';
+      // a cross size of its own is fine: the node's box keeps it (the Align
+      // below loosens the slot), only a cross-axis inset takes it over
+      final free = row
+          ? top == null && bottom == null
+          : left == null && right == null;
+      if (free) {
+        // Laid out non-positioned (no inset, no size) the Stack hands it its
+        // own box, tight; otherwise pin the cross axis to the containing
+        // block's edges. Either way the Align places it on the cross axis
+        // and sizes to it on the main one.
+        final positioned =
+            left != null ||
+            right != null ||
+            top != null ||
+            bottom != null ||
+            width != null ||
+            height != null;
+        final aligned = Align(
+          alignment: row
+              ? Alignment(left == null && right != null ? 1 : -1, cross)
+              : Alignment(cross, top == null && bottom != null ? 1 : -1),
+          widthFactor: positioned && row ? 1 : null,
+          heightFactor: positioned && !row ? 1 : null,
+          child: child,
+        );
+        return Positioned(
+          key: key,
+          left: positioned && !row ? 0 : left,
+          top: positioned && row ? 0 : top,
+          right: positioned && !row ? 0 : right,
+          bottom: positioned && row ? 0 : bottom,
+          // the node's own box keeps a declared cross size
+          width: positioned && !row ? null : width,
+          height: positioned && row ? null : height,
+          child: aligned,
+        );
+      }
+    }
+    return Positioned(
+      key: key,
+      left: left,
+      top: top,
+      right: right,
+      bottom: bottom,
+      width: width,
+      height: height,
+      child: child,
+    );
+  }
+
+  return _animateAbsGeometry(
+    style: s,
+    geometry: geometry,
+    build: buildPlain,
   );
+}
+
+/// The cross-axis [Alignment] component (-1…1) for an absolute child's
+/// static position in a CSS flex [container], or null when it stays at
+/// the start (no flex container, start/stretch alignment).
+double? _staticCrossAlignment(FjsStyle? container, FjsStyle child) {
+  if (container == null) return null;
+  final display = container.display;
+  if (display != 'flex' && display != 'inline-flex') return null;
+  final align = child.alignSelf ?? container.alignItems;
+  return switch (align) {
+    CrossAxisAlignment.center => 0,
+    CrossAxisAlignment.end => 1,
+    _ => null,
+  };
 }
 
 /// An absolutely positioned box's declared geometry, resolved against the
@@ -783,6 +961,27 @@ class _AbsGeometry {
   final FjsLength? left, top, right, bottom, width, height;
   final bool autoX, autoY;
   final FjsPaddingSpec? padding;
+
+  /// A copy with one declared length replaced — the animated value while a
+  /// CSS transition runs on that property (see [_animateAbsGeometry]).
+  _AbsGeometry copy({
+    FjsLength? left,
+    FjsLength? top,
+    FjsLength? right,
+    FjsLength? bottom,
+    FjsLength? width,
+    FjsLength? height,
+  }) => _AbsGeometry(
+    left: left ?? this.left,
+    top: top ?? this.top,
+    right: right ?? this.right,
+    bottom: bottom ?? this.bottom,
+    width: width ?? this.width,
+    height: height ?? this.height,
+    autoX: autoX,
+    autoY: autoY,
+    padding: padding,
+  );
 
   bool get needsLayoutSize =>
       left?.isRelative == true ||
@@ -904,4 +1103,170 @@ class _AbsLayoutDelegate extends SingleChildLayoutDelegate {
 
   @override
   bool shouldRelayout(_AbsLayoutDelegate oldDelegate) => oldDelegate.g != g;
+}
+
+/// A length tween over the px+percent pair: both components move together,
+/// which is CSS's calc() interpolation — `10px → 50%` sweeps the same pair a
+/// `calc(10px + 0%) → calc(0px + 50%)` declaration would.
+class _FjsLengthTween extends Tween<FjsLength> {
+  _FjsLengthTween({required FjsLength super.end});
+
+  @override
+  FjsLength lerp(double t) {
+    final b = begin!;
+    final e = end!;
+    return FjsLength(
+      b.px + (e.px - b.px) * t,
+      b.percent + (e.percent - b.percent) * t,
+    );
+  }
+}
+
+/// An inset with the node's own absolute margin folded in: CSS resolves
+/// `top: 0; margin-top: 4px` to a border box at 4. Percent insets stay
+/// percent (their reference is the containing block, which the delegate
+/// resolves); percent MARGINS are width-referenced on every side and can
+/// not fold into a top/bottom inset (height-referenced) — the style keeps
+/// them out of [EdgeInsets], so they arrive here as zero and an abs box
+/// with percent vertical margins loses them.
+FjsLength? _inset(FjsLength? inset, double margin) =>
+    inset == null ? null : FjsLength(inset.px + margin, inset.percent);
+
+const _absGeometryProps = ['left', 'top', 'right', 'bottom', 'width', 'height'];
+
+FjsLength? _absLengthOf(_AbsGeometry g, String name) => switch (name) {
+  'left' => g.left,
+  'top' => g.top,
+  'right' => g.right,
+  'bottom' => g.bottom,
+  'width' => g.width,
+  _ => g.height,
+};
+
+_AbsGeometry _withAbsLength(_AbsGeometry g, String name, FjsLength v) =>
+    switch (name) {
+      'left' => g.copy(left: v),
+      'top' => g.copy(top: v),
+      'right' => g.copy(right: v),
+      'bottom' => g.copy(bottom: v),
+      'width' => g.copy(width: v),
+      _ => g.copy(height: v),
+    };
+
+/// Runs [build] once with the declared geometry — or, when the node's CSS
+/// transitions cover left/top/right/bottom/width/height, once per animation
+/// frame with the interpolated lengths. The delegate path (percentages, auto
+/// margins) and the plain Positioned path both go through here: without it a
+/// change jumps straight to the resolved value, because layout resolves the
+/// length in one pass (spec 073: vant's progress portion is `width: 70%` and
+/// its pivot `left: 70%`, and the browser tweens both under the components'
+/// `transition: all`).
+///
+/// FjsLength is a px+percent pair, so lerping the components is always valid
+/// and the delegate then resolves the interpolated length exactly as it
+/// resolves a static one. Each animated property gets its own
+/// [TweenAnimationBuilder], nested so the innermost [build] sees every
+/// length: a level's builder re-runs on each tick of its own tween and
+/// rebuilds the levels below it, so an inner length always moves against the
+/// outer level's latest value (its end value once that one finished). The
+/// box's structure — which insets are declared, over-constrained dropping,
+/// static cross position — derives from null-ness, which the animation does
+/// not change, so a per-frame [build] cannot re-branch.
+///
+/// track.delay is not honored here (TweenAnimationBuilder has no delay hook,
+/// the same gap as the background/size paths in decoration.dart);
+/// transitionend for width/height keeps coming from the node's own size
+/// animation there, the insets dispatch none.
+Widget _animateAbsGeometry({
+  required FjsStyle style,
+  required _AbsGeometry geometry,
+  required Widget Function(_AbsGeometry animated) build,
+}) {
+  final transitions = style.transitions;
+  if (transitions == null) return build(geometry);
+
+  FjsTransitionTrack? live(String name) {
+    final track = transitions.forProperty(name);
+    return track != null && track.duration > Duration.zero ? track : null;
+  }
+
+  Widget nest(int index, _AbsGeometry g) {
+    if (index == _absGeometryProps.length) return build(g);
+    final name = _absGeometryProps[index];
+    final value = _absLengthOf(g, name);
+    final track = live(name);
+    if (value == null || track == null) return nest(index + 1, g);
+    return TweenAnimationBuilder<FjsLength>(
+      tween: _FjsLengthTween(end: value),
+      duration: track.duration,
+      curve: track.curve,
+      builder: (_, animated, _) =>
+          nest(index + 1, _withAbsLength(g, name, animated)),
+    );
+  }
+
+  return nest(0, geometry);
+}
+
+/// Lays its child out with no width cap and takes the child's size clamped
+/// to its own constraints — the child paints (and hit-tests) past the edge
+/// it overflows. OverflowBox with a defer-to-child fit, which this Flutter
+/// does not have; [alignEnd] pins the child's right edge instead of its
+/// left (a box placed by `right:`).
+class _UncappedWidth extends SingleChildRenderObjectWidget {
+  const _UncappedWidth({required this.alignEnd, super.child});
+
+  final bool alignEnd;
+
+  @override
+  _RenderUncappedWidth createRenderObject(BuildContext context) =>
+      _RenderUncappedWidth(alignEnd);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderUncappedWidth renderObject,
+  ) {
+    renderObject.alignEnd = alignEnd;
+  }
+}
+
+class _RenderUncappedWidth extends RenderShiftedBox {
+  _RenderUncappedWidth(this._alignEnd) : super(null);
+
+  bool _alignEnd;
+  set alignEnd(bool v) {
+    if (v == _alignEnd) return;
+    _alignEnd = v;
+    markNeedsLayout();
+  }
+
+  @override
+  void performLayout() {
+    final c = child;
+    if (c == null) {
+      size = constraints.smallest;
+      return;
+    }
+    c.layout(
+      BoxConstraints(
+        minHeight: constraints.minHeight,
+        maxHeight: constraints.maxHeight,
+      ),
+      parentUsesSize: true,
+    );
+    size = constraints.constrain(c.size);
+    (c.parentData! as BoxParentData).offset = Offset(
+      _alignEnd ? size.width - c.size.width : 0,
+      0,
+    );
+  }
+
+  @override
+  bool hitTestSelf(Offset position) => false;
+
+  @override
+  bool hitTest(BoxHitTestResult result, {required Offset position}) =>
+      // the overflowing part is still the child's
+      hitTestChildren(result, position: position);
 }

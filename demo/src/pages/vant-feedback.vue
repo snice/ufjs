@@ -161,6 +161,8 @@ function probeDialog() {
 
 <style scoped>
 .page {
+  /* height:0 归零基数：内容高不能当基数（App 端不收缩，整页溢出） */
+  height: 0px;
   flex-grow: 1;
   padding: 16px;
   background-color: #f7f8fa;

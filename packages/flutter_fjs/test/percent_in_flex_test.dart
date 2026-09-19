@@ -196,7 +196,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(_render(_overlayTree()));
-    final box = tester.getRect(find.byType(Stack));
+    final box = tester.getRect(find.byType(Stack).first);
     expect(box.size, const Size(120, 80));
     expect(_colored(tester, const Color(0xFFDD524D)), box);
   });

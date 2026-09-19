@@ -109,6 +109,9 @@ enum {
     FJS_EVENT_LEAVE            = 39,
     FJS_EVENT_AFTER_LEAVE      = 40,
     FJS_EVENT_CLICK_OVERLAY    = 41,
+    /* a CSS transform/opacity transition ran to its end (specs/073). No
+       params; a retarget mid-flight cancels it without the event. */
+    FJS_EVENT_TRANSITION_END   = 42,
 };
 
 /* Tagged value tags for the FJSValue C ABI struct. */

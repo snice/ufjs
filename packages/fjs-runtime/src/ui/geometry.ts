@@ -2,12 +2,13 @@
 // (flutter_fjs/lib/src/geometry.dart). Component libraries measure before
 // they act — vant's Rate reads each star's rect on a click, its Slider turns
 // `clientX - rect.left` into a value — and the DOM answers synchronously, so
-// these do too. The answer is the LAST FRAME's layout: unlike the DOM there
-// is no forced synchronous reflow (layout lives on the other side of the
-// bridge), which is what those libraries measure anyway — a box that is
-// already on screen. Coordinates are logical pixels in the window, the same
-// space touch events report.
-import { hasNativeHost, invokeHost } from '../host';
+// these do too. Like the DOM, a read forces a synchronous reflow: pending
+// ops are flushed first and the host lays out what they changed before it
+// measures (specs/073 — vant's collapse un-hides its content and reads
+// `offsetHeight` in the same tick; the last frame's layout said 0 and the
+// height transition was skipped). Coordinates are logical pixels in the
+// window, the same space touch events report.
+import { flushNow, hasNativeHost, invokeHost } from '../host';
 
 /** The DOMRect subset libraries read. */
 export interface FjsRect {
@@ -45,6 +46,8 @@ function hostNumbers(name: string, ...args: number[]): number[] | null {
  * when the node is not laid out (the DOM's answer for a detached or
  * `display: none` element). */
 export function boundingRectOf(id: number): FjsRect {
+  // the host can only lay out what it has been sent
+  if (hasNativeHost) flushNow();
   const r = hostNumbers('fjs.ui.rect', id);
   return r && r.length === 4 ? makeRect(r[0], r[1], r[2], r[3]) : makeRect(0, 0, 0, 0);
 }

@@ -94,6 +94,11 @@ export const EventType: Record<string, number> = {
   onAfterleave: 40,
   onClickoverlay: 41,
   onClickOverlay: 41,
+  // a CSS transform/opacity transition ran to its end (specs/073), no
+  // payload. `@transitionend` in a template becomes `onTransitionend` (the
+  // canonical spelling); vant's NoticeBar restarts its marquee on it.
+  onTransitionend: 42,
+  onTransitionEnd: 42,
 };
 
 /** Handler props with more than one spelling: the native side is told the
@@ -106,6 +111,7 @@ const CANONICAL_EVENT_PROP: Record<string, string> = {
   onTouchMove: 'onTouchmove',
   onTouchEnd: 'onTouchend',
   onTouchCancel: 'onTouchcancel',
+  onTransitionEnd: 'onTransitionend',
   onBeforeenter: 'onBeforeEnter',
   onAfterenter: 'onAfterEnter',
   onBeforeleave: 'onBeforeLeave',

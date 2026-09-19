@@ -126,6 +126,41 @@ class RenderFjsFlex extends RenderFlex with FjsShrinkStretchFlex {
     super.textBaseline,
     super.clipBehavior,
   });
+
+  bool _cssOverflowClip = false;
+
+  /// CSS `overflow:hidden` on the box this flex lays out: content that runs
+  /// past the box (vant's swipe track is N×100% of flex-shrink:0 items)
+  /// keeps its natural layout and is clipped by the box's own ClipRect
+  /// (decoration.dart) — exactly like web, where the same geometry shows up
+  /// as scrollWidth > clientWidth and is not an error. Flutter's debug paint
+  /// would still draw its "overflowed" stripes and report an exception on
+  /// every frame regardless of clipBehavior, so the indicator is skipped
+  /// while this is set.
+  // ignore: avoid_setters_without_getters
+  set cssOverflowClip(bool value) {
+    if (_cssOverflowClip == value) return;
+    _cssOverflowClip = value;
+    markNeedsPaint();
+  }
+
+  @override
+  void paintOverflowIndicator(
+    PaintingContext context,
+    Offset offset,
+    Rect containerRect,
+    Rect childRect, {
+    List<DiagnosticsNode>? overflowHints,
+  }) {
+    if (_cssOverflowClip) return;
+    super.paintOverflowIndicator(
+      context,
+      offset,
+      containerRect,
+      childRect,
+      overflowHints: overflowHints,
+    );
+  }
 }
 
 /// A [Flex] laid out by [RenderFjsFlex].
@@ -137,12 +172,17 @@ class FjsFlex extends Flex {
     super.mainAxisSize,
     super.crossAxisAlignment,
     super.textBaseline,
+    super.clipBehavior,
     this.measureCross = false,
+    this.cssOverflowClip = false,
     super.children,
   });
 
   /// See [FjsShrinkStretchFlex.measureCross].
   final bool measureCross;
+
+  /// See [RenderFjsFlex.cssOverflowClip].
+  final bool cssOverflowClip;
 
   @override
   RenderFlex createRenderObject(BuildContext context) {
@@ -155,7 +195,8 @@ class FjsFlex extends Flex {
       verticalDirection: verticalDirection,
       textBaseline: textBaseline,
       clipBehavior: clipBehavior,
-    )..measureCross = measureCross;
+    )..measureCross = measureCross
+      ..cssOverflowClip = cssOverflowClip;
   }
 
   @override
@@ -164,6 +205,8 @@ class FjsFlex extends Flex {
     covariant RenderFjsFlex renderObject,
   ) {
     super.updateRenderObject(context, renderObject);
-    renderObject.measureCross = measureCross;
+    renderObject
+      ..measureCross = measureCross
+      ..cssOverflowClip = cssOverflowClip;
   }
 }

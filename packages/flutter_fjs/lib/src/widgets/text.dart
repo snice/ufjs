@@ -107,7 +107,13 @@ Widget buildText(
 }) {
   final textAlign = style.textAlign;
   final maxLines = style.whiteSpaceNowrap ? 1 : style.maxLines;
-  final overflow = style.overflow;
+  // CSS text-overflow only acts on a single-line run (nowrap); Flutter's
+  // ellipsis without maxLines would cut wrapped text to one line
+  final overflow =
+      style.overflow ??
+      (maxLines != null && style.textOverflowEllipsis
+          ? TextOverflow.ellipsis
+          : null);
 
   final richSpans = node.props['richSpans'];
   if (richSpans != null) {
@@ -125,8 +131,10 @@ Widget buildText(
         if (span != null) runs.add(span);
       }
     }
+    final paragraphStyle = fjsTextStyle(style);
     return Text.rich(
-      TextSpan(style: fjsTextStyle(style), children: runs),
+      TextSpan(style: paragraphStyle, children: runs),
+      style: paragraphStyle,
       textAlign: textAlign,
       maxLines: maxLines,
       overflow: overflow,
@@ -177,6 +185,20 @@ Widget buildText(
   // line, as its inline box does on the web.
   if (childNodes.isEmpty || tree == null) {
     final textStyle = fjsTextStyle(style);
+    // An empty paragraph with declared dimensions is still a CSS box — vant's
+    // skeleton title is an empty <h3> with width/height/background. Flutter's
+    // Text('') has no extent for the decoration to paint, so hand it a box:
+    // percentages resolve against the incoming constraints (auto where those
+    // are unbounded — a percentage height in a scroller, as CSS says).
+    if ((node.text == null || node.text!.isEmpty) &&
+        (style.widthLength != null || style.heightLength != null)) {
+      return LayoutBuilder(
+        builder: (context, constraints) => SizedBox(
+          width: style.widthLength?.resolveOrNull(constraints.maxWidth),
+          height: style.heightLength?.resolveOrNull(constraints.maxHeight),
+        ),
+      );
+    }
     return Text(
       _transformed(style, node.text ?? ''),
       style: textStyle,
@@ -194,8 +216,15 @@ Widget buildText(
   ];
   // Paragraph-level properties (align, line clamp, nowrap) come from this
   // node only: a span has no box to align or clamp.
+  final paragraphStyle = fjsTextStyle(style);
   return Text.rich(
-    TextSpan(style: fjsTextStyle(style), children: spans),
+    TextSpan(style: paragraphStyle, children: spans),
+    // the paragraph's own style too, not only the root span's: Flutter takes
+    // the line metrics of a line with no glyph of its own (an icon font's
+    // `::before` box alone in its <i>) from the WIDGET style, which was the
+    // ambient Material body text — 14px × 1.43 made vant's 12px step icon a
+    // 20px line
+    style: paragraphStyle,
     textAlign: textAlign,
     maxLines: maxLines,
     overflow: overflow,

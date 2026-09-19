@@ -7,6 +7,10 @@
 // they live here next to the registration — one list to keep in sync.
 // The template names are typed by src/vant-components.d.ts, which must list
 // the same components (specs/068-demo-vant, specs/069-vant-compat-gaps).
+//
+// FIRST import: the app host has no window/document, and vant decides
+// inBrowser when it is evaluated — see ./vant/dom-env.ts (specs/073).
+import './vant/dom-env';
 import type { App } from 'vue';
 import {
   ActionSheet,

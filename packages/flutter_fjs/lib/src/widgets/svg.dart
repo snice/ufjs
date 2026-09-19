@@ -12,11 +12,17 @@
 // fill / stroke / *-opacity / stroke-width / linecap / linejoin /
 // miterlimit / dasharray / dashoffset / fill-rule, inherited down the tree
 // as SVG does; `currentColor`; `transform` attributes and CSS transforms;
-// `@keyframes` on any shape (render/animation.dart). Not supported, and
-// skipped: text, use, gradients / patterns (`url(#…)` paints nothing),
-// clip paths, masks, filters.
+// `@keyframes` on any shape (render/animation.dart); paint servers —
+// linearGradient / radialGradient via `fill/stroke: url(#id)`, in
+// objectBoundingBox units with stop-opacity and gradientTransform (vant's
+// Empty illustrations are drawn almost entirely with gradient fills, so
+// "not supported" meant a page of missing shapes, spec 073). Not supported,
+// and skipped: text, use, patterns, userSpaceOnUse gradient units, clip
+// paths, masks, filters.
 import 'dart:collection' show LinkedHashMap;
+import 'dart:typed_data' show Float64List;
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
@@ -211,12 +217,14 @@ class _SvgPainter extends CustomPainter {
     required this.viewBox,
     required this.elapsedFor,
     Listenable? repaint,
-  }) : super(repaint: repaint);
+  }) : _gradients = _collectGradients(tree, rootId),
+       super(repaint: repaint);
 
   final MirrorTree tree;
   final int rootId;
   final Rect? viewBox;
   final Duration Function(MirrorNode, FjsAnimations) elapsedFor;
+  final Map<String, _GradientDef> _gradients;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -258,8 +266,14 @@ class _SvgPainter extends CustomPainter {
             elapsedFor(node, animations),
             (p) => style[p] ?? node.props[p],
           );
-    // CSS beats the presentation attribute; a running animation beats both
-    Object? read(String key) => animated[key] ?? style[key] ?? node.props[key];
+    // CSS beats the presentation attribute; a running animation beats both.
+    // Attributes may arrive in either spelling (templates write kebab-case
+    // `stroke-width`, render functions camelCase) — the fallback covers the
+    // attribute lookup; CSS keys are already normalized.
+    Object? read(String key) => animated[key] ??
+        style[key] ??
+        node.props[key] ??
+        node.props[_kebabKey(key)];
 
     final paint = _resolvePaint(inherited, read, style['color']);
     final opacity = (_num(read('opacity')) ?? 1).clamp(0.0, 1.0);
@@ -347,24 +361,51 @@ class _SvgPainter extends CustomPainter {
   }
 
   void _paintShape(Canvas canvas, Path path, _Paint p) {
-    final fill = _color(p.fill, p.fillOpacity);
+    final bounds = path.getBounds();
+    final fill = _brush(p.fill, p.fillOpacity, bounds);
     if (fill != null) {
       path.fillType = p.evenOdd ? PathFillType.evenOdd : PathFillType.nonZero;
-      canvas.drawPath(path, Paint()..color = fill);
+      canvas.drawPath(path, fill);
     }
-    final stroke = _color(p.stroke, p.strokeOpacity);
+    final stroke = _brush(p.stroke, p.strokeOpacity, bounds);
     if (stroke != null && p.strokeWidth > 0) {
       canvas.drawPath(
         dashSvgPath(path, p.dashes, p.dashOffset),
-        Paint()
+        stroke
           ..style = PaintingStyle.stroke
-          ..color = stroke
           ..strokeWidth = p.strokeWidth
           ..strokeCap = p.cap
           ..strokeJoin = p.join
           ..strokeMiterLimit = p.miter,
       );
     }
+  }
+
+  /// A paint value to a fill/stroke [Paint]. A gradient paint server
+  /// (`url(#id)`) becomes a shader; opacity rides the paint color's alpha,
+  /// which Skia multiplies over the shader.
+  Paint? _brush(Object value, double opacity, Rect bounds) {
+    final shader = _gradientShader(value, bounds);
+    if (shader != null) {
+      return Paint()
+        ..shader = shader
+        ..color = Color.fromRGBO(0, 0, 0, opacity.clamp(0.0, 1.0));
+    }
+    final c = _color(value, opacity);
+    return c == null ? null : (Paint()..color = c);
+  }
+
+  Shader? _gradientShader(Object value, Rect bounds) {
+    if (value is Color) return null;
+    final s = value.toString().trim();
+    if (!s.startsWith('url(')) return null;
+    final id = RegExp(r'''url\(["']?#([^"')]+)["']?\)''').firstMatch(s)?.group(1);
+    final def = id == null ? null : _gradients[id];
+    if (def == null) {
+      fjsWarnOnce('svg-paint-url', '[fjs svg] paint server $s has no gradient; painted nothing');
+      return null;
+    }
+    return def.shader(bounds);
   }
 
   Color? _color(Object value, double opacity) {
@@ -374,10 +415,7 @@ class _SvgPainter extends CustomPainter {
     } else {
       final s = value.toString();
       if (s == 'none' || s == 'transparent') return null;
-      if (s.startsWith('url(')) {
-        fjsWarnOnce('svg-paint-url', '[fjs svg] paint servers (url(#…)) are not supported; painted nothing');
-        return null;
-      }
+      if (s.startsWith('url(')) return null; // unmatched paint server (warned)
       c = parseColor(s);
     }
     if (c == null) return null;
@@ -394,6 +432,123 @@ const _skipped = {
   'defs', 'title', 'desc', 'metadata', 'style', 'symbol', 'clipPath', 'mask',
   'linearGradient', 'radialGradient', 'pattern', 'filter', 'marker',
 };
+
+/// A paint server collected from `defs`: its raw attributes plus the parsed
+/// stop list. Coordinates stay raw until [shader] — they are fractions of
+/// the *painted shape's* bounding box (SVG objectBoundingBox units), so each
+/// shape referencing the gradient resolves its own mapping, exactly like the
+/// browser does when a `<g fill="url(#…)">` shades children of every size.
+class _GradientDef {
+  _GradientDef(this.radial, this.props, this.stops);
+
+  final bool radial;
+  final Map<String, Object?> props;
+  /// (offset 0..1, color with stop-opacity folded in), in document order.
+  final List<(double, Color)> stops;
+
+  Shader? shader(Rect bounds) {
+    if (stops.length < 2) return null;
+    final colors = [for (final s in stops) s.$2];
+    final offsets = [for (final s in stops) s.$1.clamp(0.0, 1.0)];
+    // All gradient geometry lives in the objectBoundingBox UNIT SQUARE —
+    // coordinates, radius and gradientTransform alike (measured against the
+    // browser: on a 2:1 box a 50% radial reaches half the WIDTH and half the
+    // HEIGHT, i.e. the gradient is squashed with the box; and vant's shadow
+    // `matrix(… .58 .72)` translations are clearly fractions). The matrix
+    // then maps unit space to the box: origin + per-axis scale, with the
+    // gradientTransform applied inside. Shader evaluation runs through m⁻¹,
+    // which is the SVG model verbatim.
+    final m = Matrix4.translationValues(bounds.left, bounds.top, 0)
+      ..scaleByDouble(bounds.width, bounds.height, 1, 1);
+    final xformText = props['gradientTransform']?.toString();
+    if (xformText != null && xformText.trim().isNotEmpty) {
+      m.multiply(parseSvgTransform(xformText));
+    }
+    final Float64List matrix4 = m.storage;
+    if (!radial) {
+      // SVG defaults: x1=0% y1=0% x2=100% y2=0% — a horizontal sweep
+      final begin = Offset(_frac(props['x1'], 0), _frac(props['y1'], 0));
+      final end = Offset(_frac(props['x2'], 1), _frac(props['y2'], 0));
+      if (begin == end) {
+        // zero-length vector: browsers paint the average of the stop colors
+        // (vant's magnifier paddle ships one of these). Skia leaves equal
+        // points undefined, so build a solid ramp over any direction.
+        var r = 0.0, g = 0.0, b = 0.0, a = 0.0;
+        for (final c in colors) {
+          r += c.r; g += c.g; b += c.b; a += c.a;
+        }
+        final n = colors.length.toDouble();
+        final avg = Color.from(alpha: a / n, red: r / n, green: g / n, blue: b / n);
+        return ui.Gradient.linear(
+          begin, const Offset(1, 0), [avg, avg], null, TileMode.clamp, matrix4,
+        );
+      }
+      return ui.Gradient.linear(begin, end, colors, offsets, TileMode.clamp, matrix4);
+    }
+    final cx = _frac(props['cx'], .5);
+    final cy = _frac(props['cy'], .5);
+    final center = Offset(cx, cy);
+    // in unit space the box's normalized diagonal is exactly 1, so a radius
+    // percentage resolves to its plain fraction
+    final radius = _frac(props['r'], .5);
+    Offset? focal;
+    if (props['fx'] != null || props['fy'] != null) {
+      final f = Offset(_frac(props['fx'], cx), _frac(props['fy'], cy));
+      if (f != center) focal = f;
+    }
+    return ui.Gradient.radial(
+      center, radius, colors, offsets, TileMode.clamp, matrix4, focal, 0,
+    );
+  }
+}
+
+/// A gradient coordinate: objectBoundingBox fractions (plain numbers) or
+/// percentages of the box dimension.
+double _frac(Object? v, double fallback) {
+  if (v == null) return fallback;
+  final s = v.toString().trim();
+  final pct = s.endsWith('%');
+  final n = double.tryParse(pct ? s.substring(0, s.length - 1) : s);
+  if (n == null) return fallback;
+  return pct ? n / 100 : n;
+}
+
+/// linearGradient / radialGradient elements anywhere under the svg root,
+/// keyed by their `id`. Stops inherit nothing and read attribute-only values
+/// (vant never styles them from CSS).
+Map<String, _GradientDef> _collectGradients(MirrorTree tree, int rootId) {
+  final out = <String, _GradientDef>{};
+  void walk(int id) {
+    final n = tree.node(id);
+    if (n == null) return;
+    if (n.tag == 'linearGradient' || n.tag == 'radialGradient') {
+      final gid = n.props['id']?.toString();
+      if (gid != null && gid.isNotEmpty) {
+        final stops = <(double, Color)>[];
+        for (final cid in n.children) {
+          final stop = tree.node(cid);
+          if (stop == null || stop.tag != 'stop') continue;
+          final c = parseColor(
+            (stop.props['stop-color'] ?? stop.props['stopColor'])?.toString(),
+          ) ?? const Color(0xFF000000);
+          final op = _num(stop.props['stop-opacity'] ?? stop.props['stopOpacity']);
+          stops.add((
+            _frac(stop.props['offset'], 0),
+            op == null || op >= 1 ? c : c.withValues(alpha: c.a * op.clamp(0.0, 1.0)),
+          ));
+        }
+        out[gid] = _GradientDef(n.tag == 'radialGradient', n.props, stops);
+      }
+      return;
+    }
+    for (final c in n.children) {
+      walk(c);
+    }
+  }
+
+  walk(rootId);
+  return out;
+}
 
 /// A shape element's geometry as a path, in user units. [ref] is the
 /// viewport the `%` lengths resolve against.
@@ -499,6 +654,13 @@ Path dashSvgPath(Path source, List<double> dashes, double offset) {
 }
 
 // ---- parsing -----------------------------------------------------------------
+
+/// `strokeWidth` → `stroke-width`: templates write presentation attributes
+/// kebab-case; render functions and the style engine use camelCase.
+final Map<String, String> _kebabCache = {};
+String _kebabKey(String key) =>
+    _kebabCache[key] ??=
+        key.replaceAllMapped(RegExp('[A-Z]'), (m) => '-${m[0]!.toLowerCase()}');
 
 double? _num(Object? v) {
   if (v is num) return v.toDouble();

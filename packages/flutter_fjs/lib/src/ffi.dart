@@ -408,4 +408,7 @@ abstract final class FjsEvent {
   static const leave = 39;
   static const afterLeave = 40;
   static const clickOverlay = 41;
+  // a CSS transform/opacity transition ran to its end (specs/073; vant's
+  // NoticeBar restarts its marquee on it). No payload.
+  static const transitionEnd = 42;
 }

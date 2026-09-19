@@ -127,10 +127,10 @@ void main() {
   ) async {
     await tester.pumpWidget(_render(_badgeTree()));
 
-    final stack = tester.widget<Stack>(find.byType(Stack));
+    final stack = tester.widget<Stack>(find.byType(Stack).first);
     expect(stack.clipBehavior, Clip.none);
 
-    final box = tester.getRect(find.byType(Stack));
+    final box = tester.getRect(find.byType(Stack).first);
     expect(box.size, const Size(56, 56));
     // the badge sits 4px past the top-right corner, all 20px of it
     final badge = _badgeRect(tester);
@@ -147,7 +147,16 @@ void main() {
     // No height either, so the badge lands under the avatar in the column.
     await tester.pumpWidget(_render(_badgeTree(boxStyle: '"width":56')));
 
-    expect(find.byType(Stack), findsNothing);
+    // no containing block of its own: the badge lays out in the column,
+    // under the avatar (its own Stack only hosts its own content)
+    final avatar = tester.getRect(
+      find.byWidgetPredicate(
+        (w) =>
+            w is Container &&
+            (w.decoration as BoxDecoration?)?.color == const Color(0xFFEEF4FF),
+      ),
+    );
+    expect(_badgeRect(tester).top, greaterThanOrEqualTo(avatar.bottom));
   });
 
   group('style', () {
@@ -237,7 +246,7 @@ void main() {
     // top measures the box's HEIGHT, left its WIDTH (CSS containing block
     // axes); the overlay starts at the box's center
     await tester.pumpWidget(_render(_centeredOverlayTree()));
-    final box = tester.getRect(find.byType(Stack));
+    final box = tester.getRect(find.byType(Stack).first);
     final overlay = tester.getRect(
       find.byWidgetPredicate(
         (w) =>
@@ -271,7 +280,7 @@ void main() {
     final tree = MirrorTree();
     tree.applyFrame(Uint8List.fromList(w.b));
     await tester.pumpWidget(_render(tree));
-    final box = tester.getRect(find.byType(Stack));
+    final box = tester.getRect(find.byType(Stack).first);
     final overlay = tester.getRect(
       find.byWidgetPredicate(
         (w) =>

@@ -156,7 +156,16 @@ class FjsStyle {
     style = hover == null && active == null
         ? base
         : {...base, ...?hover, ...?active};
+    keepsBox = true;
   }
+
+  /// A press/hover-tracking node's style: its decoration layer keeps the
+  /// same widget shape whether or not the current state paints anything.
+  /// A `:active` background that comes and goes would otherwise add and drop
+  /// the decorated box ABOVE the children, remounting the whole subtree on
+  /// release — vant's collapse arrow lost its rotate transition to that
+  /// (the release and the expand land in one frame).
+  bool keepsBox = false;
 
   /// Whether the node carries a page-authored `:active` style. Buttons also
   /// track press for the default WeUI mask, even when this is false.
@@ -205,8 +214,9 @@ class FjsStyle {
   /// 0.5). Null when no border-radius is declared. A fraction references
   /// the box's own size, which only exists at layout time — decoration.dart
   /// resolves it there.
-  List<BorderRadiusPart>? get borderRadiusParts =>
-      _v('borderRadius') == null ? null : parseBorderRadiusParts(_v('borderRadius'));
+  List<BorderRadiusPart>? get borderRadiusParts => _v('borderRadius') == null
+      ? null
+      : parseBorderRadiusParts(_v('borderRadius'));
   double? get fontSize => _num('fontSize');
   int? get maxLines => _v('maxLines') is int ? _v('maxLines') as int : null;
   TextOverflow? get overflow {
@@ -460,6 +470,7 @@ class FjsStyle {
   String? get textTransform => _v('textTransform')?.toString();
   List<BoxShadow>? get textShadows => parseBoxShadows(_v('textShadow'));
   bool get whiteSpaceNowrap => _v('whiteSpace')?.toString() == 'nowrap';
+  bool get textOverflowEllipsis => _v('textOverflow')?.toString() == 'ellipsis';
 
   TextAlign? get textAlign {
     final v = _v('textAlign')?.toString();

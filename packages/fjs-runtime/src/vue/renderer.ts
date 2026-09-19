@@ -472,26 +472,37 @@ interface HtmlTagMapping {
 }
 
 const H: Record<string, HtmlTagMapping> = {
-  // containers
-  div: { tag: 'view' },
-  section: { tag: 'view' },
-  main: { tag: 'view' },
-  article: { tag: 'view' },
-  aside: { tag: 'view' },
-  nav: { tag: 'view' },
-  header: { tag: 'view' },
-  footer: { tag: 'view' },
-  ul: { tag: 'view' },
-  ol: { tag: 'view' },
-  li: { tag: 'view' },
+  // containers. `flexShrink: 1` restores the CSS initial value the fjs tag
+  // set deliberately lacks: base-css pins `view { flex-shrink: 0 }` so an
+  // fjs view matches Flutter's keep-its-natural-size flex child, and the
+  // Dart side (_noShrinkTags) keys the same pin off the MAPPED tag. A vant
+  // `div` on the web stays a real DOM node with that initial, so e.g.
+  // `.van-skeleton__content { width: 100% }` yields to a fixed-size avatar
+  // there, while the mapped view held its width and pushed the row past the
+  // edge (RIGHT OVERFLOWED BY 84px, spec 073). Defaults sit under matched
+  // rules, so declared values — vant's own `flex-shrink: 0` on
+  // `.van-skeleton-avatar` — still win. Mapped *text* tags keep the view
+  // behavior: no known vant row competes on a definite-width text, and the
+  // narrower default keeps already-accepted pages stable.
+  div: { tag: 'view', style: { flexShrink: 1 } },
+  section: { tag: 'view', style: { flexShrink: 1 } },
+  main: { tag: 'view', style: { flexShrink: 1 } },
+  article: { tag: 'view', style: { flexShrink: 1 } },
+  aside: { tag: 'view', style: { flexShrink: 1 } },
+  nav: { tag: 'view', style: { flexShrink: 1 } },
+  header: { tag: 'view', style: { flexShrink: 1 } },
+  footer: { tag: 'view', style: { flexShrink: 1 } },
+  ul: { tag: 'view', style: { flexShrink: 1 } },
+  ol: { tag: 'view', style: { flexShrink: 1 } },
+  li: { tag: 'view', style: { flexShrink: 1 } },
   // `label` is an fjs tag of its own now (it forwards taps); it stays in
   // this table so the defaults an HTML page relied on still apply, mapping
   // to itself. `form` is NOT here: on this path it resolves to the Vue
   // component in components/form.ts, which renders a plain view.
-  table: { tag: 'view' },
-  tr: { tag: 'view', style: { flexDirection: 'row' } },
-  td: { tag: 'view' },
-  th: { tag: 'view' },
+  table: { tag: 'view', style: { flexShrink: 1 } },
+  tr: { tag: 'view', style: { flexDirection: 'row', flexShrink: 1 } },
+  td: { tag: 'view', style: { flexShrink: 1 } },
+  th: { tag: 'view', style: { flexShrink: 1 } },
 
   // text
   span: { tag: 'text' },

@@ -10,7 +10,6 @@ import 'length.dart';
 import 'style.dart';
 import 'style_parse.dart';
 
-
 /// Resolves a percentage border-radius against the box's own definite
 /// width/height (`van-radio`'s `border-radius: 100%` circle). Null when any
 /// corner carries a fraction but the box size is not definite — content-sized
@@ -122,6 +121,7 @@ Widget decorateNode(
   }
   final background = style.backgroundColor ?? defaultBackgroundColor;
   final decorated =
+      style.keepsBox ||
       style.hasDecoration ||
       border != null ||
       background != null ||
@@ -174,22 +174,33 @@ Widget decorateNode(
         heightTrack.duration > Duration.zero;
     Widget animateSize(Widget sized) {
       var out = sized;
+      // a run that reaches its end is CSS's transitionend — vant's collapse
+      // clears the fixed height on it (the renderer turns the notification
+      // into the node's event, see [FjsSizeTransitionEnd])
       if (animatesHeight) {
-        out = TweenAnimationBuilder<double>(
-          tween: Tween<double>(end: height),
-          duration: heightTrack.duration,
-          curve: heightTrack.curve,
-          builder: (_, h, inner) => SizedBox(height: h, child: inner),
-          child: out,
+        final inner = out;
+        out = Builder(
+          builder: (ctx) => TweenAnimationBuilder<double>(
+            tween: Tween<double>(end: height),
+            duration: heightTrack.duration,
+            curve: heightTrack.curve,
+            onEnd: () => const FjsSizeTransitionEnd().dispatch(ctx),
+            builder: (_, h, inner) => SizedBox(height: h, child: inner),
+            child: inner,
+          ),
         );
       }
       if (animatesWidth) {
-        out = TweenAnimationBuilder<double>(
-          tween: Tween<double>(end: width),
-          duration: widthTrack.duration,
-          curve: widthTrack.curve,
-          builder: (_, w, inner) => SizedBox(width: w, child: inner),
-          child: out,
+        final inner = out;
+        out = Builder(
+          builder: (ctx) => TweenAnimationBuilder<double>(
+            tween: Tween<double>(end: width),
+            duration: widthTrack.duration,
+            curve: widthTrack.curve,
+            onEnd: () => const FjsSizeTransitionEnd().dispatch(ctx),
+            builder: (_, w, inner) => SizedBox(width: w, child: inner),
+            child: inner,
+          ),
         );
       }
       return out;
@@ -231,7 +242,20 @@ Widget decorateNode(
       return animateSize(out);
     }
     if (width != null || height != null) {
-      return animateSize(SizedBox(width: width, height: height, child: child));
+      // overflow: hidden with a fixed height (vant's collapse wrapper while
+      // its height runs 0 → content): the content keeps its own height and
+      // is clipped, as in CSS — squeezed into the box, a flex column paints
+      // the overflow stripes instead
+      final content = style.overflowHidden && height != null
+          ? OverflowBox(
+              maxHeight: double.infinity,
+              alignment: Alignment.topCenter,
+              child: child,
+            )
+          : child;
+      return animateSize(
+        SizedBox(width: width, height: height, child: content),
+      );
     }
     return child;
   }
@@ -288,33 +312,49 @@ Widget decorateNode(
       w = ConstrainedBox(constraints: constraints, child: w);
   }
   if (style.overflowHidden) {
-    w = borderRadius != null
-        ? ClipRRect(borderRadius: borderRadius, child: w)
-        : ClipRect(child: w);
+    // the scope tells flex boxes inside that their overflow is clipped here:
+    // the same geometry is web's scrollWidth > clientWidth, not an error
+    // (see RenderFjsFlex.cssOverflowClip)
+    w = FjsClipScope(
+      child: borderRadius != null
+          ? ClipRRect(borderRadius: borderRadius, child: w)
+          : ClipRect(child: w),
+    );
   }
   // margin sits OUTSIDE the sized/decorated box, as in CSS: it must not eat
   // into width/height, the background must not paint through it, and the
-  // overflow clip stays aligned with the box's own corners
+  // overflow clip stays aligned with the box's own corners.
+  //
+  // Out-of-flow boxes are the exception: their margin offsets the box from
+  // the inset (CSS resolves `top: 0; margin-top: 4px` to a border box at 4
+  // without shrinking a declared height), so positionedChild folds the
+  // margin into the positioned insets and this Padding is skipped — inside
+  // the tight Positioned slot it would squeeze the box instead (vant's
+  // badge dot came out 8x4).
+  final outOfFlow =
+      style.position == 'absolute' || style.position == 'fixed';
   final marLengths = style.marginLengths;
-  if (marLengths != null && marLengths.hasRelative) {
-    // same reference as padding: the incoming max width, every side. The
-    // builder runs at LAYOUT time, after `w` has been reassigned by every
-    // later branch — capture the current value, or the builder closes over
-    // the LayoutBuilder itself and the box recurses into a freeze.
-    final inner = w;
-    w = LayoutBuilder(
-      builder: (context, constraints) => Padding(
-        padding: resolveEdgeLengths(
-          marLengths,
-          style.margin,
-          null,
-          constraints.maxWidth,
+  if (!outOfFlow) {
+    if (marLengths != null && marLengths.hasRelative) {
+      // same reference as padding: the incoming max width, every side. The
+      // builder runs at LAYOUT time, after `w` has been reassigned by every
+      // later branch — capture the current value, or the builder closes over
+      // the LayoutBuilder itself and the box recurses into a freeze.
+      final inner = w;
+      w = LayoutBuilder(
+        builder: (context, constraints) => Padding(
+          padding: resolveEdgeLengths(
+            marLengths,
+            style.margin,
+            null,
+            constraints.maxWidth,
+          ),
+          child: inner,
         ),
-        child: inner,
-      ),
-    );
-  } else if (style.margin != null) {
-    w = Padding(padding: style.margin!, child: w);
+      );
+    } else if (style.margin != null) {
+      w = Padding(padding: style.margin!, child: w);
+    }
   }
   // `position: relative` nudges the painted box; the slot it was laid out
   // in — and therefore every sibling — stays put, as in CSS
@@ -338,6 +378,21 @@ Widget decorateNode(
     if (shift != Offset.zero) w = Transform.translate(offset: shift, child: w);
   }
   return w;
+}
+
+/// Marks the subtree inside a box that clips its content — CSS
+/// `overflow: hidden` (the ClipRect below), scroll containers. Flex boxes
+/// inside read it to skip Flutter's debug "overflowed" indicator: content
+/// running past them is clipped here before anyone sees it, which is not
+/// an error condition on web either (see RenderFjsFlex.cssOverflowClip).
+class FjsClipScope extends InheritedWidget {
+  const FjsClipScope({super.key, required super.child});
+
+  @override
+  bool updateShouldNotify(FjsClipScope oldWidget) => false;
+
+  static bool of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<FjsClipScope>() != null;
 }
 
 /// Resolves a relative-capable edge set into [EdgeInsets]: a `%`/calc side
@@ -384,6 +439,7 @@ Widget transitionNode(
   required Object? key,
   bool stableTransform = false,
   bool stableOpacity = false,
+  VoidCallback? onTransitionEnd,
 }) {
   final transitions = style.transitions;
   final transformTrack = transitions?.forProperty('transform');
@@ -416,9 +472,12 @@ Widget transitionNode(
   // a fraction flip (`enter-from: translate3d(0, 100%, 0)`), and a static
   // wrapper here would jump instead of slide.
   final fraction = style.transformFraction;
-  if (transitions?.hasAnimatedTrack != true &&
-      !wantsTransform &&
-      !wantsOpacity) {
+  // Any declared transition keeps the wrapper, a 0s one too: vant's marquee
+  // sits at `transition-duration: 0s` with no transform, then sets both in
+  // one change. Inserting the wrapper at that moment would mount it at the
+  // END value (initState has no before-change style) — a jump, and no
+  // transitionend; CSS transitions from the old value.
+  if (transitions == null && !wantsTransform && !wantsOpacity) {
     return fraction == null
         ? content
         : FractionalTranslation(translation: fraction, child: content);
@@ -432,6 +491,7 @@ Widget transitionNode(
     opacityTrack: animatesOpacity ? opacityTrack : null,
     stableTransform: wantsTransform,
     stableOpacity: stableOpacity,
+    onTransitionEnd: onTransitionEnd,
     child: content,
   );
 }
@@ -459,6 +519,7 @@ class _TransitionNode extends StatefulWidget {
     this.opacityTrack,
     required this.stableTransform,
     this.stableOpacity = false,
+    this.onTransitionEnd,
     required this.child,
   });
 
@@ -468,10 +529,15 @@ class _TransitionNode extends StatefulWidget {
   /// The `%` part of the transform list, tweened with the matrix by the
   /// transform track (see [transitionNode]).
   final Offset? fraction;
+
   final bool stableTransform;
   final bool stableOpacity;
   final FjsTransitionTrack? transformTrack;
   final FjsTransitionTrack? opacityTrack;
+
+  /// CSS `transitionend`: a transform/opacity transition ran to its end.
+  /// A retarget mid-flight is a cancel and does not call it.
+  final VoidCallback? onTransitionEnd;
   final Widget child;
 
   @override
@@ -614,15 +680,20 @@ class _TransitionNodeState extends State<_TransitionNode>
     controller.duration = track.duration;
     setAnimation(CurvedAnimation(parent: controller, curve: track.curve));
     controller.value = 0;
+    // TickerFuture completes only when the run reaches its end — a stop()
+    // from a retarget leaves it pending, which is CSS's transitioncancel
+    void start() => controller.forward().then((_) {
+      if (mounted) widget.onTransitionEnd?.call();
+    });
     if (track.delay <= Duration.zero) {
-      controller.forward();
+      start();
       setDelayTimer(null);
       return;
     }
     setDelayTimer(
       Timer(track.delay, () {
         if (!mounted) return;
-        if (controller.value == 0) controller.forward();
+        if (controller.value == 0) start();
       }),
     );
   }
@@ -690,7 +761,9 @@ class _TransitionNodeState extends State<_TransitionNode>
           );
         }
         final opacity = _currentOpacity(widget.opacity).clamp(0.0, 1.0);
-        if (opacity < 1 || widget.opacityTrack != null || widget.stableOpacity) {
+        if (opacity < 1 ||
+            widget.opacityTrack != null ||
+            widget.stableOpacity) {
           w = Opacity(opacity: opacity, child: w);
         }
         return w;
@@ -712,3 +785,11 @@ bool _sameMatrix(Matrix4 a, Matrix4 b) {
 BorderSide _borderSide(FjsBorderSide? side) => side == null
     ? BorderSide.none
     : BorderSide(color: side.color, width: side.width);
+
+/// A width/height transition ran to its end — CSS `transitionend` for the
+/// size tracks, which live in the decoration layer and know no node id.
+/// The renderer catches it at the node that declared the transition
+/// (renderer.dart), so a child's never reaches its parent.
+class FjsSizeTransitionEnd extends Notification {
+  const FjsSizeTransitionEnd();
+}

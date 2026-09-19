@@ -39,9 +39,12 @@ export interface Compound {
   tag: string | null; // null = universal ('*')
   classes: string[];
   /** Structural position among the parent's element children (raw-text
-   * siblings excluded, see StyleEngine). Set by `:first-child`/`:last-child`. */
+   * siblings excluded, see StyleEngine). Set by `:first-child`/`:last-child`
+   * and the negated `:not(:first-child)`/`:not(:last-child)`. */
   first?: boolean;
   last?: boolean;
+  notFirst?: boolean;
+  notLast?: boolean;
   /** `[class<op>value]` tests — the one attribute the engine knows (an
    * element's class list). Component libraries hang shared decoration on
    * them: vant's hairlines are `[class*=van-hairline]::after`. */
@@ -525,11 +528,11 @@ export function parseSelector(raw: string): Selector | null {
   }
   if (/:active/.test(text)) {
     warnOnce(`selector "${raw.trim()}" puts :active on something other than its last compound, skipped`);
-    return null;
+    return null
   }
   if (/:hover/.test(text)) {
     warnOnce(`selector "${raw.trim()}" puts :hover on something other than its last compound, skipped`);
-    return null;
+    return null
   }
   // A trailing ::before / ::after (the single-colon legacy spelling too)
   // makes this selector style a synthesized decoration box instead of the
@@ -542,11 +545,13 @@ export function parseSelector(raw: string): Selector | null {
     text = text.slice(0, -pm[0].length).trim();
   }
   // :first-child / :last-child are structural — computable for any compound
-  // in the chain — so they survive into parseCompound. What is left here has
-  // to be plain compound syntax.
-  if (/[([:]/.test(text.replace(/:(?:first|last)-child|:disabled(?![\w-])/g, '').replace(CLASS_ATTR_RE, ''))) {
+  // in the chain — so they survive into parseCompound. :not() wrapping one of
+  // them is the negation vant-class stylesheets use
+  // (`.van-skeleton-paragraph:not(:first-child)`); anything else left here
+  // has to be plain compound syntax.
+  if (/[([:]/.test(text.replace(/:not\(:?(?:first|last)-child\)|:(?:first|last)-child|:disabled(?![\w-])/g, '').replace(CLASS_ATTR_RE, ''))) {
     warnOnce(`selector "${raw.trim()}" uses unsupported syntax (attr/pseudo/id), skipped`);
-    return null;
+    return null
   }
   const compounds: Compound[] = [];
   const combinators: Combinator[] = [];
@@ -583,7 +588,7 @@ export function parseSelector(raw: string): Selector | null {
     }
   }
   flush();
-  if (compounds.length === 0) return null;
+  if (compounds.length === 0) return null
   let specificity = 0;
   let pseudos = (active ? 1 : 0) + (hover ? 1 : 0);
   for (const c of compounds) {
@@ -591,6 +596,8 @@ export function parseSelector(raw: string): Selector | null {
     specificity += (c.classes.length + (c.classAttr?.length ?? 0)) * 10 + (c.tag ? 1 : 0);
     if (c.first) pseudos++;
     if (c.last) pseudos++;
+    if (c.notFirst) pseudos++;
+    if (c.notLast) pseudos++;
   }
   specificity += pseudos * 10; // a pseudo-class weighs as much as a class
   // a pseudo-element weighs like an element (CSS specificity rules)
@@ -645,6 +652,8 @@ function parseCompound(text: string): Compound | null {
   let tag: string | null = null;
   let first = false;
   let last = false;
+  let notFirst = false;
+  let notLast = false;
   const classAttr: ClassAttrTest[] = [];
   let i = 0;
   while (i < text.length) {
@@ -652,13 +661,13 @@ function parseCompound(text: string): Compound | null {
     if (ch === '[') {
       CLASS_ATTR_RE.lastIndex = i;
       const m = CLASS_ATTR_RE.exec(text);
-      if (!m || m.index !== i) return null; // unreachable via parseSelector
+      if (!m || m.index !== i) return null // unreachable via parseSelector
       classAttr.push({ op: m[1] as ClassAttrTest['op'], value: m[2] ?? m[3] ?? m[4] });
       i += m[0].length;
     } else if (ch === '.') {
       let j = i + 1;
       while (j < text.length && /[\w-]/.test(text[j])) j++;
-      if (j === i + 1) return null;
+      if (j === i + 1) return null
       classes.push(text.slice(i + 1, j));
       i = j;
     } else if (ch === ':') {
@@ -667,11 +676,25 @@ function parseCompound(text: string): Compound | null {
       let j = i + 1;
       while (j < text.length && /[\w-]/.test(text[j])) j++;
       const name = text.slice(i + 1, j);
-      if (name === 'first-child') first = true;
-      else if (name === 'last-child') last = true;
-      else if (name === 'disabled') classes.push(DISABLED_CLASS);
-      else return null; // unreachable via parseSelector, defensive
-      i = j;
+      if (name === 'not') {
+        // :not(:first-child) / :not(:last-child) — negating a structural
+        // pseudo is as computable as the pseudo itself; parseSelector's
+        // pre-check rejected every other argument
+        if (text[j] !== '(') return null // unreachable via parseSelector
+        const close = text.indexOf(')', j);
+        if (close < 0) return null
+        const arg = text.slice(j + 2, close).trim(); // skip '(', drop ':'
+        if (arg === 'first-child') notFirst = true;
+        else if (arg === 'last-child') notLast = true;
+        else return null
+        i = close + 1;
+      } else {
+        if (name === 'first-child') first = true;
+        else if (name === 'last-child') last = true;
+        else if (name === 'disabled') classes.push(DISABLED_CLASS);
+        else return null // unreachable via parseSelector, defensive
+        i = j;
+      }
     } else if (ch === '*') {
       tag = null;
       i++;
@@ -681,7 +704,7 @@ function parseCompound(text: string): Compound | null {
       tag = text.slice(i, j);
       i = j;
     } else {
-      return null; // stray '#' or other unsupported char
+      return null // stray '#' or other unsupported char
     }
   }
   // flags are omitted when false so a plain compound deep-equals the shape
@@ -691,6 +714,8 @@ function parseCompound(text: string): Compound | null {
     classes,
     ...(first ? { first: true } : {}),
     ...(last ? { last: true } : {}),
+    ...(notFirst ? { notFirst: true } : {}),
+    ...(notLast ? { notLast: true } : {}),
     ...(classAttr.length ? { classAttr } : {}),
   };
 }

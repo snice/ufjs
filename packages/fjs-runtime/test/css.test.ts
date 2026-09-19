@@ -541,6 +541,53 @@ describe('StyleEngine', () => {
     engine.register(null, `.mine { display: inline; flex-direction: column }`);
     await styleTick();
     expect(applied.get(mine)).toMatchObject({ flexDirection: 'column' });
+
+    // inline-flex also wraps (rows of van-tags), on top of its flex-row default
+    const tag = add(3, 'text', null);
+    engine.setClasses(3, 'tag');
+    engine.register(null, `.tag { display: inline-flex; align-items: center }`);
+    await styleTick();
+    expect(applied.get(tag)).toMatchObject({
+      display: 'inline-flex',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+    });
+  });
+
+  it('propagates text-decoration to text runs, not to boxes', async () => {
+    const { engine, applied, add, parentOf, childrenOf } = makeEngine();
+    const box = add(1, 'div', null);
+    engine.setClasses(1, 'origin');
+    // the raw text node under the div (van-card's origin price)
+    parentOf.set(2, 1);
+    childrenOf.set(2, []);
+    childrenOf.get(1)!.push(2);
+    engine.ensure(2, 'text', undefined, true);
+    const inner = add(3, 'div', 1);
+    engine.register(null, `.origin { text-decoration: line-through }`);
+    await styleTick();
+    expect(applied.get(box)).toMatchObject({ textDecoration: 'line-through' });
+    expect(applied.get(2)).toMatchObject({ textDecoration: 'line-through' });
+    expect(applied.get(inner)?.textDecoration).toBeUndefined();
+  });
+
+  it('hands text-overflow to the text run it clips (van-ellipsis)', async () => {
+    const { engine, applied, add, parentOf, childrenOf } = makeEngine();
+    add(1, 'div', null);
+    engine.setClasses(1, 'van-ellipsis');
+    parentOf.set(2, 1);
+    childrenOf.set(2, []);
+    childrenOf.get(1)!.push(2);
+    engine.ensure(2, 'text', undefined, true);
+    const inner = add(3, 'span', 1);
+    engine.register(
+      null,
+      `.van-ellipsis { overflow: hidden; white-space: nowrap; text-overflow: ellipsis }`,
+    );
+    await styleTick();
+    expect(applied.get(2)).toMatchObject({ whiteSpace: 'nowrap', textOverflow: 'ellipsis' });
+    expect(applied.get(inner)?.textOverflow).toBeUndefined();
   });
 
   it('merges useCssVars batches without clobbering earlier props', async () => {
@@ -651,9 +698,64 @@ describe('structural pseudos: parsing', () => {
     expect(parseSelector('.a:not(.b)')).toBeNull();
     warn.mockRestore();
   });
+
+  it('parses :not() around a structural pseudo (spec 073)', () => {
+    // vant's skeleton rows: `.van-skeleton-paragraph:not(:first-child)`
+    const sel = parseSelector('.van-skeleton-paragraph:not(:first-child)')!;
+    expect(sel.compounds[0]?.classes).toEqual(['van-skeleton-paragraph']);
+    expect(sel.compounds[0]?.notFirst).toBe(true);
+    expect(sel.compounds[0]?.first).toBeUndefined();
+    expect(sel.specificity).toBe(20); // class + pseudo-class
+    const last = parseSelector('.item:not(:last-child)')!;
+    expect(last.compounds[0]?.notLast).toBe(true);
+    // negation may sit anywhere in the compound, like the positive form
+    const mid = parseSelector('.a:not(:first-child).b')!;
+    expect(mid.compounds[0]?.classes).toEqual(['a', 'b']);
+    expect(mid.compounds[0]?.notFirst).toBe(true);
+    // a structural pseudo next to its own negation is fine (and never matches)
+    const both = parseSelector('.a:not(:first-child):first-child')!;
+    expect(both.compounds[0]?.notFirst).toBe(true);
+    expect(both.compounds[0]?.first).toBe(true);
+  });
 });
 
 describe('structural pseudos: matching and invalidation', () => {
+  it(':not(:first-child) styles every row but the first (spec 073)', async () => {
+    const { engine, applied, add } = makeEngine();
+    engine.register(null, '.row:not(:first-child) { margin-top: 12 }');
+    add(1, 'view', null);
+    for (const id of [2, 3, 4]) {
+      add(id, 'view', 1);
+      engine.setClasses(id, 'row');
+    }
+    await styleTick();
+    expect(applied.get(2)).not.toHaveProperty('marginTop');
+    expect(applied.get(3)).toMatchObject({ marginTop: 12 });
+    expect(applied.get(4)).toMatchObject({ marginTop: 12 });
+  });
+
+  it(':not(:first-child) re-evaluates when the first row is removed', async () => {
+    const { engine, applied, parentOf, childrenOf, add } = makeEngine();
+    engine.register(null, '.row:not(:first-child) { margin-top: 12 }');
+    add(1, 'view', null);
+    for (const id of [2, 3, 4]) {
+      add(id, 'view', 1);
+      engine.setClasses(id, 'row');
+    }
+    await styleTick();
+    expect(applied.get(2)).not.toHaveProperty('marginTop');
+
+    // remove row 2: row 3 IS the first child now — it must lose the style
+    // (the structural-change re-match), row 4 keeps it
+    const kids = childrenOf.get(1)!;
+    kids.splice(kids.indexOf(2), 1);
+    engine.forget(2);
+    engine.noteStructureChange(1);
+    await styleTick();
+    expect(applied.get(3)).not.toHaveProperty('marginTop');
+    expect(applied.get(4)).toMatchObject({ marginTop: 12 });
+  });
+
   it('styles only the first and last rows (cache correctness across positions)', async () => {
     const { engine, applied, add } = makeEngine();
     engine.register(

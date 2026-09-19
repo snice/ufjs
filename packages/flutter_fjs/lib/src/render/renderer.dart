@@ -28,9 +28,11 @@ import '../mirror_tree.dart';
 import '../node/node_adapter.dart';
 import '../node/node_adapters.dart';
 import '../registry/component.dart';
+import '../ffi.dart' show FjsEvent;
 import '../widgets/dispatch.dart';
 import 'animation.dart' show keyframeNode;
-import 'decoration.dart' show decorateNode, transitionNode;
+import 'decoration.dart'
+    show FjsSizeTransitionEnd, decorateNode, transitionNode;
 import 'gesture.dart';
 import 'overflow_hit.dart';
 import 'touch.dart' show needsTouchNode;
@@ -102,10 +104,18 @@ class FjsNodeRenderer extends StatelessWidget {
     // A paragraph rich-text sends as one node carries its words in the
     // `richSpans` prop, with no element text and no children — it looks
     // exactly like an anchor by the other two checks (specs/035).
-    return node.tag == 'text' &&
-        (node.text == null || node.text!.isEmpty) &&
-        node.children.isEmpty &&
-        node.props['richSpans'] == null;
+    if (node.tag != 'text' ||
+        (node.text != null && node.text!.isNotEmpty) ||
+        node.children.isNotEmpty ||
+        node.props['richSpans'] != null) {
+      return false;
+    }
+    // An empty text is a v-if comment anchor — unless it declares a box of
+    // its own: vant's skeleton title is an empty <h3> with width/height and
+    // a background, which web paints as a bare box (specs/073).
+    final width = node.styleMap['width'] ?? node.props['width'];
+    final height = node.styleMap['height'] ?? node.props['height'];
+    return width == null && height == null;
   }
 }
 
@@ -248,6 +258,9 @@ class _FjsNodeView extends StatelessWidget {
         // State-tracking nodes therefore keep both wrappers throughout.
         stableTransform: stable || tracksPress || tracksHover,
         stableOpacity: tracksPress || tracksHover,
+        onTransitionEnd: node.props['onTransitionend'] == true
+            ? () => dispatch(node.id, FjsEvent.transitionEnd)
+            : null,
       );
       // `@keyframes` wrap outside the transition layer: while an animation
       // runs, its transform/opacity is what the node shows (animation.dart)
@@ -347,6 +360,20 @@ class _FjsNodeView extends StatelessWidget {
         content = viewNodeAdapter.build(adapterContext);
       }
       decorated = decorateNode(style, content);
+    }
+    // size transitions report their end from inside the decoration
+    // (decoration.dart); this node's own boundary absorbs it either way
+    if (style.transitions != null) {
+      final inner = decorated;
+      decorated = NotificationListener<FjsSizeTransitionEnd>(
+        onNotification: (_) {
+          if (node.props['onTransitionend'] == true) {
+            dispatch(node.id, FjsEvent.transitionEnd);
+          }
+          return true;
+        },
+        child: inner,
+      );
     }
     return gestureNode(node, style, decorated, dispatch);
   }

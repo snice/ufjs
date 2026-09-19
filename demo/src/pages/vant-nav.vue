@@ -3,26 +3,7 @@
 </route>
 
 <script setup lang="ts">
-import { ref, onMounted, getCurrentInstance } from 'vue';
-// DEBUG-TMP
-const dbgInst = getCurrentInstance();
-onMounted(() => setTimeout(() => {
-  const seen = new Set<number>();
-  const walk = (v: any, d: number): void => {
-    if (!v || d > 14) return;
-    if (v.component) return walk(v.component.subTree, d);
-    const el = v.el;
-    if (el && el.id != null && !seen.has(el.id) && el.getBoundingClientRect) {
-      seen.add(el.id);
-      const r = el.getBoundingClientRect();
-      console.log('[dbg]' + '-'.repeat(d), typeof v.type === 'string' ? v.type : String(v.type?.description ?? v.type?.name ?? '?'), el.id, (v.props && v.props.class) || '', [r.left, r.width, r.height].map((n: number) => n.toFixed(2)).join(','));
-    }
-    if (Array.isArray(v.children)) for (const c of v.children) walk(c, d + 1);
-  };
-  walk((dbgInst as any).refs.sb.$.subTree, 0);
-  for (const k of ['t1', 't2', 't3']) { const e = (dbgInst as any).refs[k]; const r = e.getBoundingClientRect(); console.log('[dbg] ' + k, r.width.toFixed(3)); }
-}, 1500));
-
+import { ref } from 'vue';
 const tabActive = ref(0);
 const sidebarActive = ref(1);
 const tabbarActive = ref(0);
@@ -65,10 +46,6 @@ function swipeItemStyle(i: number) {
 <template>
   <scroll-view class="page" scroll-y>
     <text class="page-title">vant · 导航与浮层</text>
-    <view style="align-items: flex-start"><text ref="t1" style="font-size: 14px">全部商品</text></view>
-    <view style="align-items: flex-start"><text ref="t2" style="font-size: 14px; font-family: 'PingFang SC'">全部商品</text>
-    </view>
-    <view style="align-items: flex-start"><text ref="t3" style="font-size: 14px">abcd</text></view>
     <text class="page-note">
       NavBar(fixed)/Tabbar(fixed) 探测 position: fixed 的置顶通道；
       Picker 在 Popup 里探测弹层内滚动选择；NumberKeyboard 探测贴底键盘。
@@ -151,9 +128,6 @@ function swipeItemStyle(i: number) {
 
 <style scoped>
 .page {
-  /* 显式锁宽：页面里有不可换行的宽内容（Swipe 滑轨 N×100%），不锁会被
-     逐级撑破（两端同款约束，App 端 scroll-view 同理）。 */
-  width: 100%;
   flex-grow: 1;
   padding: 16px;
   background-color: #f7f8fa;
