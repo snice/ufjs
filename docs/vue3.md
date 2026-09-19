@@ -229,6 +229,129 @@ import '@ufjs/runtime/vue-global';
 命令行同款检查：项目内执行 `pnpm run typecheck`。仓库示例可以执行
 `pnpm --filter hello-fjs typecheck`。
 
+## 第三方组件库兼容（vant）
+
+Vue 生态的移动端组件库是按真浏览器写的：伪元素发丝线、属性选择器、
+`<Transition>`、`position: fixed` 弹层、`document.createElement` 挂 Toast、
+挂载帧就要量 DOM 几何。fjs 的应对分三层：
+
+1. **通用的进 runtime**——CSS 引擎的支持面（见
+   [css-compat.md](css-compat.md)）、元素上的 DOM 形状 API（见
+   [ui-api.md](ui-api.md#元素上的-dom-形状-api)）、vue-shim 补齐的 DOM 专属
+   导出（下文）；
+2. **库特有的留在项目本地**——vite 插件的 `fjs.app` 钩子对库源码打补丁，
+   机制见 [toolchain.md](toolchain.md#ui-组件库适配vite-插件的-fjsapp-钩子)；
+3. **`window` / `document` 不在 runtime 模拟**——给全局塞浏览器假象会翻转
+   每个库里 `inBrowser` 之类的判断，影响面不可控（specs/070 的结论）。库里
+   没做浏览器判断的路径由插件打守卫补丁；个别库确实需要全局时，由项目
+   自己 opt-in 一个最小侧影（demo 的 `dom-env.ts`，见「vant 的接入」）。
+
+vant 4 是这条路线的完整检验：demo 的 `vant: basic` / `vant: form` /
+`vant: feedback` / `vant: more` / `vant: nav` 五个页面两端（web 浏览器 ↔
+iOS/Android）对拍，specs/068–073。20+ 组件达到结构、位置、交互一致；剩余
+差异登记在下方「已知差异」。
+
+### 元素上的 DOM 形状 API
+
+`el.style`（内联层写入，与 `:style` 绑定共用同一份记录）、
+`el.getBoundingClientRect()`（同步，读**上一帧**的布局，没有强制重排；未
+布局时返回全零）、`el.offsetWidth / offsetHeight / offsetLeft / offsetTop`
+与 `el.offsetParent`（同一份布局——vant Tabs 的下划线居中靠
+`title.offsetLeft + offsetWidth / 2`）、`el.addEventListener/removeEventListener`
+（事件名同 `on<Name>` prop，`passive/capture` 选项忽略）、`el.contains(other)`
+（vant Checker 判断是否点在图标上）、`input` / `textarea` 元素的 DOM 式
+`value`。完整定义见 [ui-api.md](ui-api.md#元素上的-dom-形状-api)。
+
+### vue-shim：补上 runtime-dom 才有的名字
+
+App 构建里 `vue` 被 alias 到 `@vue/runtime-core` + fjs 的 shim
+（[`vue/vue-shim.ts`](../packages/fjs-runtime/src/vue/vue-shim.ts)）。组件库
+的 barrel 无条件 `import { vShow, withKeys, Transition, createApp } from 'vue'`
+——这些名字只存在于 runtime-dom（真浏览器运行时），缺一个整个构建就失败。
+shim 逐个补上，语义按 fjs 的现实重述：
+
+- **`<Transition>`**：fjs 版（BaseTransition + 样式引擎翻类）。enter/leave 的
+  `-from/-active/-to` 类照常落地：animation 型规则（vant 的
+  `van-fade-enter-active { animation: … }`）由 keyframes 引擎原生播放，
+  transition 型类切换由 App 端按 transition 的支持范围补间。结束时机取计算
+  样式里 animation 与 transition 的「时长 + 延迟」较长者——本端没有
+  transitionend / animationend 可听。`v-show` 在 `<Transition>` 内走钩子，
+  离场动画放完才 `display: none`
+- **`vShow`**：只碰内联 `display` 一项（隐藏写 `none`、显示恢复原值），元素
+  其余规则不动——以前整张替换计算样式，vant 步进器第一次改值就把输入框和
+  加号的样式丢光（specs/069）
+- **`withKeys`**：直通。fjs 事件不带键码，守卫没有东西可测——处理器在每个
+  事件上照跑，而不是永不触发
+- **`<TransitionGroup>`**：纯透传（vant 弹层不用）
+- **`createApp`**：指名抛错。挂第二个 Vue 根需要真实 DOM 容器，App 端没有；
+  vant 的命令式 API（`showToast()` 等内部 `document.createElement` +
+  `createApp`）因此 App 端不可用，页面改用组件式
+  （`<van-dialog v-model:show>`）
+
+静态提升同样挂在 DOM 语义上：`createStaticVNode` 的挂载走
+`insertStaticContent`（innerHTML 语义），本 renderer 没有这个函数。App 构建
+因此以 `hoistStatic: false` 编译 SFC（specs/070：静态子树大的页面整页空白，
+本地 Node 复现不出来——测试走运行时模板编译，没有静态提升）；手写静态
+vnode 会得到指名报错。
+
+### vant 的接入（demo 是参考实现）
+
+三个文件加一个侧影，各管一件事：
+
+1. **`src/plugins/vant.ts`**（**无平台后缀**——带 `.app.ts` / `.web.ts` 会
+   静默跳过另一端，页面报 `Failed to resolve component`）：对用到的组件逐个
+   `app.use` 全局注册；样式按需引入写在同一文件
+   （`vant/es/<comp>/style/index.mjs`——esbuild 不做目录 index 推导，路径必须
+   写全），App 构建把每条样式 import 抽成 `registerStyles()` 调用、web 端
+   消费 CSS。文件**第一个** import 是 `./vant/dom-env`：vant 在模块求值时就
+   决定 `inBrowser`（`typeof window !== 'undefined'`），必须抢在它前面
+2. **`src/plugins/vant/dom-env.ts`**：上一条的另一面。runtime 不装全局
+   假象，但 vant 一批能力（`raf()` / `doubleRaf()`、`getComputedStyle`、
+   点外关闭）在 `inBrowser` 为假时直接死——`raf()` 返回 -1 且**不回调**，
+   NoticeBar 的跑马灯永远不启动。demo 为 vant 一个库 opt-in 一个**只含它
+   所需表面的最小侧影**：`requestAnimationFrame`；读 fjs 样式引擎的
+   `getComputedStyle`（display/position/transform 等按 DOM 初始值兜底，
+   transform 转成浏览器形状的 `matrix(...)` 供 Picker 拖动时读 ty）；
+   document 级 pointer-down 流（NumberKeyboard 点外关闭的 click-away 靠
+   它，监听的是 `document`、判的是 `el.contains(event.target)`）；「首次
+   可见」的 `IntersectionObserver`（页面树先建后显示，vant 挂载时量到的是
+   0，观察者逐帧等布局出来再报一次可见——Tabs 下划线重测靠它）；吸收
+   lock-scroll 类写入的 documentElement/body。web 构建里 `window` 本来就
+   存在，这些全都不运行
+3. **`src/vant-components.d.ts`**：手写 `GlobalComponents` 声明（vant 不
+   自带），与注册列表保持同步——插件管运行时，这个文件管 vue-tsc
+   strictTemplates
+4. **`vite/vant.ts`**：带 `fjs.app` 钩子的本地 vite 插件，对 vant 源码做
+   **字面量锚点替换**，补丁分三类：
+   - `window` / `document` 守卫：`isWindow`（Rate 点击 / Slider 点按时
+     `useRect` 走到）、`useLockScroll`（弹层开关时的滚动锁）、
+     `getScrollParent`（Tabs/Sticky 的滚动父级查找）、`isHidden`（Tabs /
+     Swipe 的初始化门）、Field autosize——这些路径没做浏览器判断，App 端
+     直接 ReferenceError 并把组件更新中途打断
+   - `touch-action` 声明：Slider / Rate 在 scroll-view 里的拖动。web 上靠
+     非 passive `touchmove` 里 `preventDefault()` 赢下手势，App 端监听在
+     JS 里跑、晚 Flutter 手势竞技场一帧，指针已经判给滚动容器——只有
+     `touch-action` 这个声明是两端都认的抢手势方式
+   - 测量重试：Tabs 下划线在挂载帧读 `offsetLeft / offsetWidth` 还是 0
+     （首帧布局还没发生），按 rAF 重试至多 10 帧，量到为止
+
+   锚点在 vant 升级后对不上时，该补丁跳过、构建告警一次并写明哪个功能在
+   App 端失效——降级成「这个功能又坏了」，而不是产出坏 bundle。
+
+### 已知差异（登记过的）
+
+- 命令式 Toast / Dialog（`showToast()` / `showDialog()`）App 端不可用，见
+  `createApp` 一条；组件式（`<van-popup>` / `<van-dialog v-model:show>`）
+  两端一致
+- 没有深层 target / 事件委托：`target` 就是挂监听的节点。vant Checker 设
+  `label-disabled` 时，App 端点图标也不切换（specs/072）
+- `position: fixed` 走置顶 overlay 宿主——Teleport 的视觉与交互等效，不是
+  DOM 语义；层级只看插入顺序，详见
+  [css-compat.md](css-compat.md#定位) 的 `position: fixed` 条
+- `window.getComputedStyle` 是 dom-env 里读 fjs 样式引擎的最小 shim，不是
+  完整计算样式：vant 用它做滚动父级查找（`overflow`）与隐藏判断
+  （`display`），更深的用法（伪元素样式、百分比还原）没有
+
 ## 不可用 / 注意
 
 - `v-model`：其指令助手面向 DOM（el.addEventListener），不可用。替代：
@@ -240,15 +363,16 @@ import '@ufjs/runtime/vue-global';
 - vue-router：不可用，路由走 `fjs/router`（web 构建内部才用 vue-router）
 - `vue` 包被 alias 到 `@vue/runtime-core`，避免拉入 DOM 运行时
 - 元素上有一小组 DOM 形状的 API，供组件库直接调用（vant 依赖它们）：
-  `el.style`、`el.getBoundingClientRect()`（同步，读**上一帧**的布局，
-  没有强制重排；未布局时返回全零）、`el.addEventListener/removeEventListener`
-  （事件名同 `on<Name>` prop，`passive/capture` 选项忽略）。click 事件带
+  `el.style`、`el.getBoundingClientRect()`、`offset*` 几何、
+  `el.addEventListener/removeEventListener`、`contains()`；`vue` 侧还有
+  vue-shim 补的 `<Transition>` / `vShow` 等导出。完整清单与已知差异见上文
+  [「第三方组件库兼容（vant）」](#第三方组件库兼容vant)。click 事件带
   `clientX/clientY`（按需读取）。`@x.passive/.capture/.once` 修饰符按 Vue
   的规则处理，`.once` 生效
 - App 端**没有** `window` / `document` 全局，runtime 也不模拟：组件库里不带浏览器
-  判断直接用它们的地方，由该库的 vite 插件打补丁处理，见
-  [toolchain.md](toolchain.md#ui-组件库适配vite-插件的-fjsapp-钩子)（vant 的在
-  `demo/vite/vant.ts`）
+  判断直接用它们的地方，由该库的 vite 插件打补丁处理（vant 的在
+  `demo/vite/vant.ts`，分哪几类补丁见上文），机制见
+  [toolchain.md](toolchain.md#ui-组件库适配vite-插件的-fjsapp-钩子)
 
 ## 性能：长列表要放进自己的组件
 

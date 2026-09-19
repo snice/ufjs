@@ -99,7 +99,7 @@ CSS 文本里用 kebab-case（`font-size: 16px`），内联对象用 camelCase
 | `margin: auto`（flex 子项） | ✅ | 主轴 auto margin 吸收剩余空间（`margin: 0 auto` 居中、`margin-left: auto` 推到行尾；有 `flex-grow` 兄弟时不生效，同 CSS）；交叉轴两侧 auto 在拉伸行里居中（块级 `width + margin: 0 auto`）。vant NavBar 标题居中（specs/070）。flex-wrap 容器内暂不支持 |
 | `flex-grow` / `flex` | ⚠️ | Flutter 上是 `Expanded`（只拿剩余空间）；web 侧被改写成 `flex: n 1 0%` 对齐。**会增长的项带主轴 `max-width/max-height`**（`flex: 1; max-width: 10%`）：CSS 把它冻结在上限、余量分给其他增长项；Flutter 的 Flex 不重分配，所以直接按上限定尺寸、退出 flex 分配（行够宽时就是 CSS 的结果，vant 左对齐分割线；specs/069） |
 | `flex-basis` | ⚠️ | 不增长、主轴没写尺寸的项：`flex-basis`（px 或容器主轴 %）即主轴尺寸，wrap 与普通 flex 都生效（vant 宫格 `flex-basis: 33.33%`；specs/069）。增长项按 basis 0 处理（与 `flex: 1` 简写一致）；`flex-shrink` 的收缩不参与 |
-| `flex-shrink` | ⚠️ | 内置标签一律 `flex-shrink: 0`（对齐 Flutter 子节点不压缩）。其他标签（`input` 等，web 上是 CSS 初始值 1）在横向行里、主轴为百分比宽度时可收缩到剩余空间（vant Field 的 `input { width: 100% }` 让出清除图标的宽度，specs/070）；多个收缩项平分而非按基准比例 |
+| `flex-shrink` | ⚠️ | 内置标签一律 `flex-shrink: 0`（对齐 Flutter 子节点不压缩）。HTML 标签由渲染器恢复 CSS 初始值 `1` 作为默认样式：块级容器（`div` / `section` / `li` / `table`…，specs/073——vant Skeleton 的 `width: 100%` 内容列给 avatar 让位）与表单控件（`input` 等，specs/070——vant Field 的 `input { width: 100% }` 让出清除图标的宽度）；声明的值照常赢（vant 自己写的 `flex-shrink: 0` 生效），映射成 text 的 HTML 标签（`span` / `p`…）保持不收缩。横向行里、主轴为百分比宽度时可收缩到剩余空间；多个收缩项平分而非按基准比例 |
 | `gap` / `row-gap` / `column-gap` | ✅ | |
 | `align-self` | ✅ | `auto` / `flex-start` / `center` / `flex-end` / `stretch`（`start` / `end` / `self-start` / `self-end` 同义）。App 端：容器里有子项写了它，整个容器按 stretch 布局，其余子项各按 `align-items` 在自己那一行里对齐；容器原本不拉伸（或交叉轴无上限，如纵向滚动里的 row）时先按内容量出交叉轴尺寸再定死（两遍布局），容器自身尺寸与不写时一致。没写的容器零开销。wrap 容器里不生效 |
 | `justify-self` | — | flex 布局里本来就无效（web 同样忽略，只对 grid 生效），两端一致；grid 不支持 |

@@ -607,6 +607,16 @@ WebGL 扩展（`getExtension`）、`readPixels`、GL 指令去重、
   loading 转圈两端一致）。同批落地：相邻兄弟 `+` 组合器（带缓存失效）、
   `color: currentColor` 消解。伪元素上的动画、其余属性的帧插值顺延
 
+- ✅ **第三方组件库（vant 4）两端兼容**（specs/068–073）：demo 的 `vant: *`
+  五页两端对拍。CSS 侧——`position: fixed` 弹层置顶 overlay 宿主、行内流收缩盒、
+  装饰型 `::before` / `::after`、属性选择器 `[class*=…]`、`%` 圆角、HTML 标签
+  `flex-shrink` 初始值、SVG 渐变（van-empty 插画）；DOM 模拟侧——元素上的
+  `contains` / `offset*` / `value` / `addEventListener`，vue-shim 的
+  `<Transition>` / `vShow` / `withKeys`，`hoistStatic: false`，项目级最小
+  window/document 侧影（demo 的 dom-env）。剩余差异
+  （命令式 Toast / Dialog、深层 target、`getComputedStyle`）登记在
+  [vue3.md](vue3.md#第三方组件库兼容vant)
+
 ## 近期计划
 - **CSS 扩展收尾项**：`color` / `border-color` / 布局属性的过渡、
   `gap`/`border-radius`/`font-size`

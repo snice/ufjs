@@ -554,19 +554,39 @@ Web 两端取同一组数值。新增或改默认样式时先看：
 处理器函数留在 JS 侧注册表，跨桥只发送 `onTap: true` 标记。
 
 经 Vue 模板绑定的处理器拿到 DOM 形状的事件对象：`detail` 是上表的载荷，
-`target` / `currentTarget` 是元素本身。`input` / `textarea` 元素另有 DOM 式的
-`value` 属性——读取得到当前文本（最近一次输入事件或写入），写入会推到原生
-输入框；还有空操作的 `setSelectionRange()`。vant Field 等按 DOM 写法
-（`event.target.value`、`inputRef.value.value = text`）实现 v-model 的库因此
-两端可用（specs/070）。
+`target` / `currentTarget` 是元素本身。click 事件带 `clientX/clientY`
+（按需读取）。
 
-所有元素（经 ref 拿到的、或作为事件 `target` 的）都有 DOM 式的
-`contains(other)`：`other` 是该元素本身或其后代时为 true，`null`、非元素、已
-卸载的节点为 false。vant Checkbox / Radio 点击时用它判断是否点在图标上
-（`icon.contains(event.target)`），App 上此前因缺这个方法抛
-`TypeError: not a function`、勾选无反应（specs/072）。Web 端即原生
-`Node.contains`。`position: fixed` 的元素在 App 上挂到弹层宿主下，与 DOM 里
-Teleport 到 body 一样不再算作逻辑父元素的后代。
+### 元素上的 DOM 形状 API
+
+任何元素（经 `ref` 拿到的、或作为事件 `target` 的）都带一小组 DOM 形状的
+成员，按 DOM 写法的组件库（vant）不需要 fjs 适配就能操作。类型定义在
+`fjs-runtime/src/ui/element.ts` 的 `Element`：
+
+- `el.style`：DOM 式写入面（`el.style.opacity = 0.5`），走内联层、与
+  `:style` 绑定共用同一份记录。不是真的 CSSStyleDeclaration——读不到层叠
+  结果，只有内联值
+- `el.getBoundingClientRect()`：border box 在窗口坐标系的位置与尺寸。同步
+  返回，读**上一帧**的布局（没有强制重排）；未布局时返回全零
+- `el.offsetWidth` / `offsetHeight` / `offsetLeft` / `offsetTop` /
+  `offsetParent`：同一份上一帧布局——border box 尺寸，与相对 offsetParent
+  （最近定位祖先，由 renderer 解析）的偏移；没有定位祖先时 `offsetParent`
+  为 null、偏移即窗口坐标。vant Tabs 的下划线居中靠
+  `title.offsetLeft + offsetWidth / 2`（specs/073）
+- `el.addEventListener` / `removeEventListener(type, listener)`：事件名同
+  `on<Name>` prop（`'touchmove'` ↔ `@touchmove`），`passive` / `capture`
+  选项忽略（vant Slider 经 useEventListener 挂在自身元素上的 touchmove
+  靠它收到）
+- `contains(other)`：`other` 是该元素本身或其后代时为 true，`null`、非元素、
+  已卸载的节点为 false。vant Checkbox / Radio 点击时用它判断是否点在图标上
+  （`icon.contains(event.target)`），App 上此前因缺这个方法抛
+  `TypeError: not a function`、勾选无反应（specs/072）。Web 端即原生
+  `Node.contains`。`position: fixed` 的元素在 App 上挂到弹层宿主下，与 DOM 里
+  Teleport 到 body 一样不再算作逻辑父元素的后代
+- `input` / `textarea` 元素另有 DOM 式的 `value` 属性——读取得到当前文本
+  （最近一次输入事件或写入），写入会推到原生输入框；还有空操作的
+  `setSelectionRange()`。vant Field 等按 DOM 写法（`event.target.value`、
+  `inputRef.value.value = text`）实现 v-model 的库因此两端可用（specs/070）
 
 ## 触摸事件（对齐 DOM）
 

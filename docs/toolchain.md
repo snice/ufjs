@@ -234,6 +234,29 @@ export default defineConfig({ plugins: [fjs(), vant(), vue()] });
 - 这类插件放在项目本地（和 `vite.config` 放在一起，如 `vite/vant.ts`），不单独发
   npm 包。参考 demo 的 [`demo/vite/vant.ts`](../demo/vite/vant.ts)。
 
+demo 的 `vite/vant.ts` 是目前最完整的范例，十几条补丁分三类：
+
+- **`window` / `document` 守卫**：vant 里没做浏览器判断就摸 `window` /
+  `document` 的路径（`isWindow`、`useLockScroll`、`getScrollParent`、
+  `isHidden`、Field autosize），App 端会直接 ReferenceError 并把组件更新中途
+  打断——补上 `typeof window === "undefined"` 早退或让调用方走已有回退
+- **`touch-action` 声明**：Slider / Rate 在 scroll-view 里的拖动。web 上靠非
+  passive `touchmove` 里 `preventDefault()` 赢下手势，App 端监听晚手势竞技场
+  一帧、指针已判给滚动容器——`touch-action` 是两端都认的抢手势声明
+- **测量重试**：Tabs 下划线在挂载帧读 `offsetLeft / offsetWidth` 还是 0（首帧
+  布局还没发生），按 rAF 重试至多 10 帧
+
+补丁是**字面量锚点替换**：库升级后锚点对不上就跳过该补丁、构建告警一次并
+写明哪个功能在 App 端失效——宁要显式降级，不要坏 bundle。demo 另带
+[`src/plugins/vant/dom-env.ts`](../demo/src/plugins/vant/dom-env.ts)：在 vant
+求值前装一个只含它所需表面的最小 `window` / `document` 侧影（rAF、读 fjs
+样式引擎的 `getComputedStyle`、document 级 pointer-down、首次可见的
+IntersectionObserver）——这是项目对单个库的 opt-in，runtime 仍然不装全局
+假象，上面的守卫补丁继续覆盖 window 缺失时的路径。注册与样式按需引入
+的配套写法见 `demo/src/plugins/vant.ts`（通用机制在
+[vue3.md 的第三方组件库一节](vue3.md#第三方组件库兼容vant)），对拍页面是 demo
+的 `vant: *` 五页——basic / form / feedback / more / nav（specs/068–073）。
+
 ### 共享 chunk：`fjs.shared`
 
 `fjs build --pages` 会把 vue / fjs 运行时放进 `shared.js`，页面 chunk 通过
