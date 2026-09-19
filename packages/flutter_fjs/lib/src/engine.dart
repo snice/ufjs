@@ -843,11 +843,7 @@ class FjsEngine extends ChangeNotifier {
         // Full reload. The world may have moved while the socket was down —
         // the dev server itself may have restarted in classic mode — so the
         // units flag is re-negotiated, not reused from connect time.
-        var effectiveUnits = units;
-        if (split) {
-          final fresh = await dev.fetchManifest();
-          effectiveUnits = fresh?['units'] == true;
-        }
+        final effectiveUnits = await _renegotiateUnits(dev);
         await _loadFromDev(dev, split, effectiveUnits);
         if (split) unawaited(_preloadDevChunks(manifest));
       } catch (e) {
@@ -993,6 +989,18 @@ class FjsEngine extends ChangeNotifier {
     return true;
   }
 
+  /// Re-asks the server's current manifest whether it still serves a
+  /// units-mode split build (spec 037). Every full-reload path negotiates
+  /// afresh instead of reusing the connect-time flag — the dev server may
+  /// have restarted as a classic build since, and evaluating a units entry
+  /// without `/units.js` leaves the registry empty, so the entry's first
+  /// shared import dies with `dev unit … is not loaded` (spec 074).
+  Future<bool> _renegotiateUnits(DevClient dev) async {
+    if (chunkLoader == null) return false;
+    final fresh = await dev.fetchManifest();
+    return fresh?['units'] == true;
+  }
+
   /// One dev load: fresh VM, then the shared prelude (split builds only),
   /// then the app bundle. Fetched before [reset] so a failed fetch leaves
   /// the previous screen up instead of blanking it.
@@ -1118,7 +1126,7 @@ class FjsEngine extends ChangeNotifier {
   Future<void> reloadDev() async {
     final dev = _dev;
     if (dev == null) throw FjsException('not connected to a dev server');
-    await _loadFromDev(dev, chunkLoader != null);
+    await _loadFromDev(dev, chunkLoader != null, await _renegotiateUnits(dev));
   }
 
   /// Closes the dev connection and stops the event loop. The mirror tree
