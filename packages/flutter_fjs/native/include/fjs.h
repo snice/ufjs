@@ -112,6 +112,9 @@ enum {
     /* a CSS transform/opacity transition ran to its end (specs/073). No
        params; a retarget mid-flight cancels it without the event. */
     FJS_EVENT_TRANSITION_END   = 42,
+    /* a pointer went down anywhere (specs/073); nodeId = the deepest node
+       under it, 0 for none; payload {"x":n,"y":n}. System event. */
+    FJS_EVENT_GLOBAL_POINTER_DOWN = 43,
 };
 
 /* Tagged value tags for the FJSValue C ABI struct. */

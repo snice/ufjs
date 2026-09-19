@@ -116,6 +116,10 @@ class MirrorTree {
   final void Function(String message)? _debugLog;
 
   final Map<int, MirrorNode> _nodes = {};
+
+  /// Every live node — for the rare whole-tree scan (the global pointer's
+  /// hit → node lookup, geometry.dart).
+  Iterable<MirrorNode> get allNodes => _nodes.values;
   final List<int> _rootChildren = [];
   final Map<int, int> _parentOf = {};
 

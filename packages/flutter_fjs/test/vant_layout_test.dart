@@ -1342,6 +1342,239 @@ void main() {
     // -1 under the flow content (0 = the unkeyed flow), then tree order, then 1
     expect(order, [5, 0, 4, 3]);
   });
+
+  // vant-nav 的 Sidebar 行（specs/073）：`flex-wrap: wrap` 的 row 里有
+  // flex-grow 子项（单行），`align-items: stretch` 要把内容区拉到侧栏高度。
+  testWidgets('a single-line wrap row stretches its items', (tester) async {
+    final w = _W()
+      ..node(1, 'view', {'padding': 12})
+      ..node(2, 'view', {
+        'flexDirection': 'row',
+        'flexWrap': 'wrap',
+        'alignItems': 'stretch',
+        'gap': 8,
+      })
+      ..node(3, 'view', {'width': 80})
+      ..node(4, 'view', {'height': 60})
+      ..node(5, 'view', {'height': 60})
+      ..node(6, 'view', {
+        'flexGrow': 1,
+        'justifyContent': 'center',
+        'alignItems': 'center',
+      })
+      ..node(7, 'text', {})
+      ..text(7, '第 2 组内容')
+      ..insert(3, 4, 0)
+      ..insert(3, 5, 1)
+      ..insert(6, 7, 0)
+      ..insert(2, 3, 0)
+      ..insert(2, 6, 1)
+      ..insert(1, 2, 0);
+    final (tree, _) = await _pump(tester, w);
+    Size own(int id) =>
+        ((tree.node(id)!.element! as Element).findRenderObject() as RenderBox)
+            .size;
+    expect(own(3).height, 120);
+    expect(own(6).height, 120, reason: 'stretched to the line');
+    // and its own justify-content: center sees that height
+    Rect rect(int id) {
+      final b =
+          (tree.node(id)!.element! as Element).findRenderObject() as RenderBox;
+      return b.localToGlobal(Offset.zero) & b.size;
+    }
+
+    expect(rect(7).center.dy, closeTo(rect(6).center.dy, 0.5));
+  });
+
+  // vant-nav（specs/073）：inline-block 的按钮在 fjs <view>（web 上是 flex
+  // 容器）里被块化、随 align-items: stretch 拉满；在 HTML 块 div 里才收缩。
+  testWidgets(
+    'an inline-block is blockified in a flex view, shrinks in a div',
+    (tester) async {
+      const btn = {
+        'display': 'inline-block',
+        'flexDirection': 'row',
+        'flexWrap': 'wrap',
+        'height': 44,
+      };
+      final w = _W()
+        ..node(1, 'view', {'padding': 12})
+        ..node(2, 'view', {})
+        ..node(3, 'view', btn)
+        ..node(4, 'text', {})
+        ..text(4, '选择城市')
+        ..insert(3, 4, 0)
+        ..insert(2, 3, 0)
+        ..node(5, 'view', {})
+        ..props(5, {'htmlBlock': true})
+        ..node(6, 'view', btn)
+        ..node(7, 'text', {})
+        ..text(7, '选择城市')
+        ..insert(6, 7, 0)
+        ..insert(5, 6, 0)
+        ..insert(1, 2, 0)
+        ..insert(1, 5, 1);
+      final (tree, _) = await _pump(tester, w);
+      Size own(int id) =>
+          ((tree.node(id)!.element! as Element).findRenderObject() as RenderBox)
+              .size;
+      expect(own(3).width, 376, reason: 'flex item: stretched');
+      expect(own(6).width, lessThan(100), reason: 'block flow: shrink-to-fit');
+    },
+  );
+
+  // vant tabs（specs/073）：`.van-tabs__nav { box-sizing: content-box;
+  // height: 100%; padding-bottom: 15px }` 在 44px、overflow:hidden 的 wrap
+  // 里——内容区 44（tab 撑满 44），整盒 59 溢出被裁。
+  testWidgets('content-box height adds padding and overflows the parent', (
+    tester,
+  ) async {
+    final w = _W()
+      ..node(1, 'view', {'padding': 12})
+      ..node(2, 'view', {'height': 44, 'overflow': 'hidden'})
+      ..node(3, 'view', {
+        'display': 'flex',
+        'flexDirection': 'row',
+        'alignItems': 'stretch',
+        'boxSizing': 'content-box',
+        'height': '100%',
+        'paddingBottom': 15,
+      })
+      ..node(4, 'view', {'flexGrow': 1})
+      ..insert(3, 4, 0)
+      ..insert(2, 3, 0)
+      ..insert(1, 2, 0);
+    final (tree, _) = await _pump(tester, w);
+    Size own(int id) =>
+        ((tree.node(id)!.element! as Element).findRenderObject() as RenderBox)
+            .size;
+    expect(own(2).height, 44);
+    expect(own(4).height, 44, reason: '100% of the wrap is the CONTENT height');
+    expect(tester.takeException(), isNull);
+  });
+
+  // vant picker 选项（specs/073）：li 是居中的 flex 行，里面是
+  // `.van-ellipsis` 的 div（overflow hidden + nowrap + ellipsis），文字是
+  // div 自己的元素文本。此前 div 被压成 0×0，选项全部不可见。
+  testWidgets('an ellipsis div in a centred flex row keeps its text', (
+    tester,
+  ) async {
+    const ell = {
+      'fontSize': 16,
+      'overflow': 'hidden',
+      'whiteSpace': 'nowrap',
+      'textOverflow': 'ellipsis',
+    };
+    final w = _W()
+      ..node(1, 'view', {'padding': 12})
+      ..node(2, 'view', {
+        'display': 'flex',
+        'flexDirection': 'row',
+        'alignItems': 'center',
+        'justifyContent': 'center',
+        'padding': '0 4px',
+        'height': '44px',
+      })
+      ..node(3, 'view', ell)
+      ..props(3, {'htmlBlock': true})
+      ..text(3, '杭州')
+      ..insert(2, 3, 0)
+      ..insert(1, 2, 0);
+    final (tree, _) = await _pump(tester, w);
+    final b =
+        (tree.node(3)!.element! as Element).findRenderObject() as RenderBox;
+    expect(b.size.width, greaterThan(20));
+    expect(b.size.height, greaterThan(10));
+  });
+
+  // vant picker 遮罩（specs/073）：两层渐变，各占 100% × 110px，一层贴顶
+  // 一层贴底，中间露出选中项。此前只认单层渐变、铺满整块，选项被罩白。
+  test('layered background images keep their own size and position', () {
+    final layers = parseBackgroundLayers(
+      'linear-gradient(180deg, rgba(255, 255, 255, .9), rgba(255, 255, 255, .4)), '
+          'linear-gradient(0deg, rgba(255, 255, 255, .9), rgba(255, 255, 255, .4))',
+      '100% 110px',
+      'top,bottom',
+    )!;
+    expect(layers, hasLength(2));
+    const box = Size(402, 264);
+    expect(layers[0].rectIn(box), const Rect.fromLTWH(0, 0, 402, 110));
+    expect(layers[1].rectIn(box), const Rect.fromLTWH(0, 154, 402, 110));
+    // a single full-box gradient stays on the plain BoxDecoration path
+    expect(
+      parseBackgroundLayers('linear-gradient(red, blue)', null, null),
+      isNull,
+    );
+  });
+
+  // vant number keyboard（specs/073）：12 个 `flex: 1; flex-basis: 33%` 的键
+  // 在 flex-wrap 行里——3 列 4 行，每键占行宽三分之一。此前被当成单行，
+  // 12 个键挤在一行溢出。
+  testWidgets('percentage flex-basis items wrap into a grid', (tester) async {
+    final w = _W()
+      ..node(1, 'view', {})
+      ..node(2, 'view', {
+        'display': 'flex',
+        'flexDirection': 'row',
+        'flexWrap': 'wrap',
+      });
+    for (var k = 0; k < 12; k++) {
+      w
+        ..node(10 + k, 'view', {
+          'flex': 1,
+          'flexGrow': 1,
+          'flexBasis': '33%',
+          'height': 54,
+        })
+        ..insert(2, 10 + k, k);
+    }
+    w.insert(1, 2, 0);
+    final (tree, _) = await _pump(tester, w, width: 300);
+    Rect rect(int id) {
+      final b =
+          (tree.node(id)!.element! as Element).findRenderObject() as RenderBox;
+      return b.localToGlobal(Offset.zero) & b.size;
+    }
+
+    expect(rect(10).width, closeTo(100, 0.01));
+    expect(
+      rect(12).right,
+      closeTo(300, 0.01),
+      reason: 'three to a line, filling it',
+    );
+    expect(
+      rect(13).top,
+      rect(10).bottom,
+      reason: 'the fourth key starts line two',
+    );
+    expect(rect(21).top - rect(10).top, 54 * 3.0);
+  });
+
+  // vant 底部弹层（specs/073）：`overflow-y: auto` + 顶部圆角。CSS 里非
+  // visible 的 overflow 都会裁剪子项；此前只认 hidden，picker 的直角白底
+  // 盖住了弹层圆角。
+  testWidgets('overflow-y auto clips its content to the rounded box', (
+    tester,
+  ) async {
+    final w = _W()
+      ..node(1, 'view', {'padding': 12})
+      ..node(2, 'view', {
+        'overflowY': 'auto',
+        'borderRadius': '16px 16px 0 0',
+        'backgroundColor': '#ffffff',
+      })
+      ..node(3, 'view', {'height': 40, 'backgroundColor': '#ffffff'})
+      ..insert(2, 3, 0)
+      ..insert(1, 2, 0);
+    await _pump(tester, w);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey(2)),
+        matching: find.byType(ClipRRect),
+      ),
+      findsWidgets,
+    );
+  });
 }
 
 /// The transform node [id]'s own transition wrapper paints — not some other

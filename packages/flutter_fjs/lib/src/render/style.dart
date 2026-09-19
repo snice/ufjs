@@ -624,8 +624,17 @@ class FjsStyle {
   ({double width, Color? color, FjsBorderStyle kind})? get borderShorthand =>
       parseBorder(_v('border'));
 
-  Gradient? get gradient =>
-      parseGradient(_v('backgroundImage')) ?? parseGradient(_v('background'));
+  Gradient? get gradient => backgroundLayers != null
+      ? null
+      : parseGradient(_v('backgroundImage')) ?? parseGradient(_v('background'));
+
+  /// Layered background images (see [FjsBackgroundLayer]); null for the
+  /// single full-box gradient [gradient] paints.
+  List<FjsBackgroundLayer>? get backgroundLayers => parseBackgroundLayers(
+    _v('backgroundImage'),
+    _v('backgroundSize'),
+    _v('backgroundPosition'),
+  );
 
   List<BoxShadow>? get boxShadows => parseBoxShadows(_v('boxShadow'));
 
@@ -706,7 +715,21 @@ class FjsStyle {
 
   /// `pointer-events: none` — the node never takes a hit (see the renderer).
   bool get pointerEventsNone => _v('pointerEvents') == 'none';
-  bool get overflowHidden => _v('overflow')?.toString() == 'hidden';
+
+  /// Whether the box clips its content: any `overflow` other than visible
+  /// does in CSS, on either axis — `hidden`, and `auto`/`scroll` too (a
+  /// scroll container clips even when it has nothing to scroll: vant's
+  /// bottom popup is `overflow-y: auto`, and its rounded corners showed the
+  /// picker's square white background until it clipped).
+  bool get overflowHidden =>
+      _clips(_v('overflow')) ||
+      _clips(_v('overflowX')) ||
+      _clips(_v('overflowY'));
+
+  static bool _clips(Object? v) {
+    final s = v?.toString();
+    return s == 'hidden' || s == 'auto' || s == 'scroll' || s == 'clip';
+  }
 
   double? get gap => _num('gap');
 

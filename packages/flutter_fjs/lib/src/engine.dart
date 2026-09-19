@@ -74,10 +74,27 @@ class FjsEngine extends ChangeNotifier {
     _setupNavModules();
     _setupAnimationFrameModule();
     _setupCanvasModule();
-    registerGeometryHostModules(host: host, tree: tree);
+    registerGeometryHostModules(
+      host: host,
+      tree: tree,
+      flushPending: _flushUiNotifyNow,
+    );
     _http.register(host);
     _setupAsyncInvokeModule();
+    _unwatchPointer = watchGlobalPointer(
+      tree: tree,
+      onDown: (id, x, y) {
+        if (_disposed || _vm == null) return;
+        dispatchEvent(
+          id,
+          FjsEvent.globalPointerDown,
+          text: '{"x":${x.toStringAsFixed(1)},"y":${y.toStringAsFixed(1)}}',
+        );
+      },
+    );
   }
+
+  VoidCallback? _unwatchPointer;
 
   /// Backs the runtime's fetch() — see http.dart for the wire protocol.
   late final FjsHttp _http = FjsHttp(
@@ -196,6 +213,7 @@ class FjsEngine extends ChangeNotifier {
   }
 
   final FjsBindings bind = FjsBindings.instance();
+
   /// Op-stream diagnostics route to the same log channel as engine errors,
   /// so the device-side log sheet shows what actually arrived (specs/070).
   late final MirrorTree tree = MirrorTree(
@@ -1195,10 +1213,22 @@ class FjsEngine extends ChangeNotifier {
     engine._scheduleUiNotify();
   }
 
+  /// The queued [_scheduleUiNotify] delivered now — the geometry module's
+  /// forced reflow needs the tree-level signal too (a new page root only
+  /// reaches its route's FjsView through it). The microtask still runs and
+  /// finds nothing left to do.
+  void _flushUiNotifyNow() {
+    if (!_uiNotifyQueued || _disposed) return;
+    _uiNotifyQueued = false;
+    tree.flushDirty();
+    notifyListeners();
+  }
+
   void _scheduleUiNotify() {
     if (_uiNotifyQueued || _disposed) return;
     _uiNotifyQueued = true;
     scheduleMicrotask(() {
+      if (!_uiNotifyQueued) return; // delivered early by _flushUiNotifyNow
       _uiNotifyQueued = false;
       if (_disposed) return;
       // per-node signals first, then the tree-level one. Both are deferred to
@@ -1285,6 +1315,7 @@ class FjsEngine extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _unwatchPointer?.call();
     stopEventLoop();
     _http.close();
     _dev?.close();

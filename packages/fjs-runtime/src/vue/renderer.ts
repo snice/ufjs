@@ -14,7 +14,7 @@ import {
 import { create, forgetHandlers, forgetElementStyle, insert, remove, setHoverStyle, setText, setProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setOffsetParentResolver, type Element, type EventPayload } from '../ui/element';
 import { transitionClassesOf } from './transition-classes';
 import { lastPointer } from '../ui/geometry';
-import { hasNativeHost, invokeHost } from '../host';
+import { hasNativeHost, invokeHost, registerPreFlush } from '../host';
 import { usesDeclaredFont } from '../css/font-face';
 import { INHERITABLE, StyleEngine, type PseudoStyles } from '../css/style';
 
@@ -186,7 +186,11 @@ function isPrivateUseOnly(text: string): boolean {
  * child); none / normal produce nothing; attr()/counter() are outside the
  * supported subset (warned, treated as none — constitution V). */
 function pseudoContent(value: unknown, fontFamily?: unknown): string | null {
-  if (value === undefined || value === null) return '';
+  // no `content` declared is CSS's `normal`: no box at all. vant's
+  // `.van-sidebar-item:not(:last-child)::after { border-bottom-width: 1px }`
+  // only tops up a hairline some other rule creates; boxed on its own it
+  // drew a grey line under every sidebar title
+  if (value === undefined || value === null) return null;
   const v = value.toString().trim();
   if (v === 'none' || v === 'normal') return null;
   const quoted = /^(["'])(.*)\1$/s.exec(v);
@@ -275,6 +279,14 @@ function syncPseudoBoxes(el: Element, styles: PseudoStyles | null): void {
       continue;
     }
     const content = pseudoContent(decls.content, decls.fontFamily);
+    if (content === null) {
+      // content none / normal / unset: CSS generates no box
+      if (existing) {
+        dropPseudoBox(existing);
+        delete entry[kind];
+      }
+      continue;
+    }
     const style = { ...decls };
     delete style.content;
     if (!existing) {
@@ -313,6 +325,10 @@ export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, act
   if (pseudo !== undefined) syncPseudoBoxes(el, pseudo);
   if (style.position === 'fixed') hoistIfNeeded(el, style);
 });
+
+// Styles go out with the ops that create their elements: the host flush
+// finishes the engine's pending recompute first (see flushPending)
+registerPreFlush(() => styleEngine.flushPending());
 
 // The DOM-shaped `el.style` writes funnel into the same engine: libraries
 // like @vueuse/motion assign `el.style[key] = v`, a `:style` binding calls
@@ -374,6 +390,45 @@ function hostContains(this: HostNode, other: unknown): boolean {
   return false;
 }
 
+// ---- document-level pointer stream -------------------------------------------
+//
+// Dart reports every pointer down anywhere in the app — page, overlay, modal —
+// with the deepest node under it (system event 43, payload {"x","y"}). This is
+// what DOM code gets from `document.addEventListener('touchstart' | 'click')`:
+// vant's click-away (number keyboard, popover) checks `el.contains(target)`
+// against it. Web has the real document; this is the app side's.
+const EVENT_GLOBAL_POINTER_DOWN = 43;
+
+export interface GlobalPointerDown {
+  /** The deepest element under the pointer; null over no fjs node. */
+  target: HostNode | null;
+  clientX: number;
+  clientY: number;
+}
+
+const globalPointerListeners = new Set<(event: GlobalPointerDown) => void>();
+
+/** Subscribes to every pointer down in the app; returns the unsubscriber. */
+export function onGlobalPointerDown(listener: (event: GlobalPointerDown) => void): () => void {
+  globalPointerListeners.add(listener);
+  return () => globalPointerListeners.delete(listener);
+}
+
+registerSystemHandler(EVENT_GLOBAL_POINTER_DOWN, (id, payload) => {
+  if (globalPointerListeners.size === 0) return;
+  let x = 0;
+  let y = 0;
+  try {
+    const p = JSON.parse(String(payload ?? '{}')) as { x?: number; y?: number };
+    x = p.x ?? 0;
+    y = p.y ?? 0;
+  } catch {
+    // a malformed payload still reports the target
+  }
+  const target = elementsById.get(id) ?? pageRoots.get(id) ?? null;
+  for (const listener of [...globalPointerListeners]) listener({ target, clientX: x, clientY: y });
+});
+
 const POSITIONED = new Set(['relative', 'absolute', 'fixed', 'sticky']);
 
 // offsetParent (ui/element.ts): the nearest positioned ancestor, else the
@@ -387,7 +442,10 @@ setOffsetParentResolver((id) => {
     last = cur;
     cur = parentOf.get(cur);
   }
-  return last == null ? null : (elementsById.get(last) ?? null);
+  // the top of the chain is usually the page root, which flutterRoot()
+  // registers in pageRoots, not elementsById — null here made vant's
+  // isHidden() call every tabs bar hidden, so its underline never moved
+  return last == null ? null : (elementsById.get(last) ?? pageRoots.get(last) ?? null);
 });
 
 /** Registers a renderer-created node and gives it the DOM-shaped members. */
@@ -918,6 +976,26 @@ function installTextControlValue(el: HostNode): void {
   (el as HostNode & { setSelectionRange?: () => void }).setSelectionRange = () => {};
 }
 
+/** innerHTML → the text it shows. No HTML layout on this side: line breaks
+ * survive, other tags drop (warned once), common entities decode. */
+let warnedInnerHtml = false;
+function htmlToText(html: string): string {
+  if (!/[<&]/.test(html)) return html;
+  const text = html.replace(/<br\s*\/?>/gi, '\n');
+  if (!warnedInnerHtml && /<[a-z!/]/i.test(text)) {
+    warnedInnerHtml = true;
+    console.warn('[fjs] innerHTML markup is shown as plain text on the app side (tags dropped)');
+  }
+  return text
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, '\u00a0')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
 export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
   el,
   key,
@@ -936,6 +1014,15 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
   }
   if (prop === 'href' || prop === 'srcset') {
     return; // unsupported in v1
+  }
+  // DOM text properties set as props — vant's picker column renders each
+  // option as `<div :textContent="text">` (innerHTML under allow-html),
+  // Toast/Dialog put their message through innerHTML. Passed on as plain
+  // props the native side never saw any text: every option was blank.
+  if (prop === 'textContent' || prop === 'innerText' || prop === 'innerHTML') {
+    const raw = nextValue == null ? '' : String(nextValue);
+    setText(el, prop === 'innerHTML' ? htmlToText(raw) : raw);
+    return;
   }
   if (prop === 'id') {
     // no selector engine matches on it, but a touch event reports it as

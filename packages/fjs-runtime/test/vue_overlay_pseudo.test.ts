@@ -417,6 +417,43 @@ describe('pseudo-element decoration boxes', () => {
     app.unmount();
   });
 
+  // CSS: no `content` is `normal` — no box. vant's
+  // `.van-sidebar-item:not(:last-child)::after { border-bottom-width: 1px }`
+  // only tops up a hairline; boxed alone it underlined every title
+  // (specs/073).
+  it('generates no box for a pseudo rule without content', async () => {
+    f = freshFrames();
+    const { app } = mount(
+      () => h('view', { class: 'item' }, [h('text', 'y')]),
+      `.item::after { border-bottom-width: 1px }
+       .item::before { content: none; width: 4px }`,
+    );
+    await settle();
+    const element = ownerOfText('y');
+    const kids = f.childrenOf.get(element) ?? [];
+    expect(kids.filter((child) => !f.text.has(child))).toEqual([]);
+    app.unmount();
+  });
+
+  // vant's picker column sets each option through the `textContent` DOM
+  // property; Toast/Dialog use innerHTML (specs/073)
+  it('turns textContent / innerHTML props into element text', async () => {
+    f = freshFrames();
+    const { app } = mount(
+      () =>
+        h('view', null, [
+          h('view', { class: 'a', textContent: '杭州' }),
+          h('view', { class: 'b', innerHTML: '第一行<br>第二行 &amp; <b>粗</b>' }),
+        ]),
+      '',
+    );
+    await settle();
+    const texts = [...f.text.values()];
+    expect(texts).toContain('杭州');
+    expect(texts).toContain('第一行\n第二行 & 粗');
+    app.unmount();
+  });
+
   it('keeps real-child inserts correct past a ::before box', async () => {
     f = freshFrames();
     const items = ref<string[]>([]);

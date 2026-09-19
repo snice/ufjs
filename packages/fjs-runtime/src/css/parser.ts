@@ -473,7 +473,7 @@ function splitTopLevel(text: string, sep: string): string[] {
   return parts;
 }
 
-function camelize(key: string): string {
+export function camelize(key: string): string {
   return key
     .replace(/^-(?:webkit|moz|ms|o)-/, '')
     .replace(/-+([a-z])/g, (_, c: string) => c.toUpperCase());

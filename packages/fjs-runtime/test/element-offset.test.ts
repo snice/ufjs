@@ -56,4 +56,19 @@ describe('offset geometry', () => {
     await flush();
     expect(el.value.offsetLeft + el.value.offsetWidth / 2).toBe(0);
   });
+
+  // with no positioned ancestor the DOM falls back to <body>; here the page
+  // root. A null made vant's isHidden() treat every tabs bar as hidden, so
+  // setLine returned early and the underline never moved (specs/073).
+  it('falls back to the page root, never null for a mounted element', async () => {
+    setOpSink(() => {});
+    const tabs = ref<any>(null);
+    const App: any = defineComponent(() => () =>
+      h('view', null, [h('view', { ref: tabs, style: { position: 'relative' } }, 'tabs')]) as VNode,
+    );
+    const root = flutterRoot();
+    createApp(App).mount(root);
+    await flush();
+    expect(tabs.value.offsetParent?.id).toBe(root.id);
+  });
 });

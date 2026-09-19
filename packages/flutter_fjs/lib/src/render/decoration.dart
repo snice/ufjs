@@ -4,6 +4,7 @@
 import 'dart:async' show Timer;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import 'dashed_border.dart';
 import 'length.dart';
@@ -120,7 +121,9 @@ Widget decorateNode(
     );
   }
   final background = style.backgroundColor ?? defaultBackgroundColor;
+  final layers = style.backgroundLayers;
   final decorated =
+      layers != null ||
       style.keepsBox ||
       style.hasDecoration ||
       border != null ||
@@ -156,7 +159,25 @@ Widget decorateNode(
             (border is Border ? liveTrack('borderColor') : null);
   // declared track keeps the box even while it paints nothing yet
   final animatesDecoration = decorationTrack != null;
-  Widget box(Widget child, double? width, double? height) {
+  // `box-sizing: content-box` (vant's tab nav: `height: 100%` plus a 15px
+  // padding-bottom the underline sits in): width/height size the CONTENT,
+  // the box adds its padding and border on top. fjs boxes are border-box
+  // otherwise (css-compat.md). A % padding is left out of the sum.
+  final contentBox = style.style['boxSizing'] == 'content-box';
+  final EdgeInsets boxExtra = !contentBox
+      ? EdgeInsets.zero
+      : (style.padding ?? defaultPadding ?? EdgeInsets.zero) +
+            EdgeInsets.only(
+              top: side?.top?.width ?? 0,
+              right: side?.right?.width ?? 0,
+              bottom: side?.bottom?.width ?? 0,
+              left: side?.left?.width ?? 0,
+            );
+  Widget sizedBox(Widget child, double? width, double? height) {
+    if (contentBox) {
+      if (width != null) width += boxExtra.horizontal;
+      if (height != null) height += boxExtra.vertical;
+    }
     // width/height (or `all`) tracks animate the resolved size the same way
     // (spec 045 追加). Size is a LAYOUT property: every animation frame
     // re-lays-out the subtree, which is exactly the cost a CSS width
@@ -222,7 +243,14 @@ Widget decorateNode(
         height: animatesHeight ? null : height,
         decoration: decoration,
         foregroundDecoration: foregroundDecoration,
-        child: inner,
+        // layered background images paint over the colour, under the
+        // content, across the padding box — CSS's background-origin
+        child: layers == null
+            ? inner
+            : DecoratedBox(
+                decoration: _LayeredBackground(layers),
+                child: inner ?? const SizedBox.expand(),
+              ),
       );
     }
 
@@ -246,7 +274,10 @@ Widget decorateNode(
       // its height runs 0 → content): the content keeps its own height and
       // is clipped, as in CSS — squeezed into the box, a flex column paints
       // the overflow stripes instead
-      final content = style.overflowHidden && height != null
+      // only while the height is a transition target: an overflow-hidden
+      // box of FIXED height keeps bounding its content, so a child's
+      // `height: 100%` still resolves against it (vant's tabs wrap → nav)
+      final content = style.overflowHidden && height != null && animatesHeight
           ? OverflowBox(
               maxHeight: double.infinity,
               alignment: Alignment.topCenter,
@@ -258,6 +289,23 @@ Widget decorateNode(
       );
     }
     return child;
+  }
+
+  // A content-box size is the box's own: when padding pushes it past what
+  // the parent offers (vant's nav: 100% of a 44px wrap + 15px padding), CSS
+  // keeps it and lets it overflow — Flutter would clamp it back to 44.
+  Widget box(Widget child, double? width, double? height) {
+    final out = sizedBox(child, width, height);
+    if (!contentBox) return out;
+    final looseWidth = width != null && boxExtra.horizontal > 0;
+    final looseHeight = height != null && boxExtra.vertical > 0;
+    return looseWidth || looseHeight
+        ? FjsOverflowSize(
+            looseWidth: looseWidth,
+            looseHeight: looseHeight,
+            child: out,
+          )
+        : out;
   }
 
   final widthLength = style.widthLength;
@@ -331,8 +379,7 @@ Widget decorateNode(
   // margin into the positioned insets and this Padding is skipped — inside
   // the tight Positioned slot it would squeeze the box instead (vant's
   // badge dot came out 8x4).
-  final outOfFlow =
-      style.position == 'absolute' || style.position == 'fixed';
+  final outOfFlow = style.position == 'absolute' || style.position == 'fixed';
   final marLengths = style.marginLengths;
   if (!outOfFlow) {
     if (marLengths != null && marLengths.hasRelative) {
@@ -792,4 +839,109 @@ BorderSide _borderSide(FjsBorderSide? side) => side == null
 /// (renderer.dart), so a child's never reaches its parent.
 class FjsSizeTransitionEnd extends Notification {
   const FjsSizeTransitionEnd();
+}
+
+/// Lays its child out free of the parent's cap on the chosen axes and takes
+/// the child's size clamped to its own constraints: the child keeps a size
+/// it declared and paints past the edge it overflows (a clipping ancestor
+/// trims it, as `overflow: hidden` does on the web).
+class FjsOverflowSize extends SingleChildRenderObjectWidget {
+  const FjsOverflowSize({
+    super.key,
+    required this.looseWidth,
+    required this.looseHeight,
+    super.child,
+  });
+
+  final bool looseWidth;
+  final bool looseHeight;
+
+  @override
+  RenderFjsOverflowSize createRenderObject(BuildContext context) =>
+      RenderFjsOverflowSize(looseWidth, looseHeight);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    RenderFjsOverflowSize renderObject,
+  ) {
+    renderObject
+      ..looseWidth = looseWidth
+      ..looseHeight = looseHeight;
+  }
+}
+
+class RenderFjsOverflowSize extends RenderShiftedBox {
+  RenderFjsOverflowSize(this._looseWidth, this._looseHeight) : super(null);
+
+  bool _looseWidth;
+  set looseWidth(bool v) {
+    if (v == _looseWidth) return;
+    _looseWidth = v;
+    markNeedsLayout();
+  }
+
+  bool _looseHeight;
+  set looseHeight(bool v) {
+    if (v == _looseHeight) return;
+    _looseHeight = v;
+    markNeedsLayout();
+  }
+
+  @override
+  void performLayout() {
+    final c = child;
+    if (c == null) {
+      size = constraints.smallest;
+      return;
+    }
+    c.layout(
+      BoxConstraints(
+        minWidth: _looseWidth ? 0 : constraints.minWidth,
+        maxWidth: _looseWidth ? double.infinity : constraints.maxWidth,
+        minHeight: _looseHeight ? 0 : constraints.minHeight,
+        maxHeight: _looseHeight ? double.infinity : constraints.maxHeight,
+      ),
+      parentUsesSize: true,
+    );
+    size = constraints.constrain(c.size);
+    (c.parentData! as BoxParentData).offset = Offset.zero;
+  }
+
+  @override
+  bool hitTest(BoxHitTestResult result, {required Offset position}) =>
+      // the overflowing part is still the child's
+      hitTestChildren(result, position: position);
+}
+
+/// Paints [FjsBackgroundLayer]s, last layer first (CSS stacks the first on
+/// top).
+class _LayeredBackground extends Decoration {
+  const _LayeredBackground(this.layers);
+
+  final List<FjsBackgroundLayer> layers;
+
+  @override
+  BoxPainter createBoxPainter([VoidCallback? onChanged]) =>
+      _LayeredBackgroundPainter(layers);
+}
+
+class _LayeredBackgroundPainter extends BoxPainter {
+  _LayeredBackgroundPainter(this.layers);
+
+  final List<FjsBackgroundLayer> layers;
+
+  @override
+  void paint(Canvas canvas, Offset offset, ImageConfiguration configuration) {
+    final size = configuration.size;
+    if (size == null || size.isEmpty) return;
+    for (final layer in layers.reversed) {
+      final rect = layer.rectIn(size).shift(offset);
+      if (rect.isEmpty) continue;
+      canvas.drawRect(
+        rect,
+        Paint()..shader = layer.gradient.createShader(rect),
+      );
+    }
+  }
 }

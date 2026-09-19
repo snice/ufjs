@@ -10,9 +10,9 @@
 // logical pixels in the window's space, the same space touch events report
 // (touch.dart), so a rect and a touch point can be subtracted.
 
-import 'package:flutter/painting.dart' show PaintingBinding;
 import 'package:flutter/rendering.dart'
     show RenderObjectWithLayoutCallbackMixin;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
@@ -28,16 +28,23 @@ String _num(double v) => v.toStringAsFixed(2);
 /// Registers `fjs.ui.rect(id)` → `"[left,top,width,height]"` (null when the
 /// node is not laid out) and `fjs.ui.pointer()` → `"[x,y]"` of the last
 /// tap (null before the first).
+///
+/// [flushPending] delivers the host's queued UI notification now (the
+/// engine batches it into a microtask): a page root JS just created is only
+/// placed under its route by that tree-level signal — without it the forced
+/// reflow has no widgets to lay out, and everything a page measures while
+/// it mounts reads 0 (vant's swipe width, its tabs underline).
 void registerGeometryHostModules({
   required HostRegistry host,
   required MirrorTree tree,
+  VoidCallback? flushPending,
 }) {
   // before any font loads: the settling window starts at the change itself
   _watchFonts();
   host.register('fjs.ui.rect', (args) {
     final id = args.isEmpty ? null : args[0];
     if (id is! num) return null;
-    _reflow(tree);
+    _reflow(tree, flushPending);
     final element = tree.node(id.toInt())?.element;
     if (element is! Element || !element.mounted) return null;
     final box = element.findRenderObject();
@@ -59,7 +66,7 @@ void registerGeometryHostModules({
 /// content's `offsetHeight` in the tick that shows it). Skipped while a
 /// frame is building, laying out or painting — the tree cannot be touched
 /// then, and the last frame's answer is the only one there is.
-void _reflow(MirrorTree tree) {
+void _reflow(MirrorTree tree, [VoidCallback? flushPending]) {
   final WidgetsBinding binding;
   try {
     binding = WidgetsBinding.instance;
@@ -71,6 +78,7 @@ void _reflow(MirrorTree tree) {
   final root = binding.rootElement;
   if (root == null) return;
   final signalled = tree.flushDirty();
+  flushPending?.call();
   binding.buildOwner?.buildScope(root);
   // A view under a LayoutBuilder rebuilds in that builder's own layout
   // pass, and in the idle phase the builder defers asking for one to the
@@ -116,4 +124,55 @@ void _watchFonts() {
       (_) => _fontsSettling = false,
     );
   });
+}
+
+/// Reports every pointer DOWN anywhere in the app — page, overlay, modal —
+/// as the deepest fjs node under it (0 when none). This is the document-level
+/// touch stream DOM code listens to: vant's click-away (number keyboard,
+/// popover) watches `document` for a touchstart outside its own box. Returns
+/// the remover; null for a headless engine.
+VoidCallback? watchGlobalPointer({
+  required MirrorTree tree,
+  required void Function(int nodeId, double x, double y) onDown,
+}) {
+  final GestureBinding gestures;
+  try {
+    gestures = GestureBinding.instance;
+  } on FlutterError {
+    return null;
+  }
+  void route(PointerEvent event) {
+    if (event is! PointerDownEvent) return;
+    onDown(_nodeAt(tree, event), event.position.dx, event.position.dy);
+  }
+
+  gestures.pointerRouter.addGlobalRoute(route);
+  return () => gestures.pointerRouter.removeGlobalRoute(route);
+}
+
+/// The deepest fjs node whose render box the pointer hit.
+int _nodeAt(MirrorTree tree, PointerEvent event) {
+  final result = HitTestResult();
+  WidgetsBinding.instance.hitTestInView(result, event.position, event.viewId);
+  // render object → node, built for this one lookup (a tap, not a frame)
+  final owners = <RenderObject, int>{};
+  for (final node in tree.allNodes) {
+    final element = node.element;
+    if (element is! Element || !element.mounted) continue;
+    final ro = element.findRenderObject();
+    if (ro != null) owners[ro] = node.id;
+  }
+  for (final entry in result.path) {
+    final target = entry.target;
+    if (target is! RenderObject) continue;
+    // the hit target may sit inside a node's own wrappers: climb to the
+    // nearest render object a node owns
+    RenderObject? r = target;
+    while (r != null) {
+      final id = owners[r];
+      if (id != null) return id;
+      r = r.parent;
+    }
+  }
+  return 0;
 }

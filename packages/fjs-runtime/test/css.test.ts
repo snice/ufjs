@@ -590,6 +590,15 @@ describe('StyleEngine', () => {
     expect(applied.get(inner)?.textOverflow).toBeUndefined();
   });
 
+  it('camelizes kebab keys of an object inline style (static template style)', async () => {
+    const { engine, applied, add } = makeEngine();
+    const row = add(1, 'view', null);
+    engine.patchInlineStyle(1, null, { 'align-items': 'stretch', 'margin-top': '4px' });
+    await styleTick();
+    expect(applied.get(row)).toMatchObject({ alignItems: 'stretch', marginTop: '4px' });
+    expect(applied.get(row)?.['align-items']).toBeUndefined();
+  });
+
   it('merges useCssVars batches without clobbering earlier props', async () => {
     const { engine, applied, add } = makeEngine();
     const el = add(1, 'div', null);

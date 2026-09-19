@@ -47,6 +47,16 @@ Widget buildFlex(
 }) {
   final horizontal = (style.flexDirection ?? 'column') == 'row';
   final axis = horizontal ? Axis.horizontal : Axis.vertical;
+  // Whether this box lays its children out as CSS BLOCK flow — an HTML div
+  // (htmlBlock) left at display block / inline-block. Everything else is a
+  // flex container on the web too (an fjs <view> is display: flex there),
+  // and a flex item's display is blockified: an inline-block button in a
+  // <view> stretches like a block (see [_flexChild]).
+  final blockFlow =
+      style.props['htmlBlock'] == true &&
+      (style.display == null ||
+          style.display == 'block' ||
+          style.display == 'inline-block');
   // main-axis gap is column-gap on a row, row-gap on a column (as in CSS);
   // `gap` is the shorthand for both
   final gap = horizontal ? style.columnGap : style.rowGap;
@@ -107,15 +117,26 @@ Widget buildFlex(
   return LayoutBuilder(
     builder: (context, constraints) {
       // A scroll view gives its content an unbounded cross axis. Flutter's
-      // stretch implementation turns that into a tight Infinity constraint,
-      // which is invalid even when a descendant has a finite width/height.
-      // CSS stretch also has no meaningful size to stretch to in this case,
-      // so start is the closest finite fallback.
+      // stretch hands that on as a tight Infinity constraint — invalid. CSS
+      // still stretches there: to the LINE's cross size, the tallest item
+      // (vant-nav's sidebar row: the content pane takes the sidebar's
+      // height). That is the two-pass measure-then-stretch layout
+      // (stretch_flex.dart measureCross): items at their own size first,
+      // then the cross axis tight at the widest/tallest of them.
       final crossBounded = horizontal
           ? constraints.hasBoundedHeight
           : constraints.hasBoundedWidth;
+      // Rows only (a vertical scroller's content): a column with an
+      // unbounded WIDTH lives in a horizontal scroller, where its % paddings
+      // would resolve against the width they help size — kept at start.
+      final unboundedStretch =
+          !crossBounded &&
+          horizontal &&
+          crossAlignment == CrossAxisAlignment.stretch;
       final effectiveCrossAlignment =
-          !crossBounded && crossAlignment == CrossAxisAlignment.stretch
+          !crossBounded &&
+              !horizontal &&
+              crossAlignment == CrossAxisAlignment.stretch
           ? CrossAxisAlignment.start
           : crossAlignment;
       // the alignment the Flex itself runs with; under `align-self` it is a
@@ -126,7 +147,9 @@ Widget buildFlex(
           ? CrossAxisAlignment.stretch
           : effectiveCrossAlignment;
       final measureCross =
-          selfAligned && effectiveCrossAlignment != CrossAxisAlignment.stretch;
+          unboundedStretch ||
+          (selfAligned &&
+              effectiveCrossAlignment != CrossAxisAlignment.stretch);
       final entries = <(Widget, MirrorNode?)>[
         for (var i = 0; i < kids.length; i++) ...[
           if (gap != null && i > 0)
@@ -173,6 +196,7 @@ Widget buildFlex(
                 : null,
             mainAxisMax: mainAxisMax,
             defaultGrow: growChildren ? 1 : null,
+            blockFlow: blockFlow,
           ),
         );
         if (auto != null && auto.trail) children.add(const Spacer());
@@ -248,12 +272,17 @@ bool _keyed(Widget out, Widget child) =>
 bool _growingSingleLine(bool horizontal, List<MirrorNode?> kidNodes) {
   if (!horizontal) return false;
   var grows = false;
+  // percentage bases that add up past the line break it for real (vant's
+  // number keyboard: twelve `flex-basis: 33%` keys make four lines)
+  var basisTotal = 0.0;
   for (final n in kidNodes) {
     if (n == null) continue;
     final s = FjsStyle.of(n);
     if (isOutOfFlowPosition(s.position)) continue;
     final width = s.widthLength;
     if (width != null && width.percent >= 1) return false;
+    basisTotal += (width ?? s.flexBasisLength)?.percent ?? 0;
+    if (basisTotal > 1 + 1e-9) return false;
     final grow = s.flexGrow;
     if (grow != null && grow > 0) grows = true;
   }
@@ -314,7 +343,9 @@ Widget _wrapChildMain({
   if (childNode == null) return child;
   final s = FjsStyle.of(childNode);
   if (isOutOfFlowPosition(s.position)) return child;
-  final basis = _basisSize(s, horizontal, mainAxisMax);
+  final basis =
+      _basisSize(s, horizontal, mainAxisMax) ??
+      _growingShare(s, horizontal, mainAxisMax);
   if (basis != null) {
     return SizedBox(
       width: horizontal ? basis : null,
@@ -404,6 +435,21 @@ double? _basisSize(FjsStyle s, bool horizontal, double mainAxisMax) {
   return mainAxisMax.isFinite ? basis.resolveOrNull(mainAxisMax) : null;
 }
 
+/// A growing wrap item with a percentage basis (vant's number keyboard:
+/// `flex: 1; flex-basis: 33%` keys in a wrapping row). CSS breaks lines on
+/// the basis — three 33% keys to a line — then grow hands the leftover 1% out
+/// evenly, so each key is a third of the line. That equal share is what
+/// this returns; Wrap cannot grow, so it is sized up front.
+double? _growingShare(FjsStyle s, bool horizontal, double mainAxisMax) {
+  final grow = s.flexGrow;
+  if (grow == null || grow <= 0 || !mainAxisMax.isFinite) return null;
+  if ((horizontal ? s.widthLength : s.heightLength) != null) return null;
+  final basis = s.flexBasisLength;
+  if (basis == null || basis.px != 0 || basis.percent <= 0) return null;
+  final perLine = (1 / basis.percent + 1e-9).floor();
+  return perLine < 1 ? mainAxisMax : mainAxisMax / perLine;
+}
+
 /// Where an item that aligns itself sits in its line (the cross axis only;
 /// the Align is main-axis sized to the item).
 AlignmentGeometry _crossAlignment(CrossAxisAlignment align, bool horizontal) {
@@ -433,6 +479,7 @@ Widget _flexChild({
   required double mainAxisMax,
   CrossAxisAlignment? crossAlign,
   int? defaultGrow,
+  bool blockFlow = true,
 }) {
   if (childNode == null) {
     return defaultGrow == null
@@ -458,16 +505,19 @@ Widget _flexChild({
   // absolutely-positioned children are out of flow; never expand them
   if (isOutOfFlowPosition(s.position)) return child;
   Widget out = child;
-  // An inline-level box (`display: inline-block/inline`, e.g. van-stepper)
-  // never stretches: CSS gives it a shrink-to-fit size even under
-  // align-items: stretch. The same Align treatment an explicit cross size
+  // An inline-level box (`display: inline-block/inline`, e.g. van-stepper in
+  // a cell's value div) never stretches in BLOCK flow: CSS gives it a
+  // shrink-to-fit size. The same Align treatment an explicit cross size
   // gets absorbs the parent's tight cross constraint, so the box sizes to
   // its content. (The engine maps these displays to a wrapping row so the
-  // CHILDREN lay out horizontally — see css/style.ts.)
+  // CHILDREN lay out horizontally — see css/style.ts.) As a flex item its
+  // display is blockified and align-items stretches it — vant's
+  // inline-block button fills a <view> column on the web.
   final shrinkBox =
-      s.display == 'inline-block' ||
-      s.display == 'inline' ||
-      s.display == 'inline-flex';
+      blockFlow &&
+      (s.display == 'inline-block' ||
+          s.display == 'inline' ||
+          s.display == 'inline-flex');
   // CSS `align-items: stretch` only stretches items that have no size of
   // their own on the cross axis, but Flutter's CrossAxisAlignment.stretch
   // passes a tight cross constraint to every child. An Align absorbs that
@@ -920,11 +970,7 @@ Widget positionedChild(
     );
   }
 
-  return _animateAbsGeometry(
-    style: s,
-    geometry: geometry,
-    build: buildPlain,
-  );
+  return _animateAbsGeometry(style: s, geometry: geometry, build: buildPlain);
 }
 
 /// The cross-axis [Alignment] component (-1…1) for an absolute child's

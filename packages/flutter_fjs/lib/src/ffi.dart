@@ -411,4 +411,9 @@ abstract final class FjsEvent {
   // a CSS transform/opacity transition ran to its end (specs/073; vant's
   // NoticeBar restarts its marquee on it). No payload.
   static const transitionEnd = 42;
+  // A pointer went down anywhere in the app (specs/073): nodeId = the
+  // deepest fjs node under it (0 = none), payload {"x":n,"y":n}. A system
+  // event (registerSystemHandler): the document-level touch stream DOM code
+  // listens to for click-away.
+  static const globalPointerDown = 43;
 }

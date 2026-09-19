@@ -4,7 +4,7 @@
 // element tree). The Vue renderer feeds element state (tag/class/scopes/
 // inline style) and applies computed styles back through setProps, so the
 // native bridge keeps receiving exactly one merged `style` map per element.
-import { DISABLED_CLASS, normalizeValue, parseInlineCss, parseStylesheet, warnOnce, type ClassAttrTest, type CssRule, type Selector, mediaMatches } from './parser';
+import { DISABLED_CLASS, camelize, normalizeValue, parseInlineCss, parseStylesheet, warnOnce, type ClassAttrTest, type CssRule, type Selector, mediaMatches } from './parser';
 import { registerFontFace, type FontFaceDecl } from './font-face';
 import type { KeyframesDecl } from './animation';
 
@@ -848,26 +848,35 @@ export class StyleEngine {
   private scheduleFlush(): void {
     if (this.flushQueued) return;
     this.flushQueued = true;
-    Promise.resolve().then(() => {
-      this.flushQueued = false;
-      const clock = (globalThis as { __fjs?: { fns?: { nowMs?: () => number } } })
-        .__fjs?.fns?.nowMs;
-      const t0 = clock ? clock() : 0;
-      // parents are always created before children (ascending ids), so one
-      // ascending pass gives every element a fresh parent computed style
-      let guard = 0;
-      while (this.dirtyList.length && guard++ < 100) {
-        const ids = this.dirtyList;
-        // a fresh list (not a copy) so anything dirtied during the pass lands
-        // in the next one, under the next stamp
-        this.dirtyList = [];
-        this.dirtyEpoch++;
-        ids.sort((a, b) => a - b);
-        for (let i = 0; i < ids.length; i++) this.recompute(ids[i]);
-      }
-      if (clock) this.counters.flushMs += clock() - t0;
-      this.counters.flushes++;
-    });
+    Promise.resolve().then(() => this.flushPending());
+  }
+
+  /** Recomputes everything marked dirty, now. The microtask above does it
+   * for ordinary batching; the host flush calls it too (renderer.ts
+   * registerPreFlush), so ops never leave with the styles of elements they
+   * create still pending — a forced layout read (getBoundingClientRect
+   * flushes first) would otherwise lay those elements out unstyled: vant's
+   * swipe measured the full 402px screen before its parents' paddings. */
+  flushPending(): void {
+    this.flushQueued = false;
+    if (!this.dirtyList.length) return;
+    const clock = (globalThis as { __fjs?: { fns?: { nowMs?: () => number } } })
+      .__fjs?.fns?.nowMs;
+    const t0 = clock ? clock() : 0;
+    // parents are always created before children (ascending ids), so one
+    // ascending pass gives every element a fresh parent computed style
+    let guard = 0;
+    while (this.dirtyList.length && guard++ < 100) {
+      const ids = this.dirtyList;
+      // a fresh list (not a copy) so anything dirtied during the pass lands
+      // in the next one, under the next stamp
+      this.dirtyList = [];
+      this.dirtyEpoch++;
+      ids.sort((a, b) => a - b);
+      for (let i = 0; i < ids.length; i++) this.recompute(ids[i]);
+    }
+    if (clock) this.counters.flushMs += clock() - t0;
+    this.counters.flushes++;
   }
 
   private recompute(id: number): void {
@@ -1730,7 +1739,10 @@ function normalizeInline(value: unknown): {
       // input-width is given, which wiped `.van-stepper__input { width }`.
       if (v == null || v === '') continue;
       if (k.startsWith('--')) (custom ??= {})[normalizeVarKey(k)] = String(v);
-      else style[k] = v;
+      // Vue compiles a static `style="align-items: stretch"` into an object
+      // with the CSS (kebab) names as written; the native side reads only
+      // camelCase, so `align-items` was silently ignored there
+      else style[k.includes('-') ? camelize(k) : k] = v;
     }
   }
   return { style, custom };

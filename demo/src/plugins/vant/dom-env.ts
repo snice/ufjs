@@ -114,15 +114,97 @@ const rootElement = () => ({
   scrollLeft: 0,
 });
 
+/** The first-sight half of IntersectionObserver. A page's tree is built
+ * BEFORE its route shows it, so what vant measures on mount reads 0 (the
+ * tabs underline sat at translateX(0)); in a browser the observer's first
+ * callback comes after layout, and vant re-measures on it
+ * (useVisibilityChange → Tabs setLine). This one waits, frame by frame, for
+ * the target to get a laid-out size, then reports it visible once. Later
+ * visibility changes are not tracked. */
+type IOCallback = (entries: { target: unknown; isIntersecting: boolean; intersectionRatio: number }[]) => void;
+class FirstSightObserver {
+  private readonly pending = new Set<unknown>();
+  constructor(private readonly callback: IOCallback) {}
+  observe(target: unknown): void {
+    this.pending.add(target);
+    let frames = 0;
+    const check = () => {
+      if (!this.pending.has(target)) return;
+      const rect = (target as { getBoundingClientRect?: () => { width: number; height: number } })
+        .getBoundingClientRect?.();
+      if (rect && (rect.width > 0 || rect.height > 0)) {
+        this.pending.delete(target);
+        this.callback([{ target, isIntersecting: true, intersectionRatio: 1 }]);
+      } else if (++frames < 120) {
+        requestAnimationFrame(check);
+      }
+    };
+    requestAnimationFrame(check);
+  }
+  unobserve(target: unknown): void {
+    this.pending.delete(target);
+  }
+  disconnect(): void {
+    this.pending.clear();
+  }
+}
+
+/** `document.addEventListener` for the pointer-down family, fed by the app's
+ * document-level pointer stream (fjs/vue onGlobalPointerDown, specs/073).
+ * vant's click-away — the number keyboard closing on a touch outside it —
+ * listens on `document` and tests `el.contains(event.target)`; with a no-op
+ * here the keyboard never closed. Other document events stay no-ops. */
+const POINTER_DOWN = new Set(['touchstart', 'mousedown', 'pointerdown', 'click']);
+type GlobalDown = { target: unknown; clientX: number; clientY: number };
+type DocListener = (event: unknown) => void;
+const docSubscriptions = new Map<DocListener, Map<string, () => void>>();
+function onDocumentPointer(listener: DocListener, type: string): (() => void) | null {
+  const vue = (globalThis as { __FJS_SHARED?: Record<string, { onGlobalPointerDown?: (fn: (e: GlobalDown) => void) => () => void }> })
+    .__FJS_SHARED?.['fjs/vue'];
+  const subscribe = vue?.onGlobalPointerDown;
+  if (!subscribe) return null;
+  return subscribe(({ target, clientX, clientY }) => {
+    const point = { clientX, clientY, pageX: clientX, pageY: clientY };
+    listener({
+      type,
+      target,
+      ...point,
+      touches: [point],
+      changedTouches: [point],
+      preventDefault: noop,
+      stopPropagation: noop,
+    });
+  });
+}
+function addDocumentListener(type: string, listener: DocListener): void {
+  if (!POINTER_DOWN.has(type) || typeof listener !== 'function') return;
+  let byType = docSubscriptions.get(listener);
+  if (byType?.has(type)) return;
+  const off = onDocumentPointer(listener, type);
+  if (!off) return;
+  if (!byType) docSubscriptions.set(listener, (byType = new Map()));
+  byType.set(type, off);
+}
+function removeDocumentListener(type: string, listener: DocListener): void {
+  const byType = docSubscriptions.get(listener);
+  byType?.get(type)?.();
+  byType?.delete(type);
+  if (byType && byType.size === 0) docSubscriptions.delete(listener);
+}
+
 if (typeof window === 'undefined') {
   const g = globalThis as Record<string, unknown>;
+  // useVisibilityChange checks window.IntersectionObserver, then news the
+  // bare global. No IntersectionObserverEntry: vant's lazyload keeps its
+  // scroll-listener fallback rather than trusting this partial observer.
+  if (typeof g.IntersectionObserver === 'undefined') g.IntersectionObserver = FirstSightObserver;
   const doc = {
     body: rootElement(),
     documentElement: rootElement(),
     hidden: false,
     visibilityState: 'visible',
-    addEventListener: noop,
-    removeEventListener: noop,
+    addEventListener: addDocumentListener,
+    removeEventListener: removeDocumentListener,
   };
   const nav = { userAgent: 'fjs' }; // not iOS/Android: no WebView scroll workarounds
   g.window = {
@@ -141,6 +223,7 @@ if (typeof window === 'undefined') {
     pageXOffset: 0,
     pageYOffset: 0,
     devicePixelRatio: 1,
+    IntersectionObserver: g.IntersectionObserver,
     document: doc,
     navigator: nav,
   };

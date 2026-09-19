@@ -506,11 +506,7 @@ FjsBorderStyle? _parseBorderStyleUncached(Object value) {
 ) {
   if (value is num) {
     if (value <= 0) return null;
-    return (
-      width: value.toDouble(),
-      color: null,
-      kind: FjsBorderStyle.solid,
-    );
+    return (width: value.toDouble(), color: null, kind: FjsBorderStyle.solid);
   }
   final tokens = splitOutsideParens(value.toString());
   var width = 1.0;
@@ -1020,22 +1016,19 @@ List<FjsTransitionTrack> _overrideLonghands(
             .toList();
   final durations = durationValue == null
       ? null
-      : _cssValueList(durationValue)
-            .map(parseDuration)
-            .whereType<Duration>()
-            .toList();
+      : _cssValueList(
+          durationValue,
+        ).map(parseDuration).whereType<Duration>().toList();
   final timings = timingValue == null
       ? null
-      : _cssValueList(timingValue)
-            .map(parseTimingFunction)
-            .whereType<Curve>()
-            .toList();
+      : _cssValueList(
+          timingValue,
+        ).map(parseTimingFunction).whereType<Curve>().toList();
   final delays = delayValue == null
       ? null
-      : _cssValueList(delayValue)
-            .map(parseDuration)
-            .whereType<Duration>()
-            .toList();
+      : _cssValueList(
+          delayValue,
+        ).map(parseDuration).whereType<Duration>().toList();
   final count = properties != null && properties.isNotEmpty
       ? properties.length
       : base.length;
@@ -1331,7 +1324,6 @@ List<BoxShadow>? parseBoxShadows(Object? value) =>
 // a per-frame animated value, so the hit rate would be near zero while the
 // cache churned.
 
-
 /// Names meaning "the platform's default" — Flutter's own behavior with no
 /// family, so a stack stops at the first one (see FjsStyle.fontFamily).
 const _systemFamilies = {
@@ -1378,4 +1370,97 @@ List<String> parseFontFamilyStack(Object? value) {
     out.add(name);
   }
   return out;
+}
+
+/// One layer of a layered `background-image` (specs/073): a gradient painted
+/// into its own rectangle — [width]/[height] from `background-size` (null =
+/// the box's), placed by [alignment] from `background-position`. Layers do
+/// not repeat (vant's picker mask: `no-repeat`, `100% 110px`, `top,bottom`).
+class FjsBackgroundLayer {
+  const FjsBackgroundLayer(
+    this.gradient,
+    this.width,
+    this.height,
+    this.alignment,
+  );
+
+  final Gradient gradient;
+  final FjsLength? width;
+  final FjsLength? height;
+  final Alignment alignment;
+
+  Rect rectIn(Size box) {
+    final w = width?.resolve(box.width) ?? box.width;
+    final h = height?.resolve(box.height) ?? box.height;
+    return alignment.inscribe(Size(w, h), Offset.zero & box);
+  }
+}
+
+/// `background-image` + `-size` + `-position` as layers, first layer on top
+/// (CSS order). Null when there is nothing a single full-box gradient could
+/// not paint: one image and no size.
+List<FjsBackgroundLayer>? parseBackgroundLayers(
+  Object? image,
+  Object? size,
+  Object? position,
+) {
+  if (image == null) return null;
+  final images = splitCssList(image.toString());
+  if (images.length < 2 && size == null) return null;
+  final sizes = size == null ? const <String>[] : splitCssList(size.toString());
+  final positions = position == null
+      ? const <String>[]
+      : splitCssList(position.toString());
+  final layers = <FjsBackgroundLayer>[];
+  for (var i = 0; i < images.length; i++) {
+    final gradient = parseGradient(images[i]);
+    if (gradient == null) continue;
+    FjsLength? w, h;
+    if (sizes.isNotEmpty) {
+      final t = sizes[i % sizes.length].trim().split(RegExp(r'\s+'));
+      FjsLength? len(String v) => v == 'auto' || v == 'cover' || v == 'contain'
+          ? null
+          : parseLengthValue(v);
+      w = len(t[0]);
+      h = t.length > 1 ? len(t[1]) : null;
+    }
+    final align = positions.isEmpty
+        ? Alignment.topLeft
+        : _backgroundAlignment(positions[i % positions.length]);
+    layers.add(FjsBackgroundLayer(gradient, w, h, align));
+  }
+  return layers.isEmpty ? null : layers;
+}
+
+Alignment _backgroundAlignment(String value) {
+  final t = value.trim().split(RegExp(r'\s+'));
+  double? x, y;
+  double? pct(String v) => v.endsWith('%')
+      ? (double.tryParse(v.substring(0, v.length - 1)) ?? 0) / 50 - 1
+      : null;
+  for (final token in t) {
+    switch (token) {
+      case 'left':
+        x = -1;
+      case 'right':
+        x = 1;
+      case 'top':
+        y = -1;
+      case 'bottom':
+        y = 1;
+      case 'center':
+        break;
+      default:
+        final p = pct(token);
+        if (p != null) {
+          if (x == null) {
+            x = p;
+          } else {
+            y = p;
+          }
+        }
+    }
+  }
+  // one keyword centres the other axis, as CSS does
+  return Alignment(x ?? 0, y ?? 0);
 }
