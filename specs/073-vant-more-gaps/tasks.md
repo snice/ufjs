@@ -169,3 +169,24 @@
   JS rect 与绘制一致。真机像素扫描：圆点中心 (212.0, 798.83) vs CSS
   期望 (212.13, 799)，badge"9" 同步修正。回归用例
   `abs_child_margin_test.dart`
+- [x] T029 Swipe 滑不到第三页（vant-nav 复验暴露）：vant 把滑轨量宽写进
+  内联样式 `width: N×100%（trackSize px）`，`_flexChild` 的
+  `stretches && crossSized` 分支用 `Align(widthFactor:1)` 吸收 stretch 紧
+  约束，而 Align 的 loosen() 保留父级 max——1038px 显式宽度被钳回槽宽
+  346。钳制本身不挡绘制（transform 平移后 item 照常画、被
+  `.van-swipe` 的 overflow:hidden 裁掉），挡的是**命中测试**：Flutter
+  逐层 `size.contains`，translateX(-346) 之后可见内容在 track 布局盒
+  之外，第二次滑动的 pointer-down 在 track 的 touch 节点之前就
+  miss 了（App 端实测：首次滑动 touchstart/move/end 正常，第二次连
+  Dart 侧 FjsTouchNode 都不触发）。CSS 语义是显式尺寸可溢出且溢出部分
+  可命中（web 即如此）。修复：绝对 px 交叉轴尺寸改走新
+  `FjsUncappedCross`（flex.dart）——子项按声明尺寸布局（cross max 放开，
+  主轴照 Align loosen），包装盒仍钳到行宽（行内布局与行高不受影响），
+  hitTest 放行溢出区；百分比保留 Align（无界参照会读回 auto）；经
+  `shrinkBox` 进入分支的（inline-block 无显式尺寸）也保留 Align。
+  `flex-grow + 显式交叉尺寸` 的 tight fit 行为与 Align 路径一致（loosen）。
+  回归用例 `overflow_cross_hit_test.dart`（布局 1038/命中第二三页/界外
+  miss/百分比参照四类）。iPhone 17 模拟器实拍
+  `shots/app-vant-nav-swipe-page3.png`：两连滑到第三页、指示点第三颗
+  激活，回滑正常；vant-more 全页无回归。flutter test 447 通过（含新增
+  5 条），pnpm typecheck + test（920）通过。

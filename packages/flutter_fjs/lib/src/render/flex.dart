@@ -562,19 +562,36 @@ Widget _flexChild({
     final crossAuto = horizontal
         ? auto.top && auto.bottom
         : auto.left && auto.right;
-    out = Align(
-      key: _keyed(out, child) ? key : null,
-      alignment: crossAuto
-          ? (horizontal ? Alignment.centerLeft : Alignment.topCenter)
-          : AlignmentDirectional.topStart,
-      // The factor belongs to the cross axis. Without it, a column child
-      // with an explicit width still receives the column's tight width; when
-      // that column itself is measured as a row item, the width can be
-      // infinite and RenderPositionedBox rejects the constraint.
-      widthFactor: horizontal ? null : 1,
-      heightFactor: horizontal ? 1 : null,
-      child: out,
-    );
+    // CSS keeps an absolute cross size even when it is WIDER than the line:
+    // the box overflows it, the overflowing part still paints (the nearest
+    // `overflow: hidden` clip cuts it) and still takes hits. Align's
+    // loosen() keeps the parent's max, so `width: 1038px` in a 346px line
+    // clamped to the line — and with it vant's swipe track (N×100%) lost
+    // every page after the first translate step: the visible item lived
+    // beyond the track's box and Flutter hit-testing rejects a point
+    // outside each render box, where the browser hits the overflowing item
+    // under the transformed track. A percentage keeps the Align — an
+    // unbounded cross reference would read back as `auto` there.
+    out = crossLength != null && !crossLength.isRelative
+        ? FjsUncappedCross(
+            key: _keyed(out, child) ? key : null,
+            horizontal: horizontal,
+            centerWhenFits: crossAuto,
+            child: out,
+          )
+        : Align(
+            key: _keyed(out, child) ? key : null,
+            alignment: crossAuto
+                ? (horizontal ? Alignment.centerLeft : Alignment.topCenter)
+                : AlignmentDirectional.topStart,
+            // The factor belongs to the cross axis. Without it, a column child
+            // with an explicit width still receives the column's tight width; when
+            // that column itself is measured as a row item, the width can be
+            // infinite and RenderPositionedBox rejects the constraint.
+            widthFactor: horizontal ? null : 1,
+            heightFactor: horizontal ? 1 : null,
+            child: out,
+          );
   }
   // A percentage on the MAIN axis. Flutter's Flex lays every child out with
   // an unbounded main axis (children size themselves first), so the child's
@@ -1314,5 +1331,101 @@ class _RenderUncappedWidth extends RenderShiftedBox {
   @override
   bool hitTest(BoxHitTestResult result, {required Offset position}) =>
       // the overflowing part is still the child's
+      hitTestChildren(result, position: position);
+}
+
+/// A stretched flex item whose absolute cross size is wider than the line it
+/// stretches into: CSS keeps the declared size, the box overflows the line,
+/// and the part past the edge still paints (the ancestor's `overflow: hidden`
+/// clip is what cuts it) and still takes hits — unlike [Align], whose
+/// loosen() carries the parent's max and clamps the child to the line, and
+/// unlike a plain render box, whose hit testing rejects points outside its
+/// own size. [_flexChild] sends absolute cross lengths here; percentages
+/// stay on [Align] because an unbounded cross reference reads back as auto.
+///
+/// Kinship: [_UncappedWidth] is the same idea for an absolutely positioned
+/// box; this one is for an in-flow stretch item, so the axis to uncap
+/// follows the parent's direction.
+class FjsUncappedCross extends SingleChildRenderObjectWidget {
+  const FjsUncappedCross({
+    required this.horizontal,
+    this.centerWhenFits = false,
+    super.key,
+    super.child,
+  });
+
+  /// Whether the parent's main axis is horizontal, i.e. the cross axis to
+  /// uncap is HEIGHT.
+  final bool horizontal;
+
+  /// Both cross margins `auto`: centre the child while it fits the line;
+  /// CSS over-constrains an overflowing box to the start edge (ltr), so an
+  /// oversized child stays at offset 0.
+  final bool centerWhenFits;
+
+  @override
+  RenderFjsUncappedCross createRenderObject(BuildContext context) =>
+      RenderFjsUncappedCross(horizontal, centerWhenFits);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    covariant RenderFjsUncappedCross renderObject,
+  ) {
+    renderObject
+      ..horizontal = horizontal
+      ..centerWhenFits = centerWhenFits;
+  }
+}
+
+class RenderFjsUncappedCross extends RenderShiftedBox {
+  RenderFjsUncappedCross(this._horizontal, this._centerWhenFits) : super(null);
+
+  bool _horizontal;
+  set horizontal(bool v) {
+    if (v == _horizontal) return;
+    _horizontal = v;
+    markNeedsLayout();
+  }
+
+  bool _centerWhenFits;
+  set centerWhenFits(bool v) {
+    if (v == _centerWhenFits) return;
+    _centerWhenFits = v;
+    markNeedsLayout();
+  }
+
+  @override
+  void performLayout() {
+    final c = child;
+    if (c == null) {
+      size = constraints.smallest;
+      return;
+    }
+    // Loosen both axes like the Align this sits next to: a growing item
+    // (Flexible's tight fit) with its own explicit size keeps the declared
+    // size, and a percentage child inside reads the max as its reference.
+    // The cross max goes to infinity — that is the uncapping.
+    c.layout(
+      _horizontal
+          ? constraints.loosen().copyWith(maxHeight: double.infinity)
+          : constraints.loosen().copyWith(maxWidth: double.infinity),
+      parentUsesSize: true,
+    );
+    // the line's cross size is this box's size, whatever the child kept
+    size = constraints.constrain(c.size);
+    final fits = _horizontal
+        ? c.size.height <= size.height
+        : c.size.width <= size.width;
+    final center = _centerWhenFits && fits;
+    (c.parentData! as BoxParentData).offset = _horizontal
+        ? Offset(0, center ? (size.height - c.size.height) / 2 : 0)
+        : Offset(center ? (size.width - c.size.width) / 2 : 0, 0);
+  }
+
+  @override
+  bool hitTest(BoxHitTestResult result, {required Offset position}) =>
+      // the child overflows this box by design; its part past the edge is
+      // still hittable, as on the web
       hitTestChildren(result, position: position);
 }
