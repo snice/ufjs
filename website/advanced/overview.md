@@ -36,7 +36,7 @@ WebView 方案里，JS 和原生是两套运行时，所有交互都过 `postMes
 | JS ↔ 原生 | 字符串桥，异步 | C 函数调用，同步 |
 | 包体 | 依赖系统 WebView | +约 1 MB `libfjs` |
 
-**代价**：没有 DOM、没有浏览器排版引擎。所以 ufjs 自己实现了一个以 flex 为核心的 CSS 子集 —— 这就是 `view` 默认纵向（Flutter `Column` 的默认）、`z-index` 不支持（Flutter 按顺序叠放）的根源。
+**代价**：没有 DOM、没有浏览器排版引擎。所以 ufjs 自己实现了一个以 flex 为核心的 CSS 子集 —— 这就是 `view` 默认纵向（Flutter `Column` 的默认）、`z-index` 只在绝对定位兄弟之间生效（Flutter 本按顺序叠放）的根源。
 
 ## 决策二：JSI 式直调，不做序列化桥
 

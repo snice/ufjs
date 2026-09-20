@@ -43,18 +43,13 @@ npm run build:release        # = fjs build --pages --release
 npm run build:apk                                              # = fjs build --pages --release --apk
 npx fjs build --pages --release --apk -- --target-platform android-arm64
 npx fjs build --pages --release --hap                          # 鸿蒙
+npx fjs build --pages --release --ipa                          # iOS（仅 macOS，需 Xcode）
+npx fjs build --pages --release --aab                          # Play 上架的 appbundle
 ```
 
-`--` 后面的参数原样传给 `flutter build`。APK 在 `.fjs/flutter/build/app/outputs/flutter-apk/`。
+`--` 后面的参数原样传给 `flutter build`。`--apk` / `--hap` / `--ipa` / `--aab` 一次只用一种；`--ipa` 签名导出失败会留下 `.xcarchive`，签名配置可用 `-- --export-options-plist <file>` 透传。APK 在 `.fjs/flutter/build/app/outputs/flutter-apk/`。
 
-iOS 打包：先 `fjs build --pages --release` 同步好 assets，再用 Xcode 或 `flutter build ipa` 在宿主目录里打包：
-
-```bash
-npx fjs build --pages --release
-cd .fjs/flutter && flutter build ipa
-```
-
-签名、证书这类配置需要长期保存在宿主里，建议先 [eject 宿主](./flutter-host#eject-把宿主变成你自己的)。
+不传这些参数时，`fjs build --pages --release` 只把 assets 同步进宿主，随后可以在宿主目录里手动 `flutter build ipa` —— 签名、证书这类配置需要长期保存在宿主里，建议先 [eject 宿主](./flutter-host#eject-把宿主变成你自己的)。
 
 ### 在设备上跑 release
 
@@ -76,6 +71,7 @@ export default defineConfig({ version: '1.2.0+3' });   // versionName 1.2.0，ve
 ### 注意
 
 - 升级了 `@ufjs/runtime` 或 `vue` 之后，**所有** `.fjsbundle` 要一起重新构建（shared、bundle、pages 之间是 API 级耦合）
+- 升级三件套（`@ufjs/cli` / `@ufjs/runtime` / `flutter_fjs`）用 `fjs upgrade`，三者必须同一 minor，别手动各升各的
 - 字节码带引擎版本校验：QuickJS 版本对不上时 App 会直接报错拒绝加载，不会运行到一半崩溃
 
 ## Web

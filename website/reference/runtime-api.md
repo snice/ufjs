@@ -93,11 +93,27 @@ import { h, create, createRoot, insert, remove, setText, setProps, setStyle, flu
 
 用法见 `examples/hello-js` 和[渲染管线](/advanced/rendering)。
 
+### 元素上的 DOM 形状 API
+
+任何元素（经 `ref` 拿到的、或作为事件 `target` 的）都带一小组 DOM 形状的成员，按 DOM 写法的组件库（vant）不需要 fjs 适配就能操作：
+
+| 成员 | 说明 |
+|---|---|
+| `el.style` | DOM 式写入面（`el.style.opacity = 0.5`），走内联层、与 `:style` 绑定共用同一份记录。不是真的 CSSStyleDeclaration —— 读不到层叠结果，只有内联值 |
+| `el.getBoundingClientRect()` | border box 在窗口坐标系的位置与尺寸，同步返回。未布局的节点全零；页面已挂上之后读它会强制同步重排（同一 tick 里取消 `display:none` 再量高度能拿到新值）。**App 上页面刚 push 进来的当次不强制重排**（避免把整页 layout 叠在转场的 JS 栈上），第一拍可能量到 0，下一帧才正常 |
+| `el.offsetWidth` / `offsetHeight` / `offsetLeft` / `offsetTop` / `offsetParent` | 与 `getBoundingClientRect` 同一份布局。border box 尺寸与相对最近定位祖先的偏移；没有定位祖先时 `offsetParent` 为 null |
+| `el.addEventListener` / `removeEventListener(type, listener)` | 事件名同 `on<Name>` prop（`'touchmove'` ↔ `@touchmove`）；`passive` / `capture` 选项忽略 |
+| `el.contains(other)` | `other` 是自身或后代时为 true。`position: fixed` 的元素挂在弹层宿主下，不再算逻辑父元素的后代 |
+| `input` / `textarea` 的 `focus()` / `blur()` | DOM 式控件焦点；非控件元素调用是空操作 |
+| `input` / `textarea` 的 `value` | DOM 式读写：读得到当前文本，写会推到原生输入框；`setSelectionRange()` 是空操作 |
+
 ## `vue`
 
 照常 `import { ref, computed, watch, onMounted } from 'vue'`。构建时 `vue` 被 alias 到 `@vue/runtime-core`（App）/ 官方 `vue`（Web）/ `@ufjs/runtime/wx`（小程序）。
 
-不可用：`v-model` 指令、`vue-router`（用 `fjs/router`）、直接操作 DOM 的 API。
+App 端由 vue-shim 补齐了几个 runtime-dom 才有的导出：`<Transition>`（fjs 版：enter/leave 类切换 + animation / transition 补间）、`vShow`（只碰内联 `display` 一项）、`withKeys`（直通）、`<TransitionGroup>`（纯透传）。
+
+不可用：`v-model` 指令、`vue-router`（用 `fjs/router`）、`createApp`（挂第二个根需要真实 DOM 容器，会指名抛错 —— 组件库的命令式 Toast / Dialog 因此不可用，改用组件式）、直接操作 DOM 的 API（App 端没有 `window` / `document` 全局，runtime 也不模拟）。
 
 ## 内置标签
 

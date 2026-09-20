@@ -74,6 +74,8 @@ onPageSettled(() => buildTheExpensiveThing());
 
 `<canvas defer-resize>` 是同样的开关：首次 `@resize` 等转场结束再派。
 
+引擎还挡了另半步：页面挂载当次的 `getBoundingClientRect` / `offset*` **不做**强制同步 layout。否则组件库在 `onMounted` 里量一次尺寸，就会把刚推入的整页 layout 叠在 JS 栈上，把转场冻住（vant 表单页实测 ~160ms）。代价是那一拍还没布局的节点量到全零 —— 挂载帧要做测量的组件按 rAF 重试几帧（vant Tabs 就是这么做的）；页面挂上之后再改树再量，强制重排照常，行为与浏览器一致。
+
 ### 2. 真正的计算放 Worker
 
 ```text

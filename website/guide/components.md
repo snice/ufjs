@@ -41,7 +41,7 @@ Flutter 端没有 DOM。`div`、`span`、`p`、`h1`… 这类常见 HTML 标签�
 | 标签 | 作用 | 常用属性 / 事件 |
 |---|---|---|
 | `button` | 按钮 | `type`(default/primary/warn) `size`(default/mini) `plain` `loading` `disabled` `form-type` |
-| `input` | 单行输入 | `value` `placeholder` `secure` `keyboard` `maxlength` `@text-changed` `@submit` |
+| `input` | 单行输入（`multiline` 变多行） | `value` `placeholder` `secure` `readonly` `disabled` `rows` `keyboard` `maxlength` `@text-changed` `@submit` `@focus` `@blur` |
 | `textarea` | 多行输入 | `value` `auto-height` `@input` `@confirm` |
 | `switch` / `checkbox` / `radio` | 开关、多选、单选 | `value` `name` `@value-changed` |
 | `checkbox-group` / `radio-group` | 分组 | `@value-changed` |
@@ -83,6 +83,8 @@ Flutter 端没有 DOM。`div`、`span`、`p`、`h1`… 这类常见 HTML 标签�
 | `@change`（swiper 上） | 翻页事件，载荷是页索引 |
 
 `:on-value-changed="fn"` 这种 prop 写法也可以，kebab-case 会自动转成 camelCase。
+
+元素上还有一小组 **DOM 形状的 API**，按 DOM 写法的组件库（vant 等）不需要 fjs 适配就能用：`el.style` 写入面、`el.getBoundingClientRect()` / `offset*` 几何、`el.addEventListener/removeEventListener`、`el.contains(other)`，`input` / `textarea` 另有 DOM 式 `value` 与 `focus()` / `blur()`。完整清单见[运行时 API](/reference/runtime-api#元素上的-dom-形状-api)。
 
 更多见[事件、网络与状态](./events-and-data)。
 

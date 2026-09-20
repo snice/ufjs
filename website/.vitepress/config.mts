@@ -64,6 +64,7 @@ export default defineConfig({
           text: '扩展',
           items: [
             { text: '添加插件与三方库', link: '/guide/plugins' },
+            { text: '三方 UI 组件库', link: '/guide/ui-libs' },
             { text: '创建模块', link: '/guide/modules' },
             { text: 'Flutter 宿主与原生配置', link: '/guide/flutter-host' },
           ],

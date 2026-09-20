@@ -97,6 +97,12 @@ export default (app: App) => app.use(pinia);
 
 `fjs add` 会对需要的库自动写这一项。手动判断的标准：**页面会直接 import 它，而且它有模块级状态**。纯函数库（dayjs、es-toolkit）不需要。
 
+## 接第三方 UI 组件库
+
+Vue 生态的 UI 组件库（vant 这类）不需要 fjs 适配包，当普通 npm 依赖接进来即可：runtime 补齐了它们依赖的通用浏览器行为（CSS 支持面、元素上的 DOM 形状 API、`<Transition>` 等），库特有的差异由项目本地的 vite 插件 `fjs.app` 钩子打补丁解决。vant 4 已在 demo 五页两端对拍验证（Web 与 App；小程序端未测试，走 `@vant/weapp`）。
+
+接入方式、补丁套路与已知差异，见[三方 UI 组件库](./ui-libs)。
+
 ## 接入 Flutter 插件
 
 JS 引擎做不到的事（本地存储、相机、推送、蓝牙……）要靠 Flutter 插件。JS 侧通过**宿主函数**调用它们：

@@ -67,7 +67,7 @@ flutter_fjs：QuickJS-ng + Dart FFI + Flutter Widget
 
 1. **开始**：[快速开始](./getting-started) → [读懂项目结构](./project-structure) → [写第一个页面](./first-page)。半小时内在浏览器和手机上都跑起来。
 2. **基础**：路由、组件、样式、事件、资源、多端差异。写业务需要的全部知识。
-3. **扩展**：[添加插件](./plugins)、[创建模块](./modules)、[配置 Flutter 宿主](./flutter-host)。需要原生能力时读。
+3. **扩展**：[添加插件](./plugins)、[三方 UI 组件库](./ui-libs)、[创建模块](./modules)、[配置 Flutter 宿主](./flutter-host)。需要三方库或原生能力时读。
 4. **调试与发布**：打包 APK、字节码、小程序上线。
 5. **[原理](/advanced/overview)**：ufjs 为什么这样设计，一次点击从手指到屏幕经过了什么。
 6. **[源码导读](/source/)**：想读 ufjs 自身的源码、给它提 PR 时看。

@@ -115,7 +115,10 @@
 | `--profile` | 同上，配合 `--apk` 出 profile 包 |
 | `--apk` | 配合 release / profile：`flutter build apk` |
 | `--hap` | 配合 release / profile：`flutter build hap`（鸿蒙） |
+| `--ipa` | 配合 release / profile：`flutter build ipa`（仅 macOS + Xcode；签名导出失败会留下 `.xcarchive`，可用 `-- --export-options-plist <file>` 透传） |
+| `--aab` | 配合 release / profile：`flutter build appbundle`（Play 上架的 `.aab`） |
 | `--gz` | 配合 release：gzip 复制进宿主的字节码 |
+| `--root-path <path>` | 配合 release：改写 `manifest.json` 里的路径前缀（默认 `assets/fjs/`）；传 `.` 可把产物目录直接部署到站点根（fjs go 在线演示的用法） |
 | `--web` | 浏览器静态站点 → `dist/web` |
 | `--mp` | 微信小程序 → `dist/mp` |
 | `--analyze` | 体积报告 |
@@ -123,7 +126,17 @@
 | `--out <dir>` | 输出根目录，默认 `dist` |
 | `--flutter-dir <dir>` | 宿主目录 |
 
-`--web` 与 `--pages` 互斥；`--mp` 必须单独使用。`--` 后面的参数透传给 `flutter build`。
+`--web` 与 `--pages` 互斥；`--mp` 必须单独使用；`--apk` / `--hap` / `--ipa` / `--aab` 一次只能选一种。`--` 后面的参数透传给 `flutter build`。
+
+### `fjs preview`
+
+只读静态服务 `dist/web`，验证 release web 产物（同 `vite preview` 的定位）：不重新构建、不注入热更新片段，SPA 兜底与诚实 404 和 `fjs dev --web` 共用同一套逻辑。
+
+| 参数 | 说明 |
+|---|---|
+| `--out <dir>` | 构建输出根目录，默认 `dist`（服务 `<dir>/web`） |
+| `--port <n>` | 端口，默认 4173 |
+| `--host <addr>` | 绑定地址，默认 `127.0.0.1` |
 
 ## 项目信息
 
@@ -131,7 +144,7 @@
 |---|---|
 | `fjs routes [--platform app\|web] [--json]` | 打印路由表 |
 | `fjs modules [--json]` | 解析到的模块、标签和 autolink |
-| `fjs doctor` | 环境与项目体检 |
+| `fjs doctor` | 环境与项目体检（含 cli ↔ runtime ↔ flutter_fjs 的 minor 版本咬合检查） |
 
 ## 宿主
 
@@ -144,6 +157,19 @@
 | `fjs host sync [--force]` | 重新应用生成版宿主文件 |
 | `fjs host id [<app.id>]` | 查看 / 设置 applicationId 和 bundle identifier |
 | `fjs icon <file.png> [--platform android\|ios] [--dry-run]` | 生成应用图标 |
+| `fjs splash <file.png> [--color <#rrggbb>] [--size <px>] [--platform android\|ios] [--dry-run]` | 从一张 PNG 重新生成三套启动屏：Android `launch_background` layer-list + 分密度图 + values-v31 系统 splash，iOS LaunchImage 三倍图 + storyboard 背景色；`--size` 是 logo 逻辑尺寸（默认 192），`--color` 缺省沿用模板白 |
+
+## 升级
+
+### `fjs upgrade`
+
+把 `@ufjs/cli`、`@ufjs/runtime` 和宿主 `pubspec.yaml` 里的 `flutter_fjs` 一起升到咬合的版本（三者必须同一个 minor，`fjs doctor` 会查、这条命令负责修）：target 是 npm 上最新的 cli，runtime 与 flutter_fjs 取同 minor 的最高版（flutter_fjs 走 pub.dev API）。
+
+| 参数 | 说明 |
+|---|---|
+| `--check` | 只打印 from → to 计划，不改任何文件 |
+
+eject 过的宿主、pnpm workspace 里的 path 依赖会自动跳过。
 
 ## 清理
 

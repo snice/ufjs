@@ -62,7 +62,8 @@ if (hasNativeHost) {
 | 页面缓存 | Web 默认 `<KeepAlive>` 缓存栈上的页 | 两端都是「出栈即销毁」，行为一致 |
 | 下拉刷新 `refresh` | Web 只有触摸端简化版 | 桌面浏览器上拉不出来 |
 | `<canvas>` | Web 是浏览器原生 2D，App 是同名实现 | 以 fjs 类型为准，别用浏览器独有的方法 |
-| `.svg` 图片 | App 不支持 | 用图标模块或位图 |
+| `getBoundingClientRect` / `offset*` | App 端页面**刚 push 进来的当次**不强制重排（首帧布局还没跑），第一拍可能量到 0；web 始终可强制重排 | 挂载帧测量按 rAF 重试几帧，或挪到 `onPageSettled` 之后 |
+| `.svg` 图片 | App 不支持 | 用图标模块或位图；模板里手写的内联 `<svg>` 两端可用（`<text>` / `<use>` / 渐变填充不支持，适合图标类图形） |
 | `invokeHost` | Web / 小程序没有 Dart 宿主 | `hasNativeHost` 判断 |
 | dev 热更新 | Web 是 Vite HMR；App 是页面级 / 模块级热替换 | — |
 
