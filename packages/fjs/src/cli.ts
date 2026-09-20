@@ -9,6 +9,7 @@
 //   fjs run    <android|ios|ohos>
 //   fjs routes / fjs doctor / fjs devices / fjs clean / fjs host / fjs icon
 //   fjs splash / fjs preview / fjs upgrade / fjs log / fjs eval
+//   fjs lint / fjs types
 import { buildCommand } from './bundler/build.js';
 import { error } from './terminal/colors.js';
 import { devCommand } from './dev/server.js';
@@ -26,6 +27,8 @@ import { previewCommand } from './commands/preview.js';
 import { upgradeCommand } from './commands/upgrade.js';
 import { evalCommand, logCommand } from './commands/inspect.js';
 import { doctorCommand } from './commands/doctor.js';
+import { lintCommand } from './commands/lint.js';
+import { typesCommand } from './commands/types.js';
 import { runCommand } from './commands/run.js';
 
 function usage(): never {
@@ -126,6 +129,13 @@ commands:
   fjs routes                 print the route table derived from src/pages
       --platform <app|web>   only routes that target this platform
       --json                 machine-readable output
+  fjs lint [paths...]        report CSS the engine will not honor (unknown
+                            properties/units, #id selectors, @import…)
+                            across src/**/*.vue and src/**/*.css
+      --strict               exit 1 on warnings too, not just drops
+  fjs types                  (re)write src/fjs-routes/-assets/-modules/
+                            -components.d.ts without a build
+      --check                read-only: exit 1 when a file is stale (CI)
   fjs doctor                 check toolchain and project setup
   fjs devices                android/ios/ohos devices fjs run can see
       --json                 machine-readable output
@@ -217,6 +227,12 @@ async function main() {
       break;
     case 'routes':
       routesCommand(argv);
+      break;
+    case 'lint':
+      lintCommand(argv);
+      break;
+    case 'types':
+      typesCommand(argv);
       break;
     case 'modules':
       modulesCommand(argv);

@@ -470,6 +470,10 @@ interface FjsGlobalComponents {
   Swiper: FjsComponent<FjsSwiperProps>;
   'swiper-item': FjsComponent<FjsContainerProps>;
   SwiperItem: FjsComponent<FjsContainerProps>;
+  /** z-order container: children stack on top of each other, later ones
+   * on top. Alignment within the box follows align-items/justify-content. */
+  stack: FjsComponent<FjsContainerProps>;
+  Stack: FjsComponent<FjsContainerProps>;
   'sticky-header': FjsComponent<FjsStickyHeaderProps>;
   StickyHeader: FjsComponent<FjsStickyHeaderProps>;
   'sticky-section': FjsComponent<FjsStickySectionProps>;
@@ -537,6 +541,8 @@ declare module 'vue' {
     Swiper: FjsGlobalComponents['Swiper'];
     'swiper-item': FjsGlobalComponents['swiper-item'];
     SwiperItem: FjsGlobalComponents['SwiperItem'];
+    stack: FjsGlobalComponents['stack'];
+    Stack: FjsGlobalComponents['Stack'];
     'sticky-header': FjsGlobalComponents['sticky-header'];
     StickyHeader: FjsGlobalComponents['StickyHeader'];
     'sticky-section': FjsGlobalComponents['sticky-section'];

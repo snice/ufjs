@@ -1,6 +1,10 @@
 # Web CSS 兼容清单
 
 > 第二层第 3 篇。这是**支持范围的单一事实来源**：加了新样式能力，先改这张表。
+> 这张表有一个机器可读的镜像
+> [`fjs-runtime/src/css/support.ts`](../packages/fjs-runtime/src/css/support.ts)——
+> `fjs lint` 靠它在写代码时报告「这条 App 上不生效」，改支持范围时**两处一起动**
+> （`fjs-runtime/test/css-support.test.ts` 钉住了表与引擎的一致性）。
 >
 > fjs 在 Flutter 上没有浏览器排版引擎，CSS 由自己的引擎解析
 > （[`css/parser.ts`](../packages/fjs-runtime/src/css/parser.ts) +
@@ -405,16 +409,19 @@ type、未知特性（如 `prefers-reduced-motion`）、非 px 长度值、嵌�
 1. **解析**：`fjs-runtime/src/css/parser.ts`（选择器）或
    `css/style.ts`（属性归一化 / 继承规则）；有简写要展开时
    （`font` / `animation`）在 `css/font-shorthand.ts` / `css/animation.ts`
-2. **Flutter 渲染**：`flutter_fjs/lib/src/render/style.dart`
+2. **支持表**：`fjs-runtime/src/css/support.ts` 里删掉对应的 ❌ 条目
+   （或放开值级约束）——`fjs lint` 靠它报告，不删会一直误报
+3. **Flutter 渲染**：`flutter_fjs/lib/src/render/style.dart`
    （+ 需要时 `style_parse.dart` / `decoration.dart` / `flex.dart`；
    动画在 `render/animation.dart`，svg 画笔在 `widgets/svg.dart`）
-3. **Web 侧**：多数属性是真 CSS 不用改；需要改写的加到
+4. **Web 侧**：多数属性是真 CSS 不用改；需要改写的加到
    `fjs-runtime/src/web/css-compat.ts`，需要基础样式配合的改
    `web/base-css.ts`
-4. **内联样式归一化**：`web/style.ts`（数字补 `px` 的白名单）
-5. **文档**：改**本文件的表格**，必要时补 `docs/ui-api.md` 的样式清单
-6. **roadmap**：`docs/roadmap.md` 对应条目打勾
-7. **验证**：在 `demo` 或 `examples/hello-fjs` 加一页，
-   `fjs dev --web` 和 `fjs run android` 两边对拍
+5. **内联样式归一化**：`web/style.ts`（数字补 `px` 的白名单）
+6. **文档**：改**本文件的表格**，必要时补 `docs/ui-api.md` 的样式清单
+7. **roadmap**：`docs/roadmap.md` 对应条目打勾
+8. **验证**：在 `demo` 或 `examples/hello-fjs` 加一页，
+   `fjs dev --web` 和 `fjs run android` 两边对拍；支持表动了的话
+   `fjs-runtime/test/css-support.test.ts` 的表↔引擎断言要一起改
 
 不支持的属性**必须 `warnOnce` 跳过**，不能静默丢弃（宪法 V）。

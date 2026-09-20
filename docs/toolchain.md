@@ -310,6 +310,50 @@ fjs routes --json
 
 同一路径被两个文件命中时会给出告警——文件路由最常见的坑就是这个。
 
+## 静态检查 CSS：`fjs lint`
+
+fjs 的 CSS 引擎不是浏览器，页面写了不支持的东西（`#id` 选择器、
+`word-break`、`vw` 单位、`@import`……）运行期才 `warnOnce`，Web 端浏览器
+更是直接静默丢弃。`fjs lint` 把这件事提前到命令行：扫
+`src/**/*.vue` 的 `<style>` 块与静态 `style="…"` 属性、`src/**/*.css`，
+对照支持矩阵（[`css-compat.md`](css-compat.md) 的机器可读镜像
+`fjs-runtime/src/css/support.ts`）逐条报告。
+
+```bash
+fjs lint                    # 扫整个 src/
+fjs lint src/pages/demo.vue # 只扫指定文件/目录
+fjs lint --strict           # warn 也算失败——CI / pre-commit 用
+```
+
+发现分两级：
+
+- **`[drop]`**（退出码 1）：整条/整块不会生效——不支持的选择器、属性、
+  单位、at-rule。`#id` 尤其要留神：裸 `#id` 是死规则，`#id .x` 会**静默
+  放宽成 `.x`**，比不生效更糟。
+- **`[warn]`**（退出码 0）：部分生效或两端分叉——`transition` 过渡了
+  App 端不会动画的属性、位图背景、`@keyframes` 里的非 transform/opacity
+  帧、`@font-face` 的远程源等。`--strict` 把它们也算失败。
+
+`:style="{ filter: x }"` 这类对象字面量**不在扫描范围**：值是任意表达
+式，静态判别必然误报（同 asset 检查只看字面量 `src` 的理由）。新增 CSS
+支持后要同步支持表，见 [css-compat.md](css-compat.md) 最后一节的流程。
+
+## 生成类型文件：`fjs types`
+
+`src/fjs-routes.d.ts` / `fjs-assets.d.ts` / `fjs-modules.d.ts` /
+`fjs-components.d.ts` 四个生成文件平时由 dev server、构建和 Vite 插件
+顺带写入；`fjs types` 把同一份生成暴露成命令，刚 checkout 的项目不用先
+跑 dev 就有补全：
+
+```bash
+fjs types                   # 写出/刷新，变了才写（与 dev/build 同一条写入规则）
+fjs types --check           # 只读；有过期文件时列出并退出码 1——CI 用
+```
+
+项目没有本地模块/资产时照旧不生成（输出 `skipped`）；核心标签的组件类型
+由 `@ufjs/runtime` 自带的 `vue-global.d.ts` 提供（跟着包走），这条命令只
+负责项目级的四个文件。
+
 ## Flutter 宿主
 
 默认宿主在 `.fjs/flutter`：被 gitignore，每次 `fjs run` 都会重新生成
