@@ -572,9 +572,15 @@ Web 两端取同一组数值。新增或改默认样式时先看：
   `:style` 绑定共用同一份记录。不是真的 CSSStyleDeclaration——读不到层叠
   结果，只有内联值
 - `el.getBoundingClientRect()`：border box 在窗口坐标系的位置与尺寸。同步
-  返回，读**上一帧**的布局（没有强制重排）；未布局时返回全零
+  返回。**未布局**的节点全零。Web 上浏览器会强制重排。App 上分两段：
+  - **`navMount` 当次**（`dispatchEvent` 的 JS_Call + pump）：不强制重排，
+    以免把刚推入的整页 `flushLayout` 叠在 JS 栈上冻住转场（specs/086）。
+    刚创建、还没有 Flutter box 的节点就是全零
+  - **页面已挂上之后**：读 rect 会强制同步重排，同一 tick 里取消
+    `display:none` 再量高度能拿到新值（vant collapse，specs/073）
 - `el.offsetWidth` / `offsetHeight` / `offsetLeft` / `offsetTop` /
-  `offsetParent`：同一份上一帧布局——border box 尺寸，与相对 offsetParent
+  `offsetParent`：与 `getBoundingClientRect` 同一份布局（navMount 窗口内
+  不强制重排；页面已挂上之后强制）。border box 尺寸，与相对 offsetParent
   （最近定位祖先，由 renderer 解析）的偏移；没有定位祖先时 `offsetParent`
   为 null、偏移即窗口坐标。vant Tabs 的下划线居中靠
   `title.offsetLeft + offsetWidth / 2`（specs/073）

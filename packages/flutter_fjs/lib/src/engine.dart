@@ -561,7 +561,11 @@ class FjsEngine extends ChangeNotifier {
       return;
     }
     if (!_routeCanMount(key)) return;
-    dispatchEvent(key, FjsEvent.navMount);
+    // Vue mount + CSS flush stay on this stack; first-paint flushLayout
+    // does not (specs/086). A useRect in onMounted then sees zeros until
+    // the next Flutter frame, which is what ui-api.md already documents
+    // for an un-laid-out node.
+    runWithoutGeometryReflow(() => dispatchEvent(key, FjsEvent.navMount));
     final ms = DateTime.now().difference(started).inMilliseconds;
     onLog?.call(
       1,

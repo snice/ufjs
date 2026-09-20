@@ -270,7 +270,39 @@ iPhone 17 模拟器、`fjs run ios` debug、chunk 预热后同口径（附录打
 | vant-form 重开 first-paint | 28 ms | **32 ms** |
 | match miss | 275 | **275** |
 
-first-paint 没有进到 ≤ 30 ms（debug 模拟器、598 个 widget 仍要逐个 build/layout/paint）。驻留削的是派生对象分配，测出来被噪声盖住；不拿 GC 凑数。CSS flush 同样停在 37 ms 量级——076 已经把 custom 拷贝砍掉，本轮 inherit 合并在 QuickJS 上不够单独成行。match miss 哨未退。下一步若还要压首帧，得动包装层个数（另立项），不是再瘦 `FjsStyle` getter。
+first-paint 没有进到 ≤ 30 ms（debug 模拟器、598 个 widget 仍要逐个 build/layout/paint）。驻留削的是派生对象分配，测出来被噪声盖住；不拿 GC 凑数。CSS flush 同样停在 37 ms 量级——076 已经把 custom 拷贝砍掉，本轮 inherit 合并在 QuickJS 上不够单独成行。match miss 哨未退。
+
+## navMount 内推迟同步 layout（specs/086）
+
+084 之后 `[nav] mounted` 仍约 250ms。模拟器拆账（chunk 预热、debug）：
+
+| 片段 | 耗时 |
+|---|---:|
+| Vue `app.mount`（506 节点） | 39ms |
+| CSS flush + encode + applyFrame | ~49ms |
+| 一次 `fjs.ui.rect` → `flushLayout`（573 dirty） | **158ms** |
+| 其余微任务 | ~1ms |
+
+Widget build 已经是 1ms。卡的是 layout，而且叠在 `dispatchEvent(navMount)`
+的 JS 栈上，Navigator 转场画不了下一帧。GC 阈值（001）和缩 JS 树都不打中。
+
+086：`navMount` 当次跳过 `_reflow`。未 layout 的新节点读 rect 得全零；
+`dispatchEvent` 返回后既有 notify 让下一帧 layout 上屏。页面已挂上之后的
+同 tick 量高（073 collapse）不变。
+
+iPhone 17 模拟器、`fjs run ios` debug、chunk 预热后（完整五页见
+`specs/086-defer-navmount-reflow/spec.md` §8）：
+
+| 页面 | 086 后 `[nav] mounted` |
+|---|---:|
+| vant-basic | 40 ms |
+| vant-feedback | 13 ms |
+| vant-form | **91–98 ms**（086 前 249–267 ms） |
+| vant-more | 62 ms |
+| vant-nav | 55 ms |
+
+那 160ms layout 不再叠在 JS 栈上。转场不再冻这一拍。layout 仍在下一 Flutter
+帧发生——那是后续刀。
 
 ## 附录：怎么复现与怎么量
 
@@ -295,6 +327,10 @@ flutter run -d <simulator-udid> --dart-define=FJS_DEV=127.0.0.1:38900
 - `host.ts` `flushNow()`：pre-flush 循环前后与总耗时分账，超阈值才打印；
 - `css/style.ts` `flushPending()`：打印 `counters`（matchHit/matchMiss/规则数），
   读差值而不是累计值。
+
+要把 `[nav] mounted` 再拆到 JS_Call / 微任务 / 同步 layout，用
+[navmount-probe.md](navmount-probe.md)（C++ pump + Dart `_reflow`，量完还原
+`vm.cpp` 和模拟器 `libfjs.a`）。
 
 数字口径的提醒（同 performance.md 的规矩）：单次读数含 GC 运气，结论看**两轮
 独立测量的一致性**与**量级差**（本例 14–25×），不要抠个位数；模拟器 debug 与

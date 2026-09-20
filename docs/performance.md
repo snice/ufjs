@@ -723,8 +723,10 @@ article mount 12.2ms (render 12.1 · bridge 0.1 · gc before 8.1)
   13.7 ms，重开经 retire 保留近零——数字见 [vant-mount-perf.md](
   vant-mount-perf.md)。**2026-09-20 specs/084**：Dart interned `FjsStyle`
   view + JS compute miss 再瘦（冻结 `INHERITABLE_KEYS`、inherit 并进 merged）。
-  匹配 miss 哨仍是 275。剩 GC（QuickJS 默认，001 已否决改阈值）与「规则全集
-  常驻」的启动账。
+  匹配 miss 哨仍是 275。剩的曾经记成 GC；模拟器拆账后，`[nav] mounted`
+  里最大头是 **navMount 当次一次 `fjs.ui.rect` → `flushLayout`**（vant-form
+  ~160ms），不是全堆回收。**2026-09-20 specs/086**：那次 layout 移出
+  navMount 同步窗口，转场不再被冻；layout 仍在下一 Flutter 帧发生。
 
 - **QuickJS 的自动 GC 阈值**：一次 4000 节点的重排里，堆余量决定了要不要付
   一次全堆扫描——98 ms 对 35 ms。把阈值交给宿主配置是拿内存换流畅，需要产品

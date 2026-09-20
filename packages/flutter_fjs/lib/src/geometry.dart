@@ -23,6 +23,24 @@ import 'registry/host.dart';
 /// just before it dispatches the tap — the click that JS then asks about.
 Offset? lastTapPosition;
 
+/// navMount's JS_Call+pump. Nested so a host callback that re-enters is
+/// still suppressed. Specs/086: a page's mount-time `useRect` must not pull
+/// first-paint layout onto the JS stack (~160ms on vant-form, which froze
+/// the Navigator transition). Specs/073 same-tick unhide reads run *after*
+/// this window and still force a reflow.
+int _suppressReflow = 0;
+
+/// Runs [fn] so `fjs.ui.rect` answers from the last laid-out frame (null /
+/// zeros when the node has no box yet) instead of calling [_reflow].
+T runWithoutGeometryReflow<T>(T Function() fn) {
+  _suppressReflow++;
+  try {
+    return fn();
+  } finally {
+    _suppressReflow--;
+  }
+}
+
 String _num(double v) => v.toStringAsFixed(2);
 
 /// Registers `fjs.ui.rect(id)` → `"[left,top,width,height]"` (null when the
@@ -44,7 +62,11 @@ void registerGeometryHostModules({
   host.register('fjs.ui.rect', (args) {
     final id = args.isEmpty ? null : args[0];
     if (id is! num) return null;
-    _reflow(tree, flushPending);
+    // During navMount the mirror tree already has the new nodes (applyFrame
+    // ran) but Flutter has not built them. Forcing layout here is the first
+    // paint of the incoming route, paid on the JS call stack. Skip it; the
+    // engine's post-dispatch notify lays the page out on the next frame.
+    if (_suppressReflow == 0) _reflow(tree, flushPending);
     final element = tree.node(id.toInt())?.element;
     if (element is! Element || !element.mounted) return null;
     final box = element.findRenderObject();
@@ -66,6 +88,11 @@ void registerGeometryHostModules({
 /// content's `offsetHeight` in the tick that shows it). Skipped while a
 /// frame is building, laying out or painting — the tree cannot be touched
 /// then, and the last frame's answer is the only one there is.
+///
+/// Also skipped for the duration of [runWithoutGeometryReflow] (navMount):
+/// that path's dirty set is the incoming page, and flushing it here would
+/// freeze the push transition. Same-tick unhide after the page is live
+/// still comes through.
 void _reflow(MirrorTree tree, [VoidCallback? flushPending]) {
   final WidgetsBinding binding;
   try {

@@ -45,6 +45,8 @@
   滑动取消按压），web 侧直接是浏览器原生的 `:active`
 - ✅ Web 适配层对齐：默认行高/默认色、内置组件默认外观、scroll-view 方向与
   鼠标拖拽、swiper 一次一页（见 docs/web.md「已知差异」）
+- ✅ **navMount 不强制 first-paint layout**（specs/086）：页面 `onMounted`
+  里的 `getBoundingClientRect` 不再把整页 `flushLayout` 叠在 JS 栈上冻转场
 
 ## 工具链分发（已完成 2026-08）
 

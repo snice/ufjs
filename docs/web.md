@@ -337,6 +337,10 @@ iOS 上会带系统触感反馈；web 没有触感，这是 picker 系列目前�
   DOM 事件监听与 IntersectionObserver。`initial` / `enter` / 命名变体 /
   spring 过渡两端一致（Anime.js 走对象通道是另一种接法，见 spec 031）。
 - **页面组件要有单一根节点**：页面转场用 `<Transition>` 包着，多根节点会退化。
+- **`getBoundingClientRect` / `offset*` 在 App 的 navMount 窗口内不强制重排**
+  （specs/086）：刚 push 进来的节点第一拍可能量到 0，下一 Flutter 帧才
+  layout 上屏；页面已挂上之后同一 tick 改树再读仍强制重排（specs/073）。
+  浏览器里 `getBoundingClientRect` 始终可强制重排，没有这个窗口。
 
 ## 选项
 

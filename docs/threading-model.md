@@ -66,6 +66,13 @@ onPageSettled(() => buildTheExpensiveThing());
 `<canvas>` 有现成的开关：加 `defer-resize`，首次 `@resize` 就等转场结束再派
 （默认不延迟）。
 
+引擎还挡了另半步（specs/086）：`navMount` 当次的 `getBoundingClientRect` /
+`offset*` **不**做强制同步 `flushLayout`。否则 vant 在 `onMounted` 里量一次
+尺寸，就会把刚推入的整页 layout 叠在 JS 栈上，把转场冻住（vant-form 实测
+~160ms）。那一拍未 layout 的节点读到全零；`dispatchEvent` 返回后既有的
+notify 让下一帧正常 build/layout。页面挂上之后的同 tick 量高（collapse）
+不受影响。
+
 实测代价：三张 F2 图的首帧渲染约 210ms，不等转场的话每次 push 都固定丢掉
 约 205ms 的帧（specs/027 §6c）。
 

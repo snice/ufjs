@@ -254,10 +254,10 @@ iOS/Android）对拍，specs/068–073。20+ 组件达到结构、位置、交�
 ### 元素上的 DOM 形状 API
 
 `el.style`（内联层写入，与 `:style` 绑定共用同一份记录）、
-`el.getBoundingClientRect()`（同步，读**上一帧**的布局，没有强制重排；未
-布局时返回全零）、`el.offsetWidth / offsetHeight / offsetLeft / offsetTop`
-与 `el.offsetParent`（同一份布局——vant Tabs 的下划线居中靠
-`title.offsetLeft + offsetWidth / 2`）、`el.addEventListener/removeEventListener`
+`el.getBoundingClientRect()` / `offset*`（App 上 navMount 当次不强制重排，
+未布局全零；页面挂上之后同一 tick 改树再读会重排，见
+[ui-api.md](ui-api.md#元素上的-dom-形状-api)）、
+`el.addEventListener/removeEventListener`
 （事件名同 `on<Name>` prop，`passive/capture` 选项忽略）、`el.contains(other)`
 （vant Checker 判断是否点在图标上）、`input` / `textarea` 元素的 DOM 式
 `value`。完整定义见 [ui-api.md](ui-api.md#元素上的-dom-形状-api)。

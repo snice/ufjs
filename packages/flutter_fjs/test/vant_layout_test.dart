@@ -1266,6 +1266,53 @@ void main() {
     expect(rect[3], 45);
   });
 
+  // specs/086: navMount wraps rect reads so first-paint flushLayout is not
+  // paid on the JS stack. A node applied in this tick has no box yet.
+  testWidgets('a rect read during navMount does not force reflow', (
+    tester,
+  ) async {
+    final w = _W()
+      ..node(1, 'view', {'padding': 12})
+      ..node(2, 'view', {'height': 20})
+      ..insert(1, 2, 0);
+    final (tree, _) = await _pump(tester, w);
+    final host = HostRegistry();
+    registerGeometryHostModules(host: host, tree: tree);
+    final f = _W()
+      ..node(3, 'view', {'height': 45})
+      ..insert(1, 3, 1);
+    tree.applyFrame(Uint8List.fromList(f.b));
+    final during = runWithoutGeometryReflow(
+      () => host.invoke('fjs.ui.rect', [3]).value,
+    );
+    expect(during, isNull, reason: 'no box until the next Flutter frame');
+    // leaving the window restores specs/073: same-tick unhide still layouts
+    final raw = host.invoke('fjs.ui.rect', [3]).value;
+    expect(raw, isNotNull, reason: 'forced reflow after navMount');
+    final rect = jsonDecode(raw! as String) as List;
+    expect(rect[3], 45);
+  });
+
+  // A node that already has a box still answers during the defer window —
+  // we skip _reflow, not the read. The previous route keeps its size.
+  testWidgets('a laid-out node still answers during the defer window', (
+    tester,
+  ) async {
+    final w = _W()
+      ..node(1, 'view', {'padding': 12})
+      ..node(2, 'view', {'height': 20})
+      ..insert(1, 2, 0);
+    final (tree, _) = await _pump(tester, w);
+    final host = HostRegistry();
+    registerGeometryHostModules(host: host, tree: tree);
+    final raw = runWithoutGeometryReflow(
+      () => host.invoke('fjs.ui.rect', [2]).value,
+    );
+    expect(raw, isNotNull);
+    final rect = jsonDecode(raw! as String) as List;
+    expect(rect[3], 20);
+  });
+
   // van-step 图标（specs/073）：`<i>` 映射为 text，里面只有 ::before 的
   // inline-block 盒。段落行高取自身样式（12px × 1），不是 Material 默认
   // 正文的 14px × 1.43（此前 20px 高，圆点容器随之错位）。
