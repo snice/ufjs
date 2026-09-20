@@ -29,6 +29,7 @@ class FjsControlHandle {
     this.setChecked,
     this.toggle,
     this.focus,
+    this.blur,
   });
 
   final int nodeId;
@@ -54,6 +55,10 @@ class FjsControlHandle {
 
   /// What a label forwards a tap to on an input.
   final VoidCallback? focus;
+
+  /// Drop the keyboard / give up focus — the DOM-shaped `el.blur()`
+  /// (vant rejects focus on a readonly field by blurring it).
+  final VoidCallback? blur;
 }
 
 /// A scope's own list plus a link to the scope above it.
@@ -120,6 +125,29 @@ class FjsControlScope extends InheritedWidget {
       oldWidget.registry != registry;
 }
 
+/// Every live control by mirror node id — the DOM-shaped `el.focus()` /
+/// `el.blur()` (element.ts) land here, because vant reaches a field through
+/// a template ref and not through a label or form: the scope chain above
+/// never sees that call. Keyed by node id, which is exactly what the JS
+/// side holds; entries leave when the control's state detaches.
+final Map<int, FjsControlHandle> controlsByNode = <int, FjsControlHandle>{};
+
+/// `el.focus()` — true when a live control owns [nodeId].
+bool fjsControlFocus(int nodeId) {
+  final handle = controlsByNode[nodeId];
+  if (handle == null) return false;
+  handle.focus?.call();
+  return true;
+}
+
+/// `el.blur()`.
+bool fjsControlBlur(int nodeId) {
+  final handle = controlsByNode[nodeId];
+  if (handle == null) return false;
+  handle.blur?.call();
+  return true;
+}
+
 /// Mixin for the control widgets: keeps registration in step with the
 /// scope above, which can change when the tree is re-parented.
 mixin FjsControlRegistration<T extends StatefulWidget> on State<T> {
@@ -136,10 +164,13 @@ mixin FjsControlRegistration<T extends StatefulWidget> on State<T> {
     if (identical(next, _registry) && _handle != null) return;
     _detach();
     _registry = next;
-    if (next == null) return;
+    // The handle exists even outside every scope: the global by-node map
+    // (el.focus()/el.blur()) must answer whether or not a form/label/group
+    // sits above.
     final handle = createControlHandle();
     _handle = handle;
-    next.register(handle);
+    controlsByNode[handle.nodeId] = handle;
+    if (next != null) next.register(handle);
   }
 
   /// Tell the scopes above that the user changed this control.
@@ -150,7 +181,12 @@ mixin FjsControlRegistration<T extends StatefulWidget> on State<T> {
 
   void _detach() {
     final handle = _handle;
-    if (handle != null) _registry?.unregister(handle);
+    if (handle != null) {
+      _registry?.unregister(handle);
+      if (controlsByNode[handle.nodeId] == handle) {
+        controlsByNode.remove(handle.nodeId);
+      }
+    }
     _handle = null;
   }
 

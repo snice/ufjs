@@ -20,6 +20,7 @@ import 'http.dart';
 import 'mirror_tree.dart';
 import 'registry/component.dart';
 import 'registry/host.dart';
+import 'widgets/control_scope.dart';
 import 'worker.dart';
 import 'bytes.dart';
 
@@ -73,6 +74,7 @@ class FjsEngine extends ChangeNotifier {
     FjsFontLoader.register(host, log: (level, m) => onLog?.call(level, m));
     _setupNavModules();
     _setupAnimationFrameModule();
+    _setupControlModule();
     _setupCanvasModule();
     registerGeometryHostModules(
       host: host,
@@ -385,6 +387,21 @@ class FjsEngine extends ChangeNotifier {
   /// Dev-only (spec 037): fetches one unit file by id. Null outside units
   /// mode — release builds bundle every module, so there is nothing to fetch.
   Future<Uint8List?> Function(String id)? unitLoader;
+
+  /// The DOM-shaped `el.focus()` / `el.blur()` (element.ts): vant reaches a
+  /// field through a template ref — to reject focus on a readonly input —
+  /// and there is no label/form scope above it to route through.
+  void _setupControlModule() {
+    host
+      ..register('fjs.control.focus', (args) {
+        if (args.isNotEmpty) fjsControlFocus((args.first as num).toInt());
+        return null;
+      })
+      ..register('fjs.control.blur', (args) {
+        if (args.isNotEmpty) fjsControlBlur((args.first as num).toInt());
+        return null;
+      });
+  }
 
   void _setupNavModules() {
     host

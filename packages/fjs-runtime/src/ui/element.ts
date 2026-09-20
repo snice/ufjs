@@ -1,7 +1,7 @@
 // Element API — the HTML-like UI layer. JS apps build node trees with
 // h()/element functions; ops are batched per microtask and flushed to the
 // native host in one frame (mirrors React Native's batched shadow commits).
-import { getWriter, scheduleFlush, flushNow } from '../host';
+import { getWriter, scheduleFlush, flushNow, hasNativeHost, invokeHost } from '../host';
 import { attachCanvas, detachCanvas } from '../canvas/surface';
 import type { FjsCanvasRenderingContext2D } from '../canvas/context-2d';
 
@@ -306,6 +306,15 @@ export interface Element {
    * capture) mean nothing here and are ignored. */
   addEventListener(type: string, listener: (event: any) => void, options?: unknown): void;
   removeEventListener(type: string, listener: (event: any) => void, options?: unknown): void;
+  /** DOM-shaped control focus, for libraries holding a template ref to an
+   * input (`inputRef.value.focus()` — vant's Field). Routes to the widget
+   * registered for this element id; a no-op when the element is not a
+   * control. On web the substrate is a real DOM element and this is the
+   * native method. */
+  focus(): void;
+  /** DOM-shaped control blur — vant rejects focus on a readonly field by
+   * blurring it right from `onFocus`. */
+  blur(): void;
   /** DOM offset geometry, read from the same last-frame layout as
    * getBoundingClientRect: the border box's size, and its position against
    * the offsetParent's box (the nearest positioned ancestor, resolved by
@@ -443,6 +452,12 @@ function makeElement(id: number, tag: string): Element {
     },
     removeEventListener(type, listener) {
       removeDomListener(el, type, listener);
+    },
+    focus() {
+      if (hasNativeHost) invokeHost('fjs.control.focus', id);
+    },
+    blur() {
+      if (hasNativeHost) invokeHost('fjs.control.blur', id);
     },
   };
   // Fresh object per access (no per-element cache to clean up on removal) —

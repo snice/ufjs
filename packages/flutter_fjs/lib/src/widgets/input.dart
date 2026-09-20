@@ -51,6 +51,7 @@ class _FjsInputState extends State<FjsInput>
     // uncontrolled, and then the prop was never written.
     getValue: () => _controller.text,
     focus: () => _focusNode.requestFocus(),
+    blur: () => _focusNode.unfocus(),
   );
 
   /// One event per transition. A FocusNode fires its listener for other
@@ -82,14 +83,23 @@ class _FjsInputState extends State<FjsInput>
   ///  * `auto-height`  -> null, the field grows without bound;
   ///  * a styled height -> null with `expands`, filling the box the page
   ///    sized and scrolling inside it;
-  ///  * neither        -> 3, which is the mini program's default and, unlike
-  ///    a pixel height, follows the font size. A TextField at its maxLines
-  ///    scrolls internally rather than overflowing, which is exactly the
-  ///    wanted behaviour.
+  ///  * neither        -> `rows` (the DOM attribute vant binds; default 3,
+  ///    which is the mini program's default and, unlike a pixel height,
+  ///    follows the font size). A TextField at its maxLines scrolls
+  ///    internally rather than overflowing, which is exactly the wanted
+  ///    behaviour.
   int? get _maxLines {
     if (!_multiline) return 1;
     if (_autoHeight) return null;
-    return widget.style.height != null ? null : _defaultMultilineLines;
+    return widget.style.height != null ? null : _rows;
+  }
+
+  /// `rows`: the DOM textarea attribute, bound by vant's Field. A string
+  /// arrives when the page wrote `rows="2"` as a static attribute.
+  int get _rows {
+    final raw = widget.node.props['rows'];
+    final value = raw is num ? raw.toInt() : int.tryParse('${raw ?? ''}');
+    return value != null && value > 0 ? value : _defaultMultilineLines;
   }
 
   /// `expands` needs a bounded parent, so it is only used when the page
@@ -336,10 +346,21 @@ class _FjsInputState extends State<FjsInput>
       // sit vertically centred in a tall textarea instead of at the top.
       textAlignVertical: expands ? TextAlignVertical.top : null,
       style: _textStyle(),
+      // `readonly` / `disabled` are DOM attributes vant's Field binds on the
+      // input (specs/077: both used to be ignored and stayed editable).
+      // A readonly field stays focusable — vant's onFocus deliberately
+      // blurs it right away, the same rejection a browser does.
+      readOnly: fjsBool(widget.node.props['readonly']),
+      enabled: !fjsBool(widget.node.props['disabled']),
       decoration: InputDecoration(
         hintText: widget.node.props['placeholder']?.toString(),
         hintStyle: _hintStyle(style),
         isDense: true,
+        // The field's box is the page's CSS, drawn by decorateNode around
+        // this widget — never the host app's InputDecorationTheme. Without
+        // `filled: false` a host theme with `filled: true` (fjs go's) drew
+        // a gray pill over every vant field on white cards.
+        filled: false,
         // decorateNode applied the page's padding to the box already; only
         // an unstyled input keeps the stylesheet's own `8px 0`.
         contentPadding: style.padding != null

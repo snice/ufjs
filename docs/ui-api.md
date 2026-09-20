@@ -24,7 +24,7 @@ fjs 用 HTML 风格的语义标签构建 UI，由 Dart 侧映射为 Flutter Widg
 | `image` | Image（`src` 是 http(s) 走 `cached_network_image`，本地图走 dev server / Flutter asset）| `src`（三种写法见下）、`mode`（14 个，见下表）、`lazy-load`、`fit`（旧写法）；`@load` / `@error`。详见下表 |
 | `canvas` | **不是 Dart 标签**：两端共用 `components/canvas.ts`，渲染成 `view` + 绘制面 `inner-canvas`（后者才是 CustomPaint）| `ref` 拿到 `getContext('2d')` / `toDataURL()` / 只读的 `width` / `height`（逻辑像素）；`@resize`；`defer-resize` 把首次 `@resize` 推迟到路由转场结束（默认关，首帧贵的图表才开）；**默认插槽是画布上方的 overlay**（tooltip、图例…）。支持范围见 [canvas-compat.md](canvas-compat.md) |
 | `button` | TextButton（Material 自带的 chrome 全部关掉）| 文本取子 text 节点；自带按下态；`type`(default/primary/warn) / `size`(default/mini) / `plain` / `loading` / `disabled` / `form-type`(submit/reset) |
-| `input` | TextField | `value` / `placeholder` / `secure` / `multiline` / `keyboard`(text/number/decimal/tel/email) / `maxlength`(-1 不限) / `name`，`onTextChanged` / `onSubmit` / `onFocus` / `onBlur`；多行那组 props 见 `textarea` |
+| `input` | TextField | `value` / `placeholder` / `secure` / `multiline` / `readonly`(只读，可聚焦但不可编辑) / `disabled`(禁用，不可聚焦) / `rows`(多行行数) / `keyboard`(text/number/decimal/tel/email) / `maxlength`(-1 不限) / `name`，`onTextChanged` / `onSubmit` / `onFocus` / `onBlur`；多行那组 props 见 `textarea` |
 | `textarea` | **不是 Dart 标签**：两端共用 `components/textarea.ts`，渲染成 `<input multiline>` | `value` / `placeholder` / `placeholder-style` / `disabled` / `maxlength`(**默认 140**) / `auto-height` / `focus` / `auto-focus` / `confirm-type` / `name`；`@input` / `@focus` / `@blur` / `@confirm` / `@linechange`。详见下表 |
 | `rich-text` | **不是 Dart 标签**：两端共用 `components/rich-text.ts`，把 HTML 解析后渲染成 `view` / `text` / `image` / `divider` | `nodes`（HTML 字符串或小程序节点数组）/ `space`(ensp/emsp/nbsp)；内部节点不派事件，组件自身的 `@tap` / `@longpress` 照常。详见下表 |
 | `scroll-view` | SingleChildScrollView | `scroll-x` / `scroll-y` 选轴（也可用样式键 `direction: horizontal`）、`scroll-top` / `scroll-left`、`scroll-into-view`、`scroll-with-animation`、`upper-threshold` / `lower-threshold`（默认 50）；`@scroll`（六字段 JSON 串）/ `@scrolltoupper` / `@scrolltolower`。详见下表 |
@@ -282,6 +282,11 @@ release 下 Flutter asset 的**键**不能带查询串，但 `asset://` 页面�
 `auto-height` / `focus` / `auto-focus` / `confirm-type` / `placeholder-style` 这几个
 落在 `input` 和 `textarea` **共用的原生 widget** 上，所以写在 `<input multiline>` 上
 一样生效。文档把 `textarea` 当规范入口，但不假装 `input` 不认。
+
+**已知缺口（specs/077 遗留）**：裸 `h('textarea')`（vant Field 的路径）在 App 端
+不随内容长高——field 自身会长（`auto-height` 语义在 widget 层成立），但外层
+fjs flex 的行高计算不跟随，cell 把超过约两行的部分裁掉。诊断数据与已否掉的
+方案见 specs/077 的 tasks（T060）。
 
 小程序 textarea 的这些 props fjs **不实现**，写了会 `warnOnce`：`cursor-spacing`、
 `adjust-position`、`hold-keyboard`、`show-confirm-bar`、`fixed`、`adjust-keyboard-to`、
@@ -583,6 +588,11 @@ Web 两端取同一组数值。新增或改默认样式时先看：
   `TypeError: not a function`、勾选无反应（specs/072）。Web 端即原生
   `Node.contains`。`position: fixed` 的元素在 App 上挂到弹层宿主下，与 DOM 里
   Teleport 到 body 一样不再算作逻辑父元素的后代
+- `input` / `textarea` 元素另有 `focus()` / `blur()`：DOM 式的控件焦点。
+  vant Field 拿着模板 ref 调 `inputRef.value.blur()` 在只读字段聚焦时拒焦，
+  App 上此前因缺这个方法在 `onFocus` 里抛 `TypeError`（specs/077）。App 端
+  经 `fjs.control.focus` / `fjs.control.blur` 两个 host 模块路由到控件的
+  FocusNode；Web 端就是原生方法。非控件元素调用是空操作
 - `input` / `textarea` 元素另有 DOM 式的 `value` 属性——读取得到当前文本
   （最近一次输入事件或写入），写入会推到原生输入框；还有空操作的
   `setSelectionRange()`。vant Field 等按 DOM 写法（`event.target.value`、

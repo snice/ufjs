@@ -680,7 +680,13 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     // the textarea ELEMENT (see the H table): an unknown tag on the Dart
     // side rendered nothing at all
     const el = create(mapped ? mapped.tag : rawTag === 'textarea' ? 'input' : rawTag);
-    if (rawTag === 'textarea') setProps(el, { multiline: true });
+    if (rawTag === 'textarea') {
+      // vant's Field textarea: auto-height inside a vant cell is still
+      // broken — the field grows natively but the fjs flex's line-extent
+      // computation caps the element box at one line and the cell clips it
+      // (specs/077 遗留，诊断数据在该 spec 的 tasks 里)。挂账未修。
+      setProps(el, { multiline: true });
+    }
     // An HTML block box keeps its inline content on one line (`<div><span>0
     // </span>/50</div>`, vant's word limit), where an fjs view stacks its
     // children. The marker lets the Dart view tell the two apart
