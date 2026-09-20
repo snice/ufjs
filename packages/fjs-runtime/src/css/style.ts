@@ -348,9 +348,106 @@ export interface StyleEngineStats {
   markVisited: number;
 }
 
+/** How many dead chains to keep around before evicting the oldest. A chain
+ * holds its key string, its id and a MatchResult (declarations plus the
+ * per-parent compute cache) — low hundreds of bytes each, so the cap bounds
+ * retention at roughly a page's worth of signatures (~0.2 MB). The point of
+ * keeping them: navigating BACK to a page hits the retained matches instead
+ * of re-paying the full mount (specs/076). */
+const RETIRED_CHAIN_LIMIT = 512;
+
+/**
+ * Candidate buckets for one rule set (plain rules and `::before`/`::after`
+ * rules each get their own): rules grouped by a property of the selector's
+ * SUBJECT (rightmost compound) that the element itself must satisfy for the
+ * selector to have any chance of matching. `matchRules` walks the element's
+ * class buckets, its tag bucket and the catch-all instead of scanning every
+ * registered rule — a component library registering its whole stylesheet
+ * (vant: 639 rules) made that scan the dominant cost of a page mount
+ * (specs/075, docs/vant-mount-perf.md).
+ */
+interface RuleBuckets {
+  byClass: Map<string, CssRule[]>;
+  byTag: Map<string, CssRule[]>;
+  /** Subjects that carry neither a class nor a tag (`*`, `[class*=…]`,
+   * bare `:first-child`) — nothing to key on, so they are always walked.
+   * The index may over-approximate the candidate set; it must never
+   * under-approximate one (constitution V), and this bucket is the safety
+   * net that keeps that promise for the selectors it cannot classify. */
+  catchAll: CssRule[];
+}
+
+/** CssRule plus the per-walk dedupe stamp the candidate walk leaves on
+ * rules. A rule with several selectors is indexed once per subject key, so
+ * one element can reach it from several buckets; style-local type, the
+ * parser stays unaware of the index. */
+type IndexedRule = CssRule & { bucketStamp?: number };
+
+function newBuckets(): RuleBuckets {
+  return { byClass: new Map(), byTag: new Map(), catchAll: [] };
+}
+
+/** True when the map has at least one entry. The custom-property map is
+ * always an object (MatchResult mints one per match), sometimes an empty
+ * one, and "empty" counts as absent for the source-counting in compute(). */
+function hasKeys(map: Record<string, unknown> | undefined): boolean {
+  if (map === undefined) return false;
+  for (const k in map) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Files `rule` under every subject key of its selectors. Key choice: the
+ * subject's first class, else its tag, else the catch-all. The first class
+ * is safe because subject matching requires the element to hold ALL of the
+ * subject's classes (`matchCompoundFrom`), so "has the first class" is a
+ * necessary condition — a selector whose subject is `.a.b` lives only in
+ * the `a` bucket and is still found by every element that could match it.
+ */
+function indexRule(buckets: RuleBuckets, rule: CssRule): void {
+  for (const sel of rule.selectors) {
+    const subject = sel.compounds[sel.compounds.length - 1];
+    const cls = subject.classes.length > 0 ? subject.classes[0] : null;
+    if (cls !== null) {
+      const bucket = buckets.byClass.get(cls);
+      if (bucket === undefined) buckets.byClass.set(cls, [rule]);
+      else bucket.push(rule);
+    } else if (subject.tag != null) {
+      const bucket = buckets.byTag.get(subject.tag);
+      if (bucket === undefined) buckets.byTag.set(subject.tag, [rule]);
+      else bucket.push(rule);
+    } else {
+      buckets.catchAll.push(rule);
+    }
+  }
+}
+
 export class StyleEngine {
   private rules: CssRule[] = [];
   private nextOrder = 0;
+  /** Subject-keyed candidates over `rules` / `pseudoRules`, maintained
+   * incrementally by [register] (rules are append-only here). Replaces the
+   * per-miss full scan; see [indexRule]. */
+  private plainBuckets = newBuckets();
+  private pseudoBuckets = newBuckets();
+  /** Dedupe stamp for one candidate walk — plain and pseudo walks share the
+   * counter safely because a rule lives in exactly one of the two sets. */
+  private bucketEpoch = 0;
+  /** Per-match scratch (the [walkStack] precedent): cascade collections for
+   * the current matchRules miss, so a miss allocates only its result. */
+  private matchPlain: Array<{ rule: CssRule; spec: number }> = [];
+  private matchActive: Array<{ rule: CssRule; spec: number }> = [];
+  private matchHover: Array<{ rule: CssRule; spec: number }> = [];
+  private matchAnyActive = false;
+  private matchAnyHover = false;
+  /** Dead chains kept for re-use, oldest first — see RETIRED_CHAIN_LIMIT.
+   * `retiredHead` indexes into the queue so trimming never shifts the
+   * array; the set dedupes re-releases of an already-retired key. */
+  private retiredChains: string[] = [];
+  private retiredSet = new Set<string>();
+  private retiredHead = 0;
   private states = new Map<number, ElementState>();
   /** `::before` / `::after` rules, kept out of `rules` so their declarations
    * can never style the element itself. */
@@ -458,6 +555,7 @@ export class StyleEngine {
         if (r.pseudo !== undefined) {
           (this.pseudoRules ??= []).push(r);
           this.hasPseudo = true;
+          indexRule(this.pseudoBuckets, r);
         } else {
           parsed.push(r);
         }
@@ -469,6 +567,7 @@ export class StyleEngine {
       }
     }
     this.rules.push(...parsed);
+    for (const r of parsed) indexRule(this.plainBuckets, r);
     if (!this.hasMedia) {
       for (const r of parsed) {
         if (r.media !== undefined) {
@@ -496,6 +595,11 @@ export class StyleEngine {
     this.matchEpoch++;
     // every MatchResult (and the computed styles hanging off it) is stale
     this.matchCache.clear();
+    // retained caches died with the epoch — drop the queue so the trim
+    // doesn't do cleanup the clear already did
+    this.retiredChains.length = 0;
+    this.retiredHead = 0;
+    this.retiredSet.clear();
     for (const id of this.states.keys()) this.mark(id);
     this.scheduleFlush();
   }
@@ -548,6 +652,9 @@ export class StyleEngine {
     if (!this.hasMedia) return;
     this.matchEpoch++;
     this.matchCache.clear();
+    this.retiredChains.length = 0;
+    this.retiredHead = 0;
+    this.retiredSet.clear();
     for (const id of this.states.keys()) this.mark(id);
     this.scheduleFlush();
   }
@@ -1011,11 +1118,31 @@ export class StyleEngine {
     }
     // CSS custom properties: cascade like normal declarations and inherit
     // down the tree, then var() references resolve against them
+    // The custom-property map is SHARED, not copied, whenever a single
+    // source contributes: every consumer only reads it (var() resolution
+    // here, keyframe frames, and children merge from it copy-on-write at
+    // this same code), so referencing the parent's table verbatim is safe.
+    // Copying it per element was the largest allocation of a component-
+    // library mount — vant's --van-* token table is ~500 keys and every
+    // compute miss paid the full copy (specs/076).
+    const hasParentCustom = hasKeys(parentCustom);
+    const hasMatchedCustom = hasKeys(matched.custom);
+    const hasInlineCustom = hasKeys(s.inlineCustom);
+    const customSources
+      = (hasParentCustom ? 1 : 0) + (hasMatchedCustom ? 1 : 0) + (hasInlineCustom ? 1 : 0);
     let custom: Record<string, string> | undefined;
-    if (parentCustom) for (const k in parentCustom) (custom ??= {})[k] = parentCustom[k];
-    for (const k in matched.custom) (custom ??= {})[k] = matched.custom[k];
-    const inlineCustom = s.inlineCustom;
-    if (inlineCustom) for (const k in inlineCustom) (custom ??= {})[k] = inlineCustom[k];
+    if (customSources === 1) {
+      custom = hasParentCustom
+        ? parentCustom
+        : hasMatchedCustom
+          ? (matched.custom as Record<string, string>)
+          : s.inlineCustom;
+    } else if (customSources > 1) {
+      custom = {};
+      if (hasParentCustom) for (const k in parentCustom!) custom[k] = parentCustom![k];
+      if (hasMatchedCustom) for (const k in matched.custom) custom[k] = matched.custom[k];
+      if (hasInlineCustom) for (const k in s.inlineCustom!) custom[k] = s.inlineCustom![k];
+    }
     s.custom = custom;
     const merged: Record<string, unknown> = {
       ...inherited,
@@ -1345,12 +1472,136 @@ export class StyleEngine {
     //     hovering is not pressing on either end.
     // Custom properties stay out of both: they inherit, and a state only
     // restyles the node itself.
-    const plain: Array<{ rule: CssRule; spec: number }> = [];
-    const active: Array<{ rule: CssRule; spec: number }> = [];
-    const hover: Array<{ rule: CssRule; spec: number }> = [];
-    let anyActive = false;
-    let anyHover = false;
-    for (const rule of this.rules) {
+    const plain = this.matchPlain;
+    const active = this.matchActive;
+    const hover = this.matchHover;
+    plain.length = 0;
+    active.length = 0;
+    hover.length = 0;
+    this.matchAnyActive = false;
+    this.matchAnyHover = false;
+    // Candidate walk instead of the full rule scan: a rule can only match
+    // through one of its selectors' subjects, and every subject demands one
+    // of its classes or its tag of THIS element — so the element's class
+    // buckets, its tag bucket and the catch-all together are a superset of
+    // everything that could match. A rule indexed under several of the
+    // element's keys is reached once per key; the stamp dedupes that (a
+    // duplicate visit would also be harmless — same rule, same spec,
+    // idempotent fold — the stamp just skips the repeat work).
+    const stamp = ++this.bucketEpoch;
+    for (const cls of s.classes) {
+      this.scanPlainBucket(this.plainBuckets.byClass.get(cls), stamp, id, s, plain, active, hover);
+    }
+    this.scanPlainBucket(this.plainBuckets.byTag.get(s.tag), stamp, id, s, plain, active, hover);
+    this.scanPlainBucket(this.plainBuckets.catchAll, stamp, id, s, plain, active, hover);
+    const anyActive = this.matchAnyActive;
+    const anyHover = this.matchAnyHover;
+    const byCascade = (
+      a: { rule: CssRule; spec: number },
+      b: { rule: CssRule; spec: number },
+    ) => a.spec - b.spec || a.rule.order - b.rule.order;
+    plain.sort(byCascade);    const decls: Record<string, unknown> = {};
+    const custom: Record<string, string> = {};
+    for (const m of plain) {
+      // for-in, not Object.entries: this runs per match-cache miss and the
+      // entries API allocates a key array plus a tuple per rule for nothing
+      const d = m.rule.decls;
+      for (const k in d) {
+        const v = d[k];
+        if (k.startsWith('--')) custom[normalizeVarKey(k)] = String(v);
+        else decls[k] = v;
+      }
+    }
+    // custom properties stay out of the state variants: they inherit, and a
+    // state only restyles the node itself
+    let activeDecls: Record<string, unknown> | undefined;
+    if (anyActive) {
+      active.sort(byCascade);
+      activeDecls = {};
+      for (const m of active) {
+        const d = m.rule.decls;
+        for (const k in d) {
+          const v = d[k];
+          if (!k.startsWith('--')) activeDecls[k] = v;
+        }
+      }
+    }
+    // While hovered (not pressed) a :active rule must NOT apply, so the
+    // hover cascade tops out at bestPlain rather than best — a rule matched
+    // only through :active selectors stays out entirely (bestPlain < 0).
+    let hoverDecls: Record<string, unknown> | undefined;
+    if (anyHover) {
+      hover.sort(byCascade);
+      hoverDecls = {};
+      for (const m of hover) {
+        const d = m.rule.decls;
+        for (const k in d) {
+          const v = d[k];
+          if (!k.startsWith('--')) hoverDecls[k] = v;
+        }
+      }
+    }
+    // Pseudo-element cascade: pseudo rules matched by the same selectors,
+    // cascaded per pseudo kind in source order. State variants stay out
+    // (`:active::before` is not the supported subset — see MatchResult).
+    let beforeDecls: Record<string, unknown> | undefined;
+    let afterDecls: Record<string, unknown> | undefined;
+    if (this.hasPseudo) {
+      const before: Array<{ rule: CssRule; spec: number }> = [];
+      const after: Array<{ rule: CssRule; spec: number }> = [];
+      for (const cls of s.classes) {
+        this.scanPseudoBucket(this.pseudoBuckets.byClass.get(cls), stamp, id, s, before, after);
+      }
+      this.scanPseudoBucket(this.pseudoBuckets.byTag.get(s.tag), stamp, id, s, before, after);
+      this.scanPseudoBucket(this.pseudoBuckets.catchAll, stamp, id, s, before, after);
+      const fold = (bucket: Array<{ rule: CssRule; spec: number }>) => {
+        if (bucket.length === 0) return undefined;
+        bucket.sort(byCascade);
+        const out: Record<string, unknown> = {};
+        for (const m of bucket) {
+          const d = m.rule.decls;
+          for (const k in d) {
+            const v = d[k];
+            if (!k.startsWith('--')) out[k] = v;
+          }
+        }
+        return out;
+      };
+      beforeDecls = fold(before);
+      afterDecls = fold(after);
+    }
+    const result: MatchResult = {
+      decls,
+      custom,
+      activeDecls,
+      hoverDecls,
+      beforeDecls,
+      afterDecls,
+      id: this.nextObjId++,
+      byParent: new Map(),
+    };
+    this.matchCache.set(key, result);
+    return remember(result);
+  }
+
+  /** One candidate bucket of the plain scan — the body is the per-rule work
+   * the full scan used to do, unchanged (media filter, scope check, selector
+   * match, the three-cascade split). Kept as a method so the walk over an
+   * element's class buckets + tag bucket + catch-all stays one loop per
+   * bucket with no per-element allocation beyond the matches themselves. */
+  private scanPlainBucket(
+    bucket: CssRule[] | undefined,
+    stamp: number,
+    id: number,
+    s: ElementState,
+    plain: Array<{ rule: CssRule; spec: number }>,
+    active: Array<{ rule: CssRule; spec: number }>,
+    hover: Array<{ rule: CssRule; spec: number }>,
+  ): void {
+    if (bucket === undefined) return;
+    for (const rule of bucket) {
+      if ((rule as IndexedRule).bucketStamp === stamp) continue;
+      (rule as IndexedRule).bucketStamp = stamp;
       if (rule.media !== undefined && !mediaMatches(rule.media, this.viewport.width, this.viewport.height)) {
         continue;
       }
@@ -1378,97 +1629,41 @@ export class StyleEngine {
       if (bestPlain >= 0) plain.push({ rule, spec: bestPlain + bump });
       if (bestActive >= 0) active.push({ rule, spec: bestActive + bump });
       if (bestHover >= 0) hover.push({ rule, spec: bestHover + bump });
-      if (bestActive > bestPlain) anyActive = true;
-      if (bestHover > bestPlain) anyHover = true;
+      if (bestActive > bestPlain) this.matchAnyActive = true;
+      if (bestHover > bestPlain) this.matchAnyHover = true;
     }
-    const byCascade = (
-      a: { rule: CssRule; spec: number },
-      b: { rule: CssRule; spec: number },
-    ) => a.spec - b.spec || a.rule.order - b.rule.order;
-    plain.sort(byCascade);    const decls: Record<string, unknown> = {};
-    const custom: Record<string, string> = {};
-    for (const m of plain) {
-      for (const [k, v] of Object.entries(m.rule.decls)) {
-        if (k.startsWith('--')) custom[normalizeVarKey(k)] = String(v);
-        else decls[k] = v;
+  }
+
+  /** Same walk for the `::before`/`::after` rule set: per-rule body is the
+   * old pseudo scan verbatim, cascaded per pseudo kind by the caller. */
+  private scanPseudoBucket(
+    bucket: CssRule[] | undefined,
+    stamp: number,
+    id: number,
+    s: ElementState,
+    before: Array<{ rule: CssRule; spec: number }>,
+    after: Array<{ rule: CssRule; spec: number }>,
+  ): void {
+    if (bucket === undefined) return;
+    for (const rule of bucket) {
+      if ((rule as IndexedRule).bucketStamp === stamp) continue;
+      (rule as IndexedRule).bucketStamp = stamp;
+      if (rule.media !== undefined && !mediaMatches(rule.media, this.viewport.width, this.viewport.height)) {
+        continue;
       }
-    }
-    // custom properties stay out of the state variants: they inherit, and a
-    // state only restyles the node itself
-    let activeDecls: Record<string, unknown> | undefined;
-    if (anyActive) {
-      active.sort(byCascade);
-      activeDecls = {};
-      for (const m of active) {
-        for (const [k, v] of Object.entries(m.rule.decls)) {
-          if (!k.startsWith('--')) activeDecls[k] = v;
+      let best = -1;
+      for (const sel of rule.selectors) {
+        if (rule.scope != null) {
+          const has = sel.deep ? this.hasScopeUp(id, rule.scope) : s.scopes.has(rule.scope);
+          if (!has) continue;
         }
+        if (!this.matchSelector(sel, id)) continue;
+        best = Math.max(best, sel.specificity);
       }
+      if (best < 0) continue;
+      const spec = best + (rule.scope != null ? 10 : 0);
+      (rule.pseudo === 'before' ? before : after).push({ rule, spec });
     }
-    // While hovered (not pressed) a :active rule must NOT apply, so the
-    // hover cascade tops out at bestPlain rather than best — a rule matched
-    // only through :active selectors stays out entirely (bestPlain < 0).
-    let hoverDecls: Record<string, unknown> | undefined;
-    if (anyHover) {
-      hover.sort(byCascade);
-      hoverDecls = {};
-      for (const m of hover) {
-        for (const [k, v] of Object.entries(m.rule.decls)) {
-          if (!k.startsWith('--')) hoverDecls[k] = v;
-        }
-      }
-    }
-    // Pseudo-element cascade: pseudo rules matched by the same selectors,
-    // cascaded per pseudo kind in source order. State variants stay out
-    // (`:active::before` is not the supported subset — see MatchResult).
-    let beforeDecls: Record<string, unknown> | undefined;
-    let afterDecls: Record<string, unknown> | undefined;
-    if (this.hasPseudo) {
-      const before: Array<{ rule: CssRule; spec: number }> = [];
-      const after: Array<{ rule: CssRule; spec: number }> = [];
-      for (const rule of this.pseudoRules!) {
-        if (rule.media !== undefined && !mediaMatches(rule.media, this.viewport.width, this.viewport.height)) {
-          continue;
-        }
-        let best = -1;
-        for (const sel of rule.selectors) {
-          if (rule.scope != null) {
-            const has = sel.deep ? this.hasScopeUp(id, rule.scope) : s.scopes.has(rule.scope);
-            if (!has) continue;
-          }
-          if (!this.matchSelector(sel, id)) continue;
-          best = Math.max(best, sel.specificity);
-        }
-        if (best < 0) continue;
-        const spec = best + (rule.scope != null ? 10 : 0);
-        (rule.pseudo === 'before' ? before : after).push({ rule, spec });
-      }
-      const fold = (bucket: Array<{ rule: CssRule; spec: number }>) => {
-        if (bucket.length === 0) return undefined;
-        bucket.sort(byCascade);
-        const out: Record<string, unknown> = {};
-        for (const m of bucket) {
-          for (const [k, v] of Object.entries(m.rule.decls)) {
-            if (!k.startsWith('--')) out[k] = v;
-          }
-        }
-        return out;
-      };
-      beforeDecls = fold(before);
-      afterDecls = fold(after);
-    }
-    const result: MatchResult = {
-      decls,
-      custom,
-      activeDecls,
-      hoverDecls,
-      beforeDecls,
-      afterDecls,
-      id: this.nextObjId++,
-      byParent: new Map(),
-    };
-    this.matchCache.set(key, result);
-    return remember(result);
   }
 
   private retainChain(s: ElementState, key: string, chainId: number): void {
@@ -1484,9 +1679,18 @@ export class StyleEngine {
     if (key === undefined) return;
     const refs = (this.chainRefs.get(key) ?? 1) - 1;
     if (refs <= 0) {
+      // Retire, don't delete (specs/076): the id and the cached match stay
+      // findable so navigating back to a page hits them instead of
+      // re-matching every signature. The bounded trim below is what
+      // actually frees them.
       this.chainRefs.delete(key);
-      this.chainIds.delete(key);
-      this.matchCache.delete(key);
+      if (!this.retiredSet.has(key)) {
+        this.retiredSet.add(key);
+        this.retiredChains.push(key);
+      }
+      if (this.retiredChains.length - this.retiredHead > RETIRED_CHAIN_LIMIT) {
+        this.trimRetiredChains();
+      }
     } else {
       this.chainRefs.set(key, refs);
     }
@@ -1495,6 +1699,25 @@ export class StyleEngine {
     s.matched = undefined;
     s.matchedParentChainId = undefined;
     s.matchedEpoch = undefined;
+  }
+
+  /** Evicts oldest retired chains past the cap. A key that was
+   * re-referenced since retiring (chainRefs has it again) is skipped and
+   * simply dropped from the queue — its id and cache stay live; it re-joins
+   * the queue if it dies again. */
+  private trimRetiredChains(): void {
+    while (this.retiredChains.length - this.retiredHead > RETIRED_CHAIN_LIMIT) {
+      const key = this.retiredChains[this.retiredHead++];
+      this.retiredSet.delete(key);
+      if (this.chainRefs.get(key) === undefined) {
+        this.chainIds.delete(key);
+        this.matchCache.delete(key);
+      }
+    }
+    if (this.retiredHead > 256 && this.retiredHead * 2 > this.retiredChains.length) {
+      this.retiredChains.splice(0, this.retiredHead);
+      this.retiredHead = 0;
+    }
   }
 
   private matchSelector(sel: Selector, id: number): boolean {
@@ -1658,6 +1881,20 @@ function resolveVarsInString(
  * computed custom properties; unresolved declarations are dropped and
  * resolved values get the usual normalization (px -> number, ...). */
 function resolveVars(style: Record<string, unknown>, custom?: Record<string, string>): Record<string, unknown> {
+  // Allocation-free fast path: the previous spelling paid Object.entries
+  // plus a full copy into `out` before discovering there was nothing to
+  // substitute — the common case once the custom tokens are resolved at
+  // parse time. Scan bare-handed first; only a live var() builds the copy
+  // (specs/076).
+  let needed = false;
+  for (const k in style) {
+    const v = style[k];
+    if (typeof v === 'string' && v.includes('var(')) {
+      needed = true;
+      break;
+    }
+  }
+  if (!needed) return style;
   let changed = false;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(style)) {

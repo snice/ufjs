@@ -103,6 +103,7 @@ QuickJS 上实现的是一套**框架无关的命令式 element API**，前端�
 | 加一个 workspace 包 | [monorepo.md 第 5 节](monorepo.md#5-加一个新包) |
 | 在 demo/example 里用仓库内的包 | [monorepo.md 第 3 节](monorepo.md#3-在-workspace-里装一个本地包) |
 | 卡帧 / 列表慢 | [threading-model.md](threading-model.md) + [performance.md](performance.md) |
+| 页面打开慢（vant / 第三方组件库） | [vant-mount-perf.md](vant-mount-perf.md) |
 
 ---
 
