@@ -21,8 +21,13 @@ interface AnimationFrame {
   style: Record<string, unknown>;
 }
 
-/** Properties that inherit from parent to child, as in CSS. */
-export const INHERITABLE = new Set([
+/** Properties that inherit from parent to child, as in CSS.
+ *
+ * The Set is for `has`. The hot path in compute() walks the frozen array
+ * by index — QuickJS allocates an iterator for `for-of` on a Set
+ * (specs/084). Order is the declaration order below and must stay stable
+ * so inherit copies stay comparable. */
+export const INHERITABLE_KEYS = Object.freeze([
   'color',
   'fontSize',
   'fontFamily',
@@ -34,6 +39,7 @@ export const INHERITABLE = new Set([
   'textTransform',
   'whiteSpace',
 ]);
+export const INHERITABLE = new Set<string>(INHERITABLE_KEYS);
 
 /** Displays that make an element a flex container (the -webkit- prefix on
  * the VALUE, unlike property names, is not stripped by camelize). */
@@ -1107,11 +1113,16 @@ export class StyleEngine {
       }
     }
     this.counters.computeMiss++;
-    const inherited: Record<string, unknown> = {};
-    if (parentComputed) {
-      for (const k of INHERITABLE) {
+    // 076 skipped merging inherit into `merged` because the custom-map copy
+    // was 30ms and this merge was <1ms under it. After that copy went away,
+    // the leftover is an empty `inherited` object + a four-layer spread per
+    // miss (vant-form ~286). One object, index walk, for-in cover (specs/084).
+    const copyInherited = (out: Record<string, unknown>) => {
+      if (!parentComputed) return;
+      for (let i = 0; i < INHERITABLE_KEYS.length; i++) {
+        const k = INHERITABLE_KEYS[i];
         const v = parentComputed[k];
-        if (v !== undefined) inherited[k] = v;
+        if (v !== undefined) out[k] = v;
       }
       // text-decoration does not inherit, but it PROPAGATES: the box's
       // line is drawn through its inline text (van-card's origin price is
@@ -1119,13 +1130,24 @@ export class StyleEngine {
       // native text run is a node of its own, so it takes the line here —
       // text nodes and plain spans only; inline-blocks stop propagation
       const deco = parentComputed.textDecoration;
-      if (deco !== undefined && (s.rawText || s.tag === 'span')) inherited.textDecoration = deco;
+      if (deco !== undefined && (s.rawText || s.tag === 'span')) out.textDecoration = deco;
       // text-overflow belongs to the block container but clips ITS inline
       // text; the text run is the native node that can draw the ellipsis
       // (van-ellipsis: nowrap + overflow hidden + text-overflow: ellipsis)
       const clip = parentComputed.textOverflow;
-      if (clip !== undefined && s.rawText) inherited.textOverflow = clip;
-    }
+      if (clip !== undefined && s.rawText) out.textOverflow = clip;
+    };
+    const overlayCascade = (decls: Record<string, unknown>) => {
+      // Own object — must not write through `merged` (the element's computed).
+      const out: Record<string, unknown> = {};
+      copyInherited(out);
+      if (s.defaults) for (const k in s.defaults) out[k] = s.defaults[k];
+      for (const k in decls) out[k] = decls[k];
+      if (s.inline) for (const k in s.inline) out[k] = s.inline[k];
+      return out;
+    };
+    const merged: Record<string, unknown> = {};
+    copyInherited(merged);
     // CSS custom properties: cascade like normal declarations and inherit
     // down the tree, then var() references resolve against them
     // The custom-property map is SHARED, not copied, whenever a single
@@ -1154,12 +1176,9 @@ export class StyleEngine {
       if (hasInlineCustom) for (const k in s.inlineCustom!) custom[k] = s.inlineCustom![k];
     }
     s.custom = custom;
-    const merged: Record<string, unknown> = {
-      ...inherited,
-      ...(s.defaults ?? {}),
-      ...matched.decls,
-      ...(s.inline ?? {}),
-    };
+    if (s.defaults) for (const k in s.defaults) merged[k] = s.defaults[k];
+    for (const k in matched.decls) merged[k] = matched.decls[k];
+    if (s.inline) for (const k in s.inline) merged[k] = s.inline[k];
     // CSS initial flex-direction is row; the peer's unstyled default is
     // column (fjs's mobile-view convention), so the engine pins the CSS
     // value wherever a rule asked for a flex container without saying which
@@ -1204,27 +1223,11 @@ export class StyleEngine {
     // :hover computes the same way; both state variants keep custom
     // properties out (they inherit, and a state only restyles the node).
     s.activeComputed = matched.activeDecls
-      ? resolveVars(
-          {
-            ...inherited,
-            ...(s.defaults ?? {}),
-            ...matched.activeDecls,
-            ...(s.inline ?? {}),
-          },
-          custom,
-        )
+      ? resolveVars(overlayCascade(matched.activeDecls), custom)
       : undefined;
     if (s.activeComputed) resolveEm(s.activeComputed, parentFontPx);
     s.hoverComputed = matched.hoverDecls
-      ? resolveVars(
-          {
-            ...inherited,
-            ...(s.defaults ?? {}),
-            ...matched.hoverDecls,
-            ...(s.inline ?? {}),
-          },
-          custom,
-        )
+      ? resolveVars(overlayCascade(matched.hoverDecls), custom)
       : undefined;
     if (s.hoverComputed) resolveEm(s.hoverComputed, parentFontPx);
     // Pseudo-element styles: the element's inheritable computed properties
@@ -1234,7 +1237,8 @@ export class StyleEngine {
     // through the same resolution as the element's own style.
     if (matched.beforeDecls !== undefined || matched.afterDecls !== undefined) {
       const inheritable: Record<string, unknown> = {};
-      for (const k of INHERITABLE) {
+      for (let i = 0; i < INHERITABLE_KEYS.length; i++) {
+        const k = INHERITABLE_KEYS[i];
         const v = style[k];
         if (v !== undefined) inheritable[k] = v;
       }

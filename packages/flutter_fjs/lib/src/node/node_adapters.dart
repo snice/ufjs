@@ -178,6 +178,7 @@ class _ButtonNodeAdapter extends FjsNodeAdapter {
         active,
       ),
       foregroundKey: active ? fjsButtonPressMaskKey : null,
+      keepsBox: context.keepsBox,
     );
   }
 }
@@ -803,6 +804,7 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
         flow,
         flowNodes,
         growChildren: context.isRoot,
+        htmlBlock: true,
       );
     }
     return buildBox(
@@ -824,6 +826,7 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
       ],
       const [null],
       growChildren: context.isRoot,
+      htmlBlock: true,
     );
   }
 
@@ -844,6 +847,7 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
         ],
         const [null],
         growChildren: context.isRoot,
+        htmlBlock: true,
       );
     }
     final kids = context.buildChildren();
@@ -865,6 +869,7 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
         [buildText(context.node, context.style, childNodes: const []), ...kids],
         [null, ...context.childNodes],
         growChildren: context.isRoot,
+        htmlBlock: context.node.props['htmlBlock'] == true,
       );
     }
     if (context.node.props['htmlBlock'] == true &&
@@ -877,6 +882,7 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
       kids,
       context.childNodes,
       growChildren: context.isRoot,
+      htmlBlock: context.node.props['htmlBlock'] == true,
     );
   }
 }

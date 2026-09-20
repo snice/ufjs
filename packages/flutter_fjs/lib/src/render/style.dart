@@ -117,10 +117,32 @@ class FjsStyle {
     if (s is Map<String, Object?>) style = s;
   }
 
-  /// The node's computed style, taken from the interned entry when there is
-  /// one. Nodes that resolved to the same style share one map instance.
-  FjsStyle.of(MirrorNode node) : props = node.props {
-    style = node.styleMap;
+  /// Interned view over an entry's map. [props] is empty: the computed style
+  /// is complete, so falling back to top-level props would be a second source
+  /// of truth. Shared by every node whose SET_STYLE names this id (specs/084).
+  FjsStyle._interned(FjsStyleEntry entry) : props = const {} {
+    style = entry.map;
+  }
+
+  /// Overlay of hover/active maps on a base computed style. Not attached to
+  /// an entry of its own — the base entry's [FjsStyleEntry.overlays] holds it.
+  FjsStyle._overlay(Map<String, Object?> merged) : props = const {} {
+    style = merged;
+  }
+
+  /// The node's computed style. Interned nodes that resolved to the same
+  /// style share one [FjsStyle] instance, so derived EdgeInsets / borders
+  /// are built once per style id, not once per node per build.
+  factory FjsStyle.of(MirrorNode node) {
+    final entry = node.style;
+    if (entry != null) {
+      final existing = entry.resolvedView;
+      if (existing is FjsStyle) return existing;
+      final created = FjsStyle._interned(entry);
+      entry.resolvedView = created;
+      return created;
+    }
+    return FjsStyle(node.props);
   }
 
   /// The style this node has while pressed: its computed style with the
@@ -134,38 +156,53 @@ class FjsStyle {
   }
 
   /// [FjsStyle.pressed] over a node's interned styles.
-  FjsStyle.pressedOf(MirrorNode node) : props = node.props {
-    final base = node.styleMap;
-    final active = node.activeStyleMap;
-    style = active == null ? base : {...base, ...active};
-  }
+  factory FjsStyle.pressedOf(MirrorNode node) =>
+      FjsStyle.stateOf(node, pressed: true);
 
   /// The style for the node's current interaction state, layering
   /// `:hover` (op 12) under `:active`: while pressed the pointer is still
   /// over the node on desktop, and the pressed state wins on both ends
   /// (css-compat.md §4). Touch press does not set [hovered], matching
   /// browsers that keep `:hover` off touch input.
-  FjsStyle.stateOf(
+  ///
+  /// Unpressed/unhovered returns the shared interned view. Pressed/hovered
+  /// overlays are cached on the BASE entry, keyed by the overlay ids, so a
+  /// press cannot write through the shared base view (keepsBox used to live
+  /// on this instance — it is now a decorateNode argument, because it is
+  /// per-node widget shape, not per-style).
+  factory FjsStyle.stateOf(
     MirrorNode node, {
     bool pressed = false,
     bool hovered = false,
-  }) : props = node.props {
-    final base = node.styleMap;
-    final hover = hovered ? node.hoverStyleMap : null;
-    final active = pressed ? node.activeStyleMap : null;
-    style = hover == null && active == null
-        ? base
-        : {...base, ...?hover, ...?active};
-    keepsBox = true;
+  }) {
+    final hoverEntry = hovered ? node.hoverStyle : null;
+    final activeEntry = pressed ? node.activeStyle : null;
+    final baseEntry = node.style;
+    if (hoverEntry == null && activeEntry == null) {
+      if (baseEntry != null) return FjsStyle.of(node);
+      // SET_PROPS-era frames: :active lived on props, not an interned entry.
+      final hover = hovered ? node.hoverStyleMap : null;
+      final active = pressed ? node.activeStyleMap : null;
+      if (hover == null && active == null) return FjsStyle.of(node);
+      return FjsStyle._overlay({...node.styleMap, ...?hover, ...?active});
+    }
+    if (baseEntry != null) {
+      final key = (hoverEntry?.id ?? 0) << 32 | (activeEntry?.id ?? 0);
+      final cached = baseEntry.overlays?[key];
+      if (cached is FjsStyle) return cached;
+      final merged = <String, Object?>{
+        ...baseEntry.map,
+        ...?hoverEntry?.map,
+        ...?activeEntry?.map,
+      };
+      final view = FjsStyle._overlay(merged);
+      (baseEntry.overlays ??= {})[key] = view;
+      return view;
+    }
+    final hover = hoverEntry?.map ?? (hovered ? node.hoverStyleMap : null);
+    final active = activeEntry?.map ?? (pressed ? node.activeStyleMap : null);
+    return FjsStyle._overlay({...node.styleMap, ...?hover, ...?active});
   }
-
-  /// A press/hover-tracking node's style: its decoration layer keeps the
-  /// same widget shape whether or not the current state paints anything.
-  /// A `:active` background that comes and goes would otherwise add and drop
-  /// the decorated box ABOVE the children, remounting the whole subtree on
-  /// release — vant's collapse arrow lost its rotate transition to that
-  /// (the release and the expand land in one frame).
-  bool keepsBox = false;
 
   /// Whether the node carries a page-authored `:active` style. Buttons also
   /// track press for the default WeUI mask, even when this is false.
@@ -183,6 +220,79 @@ class FjsStyle {
 
   final Map<String, Object?> props;
   late Map<String, Object?> style = const {};
+
+  // Lazy Flutter values. Interned [FjsStyle] instances are shared, so the
+  // first node to read a property pays the parse; the rest of the cluster
+  // reuse the result. `*Ready` flags distinguish "not yet computed" from
+  // a computed-null (no padding declared).
+  EdgeInsets? _padding;
+  bool _paddingReady = false;
+  EdgeInsets? _margin;
+  bool _marginReady = false;
+  FjsEdgeLengths? _paddingLengths;
+  bool _paddingLengthsReady = false;
+  FjsEdgeLengths? _marginLengths;
+  bool _marginLengthsReady = false;
+  BoxConstraints? _cachedConstraints;
+  bool _cachedConstraintsReady = false;
+  BorderRadius? _borderRadius;
+  bool _borderRadiusReady = false;
+  List<BorderRadiusPart>? _borderRadiusParts;
+  bool _borderRadiusPartsReady = false;
+  FjsBoxBorders? _boxBorders;
+  bool _boxBordersReady = false;
+  Matrix4? _transform;
+  bool _transformReady = false;
+  double? _opacity;
+  bool _opacityReady = false;
+  List<BoxShadow>? _boxShadows;
+  bool _boxShadowsReady = false;
+  TextOverflow? _overflow;
+  bool _overflowReady = false;
+  double? _fontSize;
+  bool _fontSizeReady = false;
+  FontWeight? _fontWeight;
+  bool _fontWeightReady = false;
+  String? _fontFamily;
+  bool _fontFamilyReady = false;
+  List<String>? _fontFamilyStack;
+  bool _fontFamilyStackReady = false;
+  double? _letterSpacing;
+  bool _letterSpacingReady = false;
+  TextAlign? _textAlign;
+  bool _textAlignReady = false;
+  FontStyle? _fontStyle;
+  bool _fontStyleReady = false;
+  Color? _cachedColor;
+  bool _colorReady = false;
+  Color? _backgroundColor;
+  bool _backgroundColorReady = false;
+  TextDecoration? _textDecoration;
+  bool _textDecorationReady = false;
+  int? _maxLines;
+  bool _maxLinesReady = false;
+  String? _display;
+  bool _displayReady = false;
+  String? _position;
+  bool _positionReady = false;
+  double? _width;
+  bool _widthReady = false;
+  double? _height;
+  bool _heightReady = false;
+  FjsLength? _widthLength;
+  bool _widthLengthReady = false;
+  FjsLength? _heightLength;
+  bool _heightLengthReady = false;
+  String? _flexDirection;
+  bool _flexDirectionReady = false;
+  MainAxisAlignment? _justifyContent;
+  bool _justifyContentReady = false;
+  CrossAxisAlignment? _alignItems;
+  bool _alignItemsReady = false;
+  double? _gap;
+  bool _gapReady = false;
+  bool? _overflowHidden;
+  bool? _hasDecoration;
 
   Object? _v(String key) => style[key] ?? props[key];
 
@@ -202,28 +312,64 @@ class FjsStyle {
   /// `calc(...)`) reads as null here — it cannot be known before layout, and
   /// null is what every consumer already treats as "auto". Use
   /// [widthLength] / [heightLength] to pick those up.
-  double? get width => _num('width');
-  double? get height => _num('height');
+  double? get width {
+    if (_widthReady) return _width;
+    _widthReady = true;
+    return _width = _num('width');
+  }
+
+  double? get height {
+    if (_heightReady) return _height;
+    _heightReady = true;
+    return _height = _num('height');
+  }
 
   /// Width/height as declared, keeping a percentage relative. Null when the
   /// property is absent or unparseable.
-  FjsLength? get widthLength => parseLengthValue(_v('width'));
-  FjsLength? get heightLength => parseLengthValue(_v('height'));
+  FjsLength? get widthLength {
+    if (_widthLengthReady) return _widthLength;
+    _widthLengthReady = true;
+    return _widthLength = parseLengthValue(_v('width'));
+  }
+
+  FjsLength? get heightLength {
+    if (_heightLengthReady) return _heightLength;
+    _heightLengthReady = true;
+    return _heightLength = parseLengthValue(_v('height'));
+  }
 
   /// Per-corner border-radius parts, percentages KEPT (`50%` → fraction
   /// 0.5). Null when no border-radius is declared. A fraction references
   /// the box's own size, which only exists at layout time — decoration.dart
   /// resolves it there.
-  List<BorderRadiusPart>? get borderRadiusParts => _v('borderRadius') == null
-      ? null
-      : parseBorderRadiusParts(_v('borderRadius'));
-  double? get fontSize => _num('fontSize');
-  int? get maxLines => _v('maxLines') is int ? _v('maxLines') as int : null;
+  List<BorderRadiusPart>? get borderRadiusParts {
+    if (_borderRadiusPartsReady) return _borderRadiusParts;
+    _borderRadiusPartsReady = true;
+    return _borderRadiusParts = _v('borderRadius') == null
+        ? null
+        : parseBorderRadiusParts(_v('borderRadius'));
+  }
+
+  double? get fontSize {
+    if (_fontSizeReady) return _fontSize;
+    _fontSizeReady = true;
+    return _fontSize = _num('fontSize');
+  }
+
+  int? get maxLines {
+    if (_maxLinesReady) return _maxLines;
+    _maxLinesReady = true;
+    final v = _v('maxLines');
+    return _maxLines = v is int ? v : null;
+  }
+
   TextOverflow? get overflow {
+    if (_overflowReady) return _overflow;
+    _overflowReady = true;
     final v = _v('overflow')?.toString();
-    if (v == 'ellipsis') return TextOverflow.ellipsis;
-    if (v == 'clip') return TextOverflow.clip;
-    return null;
+    if (v == 'ellipsis') return _overflow = TextOverflow.ellipsis;
+    if (v == 'clip') return _overflow = TextOverflow.clip;
+    return _overflow = null;
   }
 
   /// The border to paint, or null for none. `kind` is how it is stroked —
@@ -294,6 +440,7 @@ class FjsStyle {
   /// express — the fixed precedence above is the same approximation the
   /// global `border` / `border-width` pair already makes.
   FjsBoxBorders? boxBorders({Color? defaultBorderColor}) {
+    if (defaultBorderColor == null && _boxBordersReady) return _boxBorders;
     final gShort = borderShorthand;
 
     FjsBorderSide? resolve(String s) {
@@ -363,17 +510,26 @@ class FjsStyle {
     final right = resolve('Right');
     final bottom = resolve('Bottom');
     final left = resolve('Left');
-    if (top == null && right == null && bottom == null && left == null)
-      return null;
-    return FjsBoxBorders(top: top, right: right, bottom: bottom, left: left);
+    final result = (top == null && right == null && bottom == null && left == null)
+        ? null
+        : FjsBoxBorders(top: top, right: right, bottom: bottom, left: left);
+    if (defaultBorderColor == null) {
+      _boxBordersReady = true;
+      _boxBorders = result;
+    }
+    return result;
   }
 
-  bool get hasDecoration =>
-      backgroundColor != null ||
-      gradient != null ||
-      boxShadows != null ||
-      (borderRadius?.bottomRight.x ?? 0) > 0 ||
-      border != null;
+  bool get hasDecoration {
+    final cached = _hasDecoration;
+    if (cached != null) return cached;
+    return _hasDecoration =
+        backgroundColor != null ||
+        gradient != null ||
+        boxShadows != null ||
+        (borderRadius?.bottomRight.x ?? 0) > 0 ||
+        border != null;
+  }
 
   /// The axis a scroller scrolls along.
   ///
@@ -401,9 +557,18 @@ class FjsStyle {
     };
   }
 
-  Color? get backgroundColor =>
-      _color('backgroundColor') ?? _color('background');
-  Color? get color => _color('color');
+  Color? get backgroundColor {
+    if (_backgroundColorReady) return _backgroundColor;
+    _backgroundColorReady = true;
+    return _backgroundColor =
+        _color('backgroundColor') ?? _color('background');
+  }
+
+  Color? get color {
+    if (_colorReady) return _cachedColor;
+    _colorReady = true;
+    return _cachedColor = _color('color');
+  }
 
   /// CSS `currentColor`: the element's (inherited, already resolved) text
   /// color — what a border shorthand without a color paints with (vant's
@@ -411,8 +576,17 @@ class FjsStyle {
   /// blue). Black when no color reached the element.
   Color get currentColor => color ?? const Color(0xFF000000);
 
-  FontWeight? get fontWeight => parseFontWeight(_v('fontWeight'));
-  FontStyle? get fontStyle => parseFontStyle(_v('fontStyle'));
+  FontWeight? get fontWeight {
+    if (_fontWeightReady) return _fontWeight;
+    _fontWeightReady = true;
+    return _fontWeight = parseFontWeight(_v('fontWeight'));
+  }
+
+  FontStyle? get fontStyle {
+    if (_fontStyleReady) return _fontStyle;
+    _fontStyleReady = true;
+    return _fontStyle = parseFontStyle(_v('fontStyle'));
+  }
 
   /// The primary family of the declared `font-family` stack, with the
   /// generic `monospace` turned into a font this platform actually has.
@@ -430,8 +604,10 @@ class FjsStyle {
   /// vant's `-apple-system-font, helvetica neue, arial, sans-serif` on the
   /// system font, as Safari shows it, instead of dropping to Helvetica Neue.
   String? get fontFamily {
+    if (_fontFamilyReady) return _fontFamily;
+    _fontFamilyReady = true;
     final stack = fontFamilyStack;
-    return stack.isEmpty ? null : stack.first;
+    return _fontFamily = stack.isEmpty ? null : stack.first;
   }
 
   /// The rest of [fontFamily]'s stack, for glyphs the primary lacks.
@@ -440,12 +616,20 @@ class FjsStyle {
     return stack.length < 2 ? null : stack.sublist(1);
   }
 
-  List<String> get fontFamilyStack => parseFontFamilyStack(_v('fontFamily'));
+  List<String> get fontFamilyStack {
+    if (_fontFamilyStackReady) return _fontFamilyStack!;
+    _fontFamilyStackReady = true;
+    return _fontFamilyStack = parseFontFamilyStack(_v('fontFamily'));
+  }
 
   /// `sub` / `super` on a span nested in a text (widgets/text.dart); any
   /// other value is ignored.
   String? get verticalAlign => _v('verticalAlign')?.toString();
-  double? get letterSpacing => _num('letterSpacing');
+  double? get letterSpacing {
+    if (_letterSpacingReady) return _letterSpacing;
+    _letterSpacingReady = true;
+    return _letterSpacing = _num('letterSpacing');
+  }
 
   /// Unitless numbers are line-height multipliers; "24px" is absolute.
   double? get lineHeightMultiplier {
@@ -465,19 +649,24 @@ class FjsStyle {
     return null;
   }
 
-  TextDecoration? get textDecoration =>
-      parseTextDecoration(_v('textDecoration'));
+  TextDecoration? get textDecoration {
+    if (_textDecorationReady) return _textDecoration;
+    _textDecorationReady = true;
+    return _textDecoration = parseTextDecoration(_v('textDecoration'));
+  }
   String? get textTransform => _v('textTransform')?.toString();
   List<BoxShadow>? get textShadows => parseBoxShadows(_v('textShadow'));
   bool get whiteSpaceNowrap => _v('whiteSpace')?.toString() == 'nowrap';
   bool get textOverflowEllipsis => _v('textOverflow')?.toString() == 'ellipsis';
 
   TextAlign? get textAlign {
+    if (_textAlignReady) return _textAlign;
+    _textAlignReady = true;
     final v = _v('textAlign')?.toString();
-    if (v == 'center') return TextAlign.center;
-    if (v == 'right' || v == 'end') return TextAlign.right;
-    if (v == 'left' || v == 'start') return TextAlign.left;
-    return null;
+    if (v == 'center') return _textAlign = TextAlign.center;
+    if (v == 'right' || v == 'end') return _textAlign = TextAlign.right;
+    if (v == 'left' || v == 'start') return _textAlign = TextAlign.left;
+    return _textAlign = null;
   }
 
   BoxFit? get fit {
@@ -488,14 +677,32 @@ class FjsStyle {
     return null;
   }
 
-  EdgeInsets? get padding => _edge('padding');
-  EdgeInsets? get margin => _edge('margin');
+  EdgeInsets? get padding {
+    if (_paddingReady) return _padding;
+    _paddingReady = true;
+    return _padding = _edge('padding');
+  }
+
+  EdgeInsets? get margin {
+    if (_marginReady) return _margin;
+    _marginReady = true;
+    return _margin = _edge('margin');
+  }
 
   /// The same shorthand+longhand merge as [_edge], but each side stays an
   /// [FjsLength] so a `%` or `calc()` survives to the layout pass
   /// (spec 044). Null when the property is not declared at all.
-  FjsEdgeLengths? get paddingLengths => _edgeLengths('padding');
-  FjsEdgeLengths? get marginLengths => _edgeLengths('margin');
+  FjsEdgeLengths? get paddingLengths {
+    if (_paddingLengthsReady) return _paddingLengths;
+    _paddingLengthsReady = true;
+    return _paddingLengths = _edgeLengths('padding');
+  }
+
+  FjsEdgeLengths? get marginLengths {
+    if (_marginLengthsReady) return _marginLengths;
+    _marginLengthsReady = true;
+    return _marginLengths = _edgeLengths('margin');
+  }
 
   /// True when any padding/margin side is a `%`/calc value — the gate that
   /// decides whether the box's build wraps a [LayoutBuilder] to resolve
@@ -617,7 +824,11 @@ class FjsStyle {
     return null;
   }
 
-  BorderRadius? get borderRadius => parseBorderRadius(_v('borderRadius'));
+  BorderRadius? get borderRadius {
+    if (_borderRadiusReady) return _borderRadius;
+    _borderRadiusReady = true;
+    return _borderRadius = parseBorderRadius(_v('borderRadius'));
+  }
 
   /// `border: 1px solid #ccc` shorthand fills in width/color when the
   /// longhand props are absent.
@@ -636,17 +847,27 @@ class FjsStyle {
     _v('backgroundPosition'),
   );
 
-  List<BoxShadow>? get boxShadows => parseBoxShadows(_v('boxShadow'));
+  List<BoxShadow>? get boxShadows {
+    if (_boxShadowsReady) return _boxShadows;
+    _boxShadowsReady = true;
+    return _boxShadows = parseBoxShadows(_v('boxShadow'));
+  }
 
   double? get opacity {
+    if (_opacityReady) return _opacity;
+    _opacityReady = true;
     final v = _num('opacity');
-    return v == null ? null : v.clamp(0.0, 1.0);
+    return _opacity = v == null ? null : v.clamp(0.0, 1.0);
   }
 
   /// `transform` — translate/scale/rotate, composed left to right as in
   /// CSS. A translated node repaints instead of relaying out, which is what
   /// makes a drag cheap.
-  Matrix4? get transform => parseTransform(_v('transform'));
+  Matrix4? get transform {
+    if (_transformReady) return _transform;
+    _transformReady = true;
+    return _transform = parseTransform(_v('transform'));
+  }
 
   /// The `%` part of `transform`'s translations, as a fraction of the box's
   /// own size — CSS resolves `translate(-50%, -50%)` against the element
@@ -711,7 +932,11 @@ class FjsStyle {
   /// touch.dart, which owns the arena side of it.
   Object? get touchAction => _v('touchAction');
 
-  String? get display => _v('display')?.toString();
+  String? get display {
+    if (_displayReady) return _display;
+    _displayReady = true;
+    return _display = _v('display')?.toString();
+  }
 
   /// `pointer-events: none` — the node never takes a hit (see the renderer).
   bool get pointerEventsNone => _v('pointerEvents') == 'none';
@@ -721,17 +946,25 @@ class FjsStyle {
   /// scroll container clips even when it has nothing to scroll: vant's
   /// bottom popup is `overflow-y: auto`, and its rounded corners showed the
   /// picker's square white background until it clipped).
-  bool get overflowHidden =>
-      _clips(_v('overflow')) ||
-      _clips(_v('overflowX')) ||
-      _clips(_v('overflowY'));
+  bool get overflowHidden {
+    final cached = _overflowHidden;
+    if (cached != null) return cached;
+    return _overflowHidden =
+        _clips(_v('overflow')) ||
+        _clips(_v('overflowX')) ||
+        _clips(_v('overflowY'));
+  }
 
   static bool _clips(Object? v) {
     final s = v?.toString();
     return s == 'hidden' || s == 'auto' || s == 'scroll' || s == 'clip';
   }
 
-  double? get gap => _num('gap');
+  double? get gap {
+    if (_gapReady) return _gap;
+    _gapReady = true;
+    return _gap = _num('gap');
+  }
 
   /// `row-gap` / `column-gap`, each falling back to the `gap` shorthand.
   double? get rowGap => _num('rowGap') ?? gap;
@@ -827,7 +1060,11 @@ class FjsStyle {
   /// min/max sizes -> box constraints for the widget subtree. Relative
   /// values (`max-width: 100%`) read as absent here; [constraintsIn] is the
   /// one that resolves them, and [hasRelativeConstraints] says which to ask.
-  BoxConstraints? get constraints => _constraints(null);
+  BoxConstraints? get constraints {
+    if (_cachedConstraintsReady) return _cachedConstraints;
+    _cachedConstraintsReady = true;
+    return _cachedConstraints = _constraints(null);
+  }
 
   /// [constraints] with percentages resolved against [outer] — the space the
   /// parent offers, the same reference `width: 50%` uses.
@@ -878,37 +1115,41 @@ class FjsStyle {
   }
 
   MainAxisAlignment? get justifyContent {
+    if (_justifyContentReady) return _justifyContent;
+    _justifyContentReady = true;
     switch (_v('justifyContent')?.toString()) {
       case 'center':
-        return MainAxisAlignment.center;
+        return _justifyContent = MainAxisAlignment.center;
       case 'flex-end':
       case 'end':
-        return MainAxisAlignment.end;
+        return _justifyContent = MainAxisAlignment.end;
       case 'space-between':
-        return MainAxisAlignment.spaceBetween;
+        return _justifyContent = MainAxisAlignment.spaceBetween;
       case 'space-around':
-        return MainAxisAlignment.spaceAround;
+        return _justifyContent = MainAxisAlignment.spaceAround;
       case 'space-evenly':
-        return MainAxisAlignment.spaceEvenly;
+        return _justifyContent = MainAxisAlignment.spaceEvenly;
       default:
-        return null;
+        return _justifyContent = null;
     }
   }
 
   CrossAxisAlignment? get alignItems {
+    if (_alignItemsReady) return _alignItems;
+    _alignItemsReady = true;
     switch (_v('alignItems')?.toString()) {
       case 'center':
-        return CrossAxisAlignment.center;
+        return _alignItems = CrossAxisAlignment.center;
       case 'flex-start':
       case 'start':
-        return CrossAxisAlignment.start;
+        return _alignItems = CrossAxisAlignment.start;
       case 'flex-end':
       case 'end':
-        return CrossAxisAlignment.end;
+        return _alignItems = CrossAxisAlignment.end;
       case 'stretch':
-        return CrossAxisAlignment.stretch;
+        return _alignItems = CrossAxisAlignment.stretch;
       default:
-        return null;
+        return _alignItems = null;
     }
   }
 
@@ -933,14 +1174,19 @@ class FjsStyle {
   }
 
   String? get flexDirection {
+    if (_flexDirectionReady) return _flexDirection;
+    _flexDirectionReady = true;
     final v = _v('flexDirection')?.toString();
-    if (v == 'row') return 'row';
-    if (v == 'column' || v == null) return 'column';
-    return 'column';
+    if (v == 'row') return _flexDirection = 'row';
+    return _flexDirection = 'column';
   }
 
   // ---- absolute positioning (inside stack) ----------------------------------
-  String? get position => _v('position')?.toString();
+  String? get position {
+    if (_positionReady) return _position;
+    _positionReady = true;
+    return _position = _v('position')?.toString();
+  }
 
   /// Whether this box is a containing block for absolutely-positioned
   /// children — CSS's rule, and what lets `view` + `position: relative`

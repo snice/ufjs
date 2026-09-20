@@ -69,6 +69,13 @@ Widget decorateNode(
   Color? defaultBorderColor,
   Decoration? foregroundDecoration,
   Key? foregroundKey,
+
+  /// Per-node widget shape, not per-style: a press/hover-tracking node's
+  /// decoration layer keeps the same wrapper whether or not the current
+  /// state paints anything. Lived on [FjsStyle] until interned views were
+  /// shared (specs/084); a `:active` background that comes and goes would
+  /// otherwise remount the subtree (vant collapse arrow).
+  bool keepsBox = false,
 }) {
   Widget w = content;
   final padLengths = style.paddingLengths;
@@ -171,7 +178,7 @@ Widget decorateNode(
   // the box must still take the decorated path or nothing paints them
   final decorated =
       layers != null ||
-      style.keepsBox ||
+      keepsBox ||
       style.hasDecoration ||
       border != null ||
       background != null ||

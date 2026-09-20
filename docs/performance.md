@@ -447,12 +447,14 @@ min/med/max，和 `examples/bench` 的样式基准同一套方法。压测页计
    1000 行（3330 个元素）在 debug 模拟器上已经是 166 ms 一帧。
    现在 debug 构建里超过 200 个孩子的 `scroll-view` 会打印一次提醒。
 2. **长列表放进自己的组件**（Vue 侧，见上文）：省掉 Vue 的 vnode diff。
-3. 引擎侧还剩的每节点成本——`FjsStyle` 每次 build 重新派生、`_PressedNode` 给
-   每个带 `:active` 的节点加一层 `Listener`——在上面两条之后是次要项。已经拔掉
-   的两个：`isHidden` 不再为一次 `display` 查询分配一个 `FjsStyle`（它每个节点
-   每次 build 被调用两次，外加每个父节点为每个孩子调用一次），收集孩子从三次
-   `tree.node(id)` 变成一次。`flutter test --dart-define=FJS_BENCH=true
-   test/render_bench_test.dart` 上是 4.05 → 3.83 ms（1200 节点整树重建）。
+3. 引擎侧还剩的每节点成本——`_PressedNode` 给每个带 `:active` 的节点加一层
+   `Listener`——在上面两条之后是次要项。已经拔掉的：`isHidden` 不再为一次
+   `display` 查询分配一个 `FjsStyle`；收集孩子从三次 `tree.node(id)` 变成一次；
+   **specs/084** 让共享 `styleId` 的节点共用一份 interned `FjsStyle` view，
+   padding / 边框 / 圆角等派生值按 entry 驻留（`keepsBox` 挪到 `decorateNode`
+   参数，避免按下态写穿共享 view）。`flutter test --dart-define=FJS_BENCH=true
+   test/render_bench_test.dart` 上整树重建不再走进 `style_parse`（1200 节点
+   parse-on-rebuild 0）。
 
 **没有做、但下一步该评估的**：让 `scroll-view` 在孩子多且没有绝对定位的时候
 自动走 sliver（懒构建）。收益就是上表那 5.7×，代价是它会改变一批边界语义
@@ -719,8 +721,10 @@ article mount 12.2ms (render 12.1 · bridge 0.1 · gc before 8.1)
   **2026-09 已修**：specs/075 索引把匹配从 ~240 ms 压到 7.2 ms；specs/076
   计算段分配瘦身（custom 表共享 + resolveVars 快路径）把 attributed 段压到
   13.7 ms，重开经 retire 保留近零——数字见 [vant-mount-perf.md](
-  vant-mount-perf.md)。剩两笔：GC（分配驱动的全堆回收，阈值配置是
-  specs/001 待澄清 b）与「规则全集常驻」的启动账（页面级注册，见该文）。
+  vant-mount-perf.md)。**2026-09-20 specs/084**：Dart interned `FjsStyle`
+  view + JS compute miss 再瘦（冻结 `INHERITABLE_KEYS`、inherit 并进 merged）。
+  匹配 miss 哨仍是 275。剩 GC（QuickJS 默认，001 已否决改阈值）与「规则全集
+  常驻」的启动账。
 
 - **QuickJS 的自动 GC 阈值**：一次 4000 节点的重排里，堆余量决定了要不要付
   一次全堆扫描——98 ms 对 35 ms。把阈值交给宿主配置是拿内存换流畅，需要产品

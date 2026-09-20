@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_fjs/src/mirror_tree.dart';
 import 'package:flutter_fjs/src/render/renderer.dart';
+import 'package:flutter_fjs/src/render/style.dart';
 import 'package:flutter_fjs/src/render/style_parse.dart';
 import 'package:flutter_fjs/src/ui_ops.dart';
 
@@ -42,11 +43,11 @@ class _W {
     raw(j);
   }
 
-  void setStyle(int id, int styleId) {
+  void setStyle(int id, int styleId, [int activeStyleId = 0]) {
     u8(UiOpCode.setStyle);
     u32(id);
     u32(styleId);
-    u32(0);
+    u32(activeStyleId);
   }
 
   void insert(int parent, int child, int index) {
@@ -166,5 +167,69 @@ void main() {
       isTrue,
     );
     expect(() => shadows.add(shadows.first), throwsUnsupportedError);
+  });
+
+  test('nodes sharing a styleId share one FjsStyle and one padding', () {
+    final tree = _rows(3);
+    final a = FjsStyle.of(tree.node(2)!);
+    final b = FjsStyle.of(tree.node(3)!);
+    final c = FjsStyle.of(tree.node(4)!);
+    expect(identical(a, b), isTrue);
+    expect(identical(a, c), isTrue);
+    expect(identical(a.padding, b.padding), isTrue);
+    expect(a.padding, const EdgeInsets.fromLTRB(16, 12, 16, 12));
+    expect(identical(a.boxBorders(), b.boxBorders()), isTrue);
+  });
+
+  test('DEFINE_STYLE then SET_STYLE to a new id drops the old view', () {
+    final tree = _rows(2);
+    final before = FjsStyle.of(tree.node(2)!);
+    final oldPadding = before.padding;
+    final w = _W()
+      ..defineStyle(2, '{"padding":"4px","backgroundColor":"#ffffff"}');
+    for (var i = 0; i < 2; i++) {
+      w.setStyle(i + 2, 2);
+    }
+    tree.applyFrame(w.frame);
+    final after = FjsStyle.of(tree.node(2)!);
+    expect(identical(after, before), isFalse);
+    expect(identical(after.padding, oldPadding), isFalse);
+    expect(after.padding, const EdgeInsets.all(4));
+    expect(after.backgroundColor, const Color(0xFFFFFFFF));
+  });
+
+  test('pressed overlay does not write through the interned base', () {
+    const baseJson =
+        '{"padding":"12px 16px","backgroundColor":"#111111"}';
+    const activeJson =
+        '{"padding":"0px","backgroundColor":"#ff0000"}';
+    final w = _W()
+      ..create(1, 'view')
+      ..insert(0, 1, 0)
+      ..defineStyle(1, baseJson)
+      ..defineStyle(2, activeJson)
+      ..create(2, 'view')
+      ..setStyle(2, 1, 2)
+      ..insert(1, 2, 0);
+    final tree = MirrorTree()..applyFrame(w.frame);
+    final node = tree.node(2)!;
+    final base = FjsStyle.of(node);
+    final pad = base.padding;
+    final bg = base.backgroundColor;
+    expect(pad, const EdgeInsets.fromLTRB(16, 12, 16, 12));
+
+    final pressed = FjsStyle.stateOf(node, pressed: true);
+    expect(identical(pressed, base), isFalse);
+    expect(pressed.padding, EdgeInsets.zero);
+    expect(pressed.backgroundColor, const Color(0xFFFF0000));
+    // reading the overlay must not mutate the shared base view
+    expect(identical(FjsStyle.of(node), base), isTrue);
+    expect(identical(base.padding, pad), isTrue);
+    expect(base.backgroundColor, bg);
+    expect(base.padding, const EdgeInsets.fromLTRB(16, 12, 16, 12));
+    expect(
+      identical(pressed, FjsStyle.stateOf(node, pressed: true)),
+      isTrue,
+    );
   });
 }

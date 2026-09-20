@@ -190,8 +190,11 @@ void main() {
         'cold=${cold / 1000}ms ratio=${(cold / warm).toStringAsFixed(2)}x '
         'parses: $coldParses -> $warmParses',
       );
+      // Interned FjsStyle views (specs/084) absorb rebuilds: getters do not
+      // re-enter style_parse even with the parse cache bypassed. First-paint
+      // of a new style id still hits the parse cache (resolved_style_test).
       expect(warmParses, 0);
-      expect(coldParses, greaterThan(0));
+      expect(coldParses, 0);
     },
     skip: !const bool.fromEnvironment('FJS_BENCH'),
   );

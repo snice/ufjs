@@ -20,6 +20,7 @@ class FjsNodeAdapterContext {
     required this.dispatch,
     required this.pressed,
     required this.isRoot,
+    this.keepsBox = false,
     this.registry,
   });
 
@@ -33,6 +34,9 @@ class FjsNodeAdapterContext {
   final FjsDispatch dispatch;
   final bool pressed;
   final bool isRoot;
+
+  /// See [decorateNode]'s `keepsBox` — per-node, not per interned style.
+  final bool keepsBox;
 
   /// Dart-registered components (engine.registerComponent). An adapter that
   /// mounts a subtree of its own — `modal`'s sheet is the one — has to pass
@@ -48,6 +52,6 @@ abstract class FjsNodeAdapter {
   Widget build(FjsNodeAdapterContext context);
 
   Widget decorate(FjsNodeAdapterContext context, Widget content) {
-    return decorateNode(context.style, content);
+    return decorateNode(context.style, content, keepsBox: context.keepsBox);
   }
 }

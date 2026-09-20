@@ -342,6 +342,7 @@ class _FjsNodeView extends StatelessWidget {
       dispatch: dispatch,
       pressed: pressed,
       isRoot: isRoot,
+      keepsBox: _tracksPress(node) || FjsStyle.nodeHasHoverStyle(node),
       registry: registry,
     );
 
@@ -359,7 +360,11 @@ class _FjsNodeView extends StatelessWidget {
         // ...then plain container fallback
         content = viewNodeAdapter.build(adapterContext);
       }
-      decorated = decorateNode(style, content);
+      decorated = decorateNode(
+        style,
+        content,
+        keepsBox: adapterContext.keepsBox,
+      );
     }
     // size transitions report their end from inside the decoration
     // (decoration.dart); this node's own boundary absorbs it either way

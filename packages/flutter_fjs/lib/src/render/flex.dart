@@ -44,6 +44,7 @@ Widget buildFlex(
   List<MirrorNode?> kidNodes, {
   bool growChildren = false,
   bool cull = false,
+  bool htmlBlock = false,
 }) {
   final horizontal = (style.flexDirection ?? 'column') == 'row';
   final axis = horizontal ? Axis.horizontal : Axis.vertical;
@@ -52,8 +53,10 @@ Widget buildFlex(
   // flex container on the web too (an fjs <view> is display: flex there),
   // and a flex item's display is blockified: an inline-block button in a
   // <view> stretches like a block (see [_flexChild]).
+  // Read from the node, not [FjsStyle.props]: interned styles share one
+  // view with empty props (specs/084), and htmlBlock is a tag marker.
   final blockFlow =
-      style.props['htmlBlock'] == true &&
+      htmlBlock &&
       (style.display == null ||
           style.display == 'block' ||
           style.display == 'inline-block');
@@ -728,6 +731,7 @@ Widget buildBox(
   List<MirrorNode?> kidNodes, {
   bool growChildren = false,
   bool cull = false,
+  bool htmlBlock = false,
 }) {
   if (!style.isPositioningContext) {
     return buildFlex(
@@ -736,6 +740,7 @@ Widget buildBox(
       kidNodes,
       growChildren: growChildren,
       cull: cull,
+      htmlBlock: htmlBlock,
     );
   }
   final flow = <Widget>[];
@@ -761,7 +766,14 @@ Widget buildBox(
   // collapse arrow snapped instead of rotating).
   return stackOutOfFlow(
     style,
-    buildFlex(style, flow, flowNodes, growChildren: growChildren, cull: cull),
+    buildFlex(
+      style,
+      flow,
+      flowNodes,
+      growChildren: growChildren,
+      cull: cull,
+      htmlBlock: htmlBlock,
+    ),
     over,
   );
 }

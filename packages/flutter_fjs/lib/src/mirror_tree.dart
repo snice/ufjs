@@ -16,11 +16,26 @@ import 'ui_ops.dart';
 /// many nodes resolve to it. Identity is meaningful — two nodes sharing a
 /// style share this object, which is what lets the widget layer cache the
 /// parsed Flutter values on it.
+///
+/// [resolvedView] / [overlays] are opaque here (same reason [MirrorNode.view]
+/// is): the op decoder must not import the painting layer. `FjsStyle.of`
+/// stores the interned view on the entry. DEFINE_STYLE replaces the whole
+/// object, so a stale EdgeInsets cannot outlive the map it was derived from
+/// (specs/084).
 class FjsStyleEntry {
   FjsStyleEntry(this.id, this.map);
 
   final int id;
   final Map<String, Object?> map;
+
+  /// Interned `FjsStyle` wrapping [map], shared by every node whose
+  /// SET_STYLE names this id.
+  Object? resolvedView;
+
+  /// Pressed/hovered overlay `FjsStyle` views, keyed by packed
+  /// `(hoverId << 32) | activeId`. Lives on the BASE entry so a press
+  /// cannot write through the shared base view.
+  Map<int, Object>? overlays;
 }
 
 class MirrorNode {

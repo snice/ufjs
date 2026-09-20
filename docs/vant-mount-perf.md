@@ -107,6 +107,8 @@ vant 只是「一次挂载产生大量新元素签名」的放大器，任何满
 > [优化落地](#优化落地specs075最右复合选择器索引)。
 > **更新（2026-09，specs/076）**：方向 2 已落地（重开命中），计算段分配瘦身
 > 也已落地，实测同见下节。
+> **更新（2026-09，specs/084）**：首开剩余的 Dart 派生驻留 + compute miss
+> 再瘦，见 [解析驻留](#解析驻留与-compute-miss-再瘦specs084)。
 
 ### 1. 按最右复合选择器建规则索引（主修）
 
@@ -236,6 +238,39 @@ flush 总量以 **+82 ms/轮** 线性爬升而 attributed 段恒定——分配�
   attributed 段，别看总量。
 - bench 同机 A/B 无回退，`theme-switch-cascade-only` 22.9 对 28.0 ms——
   resolveVars 快路径在纯级联路径上的直接收益。
+
+## 解析驻留与 compute miss 再瘦（specs/084）
+
+075/076 之后 vant-form 首开的匹配已经不是主因（match miss 仍 275，语义哨）。
+剩下两段能量到、且不动 GC：
+
+1. **Dart**：`FjsStyleEntry` 挂 interned `FjsStyle` view（`Object? resolvedView`，
+   与 `MirrorNode.view` 同层，op 解码器不 import painting）。共享同一
+   `styleId` 的节点共用 padding / `boxBorders` / 圆角等派生对象；`DEFINE_STYLE`
+   换对象即失效。`:active`/`:hover` overlay 按 `(hoverId << 32) | activeId`
+   缓存在 **base** entry 上，不写穿共享 view。`keepsBox` 从 `FjsStyle` 挪到
+   `decorateNode` 参数（per-node 的 widget 形状，不是 per-style）。
+2. **JS**：compute miss 用冻结 `INHERITABLE_KEYS` 按下标拷继承，defaults /
+   decls / inline 用 `for-in` 盖到同一 `merged` 上。076 当时否掉这刀是因为
+   custom 拷贝 30 ms 把 merge <1 ms 盖住了。
+
+验收测试：`resolved_style_test` 钉住 identical / 换 id / overlay 不写穿；
+`css-compute-diet` 补无自带声明的子元素仍继承 color/fontSize。`pnpm test` /
+`typecheck` / `flutter test` 全绿；render_bench 重建不再走进 `style_parse`。
+
+iPhone 17 模拟器、`fjs run ios` debug、chunk 预热后同口径（附录打点，量完已撤）：
+
+| 指标 | 076 后（084 前） | 084 |
+|---|---:|---:|
+| vant-form 首开 Vue mount | 40 ms | **40 ms** |
+| vant-form 首开 CSS flush | 37.4 ms / compute miss 286 | **37.8 ms / compute miss 286** |
+| vant-form 首开 applyFrame | 7.5 ms / 87 KB | **8.1 ms / 87 KB** |
+| vant-form 首开 `[nav] mounted` | 259 ms | **250 ms** |
+| vant-form 首开 first-paint | 57 ms / 598 节点 | **61 ms / 598 节点** |
+| vant-form 重开 first-paint | 28 ms | **32 ms** |
+| match miss | 275 | **275** |
+
+first-paint 没有进到 ≤ 30 ms（debug 模拟器、598 个 widget 仍要逐个 build/layout/paint）。驻留削的是派生对象分配，测出来被噪声盖住；不拿 GC 凑数。CSS flush 同样停在 37 ms 量级——076 已经把 custom 拷贝砍掉，本轮 inherit 合并在 QuickJS 上不够单独成行。match miss 哨未退。下一步若还要压首帧，得动包装层个数（另立项），不是再瘦 `FjsStyle` getter。
 
 ## 附录：怎么复现与怎么量
 

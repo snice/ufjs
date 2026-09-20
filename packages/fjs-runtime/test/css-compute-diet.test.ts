@@ -182,3 +182,18 @@ describe('retired chain retention', () => {
     expect(engine.stats.matchMiss).toBeGreaterThan(missBefore);
   });
 });
+
+describe('inherit merge (specs/084)', () => {
+  it('a child with no declarations of its own still inherits color and fontSize', async () => {
+    const { engine, applied, add } = makeEngine();
+    const root = add(1, 'view', null);
+    const child = add(2, 'view', root);
+    const grand = add(3, 'text', child);
+    engine.register(null, '.p { color: #123456; font-size: 20px }');
+    engine.setClasses(root, 'p');
+    await styleTick();
+    expect(applied.get(root)).toMatchObject({ color: '#123456', fontSize: 20 });
+    expect(applied.get(child)).toMatchObject({ color: '#123456', fontSize: 20 });
+    expect(applied.get(grand)).toMatchObject({ color: '#123456', fontSize: 20 });
+  });
+});

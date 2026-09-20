@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import { fjs } from '@ufjs/cli/vite';
-import { vant } from './vite/vant';
+import { vant } from './vite/vant.ts';
 
 export default defineConfig({
   // vant() adapts vant for the fjs app build (its `fjs.app` hook, see

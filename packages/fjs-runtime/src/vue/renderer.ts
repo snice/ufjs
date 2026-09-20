@@ -16,7 +16,7 @@ import { transitionClassesOf } from './transition-classes';
 import { lastPointer } from '../ui/geometry';
 import { hasNativeHost, invokeHost, registerPreFlush } from '../host';
 import { usesDeclaredFont } from '../css/font-face';
-import { INHERITABLE, StyleEngine, type PseudoStyles } from '../css/style';
+import { INHERITABLE_KEYS, StyleEngine, type PseudoStyles } from '../css/style';
 
 type HostNode = Element;
 
@@ -221,7 +221,8 @@ const pseudoTexts = new Map<number, Element>();
  * in the default font at 14px #333 (a `?` box on iOS, specs/071). */
 function pseudoTextStyle(style: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const k of INHERITABLE) {
+  for (let i = 0; i < INHERITABLE_KEYS.length; i++) {
+    const k = INHERITABLE_KEYS[i];
     if (style[k] !== undefined) out[k] = style[k];
   }
   return out;
