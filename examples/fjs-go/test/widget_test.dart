@@ -22,7 +22,11 @@ void main() {
 
   testWidgets('boots into the connect screen', (WidgetTester tester) async {
     await tester.pumpWidget(FjsGoApp(recents: recents));
-    await tester.pumpAndSettle();
+    // pumpAndSettle would time out: the connect screen keeps a PulseDot
+    // (the 附近的服务器 "搜索中" indicator) animating on repeat forever, and
+    // the screen builds synchronously — one pump past the first frame is
+    // all the headline needs.
+    await tester.pump();
 
     // the connect screen's headline. The scan hero is mobile-only and the
     // recent-servers list depends on the machine — this line always shows.
