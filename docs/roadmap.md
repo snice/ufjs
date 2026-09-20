@@ -653,6 +653,27 @@ CSS 收尾项（纯 Dart 侧与 JS 引擎侧，op 协议零改动）：
   同样要求 `--release`/`--profile`；`--ipa` 仅 darwin，签名导出失败留
   `.xcarchive` 并提示 `-- --export-options-plist` 透传
 
+## fjs lint / fjs types（已完成 2026-09）
+
+中期计划里的两条 CLI 项提前清掉（`specs/087-fjs-lint-types/`）：
+
+- ✅ **`fjs lint`**：静态扫 `.vue` 的 `<style>` 块与静态 `style` 属性、
+  `.css` 文件，对照支持矩阵报「引擎不会生效」的 CSS——`[drop]` 级
+  （`#id` 选择器（`#id .x` 会静默放宽成 `.x`）、`~` 组合器、`:nth-child`、
+  `word-break`/`filter`、`vw`/`vh`、`display: grid`、`@import`/
+  `@supports`、非 class 属性选择器）退出码 1；`[warn]` 级（App 端不动画
+  的 transition/keyframes 属性、位图背景、`@font-face` 远程源、
+  `:root` 里的实声明）退出码 0，`--strict` 才算失败。规则表是
+  `css-compat.md` 的机器可读镜像（`fjs-runtime/src/css/support.ts`），
+  引擎与 CLI 共读，一致性由 fjs-runtime 测试钉住。`:style` 对象字面量、
+  小程序 wxss、挂进 build/dev 都明确不做（spec §2）
+- ✅ **`fjs types`**：`fjs-routes/-assets/-modules/-components.d.ts`
+  四个生成器的命令化（此前只在 dev/build/Vite 里顺带写），刚 checkout
+  不用跑 dev 就有补全；`--check` 只读、有过期文件退出码 1 供 CI。
+  顺带修掉一个真实漂移：`stack` 在 tags.json 里但 `vue-global.d.ts`
+  没有它的 GlobalComponents 条目——新增防漂移测试把 tags.json 与
+  组件类型钉在一起
+
 ## 近期计划
 
 - **App 侧真机对拍挂账**：078/079 的示例页（过渡演示新增面板、百分比间距与
@@ -660,7 +681,7 @@ CSS 收尾项（纯 Dart 侧与 JS 引擎侧，op 协议零改动）：
   13 条 Dart widget 用例覆盖）
 - **`--aab` 实跑**：签名环境无关但构建耗时长，产物路径以 releaseBuild 打印
   为准（specs/083 T021）
-- 当前 CSS 支持范围见 [css-compat.md](css-compat.md)，加一条要改的 7 个地方
+- 当前 CSS 支持范围见 [css-compat.md](css-compat.md)，加一条要改的 8 个地方
   也在那里（dashed / dotted 边框自绘已完成，见 `render/dashed_border.dart`）
 
 ## 中期
@@ -688,14 +709,11 @@ CSS 收尾项（纯 Dart 侧与 JS 引擎侧，op 协议零改动）：
   包管理先成型。命名上和已经落地的 `fjs add <npm 包>` 分开：前者动宿主
   （pubspec、Dart、权限清单），需要 list/remove/sync 对着可 eject 的宿主收敛；
   后者只动 JS 侧。JS 库用 `requires` 声明它需要哪个 capability，两边由此咬合
-- **`fjs lint`**：扫 `.vue` 里用到但 CSS 引擎还不支持的属性（transition、
-  @media、百分比尺寸等），提前报出来而不是运行时静默失效
-- **`fjs types`**：把 `tags.json` → 组件 d.ts / Volar 数据的生成暴露成命令
+  （`fjs lint` / `fjs types` 已完成，见上文）
 
 ## 远期
 
 - Windows / Linux 桌面端（CMake 已预留，MSVC 适配 QuickJS 需少量补丁）
-- Flutter Web 目标的 JS 直通实现（无引擎，直接用浏览器 JS，同 API）
 - 调试器协议：Chrome DevTools 接 QuickJS debugger（`fjs log` / `fjs eval` 已经
   把 dev socket 变成双向通道，断点和堆栈是它的超集）
 - 三方原生模块包管理（npm 包声明 native/ 目录，构建期合并）

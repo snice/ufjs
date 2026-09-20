@@ -21,6 +21,13 @@ pnpm run build:web
 两种方式都会走同一套 fjs Web alias：`fjs/app`、`fjs/router`、`fjs/web` 和
 `fjs/pages`。产物是普通静态文件，可以交给任意静态托管。
 
+**为什么没有 "Flutter Web" 目标**：早期设想里有过一条路——把 Flutter 宿主
+编译到 Flutter Web，JS 侧不经 WASM 化的 QuickJS、直接用浏览器 JS。实际没走
+这条：浏览器侧的载体就是上面的 DOM 适配层，无引擎、浏览器原生 JS、同一套
+element API，产品层面已经是那个设想想要的东西。只有当「Flutter 渲染本身要
+跑在浏览器里」（逐像素等同 App 的 widget 渲染）成为真实需求时，才值得重开
+这个题目。
+
 ## 它是怎么成立的
 
 | 层 | Flutter | Web |
