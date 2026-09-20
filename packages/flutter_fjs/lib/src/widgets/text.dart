@@ -28,8 +28,10 @@ const _defaultFontSize = 14.0;
 
 /// The TextStyle of one text node. [span] adds what only an inline box
 /// paints with its text (a background behind the glyphs); a paragraph's own
-/// background is its box decoration, drawn by decorateNode.
-TextStyle fjsTextStyle(FjsStyle style, {bool span = false}) {
+/// background is its box decoration, drawn by decorateNode. [color] is the
+/// interpolated colour an active `transition: color` hands down each tick
+/// (spec 078); null means take the style's own.
+TextStyle fjsTextStyle(FjsStyle style, {bool span = false, Color? color}) {
   final lineHeight =
       style.lineHeightMultiplier ??
       () {
@@ -43,7 +45,7 @@ TextStyle fjsTextStyle(FjsStyle style, {bool span = false}) {
     // not Flutter's inherited DefaultTextStyle. Anything the cascade did
     // resolve (including a color inherited from an ancestor, which the JS
     // style engine folds into this node's own style) still wins.
-    color: style.color ?? const Color(0xFF333333),
+    color: color ?? style.color ?? const Color(0xFF333333),
     fontSize: style.fontSize ?? _defaultFontSize,
     fontWeight: style.fontWeight,
     fontStyle: style.fontStyle,
@@ -58,6 +60,39 @@ TextStyle fjsTextStyle(FjsStyle style, {bool span = false}) {
     shadows: style.textShadows,
     backgroundColor: span ? style.backgroundColor : null,
   );
+}
+
+/// `transition: color` on the paragraph itself (spec 078): the colour
+/// interpolates through a TweenAnimationBuilder, whose semantics are the CSS
+/// transition's — the first frame takes the value as-is, a changed target
+/// interpolates from wherever the previous animation was (decorateNode's
+/// decorationTrack makes the same trade). The paragraph rebuilds each tick
+/// with the interpolated colour; a nested span that declares its own `color`
+/// keeps snapping — per-run tweens would need paragraph-state machinery for
+/// a case vant does not exercise (css-compat.md). The builder stays in the
+/// tree whenever the track is declared, not only while a colour is set.
+Widget _animatedParagraphColor(
+  FjsStyle style,
+  Widget Function(Color? color) build,
+) {
+  final track = style.transitions?.forProperty('color');
+  if (track == null || track.duration <= Duration.zero) return build(null);
+  return TweenAnimationBuilder<Color>(
+    tween: _ParagraphColorTween(end: style.color ?? const Color(0xFF333333)),
+    duration: track.duration,
+    curve: track.curve,
+    builder: (_, color, __) => build(color),
+  );
+}
+
+/// The colour tween: [Tween<Color>] has no arithmetic on its own, so the
+/// interpolation is [Color.lerp] — begin is always set by
+/// [TweenAnimationBuilder] before the first lerp (it starts at the end).
+class _ParagraphColorTween extends Tween<Color> {
+  _ParagraphColorTween({required super.end});
+
+  @override
+  Color lerp(double t) => Color.lerp(begin, end, t)!;
 }
 
 /// The TextStyle of one `richSpans` run: ONLY what the run itself declares.
@@ -131,14 +166,16 @@ Widget buildText(
         if (span != null) runs.add(span);
       }
     }
-    final paragraphStyle = fjsTextStyle(style);
-    return Text.rich(
-      TextSpan(style: paragraphStyle, children: runs),
-      style: paragraphStyle,
-      textAlign: textAlign,
-      maxLines: maxLines,
-      overflow: overflow,
-    );
+    return _animatedParagraphColor(style, (color) {
+      final paragraphStyle = fjsTextStyle(style, color: color);
+      return Text.rich(
+        TextSpan(style: paragraphStyle, children: runs),
+        style: paragraphStyle,
+        textAlign: textAlign,
+        maxLines: maxLines,
+        overflow: overflow,
+      );
+    });
   }
 
   // An absolutely positioned child (a `::before` decoration box: vant's
@@ -184,7 +221,6 @@ Widget buildText(
   // paragraph gets it: a nested span with a larger size must still grow its
   // line, as its inline box does on the web.
   if (childNodes.isEmpty || tree == null) {
-    final textStyle = fjsTextStyle(style);
     // An empty paragraph with declared dimensions is still a CSS box — vant's
     // skeleton title is an empty <h3> with width/height/background. Flutter's
     // Text('') has no extent for the decoration to paint, so hand it a box:
@@ -199,14 +235,17 @@ Widget buildText(
         ),
       );
     }
-    return Text(
-      _transformed(style, node.text ?? ''),
-      style: textStyle,
-      strutStyle: StrutStyle.fromTextStyle(textStyle, forceStrutHeight: true),
-      textAlign: textAlign,
-      maxLines: maxLines,
-      overflow: overflow,
-    );
+    return _animatedParagraphColor(style, (color) {
+      final textStyle = fjsTextStyle(style, color: color);
+      return Text(
+        _transformed(style, node.text ?? ''),
+        style: textStyle,
+        strutStyle: StrutStyle.fromTextStyle(textStyle, forceStrutHeight: true),
+        textAlign: textAlign,
+        maxLines: maxLines,
+        overflow: overflow,
+      );
+    });
   }
 
   final spans = <InlineSpan>[
@@ -216,19 +255,21 @@ Widget buildText(
   ];
   // Paragraph-level properties (align, line clamp, nowrap) come from this
   // node only: a span has no box to align or clamp.
-  final paragraphStyle = fjsTextStyle(style);
-  return Text.rich(
-    TextSpan(style: paragraphStyle, children: spans),
-    // the paragraph's own style too, not only the root span's: Flutter takes
-    // the line metrics of a line with no glyph of its own (an icon font's
-    // `::before` box alone in its <i>) from the WIDGET style, which was the
-    // ambient Material body text — 14px × 1.43 made vant's 12px step icon a
-    // 20px line
-    style: paragraphStyle,
-    textAlign: textAlign,
-    maxLines: maxLines,
-    overflow: overflow,
-  );
+  return _animatedParagraphColor(style, (color) {
+    final paragraphStyle = fjsTextStyle(style, color: color);
+    return Text.rich(
+      TextSpan(style: paragraphStyle, children: spans),
+      // the paragraph's own style too, not only the root span's: Flutter takes
+      // the line metrics of a line with no glyph of its own (an icon font's
+      // `::before` box alone in its <i>) from the WIDGET style, which was the
+      // ambient Material body text — 14px × 1.43 made vant's 12px step icon a
+      // 20px line
+      style: paragraphStyle,
+      textAlign: textAlign,
+      maxLines: maxLines,
+      overflow: overflow,
+    );
+  });
 }
 
 String _transformed(FjsStyle style, String data) => style.textTransform != null

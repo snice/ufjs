@@ -81,7 +81,7 @@ CSS 文本里用 kebab-case（`font-size: 16px`），内联对象用 camelCase
 | `border-width` / `border-color` / `border-style` | ✅ | 覆盖简写的对应分量；1~4 值按边展开（`border-width: 1px 0 0` 只画上边，vant 分割线；specs/069）。简写不写颜色时取 `currentColor`（元素的文字色），同 CSS |
 | `border-style` 值 | ⚠️ | `solid` / `dashed` / `dotted` 真画；`double` / `groove` 等按 solid |
 | `border-radius` | ✅ | `12` \| `'8px'` \| `'8px 16px'` \| `'1px 2px 3px 4px'` |
-| `border-radius: %` | ⚠️ | 横向依宽、纵向依高解成椭圆角（specs/069：van-radio 圆点、van-switch 圆钮）。**只在盒子宽高是确定 px 时生效**；内容自适应的盒子写百分比圆角保持方角（布局期才有尺寸，没为这个角落把整个装饰盒推迟到布局期）。`a / b` 椭圆写法不支持（整条丢弃并告警） |
+| `border-radius: %` | ⚠️ | 横向依宽、纵向依高解成椭圆角（specs/069：van-radio 圆点、van-switch 圆钮）。确定 px 盒直接解析；**相对尺寸**（`width: 50%` 等，spec 079）在尺寸 LayoutBuilder 里按解析后的盒尺寸解析，圆角跟着真实盒子走。内容自适应的盒子写百分比圆角保持方角（参照是画出来的尺寸，布局前不可知，约束参照会把 `10%` 放大成 pill；50% 圆不受影响——RRect 会把超限圆角钳回半盒）。自绘/覆盖路径（dashed/分边 painter、foregroundDecoration）上的 % 圆角保持方角并告警一次。`a / b` 椭圆写法不支持（整条丢弃并告警） |
 | 单边边框（`border-top` 等，spec 041）| ✅ | 简写与 `-width`/`-color`/`-style` 长手都可；每边级联：单边长手 > 单边简写 > 全局长手 > 全局简写（合并 map 定优先级，**不还原源顺序**——`border-bottom: none` 之后再写 `border: 1px red`，web 上 bottom 会被简写重置回来，App 上仍无）；仅声明 `-color`/`-style` 按 CSS 语义推出 1px。**非一致边 + `border-radius`** 由自绘 painter 按边描画（角弧归相邻边各半），角部衔接与浏览器有亚像素差；`button` 的默认 hairline 只补页面没声明的边 |
 
 `border-color` 单独出现时按 CSS 语义算 1px 边框；`none` 和 0 宽度就是没边框
@@ -100,7 +100,7 @@ CSS 文本里用 kebab-case（`font-size: 16px`），内联对象用 camelCase
 | `flex-grow` / `flex` | ⚠️ | Flutter 上是 `Expanded`（只拿剩余空间）；web 侧被改写成 `flex: n 1 0%` 对齐。**会增长的项带主轴 `max-width/max-height`**（`flex: 1; max-width: 10%`）：CSS 把它冻结在上限、余量分给其他增长项；Flutter 的 Flex 不重分配，所以直接按上限定尺寸、退出 flex 分配（行够宽时就是 CSS 的结果，vant 左对齐分割线；specs/069） |
 | `flex-basis` | ⚠️ | 不增长、主轴没写尺寸的项：`flex-basis`（px 或容器主轴 %）即主轴尺寸，wrap 与普通 flex 都生效（vant 宫格 `flex-basis: 33.33%`；specs/069）。增长项按 basis 0 处理（与 `flex: 1` 简写一致）；`flex-shrink` 的收缩不参与 |
 | `flex-shrink` | ⚠️ | 内置标签一律 `flex-shrink: 0`（对齐 Flutter 子节点不压缩）。HTML 标签由渲染器恢复 CSS 初始值 `1` 作为默认样式：块级容器（`div` / `section` / `li` / `table`…，specs/073——vant Skeleton 的 `width: 100%` 内容列给 avatar 让位）与表单控件（`input` 等，specs/070——vant Field 的 `input { width: 100% }` 让出清除图标的宽度）；声明的值照常赢（vant 自己写的 `flex-shrink: 0` 生效），映射成 text 的 HTML 标签（`span` / `p`…）保持不收缩。横向行里、主轴为百分比宽度时可收缩到剩余空间；多个收缩项平分而非按基准比例 |
-| `gap` / `row-gap` / `column-gap` | ✅ | |
+| `gap` / `row-gap` / `column-gap` | ✅ | 绝对值直接生效；`%`（spec 079）在 flex 的 LayoutBuilder 里按容器自身轴尺寸解析——column-gap 参照宽、row-gap 参照高，无界参照（滚动内容）退化为 0；web 真 CSS。number/`Npx`/`%`/calc |
 | `align-self` | ✅ | `auto` / `flex-start` / `center` / `flex-end` / `stretch`（`start` / `end` / `self-start` / `self-end` 同义）。App 端：容器里有子项写了它，整个容器按 stretch 布局，其余子项各按 `align-items` 在自己那一行里对齐；容器原本不拉伸（或交叉轴无上限，如纵向滚动里的 row）时先按内容量出交叉轴尺寸再定死（两遍布局），容器自身尺寸与不写时一致。没写的容器零开销。wrap 容器里不生效 |
 | `justify-self` | — | flex 布局里本来就无效（web 同样忽略，只对 grid 生效），两端一致；grid 不支持 |
 | `display: none` | ✅ | |
@@ -123,7 +123,7 @@ CSS 文本里用 kebab-case（`font-size: 16px`），内联对象用 camelCase
 
 | 属性 | 支持 | 说明 |
 |---|---|---|
-| `font-size` | ✅ | 继承 |
+| `font-size` | ✅ | 继承;`%` 按父元素计算字号解析(spec 079,根元素按 CSS 初始 16px),引擎改写成 px 下发,两端同值;`calc(…%)` 不展开,维持原值 |
 | `font-weight` | ✅ | 100–900 \| normal \| bold |
 | `font-style` | ✅ | |
 | `font-family` | ✅ | 按 CSS 读字体栈（specs/071）：去引号、逗号分隔，首项为主字体、其余为 Flutter `fontFamilyFallback`；栈在第一个系统/通用族名处截止（`-apple-system`、`system-ui`、`sans-serif`、`serif` 等 = 平台默认字体，所以 vant 的 `-apple-system-font, helvetica neue, …` 仍是系统字体，同 Safari）。`monospace` 映射成平台等宽字体（iOS / macOS `Menlo`、Windows `Courier New`、其余 `monospace`）。**行为变化**：以前整串（含引号）当一个字体名，带引号的名字从未生效 |
@@ -154,7 +154,7 @@ width / height——Flutter 的 `TextSpan` 没有盒子，web 侧用 `!important
 | `box-shadow` | ✅ | 字符串或数组 |
 | `background` / `background-image` | ⚠️ | 仅 `linear-gradient` / `radial-gradient`；不支持位图 url（用 `<image>` 标签）|
 | `transform` | ✅ | translate / translateX / translateY / translate3d / scale / scaleX / scaleY / rotate(deg\|rad\|turn\|grad) / matrix(a,b,c,d,e,f)，从左到右复合 |
-| `transition` | ⚠️ | `transform` / `opacity` / `background-color`（实色，无背景 ↔ 有背景按透明渐入渐出）/ `border-color`（实线统一边框）/ `width` / `height` 两端渐变（spec 045；简写与长手、duration/curve/delay 同一套解析），以及绝对/固定定位盒的 `left` / `top` / `right` / `bottom`（spec 073——vant Progress 的 portion `width` 与 pivot `left` 都靠它；`FjsLength` 是 px+百分比线性对，两端插值等价于 calc() 插值，被 delegate 解析的百分比因此逐帧跟随盒子）。尺寸与 inset 是布局属性：逐帧重排，与 web 成本一致，别在大子树上用。**App 端差异**：`transition-delay` 对 background-color / border-color / 尺寸 / inset 不生效（transform/opacity 有）；gradient 背景跳变不动画；inset 的 transitionend 不派发（width/height 照旧，由尺寸动画派发）；文字 `color` / 虚线或分边不同的边框 / 其余布局属性 App 端瞬时跳变，web 原生渐变。页面转场用 `<Transition>`，见 [routing.md](routing.md) |
+| `transition` | ⚠️ | `transform` / `opacity` / `background-color`（实色，无背景 ↔ 有背景按透明渐入渐出）/ `border-color`（统一实线与分边、虚线都渐变）/ `color`（段落自身颜色；嵌套片段自带 color 仍瞬时）/ `width` / `height` / `padding` / `margin` 两端渐变（spec 045/073/078；简写与长手、duration/curve 同一套解析），以及绝对/固定定位盒的 `left` / `top` / `right` / `bottom`（spec 073——vant Progress 的 portion `width` 与 pivot `left` 都靠它；`FjsLength` 是 px+百分比线性对，两端插值等价于 calc() 插值，被 delegate 解析的百分比因此逐帧跟随盒子）。`color` / `border-color` 只插颜色本身，宽度 / 样式 / 分边出现与消失取终态；`padding` / `margin` 是布局属性：逐帧重排，与 web 成本一致，别在大子树上用。**App 端差异**：`transition-delay` 对 color / border-color / background-color / 尺寸 / inset / padding / margin 不生效（transform/opacity 有）；gradient 背景跳变不动画；inset 与 padding/margin 的 transitionend 不派发（width/height 照旧，由尺寸动画派发）；嵌套 text 片段自带 `color` 的过渡瞬时，web 原生渐变。页面转场用 `<Transition>`，见 [routing.md](routing.md) |
 | `<Transition>`（组件） | ⚠️ | vue-shim 里的 fjs 版（BaseTransition + 引擎类操作）：enter/leave 的 `-from/-active/-to` 类照常落地，组件库里 animation 型的 enter/leave 规则（vant 的 `van-fade-enter-active { animation: … }`）由 keyframes 引擎原生播放；transition 型的类切换（vant 弹层滑入滑出、Dialog 缩放）由 App 端按上表 `transition` 的支持范围补间。类移除时机取元素计算样式里 animation 与 transition 的「时长 + 延迟」较长者（本端没有 DOM end 事件）；`transition-*` 长写覆盖在简写之上。`v-show` 在 `<Transition>` 内走钩子（离场动画放完才 `display: none`）。**App 端差异**：`<TransitionGroup>` 是纯透传（vant 弹层不用） |
 | `animation` / `@keyframes` | ⚠️ | 引擎解析、原生执行，无逐帧桥往返；支持范围与差异见下方「动画」小节 |
 | `filter` / `backdrop-filter` | ❌ | |
@@ -244,10 +244,12 @@ vant spinner 的 `color: currentColor` 之前画黑线就是这个）；伪元�
 之后的 `%` 平移按未旋转处理（登记的近似）
 ✅ `%`、`calc()` —— **尺寸**（`width` / `height` / `min-*` / `max-*`）、
 **盒模型间距**（`padding` / `margin` 简写与长手，spec 044）与
-**定位偏移**（`top` / `right` / `bottom` / `left`，spec 044）上生效。
+**定位偏移**（`top` / `right` / `bottom` / `left`，spec 044）上生效；
+**`gap`**（spec 079，参照容器自身对应轴）。
 ❌ `em`、`rem`（构建时就换算成 px 了）、`vw`、`vh`；
-❌ 其余属性上的 `%`：`gap` / `border-radius` / `font-size` 等按 CSS
-也是百分比，这里读不出来，等同没写（按需补，参照机制各不相同）。
+❌ `border-radius` 的 `%` 仅相对尺寸盒支持（spec 079，内容盒保持方角）、
+`font-size` 的裸 `%` 由引擎改写（calc 不展开），其余属性上的 `%`
+等同没写（按需补，参照机制各不相同）。
 
 百分比的参照是**父盒子在这个轴上给出的空间**——和 CSS 一样是父元素的内容盒。
 参照轴（spec 044）：尺寸与 padding/margin 的**四边都参照父盒宽**

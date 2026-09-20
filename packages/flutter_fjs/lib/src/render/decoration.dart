@@ -10,12 +10,16 @@ import 'dashed_border.dart';
 import 'length.dart';
 import 'style.dart';
 import 'style_parse.dart';
+import '../widgets/control_scope.dart' show fjsWarnOnce;
 
-/// Resolves a percentage border-radius against the box's own definite
+/// Resolves a percentage border-radius against the box's own DEFINITE
 /// width/height (`van-radio`'s `border-radius: 100%` circle). Null when any
-/// corner carries a fraction but the box size is not definite — content-sized
-/// boxes keep square corners, registered in css-compat.md. Absolute px parts
-/// always apply.
+/// corner carries a fraction but an axis is relative or content-sized —
+/// relative sizes resolve in [_fractionRadiusIn] inside the size
+/// LayoutBuilder (spec 079), and a content-sized axis keeps square corners
+/// (css-compat.md). A relative length's `.px` is only its residual, not the
+/// box, so relative axes never pass through here. Absolute px parts always
+/// apply.
 BorderRadius? _fractionRadius(FjsStyle style) {
   final parts = style.borderRadiusParts;
   if (parts == null || !parts.any((p) => p.fraction != 0)) return null;
@@ -23,14 +27,32 @@ BorderRadius? _fractionRadius(FjsStyle style) {
   final w = absPx(style.widthLength);
   final h = absPx(style.heightLength);
   if (w == null || h == null) return null;
+  return _fractionRadiusIn(style, w, h);
+}
+
+/// The same resolution against a KNOWN painted size — the box the size
+/// LayoutBuilder has just resolved (a declared `width: 50%` IS this many
+/// pixels wide, so the corners come from the size the box really gets).
+BorderRadius? _fractionRadiusIn(FjsStyle style, double width, double height) {
+  final parts = style.borderRadiusParts!;
   Radius corner(BorderRadiusPart p) =>
-      Radius.elliptical(p.px + p.fraction * w, p.px + p.fraction * h);
+      Radius.elliptical(p.px + p.fraction * width, p.px + p.fraction * height);
   return BorderRadius.only(
     topLeft: corner(parts[0]),
     topRight: corner(parts[1]),
     bottomRight: corner(parts[2]),
     bottomLeft: corner(parts[3]),
   );
+}
+
+/// A live track for [name] — `transition: …` declared AND longer than zero.
+/// The gate every transition consumer uses: a 0s track still mounts its
+/// wrapper (see _TransitionNode) but animates nothing, so the tween paths
+/// skip it. `_normalizeTransitionProperty` camelized the names already
+/// (`border-color` in CSS arrives as `borderColor`).
+FjsTransitionTrack? _liveTrack(FjsStyle style, String name) {
+  final track = style.transitions?.forProperty(name);
+  return track != null && track.duration > Duration.zero ? track : null;
 }
 
 /// Applies [style]'s box properties to [content].
@@ -50,6 +72,7 @@ Widget decorateNode(
 }) {
   Widget w = content;
   final padLengths = style.paddingLengths;
+  final padTrack = _liveTrack(style, 'padding');
   if (padLengths != null && padLengths.hasRelative) {
     // A % padding references the containing block's WIDTH on every side
     // (CSS box model — `padding-top: 10%` is 10% of the width, not the
@@ -58,8 +81,9 @@ Widget decorateNode(
     // _flexChild passed its bound down, and unbounded inside a scroller —
     // where CSS resolves the percentage to 0 and so does resolveOrNull.
     w = LayoutBuilder(
-      builder: (context, constraints) => Padding(
-        padding: resolveEdgeLengths(
+      builder: (context, constraints) => _animatedEdges(
+        padTrack,
+        resolveEdgeLengths(
           padLengths,
           style.padding,
           defaultPadding,
@@ -70,7 +94,7 @@ Widget decorateNode(
     );
   } else {
     final padding = style.padding ?? defaultPadding;
-    if (padding != null) w = Padding(padding: padding, child: w);
+    if (padding != null) w = _animatedEdges(padTrack, padding, child: w);
   }
   // The four sides, each through its own cascade; a built-in's default
   // hairline fills in only the sides the page said nothing about.
@@ -82,10 +106,30 @@ Widget decorateNode(
   // with a percentage radius keeps square corners (css-compat.md); pulling
   // the size out of an arbitrary layout would need the whole decorated-box
   // build deferred behind a LayoutBuilder.
-  final borderRadius =
+  var borderRadius =
       style.borderRadius ?? _fractionRadius(style) ?? defaultBorderRadius;
+  // A % radius on a RELATIVE size (spec 079) resolves inside the size
+  // LayoutBuilder below, against the size the box actually gets — a square
+  // fallback would shrink a van-circle chip to a square. The side painters
+  // sit OUTSIDE that builder, so the combo with a dashed or per-side stroke
+  // keeps square corners and says so once (constitution V).
+  var layoutRadius = false;
+  if (style.borderRadiusParts?.any((p) => p.fraction != 0) == true &&
+      (style.widthLength?.isRelative == true ||
+          style.heightLength?.isRelative == true)) {
+    if (side != null && (side.hasDashed || !side.isUniform)) {
+      fjsWarnOnce(
+        'fraction-radius-side-painter',
+        'a % border-radius on a %/calc-sized box with a dashed or per-side '
+        'border keeps square corners here',
+      );
+    } else {
+      layoutRadius = true;
+    }
+  }
   final radiusPainted =
-      borderRadius != null && borderRadius != BorderRadius.zero;
+      (borderRadius != null && borderRadius != BorderRadius.zero) ||
+      layoutRadius;
   // Which of the three painters a non-uniform set needs:
   //   uniform solid           -> Border.all, inside the BoxDecoration
   //   uniform dashed/dotted   -> FjsDashedBorderPainter (the long-standing path)
@@ -122,12 +166,16 @@ Widget decorateNode(
   }
   final background = style.backgroundColor ?? defaultBackgroundColor;
   final layers = style.backgroundLayers;
+  // radiusPainted, not just hasDecoration: a %-only radius parses to null
+  // in the absolute getter, and its corners resolve at layout (spec 079) —
+  // the box must still take the decorated path or nothing paints them
   final decorated =
       layers != null ||
       style.keepsBox ||
       style.hasDecoration ||
       border != null ||
       background != null ||
+      radiusPainted ||
       foregroundDecoration != null;
   // The sized/decorated box itself, given the pixels for this build. Pulled
   // out because a percentage size only becomes pixels inside a layout pass
@@ -148,10 +196,7 @@ Widget decorateNode(
   //
   // track property names are camelized by _normalizeTransitionProperty
   // (`background-color` in CSS arrives as `backgroundColor`)
-  FjsTransitionTrack? liveTrack(String name) {
-    final track = style.transitions?.forProperty(name);
-    return track != null && track.duration > Duration.zero ? track : null;
-  }
+  FjsTransitionTrack? liveTrack(String name) => _liveTrack(style, name);
 
   final decorationTrack = style.gradient != null
       ? null
@@ -173,7 +218,12 @@ Widget decorateNode(
               bottom: side?.bottom?.width ?? 0,
               left: side?.left?.width ?? 0,
             );
-  Widget sizedBox(Widget child, double? width, double? height) {
+  Widget sizedBox(
+    Widget child,
+    double? width,
+    double? height, [
+    BorderRadius? fractionRadius,
+  ]) {
     if (contentBox) {
       if (width != null) width += boxExtra.horizontal;
       if (height != null) height += boxExtra.vertical;
@@ -230,7 +280,9 @@ Widget decorateNode(
     final decoration = BoxDecoration(
       color: background,
       gradient: style.gradient,
-      borderRadius: borderRadius,
+      // a % radius rides a relative size and resolves in the LayoutBuilder
+      // that owns the box's width/height (spec 079)
+      borderRadius: fractionRadius ?? borderRadius,
       border: border,
       boxShadow: style.boxShadows,
     );
@@ -294,8 +346,13 @@ Widget decorateNode(
   // A content-box size is the box's own: when padding pushes it past what
   // the parent offers (vant's nav: 100% of a 44px wrap + 15px padding), CSS
   // keeps it and lets it overflow — Flutter would clamp it back to 44.
-  Widget box(Widget child, double? width, double? height) {
-    final out = sizedBox(child, width, height);
+  Widget box(
+    Widget child,
+    double? width,
+    double? height, [
+    BorderRadius? fractionRadius,
+  ]) {
+    final out = sizedBox(child, width, height, fractionRadius);
     if (!contentBox) return out;
     final looseWidth = width != null && boxExtra.horizontal > 0;
     final looseHeight = height != null && boxExtra.vertical > 0;
@@ -317,11 +374,20 @@ Widget decorateNode(
     // again as in CSS.
     final inner = w;
     w = LayoutBuilder(
-      builder: (context, constraints) => box(
-        inner,
-        widthLength?.resolveOrNull(constraints.maxWidth),
-        heightLength?.resolveOrNull(constraints.maxHeight),
-      ),
+      builder: (context, constraints) {
+        final width = widthLength?.resolveOrNull(constraints.maxWidth);
+        final height = heightLength?.resolveOrNull(constraints.maxHeight);
+        return box(
+          inner,
+          width,
+          height,
+          // the corners come from the size the box actually gets (spec 079);
+          // an unbounded axis leaves the size null and the corners square
+          layoutRadius && width != null && height != null
+              ? _fractionRadiusIn(style, width, height)
+              : null,
+        );
+      },
     );
   } else {
     // widthLength covers every absolute form including calc() — a
@@ -332,17 +398,47 @@ Widget decorateNode(
     w = box(w, widthLength?.px, heightLength?.px);
   }
   if (paintedOver) {
-    w = CustomPaint(
-      foregroundPainter: side.isUniform
-          ? FjsDashedBorderPainter(
-              width: side.top!.width,
-              color: side.top!.color,
-              kind: side.top!.kind,
-              borderRadius: borderRadius,
-            )
-          : FjsSideBorderPainter(borders: side, borderRadius: borderRadius),
-      child: w,
-    );
+    // `transition: border-color` (or `all`, spec 078): the uniform solid
+    // stroke lerps inside the BoxDecoration (decorationTrack above), but
+    // dashed sides and per-side borders paint here — their colours tween
+    // over the painter, geometry (widths, kinds) always taking the end
+    // style, since CSS transitions only the colour.
+    final borderColorTrack = liveTrack('borderColor');
+    if (borderColorTrack != null) {
+      final content = w;
+      w = TweenAnimationBuilder<FjsBoxBorders>(
+        tween: _BoxBordersTween(end: side),
+        duration: borderColorTrack.duration,
+        curve: borderColorTrack.curve,
+        builder: (_, borders, inner) => CustomPaint(
+          foregroundPainter: borders.isUniform
+              ? FjsDashedBorderPainter(
+                  width: borders.top!.width,
+                  color: borders.top!.color,
+                  kind: borders.top!.kind,
+                  borderRadius: borderRadius,
+                )
+              : FjsSideBorderPainter(
+                  borders: borders,
+                  borderRadius: borderRadius,
+                ),
+          child: inner,
+        ),
+        child: content,
+      );
+    } else {
+      w = CustomPaint(
+        foregroundPainter: side.isUniform
+            ? FjsDashedBorderPainter(
+                width: side.top!.width,
+                color: side.top!.color,
+                kind: side.top!.kind,
+                borderRadius: borderRadius,
+              )
+            : FjsSideBorderPainter(borders: side, borderRadius: borderRadius),
+        child: w,
+      );
+    }
   }
   if (style.hasRelativeConstraints) {
     final inner = w;
@@ -380,18 +476,20 @@ Widget decorateNode(
   // the tight Positioned slot it would squeeze the box instead (vant's
   // badge dot came out 8x4).
   final outOfFlow = style.position == 'absolute' || style.position == 'fixed';
-  final marLengths = style.marginLengths;
+  final marginLengths = style.marginLengths;
+  final marginTrack = _liveTrack(style, 'margin');
   if (!outOfFlow) {
-    if (marLengths != null && marLengths.hasRelative) {
+    if (marginLengths != null && marginLengths.hasRelative) {
       // same reference as padding: the incoming max width, every side. The
       // builder runs at LAYOUT time, after `w` has been reassigned by every
       // later branch — capture the current value, or the builder closes over
       // the LayoutBuilder itself and the box recurses into a freeze.
       final inner = w;
       w = LayoutBuilder(
-        builder: (context, constraints) => Padding(
-          padding: resolveEdgeLengths(
-            marLengths,
+        builder: (context, constraints) => _animatedEdges(
+          marginTrack,
+          resolveEdgeLengths(
+            marginLengths,
             style.margin,
             null,
             constraints.maxWidth,
@@ -400,7 +498,7 @@ Widget decorateNode(
         ),
       );
     } else if (style.margin != null) {
-      w = Padding(padding: style.margin!, child: w);
+      w = _animatedEdges(marginTrack, style.margin!, child: w);
     }
   }
   // `position: relative` nudges the painted box; the slot it was laid out
@@ -425,6 +523,59 @@ Widget decorateNode(
     if (shift != Offset.zero) w = Transform.translate(offset: shift, child: w);
   }
   return w;
+}
+
+/// Padding / margin that interpolates while [track] is live —
+/// `transition: padding` / `transition: margin` (spec 078). The tween holds
+/// the RESOLVED pixels: a % side met its reference already (relative values
+/// resolve inside the LayoutBuilder that hands the constraint down), so
+/// EdgeInsets.lerp is the CSS transition per side. track.delay is not
+/// honoured — TweenAnimationBuilder has no delay hook, the same gap
+/// background-color lives with (css-compat.md) — and no transitionend is
+/// dispatched (only width/height need one, for vant's collapse).
+Widget _animatedEdges(
+  FjsTransitionTrack? track,
+  EdgeInsets edges, {
+  required Widget child,
+}) {
+  if (track == null || track.duration <= Duration.zero) {
+    return Padding(padding: edges, child: child);
+  }
+  return TweenAnimationBuilder<EdgeInsets>(
+    tween: EdgeInsetsTween(end: edges),
+    duration: track.duration,
+    curve: track.curve,
+    builder: (_, value, inner) => Padding(padding: value, child: inner),
+    child: child,
+  );
+}
+
+/// Lerps a box-border set for `transition: border-color` (spec 078):
+/// colours interpolate between sides present on BOTH ends; a side that
+/// appears or disappears takes the end state at once — CSS transitions only
+/// the colour, and `FjsBoxBorders` forgets a 0-width side's colour
+/// (style.dart's boxBorders), so there is nothing older to lerp from.
+class _BoxBordersTween extends Tween<FjsBoxBorders> {
+  _BoxBordersTween({required super.end});
+
+  @override
+  FjsBoxBorders lerp(double t) {
+    FjsBorderSide? side(FjsBorderSide? a, FjsBorderSide? b) {
+      if (a == null || b == null) return b;
+      return (
+        width: b.width,
+        color: Color.lerp(a.color, b.color, t)!,
+        kind: b.kind,
+      );
+    }
+
+    return FjsBoxBorders(
+      top: side(begin?.top, end?.top),
+      right: side(begin?.right, end?.right),
+      bottom: side(begin?.bottom, end?.bottom),
+      left: side(begin?.left, end?.left),
+    );
+  }
 }
 
 /// Marks the subtree inside a box that clips its content — CSS

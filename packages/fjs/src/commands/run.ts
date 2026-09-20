@@ -68,6 +68,8 @@ export async function runCommand(argv: string[]): Promise<void> {
       gz: opts.gz,
       apk: false,
       hap: false,
+      ipa: false,
+      aab: false,
       flutterDir: opts.flutterDir,
       flutterArgs: [],
     };

@@ -190,6 +190,16 @@ function foldAbsoluteCalcOnce(value: string): string {
  * lineHeight is left a string: the peer tells multipliers (a bare number)
  * from absolute heights ("Npx") apart. */
 function resolveEm(style: Record<string, unknown>, parentPx: number): void {
+  // `font-size: 50%` resolves against the parent's computed size, the same
+  // job the em branch below does for em — but no EM_LENGTH match reaches a
+  // bare percent, and one reaching the peer parses as an invalid length:
+  // the property drops and the text falls to the peer's 14px default while
+  // web's real CSS resolves it. Rewrite to px alongside the em case; a
+  // child reads the same px either way (fontSizePx handled % already).
+  const declared = style.fontSize;
+  if (typeof declared === 'string' && /^-?\d*\.?\d+%$/.test(declared.trim())) {
+    style.fontSize = Math.round(fontSizePx(declared, parentPx) * 100) / 100;
+  }
   let own: number | undefined;
   for (const k in style) {
     const v = style[k];

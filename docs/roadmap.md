@@ -617,22 +617,49 @@ WebGL 扩展（`getExtension`）、`readPixels`、GL 指令去重、
   （命令式 Toast / Dialog、深层 target、`getComputedStyle`）登记在
   [vue3.md](vue3.md#第三方组件库兼容vant)
 
+## CSS 收尾：transition 与百分比（已完成 2026-09）
+
+`specs/078-css-transition-wrapup/` + `specs/079-css-percent-wrapup/`，近期计划的
+CSS 收尾项（纯 Dart 侧与 JS 引擎侧，op 协议零改动）：
+
+- ✅ **transition 补全**：文字 `color`（段落自身，`:active`/`:hover` 状态变体
+  驱动同一路径）、分边与虚线的 `border-color`（自绘 painter 每边 ColorTween，
+  几何取终态）、`margin` / `padding`（解析后的 EdgeInsets 插值，% 在
+  LayoutBuilder 内解析）。差异登记：delay 不生效、嵌套片段自带 color 瞬时、
+  不派 transitionend
+- ✅ **百分比补全**：`gap` 的 `%`（flex LayoutBuilder 内按容器自身对应轴解析，
+  无界退化 0）；`border-radius` 的 `%` 放开到相对尺寸盒（按解析后的盒尺寸，
+  内容盒保持方角、painter 组合回退方形并告警）；`font-size` 的裸 `%` 由引擎
+  按父计算字号改写成 px 下发（根按 16px），两端同值、Dart 零改动
+
+## fjs splash / upgrade / preview / --ipa --aab（已完成 2026-09）
+
+近期计划的四条 CLI 项（specs/080–083）：
+
+- ✅ **`fjs splash`**：一张 PNG + `--color` 生成三套启动屏——Android
+  launch_background layer-list + 分密度 launch_image、values-v31 系统 splash
+  （图标被 OS 裁圆已提示）、iOS LaunchImage.imageset 三倍图 + storyboard
+  背景色；缩放复用 `fjs icon` 的外调 sips/ImageMagick；iOS 模拟器冷启动对拍
+- ✅ **`fjs upgrade`**：`@ufjs/cli` / `@ufjs/runtime` / 宿主 `flutter_fjs`
+  三包同 minor 一起升（target = npm latest 的 cli，另两者取同 minor 最高版，
+  flutter_fjs 走 pub.dev API）；`--check` 只打印计划；path 依赖与
+  pnpm-workspace checkout 跳过；doctor 补第三项检查（托管 flutter_fjs ↔ cli
+  不同 minor 告警，此前只查 cli↔runtime）
+- ✅ **`fjs preview`**：只读静态服务 `dist/web`（默认 4173），SPA 兜底 / 诚实
+  404 / 穿越防护与 `fjs dev --web` 共享 `dev/static.ts`，URL 语义不漂移
+- ✅ **`fjs build --ipa` / `--aab`**：与 `--apk`/`--hap` 互斥（一次一种）、
+  同样要求 `--release`/`--profile`；`--ipa` 仅 darwin，签名导出失败留
+  `.xcarchive` 并提示 `-- --export-options-plist` 透传
+
 ## 近期计划
-- **CSS 扩展收尾项**：`color` / `border-color` / 布局属性的过渡、
-  `gap`/`border-radius`/`font-size`
-  的 `%`——均按需另立 spec。当前支持范围见 [css-compat.md](css-compat.md)，
-  加一条要改的 7 个地方也在那里
-  （dashed / dotted 边框自绘已完成，见 `render/dashed_border.dart`）
-- **`fjs splash` 启动图**：不是"换几张图"那么简单——Android 12+ 走
-  `windowSplashScreenAnimatedIcon` 主题属性，更早版本走 `launch_background.xml`
-  的 layer-list，iOS 是 `LaunchScreen.storyboard` 里的 imageset，三套机制三种
-  改法且都要改 XML。`fjs icon` 那套外调缩放可以直接复用
-- **`fjs upgrade`**：把 `@ufjs/cli`、`@ufjs/runtime`、pubspec 里的 `flutter_fjs`
-  一起升到咬合的版本。三者版本必须匹配，手动升是踩坑重灾区
-  （`fjs doctor` 目前只能发现不匹配，不能修）
-- **`fjs preview`**：静态服务 `dist/web`，对齐 `vite preview`，验证 release
-  web 产物
-- **`fjs build --ipa` / `--aab`**：目前只有 `--apk`
+
+- **App 侧真机对拍挂账**：078/079 的示例页（过渡演示新增面板、百分比间距与
+  圆角）web 侧已对拍，`fjs run ios` 走一遍显示层确认仍是手工项（行为已被
+  13 条 Dart widget 用例覆盖）
+- **`--aab` 实跑**：签名环境无关但构建耗时长，产物路径以 releaseBuild 打印
+  为准（specs/083 T021）
+- 当前 CSS 支持范围见 [css-compat.md](css-compat.md)，加一条要改的 7 个地方
+  也在那里（dashed / dotted 边框自绘已完成，见 `render/dashed_border.dart`）
 
 ## 中期
 

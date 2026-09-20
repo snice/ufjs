@@ -1312,3 +1312,49 @@ describe('absolute calc folding', () => {
     expect(applied.get(node)).toMatchObject({ transform: 'translate(20.8px)' });
   });
 });
+
+describe('font-size: %', () => {
+  it('resolves against the parent computed size', async () => {
+    const { engine, applied, add } = makeEngine();
+    add(1, 'view', null);
+    add(2, 'text', 1);
+    engine.setInlineStyle(1, 'fontSize: 20px');
+    engine.setInlineStyle(2, 'fontSize: 50%');
+    await styleTick();
+    expect(applied.get(2)?.fontSize).toBe(10);
+  });
+
+  it('chains through grandchildren as resolved px', async () => {
+    const { engine, applied, add } = makeEngine();
+    add(1, 'view', null);
+    add(2, 'view', 1);
+    add(3, 'text', 2);
+    engine.setInlineStyle(1, 'fontSize: 40px');
+    engine.setInlineStyle(2, 'fontSize: 50%');
+    engine.setInlineStyle(3, 'fontSize: 50%');
+    await styleTick();
+    expect(applied.get(2)?.fontSize).toBe(20);
+    expect(applied.get(3)?.fontSize).toBe(10);
+  });
+
+  it('resolves the root against the 16px initial value', async () => {
+    const { engine, applied, add } = makeEngine();
+    add(1, 'text', null);
+    engine.setInlineStyle(1, 'fontSize: 150%');
+    await styleTick();
+    expect(applied.get(1)?.fontSize).toBe(24);
+  });
+
+  it('a font-size change re-resolves the children', async () => {
+    const { engine, applied, add } = makeEngine();
+    add(1, 'view', null);
+    add(2, 'text', 1);
+    engine.setInlineStyle(1, 'fontSize: 20px');
+    engine.setInlineStyle(2, 'fontSize: 50%');
+    await styleTick();
+    expect(applied.get(2)?.fontSize).toBe(10);
+    engine.setInlineStyle(1, 'fontSize: 32px');
+    await styleTick();
+    expect(applied.get(2)?.fontSize).toBe(16);
+  });
+});

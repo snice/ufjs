@@ -205,6 +205,11 @@ export interface BuildOptions {
   apk: boolean;
   /** With --release, also run `flutter build hap` (OpenHarmony fork only). */
   hap: boolean;
+  /** With --release, also run `flutter build ipa` (macOS only; export
+   * needs signing config — a failed export leaves the .xcarchive behind). */
+  ipa: boolean;
+  /** With --release, also run `flutter build appbundle` (.aab for Play). */
+  aab: boolean;
   /** Flutter host project dir used by --release/--apk. */
   flutterDir: string;
   /** Extra args passed to `flutter build apk` after `--`. */
@@ -265,6 +270,8 @@ export function parseBuildArgs(argv: string[]): BuildOptions {
     rootPath: RELEASE_ROOT_PATH,
     apk: false,
     hap: false,
+    ipa: false,
+    aab: false,
     flutterDir: configuredFlutterDir(),
     flutterArgs: [],
     analyze: false,
@@ -284,6 +291,8 @@ export function parseBuildArgs(argv: string[]): BuildOptions {
     }
     else if (a === '--apk') opts.apk = true;
     else if (a === '--hap') opts.hap = true;
+    else if (a === '--ipa') opts.ipa = true;
+    else if (a === '--aab') opts.aab = true;
     else if (a === '--minify') opts.minify = true;
     else if (a === '--no-minify') opts.minify = false;
     else if (a === '--gz') opts.gz = true;
@@ -1140,11 +1149,20 @@ export async function buildCommand(argv: string[]): Promise<void> {
   // parseBuildArgs, so `fjs dev` — which shares the parser — writes to the
   // same place (spec 047)
   const opts = parseBuildArgs(argv);
-  if (opts.apk && !opts.release) {
-    throw new Error('--apk requires --release or --profile');
+  // One flutter target per invocation: each of these spawns its own
+  // `flutter build <target>`, and silently picking one of two asked-for
+  // targets would bury the other
+  const targets = [opts.apk && '--apk', opts.hap && '--hap', opts.ipa && '--ipa', opts.aab && '--aab'].filter(
+    Boolean,
+  ) as string[];
+  if (targets.length > 1) {
+    throw new Error(`pick one of --apk/--hap/--ipa/--aab per build (got ${targets.join(' ')})`);
   }
-  if (opts.hap && !opts.release) {
-    throw new Error('--hap requires --release or --profile');
+  for (const flag of targets) {
+    if (!opts.release) throw new Error(`${flag} requires --release or --profile`);
+  }
+  if (opts.ipa && process.platform !== 'darwin') {
+    throw new Error('--ipa needs macOS and Xcode');
   }
   if (opts.release) {
     if (opts.web) throw new Error('--release is for Flutter app builds; remove --web');
@@ -1284,6 +1302,26 @@ export function releaseBuild(opts: BuildOptions, res: BuildResult): void {
     const result = spawnSync('flutter', args, { cwd: flutterDir, stdio: 'inherit' });
     if (result.status !== 0) throw new Error('flutter build hap failed');
     console.log(`built HAP under ${path.relative(root, path.join(flutterDir, 'ohos', 'entry', 'build', 'default', 'outputs', 'default'))}`);
+  }
+  if (opts.aab) {
+    const args = ['build', 'appbundle', ...flutterModeArgs(opts.mode, opts.flutterArgs), ...opts.flutterArgs];
+    const result = spawnSync('flutter', args, { cwd: flutterDir, stdio: 'inherit' });
+    if (result.status !== 0) throw new Error('flutter build appbundle failed');
+    console.log(`built AAB under ${path.relative(root, path.join(flutterDir, 'build', 'app', 'outputs', 'bundle', 'release'))}`);
+  }
+  if (opts.ipa) {
+    const args = ['build', 'ipa', ...flutterModeArgs(opts.mode, opts.flutterArgs), ...opts.flutterArgs];
+    const result = spawnSync('flutter', args, { cwd: flutterDir, stdio: 'inherit' });
+    if (result.status !== 0) {
+      // the usual failure is the signed EXPORT, not the archive: point at
+      // the archive and the passthrough that turns it into an .ipa
+      console.error(
+        `flutter build ipa failed. the archive is under ${path.relative(root, path.join(flutterDir, 'build', 'ios', 'archive'))} —\n` +
+          'export it from Xcode, or rerun with `-- --export-options-plist <file>` for a signed .ipa',
+      );
+      throw new Error('flutter build ipa failed');
+    }
+    console.log(`built IPA under ${path.relative(root, path.join(flutterDir, 'build', 'ios', 'ipa'))}`);
   }
 }
 

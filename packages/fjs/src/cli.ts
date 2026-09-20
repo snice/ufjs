@@ -8,7 +8,7 @@
 //   fjs add    <package>...
 //   fjs run    <android|ios|ohos>
 //   fjs routes / fjs doctor / fjs devices / fjs clean / fjs host / fjs icon
-//   fjs log / fjs eval
+//   fjs splash / fjs preview / fjs upgrade / fjs log / fjs eval
 import { buildCommand } from './bundler/build.js';
 import { error } from './terminal/colors.js';
 import { devCommand } from './dev/server.js';
@@ -21,6 +21,9 @@ import { devicesCommand } from './commands/devices.js';
 import { cleanCommand } from './commands/clean.js';
 import { hostCommand } from './commands/host.js';
 import { iconCommand } from './commands/icon.js';
+import { splashCommand } from './commands/splash.js';
+import { previewCommand } from './commands/preview.js';
+import { upgradeCommand } from './commands/upgrade.js';
 import { evalCommand, logCommand } from './commands/inspect.js';
 import { doctorCommand } from './commands/doctor.js';
 import { runCommand } from './commands/run.js';
@@ -55,6 +58,13 @@ commands:
       --apk                 with --release/--profile: also flutter build apk
       --hap                 with --release/--profile: also flutter build hap
                             (needs the OpenHarmony flutter fork)
+      --ipa                 with --release/--profile: also flutter build ipa
+                            (macOS + Xcode; a failed export leaves the
+                            .xcarchive — pass -- --export-options-plist
+                            <file> for a signed .ipa)
+      --aab                 with --release/--profile: also flutter build
+                            appbundle (the .aab Play publishes)
+                            one of --apk/--hap/--ipa/--aab per build
       --flutter-dir <dir>    Flutter host dir for --release/--apk
                             (default: .fjs/flutter, or package.json
                             fjs.flutterDir once ejected)
@@ -129,6 +139,23 @@ commands:
   fjs icon <file.png>        regenerate the app icons from one square PNG
       --platform <android|ios>  only that platform (default: both)
       --dry-run              list the files and sizes instead
+  fjs splash <file.png>      regenerate the launch screens from one PNG
+      --color <#rrggbb>      splash background colour (default: keep the
+                             template's white)
+      --size <px>            logo logical size (default: 192)
+      --platform <android|ios>  only that platform (default: both)
+      --dry-run              list the files and sizes instead
+  fjs preview                serve dist/web statically (like vite preview):
+                             verify the release web build, read-only — no
+                             rebuild, no reload snippet
+      --out <dir>            build output root (default: dist; serves
+                             <dir>/web)
+      --port <n>             port (default: 4173)
+      --host <addr>          bind address (default: 127.0.0.1)
+  fjs upgrade                move @ufjs/cli, @ufjs/runtime and the host's
+                             flutter_fjs to the newest matching versions
+                             (one system, one minor — doctor warns, this fixes)
+      --check                print the from → to plan, change nothing
   fjs log                    stream the app's console output
       --port <n>             dev server port (default: 38900)
       --host <addr>          dev server address (default: 127.0.0.1)
@@ -208,6 +235,15 @@ async function main() {
       break;
     case 'icon':
       iconCommand(argv);
+      break;
+    case 'splash':
+      splashCommand(argv);
+      break;
+    case 'preview':
+      await previewCommand(argv);
+      break;
+    case 'upgrade':
+      await upgradeCommand(argv);
       break;
     case 'log':
       await logCommand(argv);

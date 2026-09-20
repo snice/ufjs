@@ -57,10 +57,6 @@ Widget buildFlex(
       (style.display == null ||
           style.display == 'block' ||
           style.display == 'inline-block');
-  // main-axis gap is column-gap on a row, row-gap on a column (as in CSS);
-  // `gap` is the shorthand for both
-  final gap = horizontal ? style.columnGap : style.rowGap;
-  final crossGap = horizontal ? style.rowGap : style.columnGap;
   if (style.flexWrap && !_growingSingleLine(horizontal, kidNodes)) {
     // wrapped children lay out run by run, so flexGrow (Expanded) has no
     // meaning here — but a CSS flex item's MAIN-axis size is still
@@ -81,10 +77,21 @@ Widget buildFlex(
         final crossAxisMax = horizontal
             ? constraints.maxHeight
             : constraints.maxWidth;
+        // A % gap is a fraction of the container's own size along the gap's
+        // axis (CSS: column-gap against the width, row-gap against the
+        // height); an unbounded reference resolves to zero, as CSS treats it.
         return Wrap(
           direction: axis,
-          spacing: gap ?? 0,
-          runSpacing: crossGap ?? 0,
+          spacing:
+              (horizontal
+                  ? style.columnGapLength
+                  : style.rowGapLength)?.resolveOrNull(mainAxisMax) ??
+              0,
+          runSpacing:
+              (horizontal
+                  ? style.rowGapLength
+                  : style.columnGapLength)?.resolveOrNull(crossAxisMax) ??
+              0,
           alignment: style.wrapAlignment,
           crossAxisAlignment: style.wrapCrossAlignment,
           children: [
@@ -150,13 +157,6 @@ Widget buildFlex(
           unboundedStretch ||
           (selfAligned &&
               effectiveCrossAlignment != CrossAxisAlignment.stretch);
-      final entries = <(Widget, MirrorNode?)>[
-        for (var i = 0; i < kids.length; i++) ...[
-          if (gap != null && i > 0)
-            (horizontal ? SizedBox(width: gap) : SizedBox(height: gap), null),
-          (kids[i], i < kidNodes.length ? kidNodes[i] : null),
-        ],
-      ];
       // What a percentage on the main axis is a percentage OF: this box's
       // content box, the same reference CSS uses. Flex hands its children an
       // unbounded main axis, so a child cannot read it from its own
@@ -164,6 +164,22 @@ Widget buildFlex(
       final mainAxisMax = horizontal
           ? constraints.maxWidth
           : constraints.maxHeight;
+      // The main-axis gap with its % resolved — column-gap against the
+      // width on a row, row-gap against the height on a column, both of
+      // them mainAxisMax here; unbounded falls to zero, as CSS treats it.
+      final gapPx = (horizontal
+              ? style.columnGapLength
+              : style.rowGapLength)?.resolveOrNull(mainAxisMax);
+      final entries = <(Widget, MirrorNode?)>[
+        for (var i = 0; i < kids.length; i++) ...[
+          if (gapPx != null && i > 0)
+            (
+              horizontal ? SizedBox(width: gapPx) : SizedBox(height: gapPx),
+              null,
+            ),
+          (kids[i], i < kidNodes.length ? kidNodes[i] : null),
+        ],
+      ];
       // Main-axis auto margins (CSS flexbox §8.1): they take the free space
       // before justify-content sees any, split equally between them — a
       // Spacer on each auto side is exactly that split. There is free space

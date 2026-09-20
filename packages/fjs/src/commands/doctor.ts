@@ -289,19 +289,34 @@ function hostCheck(root: string): Result {
   const hosted = /flutter_fjs:\s*(\S+)/.exec(text);
   const source = local ? `from ${local[1]}` : hosted ? hosted[1] : 'from pub.dev';
   const owner = isEjected(root) ? 'ejected' : 'managed';
+  // the third leg of the version triangle (fjs upgrade moves all three):
+  // a hosted flutter_fjs on a different minor than the CLI is the classic
+  // half-upgrade; a path dependency is the repo's own business
+  if (!local && hosted !== null) {
+    const cli = installedVersion(root, '@ufjs/cli');
+    const constraint = hosted[1].replace(/^\^/, '');
+    if (cli !== null && minor(constraint) !== minor(cli)) {
+      return {
+        status: 'warn',
+        detail: `${shown} (${owner}) — flutter_fjs ${hosted[1]} vs @ufjs/cli ${cli}`,
+        hint: 'fjs upgrade moves the three packages together',
+      };
+    }
+  }
   return { status: 'ok', detail: `${shown} (${owner}) — flutter_fjs ${source}` };
 }
 
 // ------------------------------------------------------------- helpers
 
-interface PackageJson {
+export interface PackageJson {
   name?: string;
   version?: string;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  packageManager?: string;
 }
 
-function readPackage(root: string): PackageJson | null {
+export function readPackage(root: string): PackageJson | null {
   try {
     return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as PackageJson;
   } catch {
@@ -311,8 +326,9 @@ function readPackage(root: string): PackageJson | null {
 
 /** Walks node_modules by hand instead of using require.resolve: both @ufjs
  * packages declare "exports", which hides their own package.json from the
- * resolver. Walking up also follows pnpm's symlinked workspace layout. */
-function installedVersion(root: string, name: string): string | null {
+ * resolver. Walking up also follows pnpm's symlinked workspace layout.
+ * fjs upgrade reuses this for its from-side. */
+export function installedVersion(root: string, name: string): string | null {
   let dir = root;
   for (;;) {
     const manifest = path.join(dir, 'node_modules', ...name.split('/'), 'package.json');
@@ -330,7 +346,7 @@ function installedVersion(root: string, name: string): string | null {
   }
 }
 
-function minor(version: string): string {
+export function minor(version: string): string {
   const [major, min] = version.split('.');
   return `${major}.${min}`;
 }

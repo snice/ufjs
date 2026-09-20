@@ -133,12 +133,15 @@ function emit(
 
 // ------------------------------------------------------------- resizer
 
-interface Resizer {
+/** The resizing backend + PNG header reader live here because the icon
+ * command owns them; fjs splash reuses both (same no-image-library trade). */
+
+export interface Resizer {
   name: string;
   command(source: string, out: string, size: number): [string, string[]];
 }
 
-function findResizer(): Resizer {
+export function findResizer(): Resizer {
   // sips ships with macOS; -z forces exact height and width
   if (process.platform === 'darwin' && has('sips')) {
     return {
@@ -176,7 +179,7 @@ function has(cmd: string): boolean {
 
 // ----------------------------------------------------------------- png
 
-interface Png {
+export interface Png {
   width: number;
   height: number;
   hasAlpha: boolean;
@@ -184,7 +187,7 @@ interface Png {
 
 /** Reads IHDR. Doubles as the "is this actually a PNG" check — the resizer
  * would say so too, but only after writing a dozen broken files. */
-function readPng(file: string): Png {
+export function readPng(file: string): Png {
   const head = Buffer.alloc(26);
   const fd = fs.openSync(file, 'r');
   try {

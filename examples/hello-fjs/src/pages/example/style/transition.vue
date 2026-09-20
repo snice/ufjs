@@ -1,15 +1,16 @@
 <route>
-{"title": "过渡演示", "group": "样式演示", "desc": "transition：背景渐变 / transform 缩放 / opacity，两端同源"}
+{"title": "过渡演示", "group": "样式演示", "desc": "transition：背景/文字色 / 虚线边框 / 间距 / transform / opacity，两端同源"}
 </route>
 
 <script setup lang="ts">
-// transition 演示页（spec 045）。
+// transition 演示页（spec 045/078）。
 //
-// 可动画属性：background-color / transform / opacity / width / height
-// （App 端 decoration 层逐帧插值，web 端浏览器原生）。其余属性（color /
-// border）App 端瞬时跳变，是登记过的两端差异；@keyframes 另立 spec。
-// 对拍：按住「按住缩小」看 :active 缩放渐变；点「点我变色」看背景色
-// 0.3s 渐变；hover（桌面/悬停）看淡入。
+// 可动画属性：background-color / color / border-color / transform / opacity
+// / width / height / padding / margin（App 端逐帧插值，web 端浏览器原生）。
+// delay 与嵌套片段自带 color 的过渡是登记过的两端差异；@keyframes 另立。
+// 对拍：点「点我变色」看背景色渐变；点「文字变色」看字色渐变；
+// 点「虚线变色」看 dashed 分隔线渐变；点「间距渐变」看内外边距展开；
+// 按住「按住缩小」看 :active 缩放；hover（桌面）看淡入。
 import { ref } from 'vue';
 import Panel from '@/components/Panel.vue';
 
@@ -33,6 +34,18 @@ const on = ref(false);
 
     <Panel title="尺寸过渡" desc="transition: width 0.4s —— 点按变宽/还原。尺寸是布局属性：逐帧重排，与 web 的成本一致，别在大子树上用">
       <view class="size-btn" :class="{ wide: on }" @tap="on = !on">点我变宽</view>
+    </Panel>
+
+    <Panel title="文字变色" desc="transition: color 0.3s —— 段落自身的颜色渐变（spec 078）；嵌套 text 片段自带的 color 仍瞬时，是登记过的差异">
+      <view class="text-btn" :class="{ lit: on }" @tap="on = !on">文字由灰变绿</view>
+    </Panel>
+
+    <Panel title="虚线变色" desc="transition: border-color 0.3s —— dashed 分隔线渐变；颜色插值，宽度与样式取终态">
+      <view class="dash" :class="{ lit: on }">border-bottom: 2px dashed</view>
+    </Panel>
+
+    <Panel title="间距渐变" desc="transition: padding / margin —— 盒子的呼吸感；同为布局属性，逐帧重排">
+      <view class="gap-btn" :class="{ roomy: on }" @tap="on = !on">padding / margin 展开</view>
     </Panel>
   </view>
 </template>
@@ -104,5 +117,42 @@ const on = ref(false);
 }
 .size-btn.wide {
   width: 240px;
+}
+
+.text-btn {
+  padding: 12 16;
+  font-size: 15;
+  color: #666666;
+  background-color: #f5f5f5;
+  border-radius: 8;
+  transition: color 0.3s ease;
+}
+.text-btn.lit {
+  color: #07c160;
+}
+
+.dash {
+  padding: 12 0;
+  font-size: 14;
+  color: #666666;
+  border-bottom: 2px dashed #dd524d;
+  transition: border-color 0.3s ease;
+}
+.dash.lit {
+  border-bottom-color: #07c160;
+}
+
+.gap-btn {
+  padding: 12 16;
+  margin: 0;
+  background-color: #2f86ff;
+  border-radius: 8;
+  color: #ffffff;
+  font-size: 15;
+  transition: padding 0.4s ease, margin 0.4s ease;
+}
+.gap-btn.roomy {
+  padding: 20 32;
+  margin: 16 0;
 }
 </style>

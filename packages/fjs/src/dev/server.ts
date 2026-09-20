@@ -78,17 +78,9 @@ function projectName(root: string): string {
   return path.basename(root);
 }
 
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.mjs': 'application/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.woff2': 'font/woff2',
-};
+// the MIME table and the file semantics live in dev/static.ts, shared with
+// `fjs preview` — what a URL means must not drift between the two servers
+import { MIME, resolveStaticFile } from './static.js';
 
 /** Live-reload client appended to the dev index.html.
  *
@@ -1015,24 +1007,15 @@ function webServer(opts: BuildOptions, root: string): Server {
     async handle(req, res) {
       await ready();
       const url = (req.url ?? '/').split('?')[0];
-      let file = path.join(webOut, url === '/' ? 'index.html' : decodeURIComponent(url));
-      if (!file.startsWith(webOut)) return false; // path traversal
-      // SPA fallback: hash routing keeps everything on '/', but a deep link
-      // in history mode still has to land on index.html.
-      //
-      // Only for paths that could BE a route, though. A missing
-      // `/images/x.png` used to come back as index.html with a 200, which
-      // the browser reports as nothing more than a broken image — the
-      // silent failure specs/017-local-image-assets was written to remove.
-      // Anything with a file extension gets an honest 404.
-      if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
-        if (path.extname(url)) {
-          res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-          res.end(`not found: ${url}\n`);
-          return true;
-        }
-        file = path.join(webOut, 'index.html');
-        if (!fs.existsSync(file)) return false;
+      // resolveStaticFile carries the SPA-fallback comment: an
+      // extension-less path lands on index.html (a deep link in history
+      // mode), a missing path WITH an extension gets the honest 404 that
+      // specs/017's silent-failure cleanup demands.
+      const file = resolveStaticFile(webOut, url);
+      if (file === null) {
+        res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end(`not found: ${url}\n`);
+        return true;
       }
       res.writeHead(200, {
         'content-type': MIME[path.extname(file)] ?? 'application/octet-stream',

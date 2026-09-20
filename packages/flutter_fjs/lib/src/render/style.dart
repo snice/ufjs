@@ -737,6 +737,18 @@ class FjsStyle {
   double? get rowGap => _num('rowGap') ?? gap;
   double? get columnGap => _num('columnGap') ?? gap;
 
+  /// The same three, kept as [FjsLength] so `gap: 5%` reaches the layout
+  /// pass (spec 079). A percentage gap is a fraction of the container's own
+  /// size along the gap's axis (CSS gap semantics: column-gap against the
+  /// width, row-gap against the height), which only the flex layout pass
+  /// knows — flex.dart resolves it inside its LayoutBuilder.
+  FjsLength? get gapLength => parseLengthValue(_v('gap'));
+
+  /// `row-gap` / `column-gap`, each falling back to the `gap` shorthand.
+  FjsLength? get rowGapLength => parseLengthValue(_v('rowGap')) ?? gapLength;
+  FjsLength? get columnGapLength =>
+      parseLengthValue(_v('columnGap')) ?? gapLength;
+
   /// `flex-wrap`. `wrap-reverse` wraps without reversing the run order
   /// (Flutter's Wrap can do it, but nothing needs it yet).
   bool get flexWrap {
