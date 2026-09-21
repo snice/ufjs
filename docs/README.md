@@ -85,6 +85,7 @@ QuickJS 上实现的是一套**框架无关的命令式 element API**，前端�
 | 14.5 | [调试器内部实现](debugger.md) | `fjs debug` 怎么搭起来：引擎原生 CDP、可插拔的 `libfjs_debugger`、中继与面板桥接 |
 | 15 | [发布 npm 与 pub.dev](publishing.md) | 三个包版本咬合、预编译产物 |
 | 16 | [性能测试](performance.md) | 基准方法、实测数据、热点 |
+| 16.5 | [引擎性能对比](engine-perf.md) | PrimJS 4.1.1 vs quickjs-ng 0.9.0：各快在哪、内存与体积、差距的机制 |
 | 17 | [Roadmap](roadmap.md) | 已交付 / 近期 / 中期 / 远期 |
 
 ---

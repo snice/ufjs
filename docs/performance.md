@@ -13,7 +13,7 @@ pnpm run build
 ../../packages/flutter_fjs/native/build-native/fjsrun --pump 8000 dist/app/bundle.js
 ```
 
-机器基线：Apple Silicon (M 系列)，macOS 26，flutter 3.24.5。历史数据采集于 quickjs-ng 0.9.0；spec 088 起引擎为 PrimJS 4.1.1（es2021→es2019 降级），数字待重测。
+机器基线：Apple Silicon (M 系列)，macOS 26，flutter 3.24.5。历史数据采集于 quickjs-ng 0.9.0；spec 088 起引擎为 PrimJS 4.1.1（es2021→es2019 降级），数字待重测。两个引擎的同机对比（2026-09-22：分配主导的页面负载 PrimJS 快 1.3–1.7×，纯计算 quickjs-ng 快 1.7–2.2×）见 [engine-perf.md](engine-perf.md)。
 
 ### 样式基准报 min，不报单次耗时
 
