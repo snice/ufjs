@@ -174,6 +174,11 @@ class DevClient {
     }
     _ws = ws;
     _retryAttempt = 0;
+    // spec 088: tells the server this is a native app, not a browser page
+    // or a tool. The server answers with `debug on <port>` when a
+    // `fjs debug` relay is already up, which is how an app that starts (or
+    // hot restarts) after `fjs debug` still gets attached.
+    ws.add(jsonEncode({'fjs': 'app'}));
     ws.listen(
       (data) {
         if (_closed) return;

@@ -38,6 +38,7 @@ import {
   scanModules,
   writeModuleTypes,
 } from '../project/modules.js';
+import { DebugRelayRegistry } from './debug-relay.js';
 import { qrLines, colorSupported } from './qrcode.js';
 import { startBeacon } from './discovery.js';
 import { logLevelLabel } from '../commands/inspect.js';
@@ -431,6 +432,12 @@ export async function devCommand(argv: string[]): Promise<void> {
   // pushed at a browser would reload it — so the split is by identity, not
   // by guessing from the message.
   const tools = new Set<WebSocket>();
+  // Apps that announced themselves (`{fjs:'app'}`). A browser page is an
+  // app too as far as reloads go, but it must never be handed a `debug on`
+  // push: the reload snippet treats every unknown message as "reload", so
+  // greeting it would put it in a reload loop.
+  const nativeApps = new Set<WebSocket>();
+  const debugRelay = new DebugRelayRegistry<WebSocket>();
   // toggled by the `l` shortcut, read by the log relay below
   let streamLogs = false;
   const apps = (): WebSocket[] =>
@@ -443,7 +450,14 @@ export async function devCommand(argv: string[]): Promise<void> {
   };
 
   wss.on('connection', (socket) => {
-    socket.on('close', () => tools.delete(socket));
+    socket.on('close', () => {
+      tools.delete(socket);
+      nativeApps.delete(socket);
+      // the relay dies with the `fjs debug` that opened it
+      if (debugRelay.dropOwner(socket)) {
+        for (const app of nativeApps) app.send('debug off');
+      }
+    });
     socket.on('message', (raw) => {
       // apps that predate this protocol never send anything; anything that
       // is not our JSON is ignored rather than trusted
@@ -467,6 +481,16 @@ export async function devCommand(argv: string[]): Promise<void> {
           tools.add(socket);
           socket.send(JSON.stringify({ fjs: 'hello', apps: apps().length }));
           break;
+        case 'app': {
+          // spec 088: this announce is what makes a late attach work. The
+          // app is usually not connected yet when `fjs debug` starts (`fjs
+          // run ios` builds for a while, hot restarts reconnect), so the
+          // relay is greeted from here rather than pushed once and lost.
+          nativeApps.add(socket);
+          const greeting = debugRelay.greeting();
+          if (greeting) socket.send(greeting);
+          break;
+        }
         case 'log': {
           const level = msg.level ?? 1;
           const text = String(msg.text ?? '');
@@ -505,9 +529,23 @@ export async function devCommand(argv: string[]): Promise<void> {
           if (msg.on === true) {
             const port = Number(msg.port);
             if (!Number.isInteger(port) || port <= 0) break;
-            for (const app of apps()) app.send(`debug on ${port}`);
+            // Remembered, not just broadcast: apps that connect later are
+            // greeted with it (the `app` case above).
+            debugRelay.open(socket, port);
+            for (const app of nativeApps) app.send(`debug on ${port}`);
+            const silent = apps().length - nativeApps.size;
+            if (silent > 0) {
+              // never guess: a browser page would take `debug on` for a
+              // reload, and an older flutter_fjs never announces itself
+              console.log(
+                `fjs debug: ${silent} connected client${silent === 1 ? '' : 's'} ` +
+                  'will not attach (a browser page, or a flutter_fjs older ' +
+                  'than this CLI — run `fjs upgrade`)',
+              );
+            }
           } else {
-            for (const app of apps()) app.send('debug off');
+            debugRelay.close();
+            for (const app of nativeApps) app.send('debug off');
           }
           break;
         }

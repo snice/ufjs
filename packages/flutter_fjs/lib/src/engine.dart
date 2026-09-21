@@ -856,6 +856,7 @@ class FjsEngine extends ChangeNotifier {
     // server ignores the query and the manifest says nothing — classic path
     final manifest = await dev.fetchManifest();
     final split = manifest?['split'] == true;
+    _devSplit = split;
     final units = split && manifest?['units'] == true;
     if (split) {
       // Plain fetch, NOT the bootstrap one: a route chunk fails with the app
@@ -918,6 +919,9 @@ class FjsEngine extends ChangeNotifier {
     dev.onDebugDetach = () {
       if (_debugPort == null) return;
       _debugPort = null;
+      _debugRetryTimer?.cancel();
+      _debugRetryTimer = null;
+      _debugRetryAttempt = 0;
       final vm = _vm;
       if (vm != null) bind.debuggerDetachVm(vm);
       onLog?.call(1, '[fjs/debug] detached');
@@ -1078,19 +1082,110 @@ class FjsEngine extends ChangeNotifier {
   /// re-attach cost — the debug channel has to survive every reload.
   int? _debugPort;
 
+  /// Whether the connected dev server serves a split build. connectDev
+  /// negotiates it; the debug retry needs it to re-run [_loadFromDev] after
+  /// a late attach succeeds.
+  bool _devSplit = false;
+
+  /// Bounded redial after a failed first attach (spec 088). The relay takes
+  /// one app at a time, and the slot can be held by an app instance a dead
+  /// `fjs run` left behind — the dial then fails with the app otherwise
+  /// healthy, which used to leave the session undebuggable until the next
+  /// full reload happened to win. Retries dial only; the VM this retry was
+  /// scheduled for has already evaluated every script WITHOUT the debugger,
+  /// so a successful retry reloads once more to register them.
+  Timer? _debugRetryTimer;
+  int _debugRetryAttempt = 0;
+
+  static const int _debugRetryMax = 4;
+
   /// Attaches the CDP channel to the current VM when a debug session is
   /// active. Called right after reset() inside [_loadFromDev] — BEFORE any
   /// script evals — so every script of the fresh VM lands in the debugger's
-  /// script table.
+  /// script table. The TCP session itself survives reloads inside the
+  /// debugger module; only the per-VM inspector state is (re)installed here.
   void _reattachDebugger() {
     final port = _debugPort;
     if (port == null) return;
     final dev = _dev;
     final vm = _vm;
     if (dev == null || vm == null) return;
-    if (bind.debuggerAttachHost(vm, dev.host, port) != 0) {
-      onLog?.call(2, '[fjs/debug] re-attach failed: ${_lastError()}');
+    if (_debugDial(vm, dev, port)) return;
+    _scheduleDebugRetry(dev, port);
+  }
+
+  /// Dials the relay's VM channel, device-local loopback first.
+  ///
+  /// `fjs debug` publishes the channel on every adb device via
+  /// `adb reverse tcp:<port>`, and that tunnel is why the loopback candidate
+  /// goes first: the Android emulator's userspace network proxy repeatedly
+  /// let the HOST side of the connect complete while the GUEST-side
+  /// handshake hung past the whole 2s budget — five dials, five timeouts,
+  /// while a shell `nc` to the same address connected in 0.7s
+  /// (specs/088 regression). The tunnel is also what makes the channel work
+  /// over USB where no LAN route exists. Without it (iOS, or a physical
+  /// device fjs debug could not reach) the dev-server host is the fallback:
+  /// a loopback dial that finds no tunnel fails instantly with ECONNREFUSED,
+  /// so the extra candidate never delays the working path.
+  bool _debugDial(FJSVMHandle vm, DevClient dev, int port) {
+    final candidates = <String>[
+      '127.0.0.1',
+      if (dev.host != '127.0.0.1') dev.host,
+    ];
+    final failures = <String>[];
+    for (final host in candidates) {
+      // every failure path in the module closes its socket, so trying the
+      // next candidate right away is safe
+      if (bind.debuggerAttachHost(vm, host, port) == 0) return true;
+      failures.add('$host — ${_lastError()}');
     }
+    onLog?.call(2, '[fjs/debug] attach failed: ${failures.join(' · ')}');
+    return false;
+  }
+
+  void _scheduleDebugRetry(DevClient dev, int port) {
+    if (_debugRetryAttempt >= _debugRetryMax) {
+      _debugRetryAttempt = 0;
+      onLog?.call(
+        2,
+        '[fjs/debug] attach keeps failing — toggle fjs debug off/on to retry',
+      );
+      return;
+    }
+    // A reload while the retry is pending replaces the VM it was for; the
+    // reload's own attach attempt takes over from here.
+    final generation = _vmGeneration;
+    final wait = 800 << _debugRetryAttempt;
+    _debugRetryAttempt++;
+    onLog?.call(
+      1,
+      '[fjs/debug] retrying attach in ${wait}ms '
+      '(attempt $_debugRetryAttempt/$_debugRetryMax)',
+    );
+    _debugRetryTimer?.cancel();
+    _debugRetryTimer = Timer(Duration(milliseconds: wait), () async {
+      if (_disposed || _debugPort != port || _vmGeneration != generation) {
+        return;
+      }
+      final vm = _vm;
+      if (vm == null || _dev != dev) return;
+      if (!_debugDial(vm, dev, port)) {
+        _scheduleDebugRetry(dev, port);
+        return;
+      }
+      _debugRetryAttempt = 0;
+      onLog?.call(
+        1,
+        '[fjs/debug] debug channel attached — reloading so every script '
+        'registers with the debugger',
+      );
+      try {
+        final effectiveUnits = await _renegotiateUnits(dev);
+        await _loadFromDev(dev, _devSplit, effectiveUnits);
+      } catch (e) {
+        onLog?.call(3, '[fjs/debug] post-attach reload failed: $e');
+      }
+    });
   }
 
   /// One dev load: fresh VM, then the shared prelude (split builds only),
@@ -1395,6 +1490,7 @@ class FjsEngine extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     _unwatchPointer?.call();
+    _debugRetryTimer?.cancel();
     stopEventLoop();
     _http.close();
     _dev?.close();

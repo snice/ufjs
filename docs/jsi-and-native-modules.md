@@ -147,10 +147,13 @@ cmake -B build-native -DFJS_BUILD_TESTS=ON && cmake --build build-native -j
                                         # 接入 `fjs debug` 的调试通道（spec 088）
 ```
 
-### 调试器 ABI（spec 088，OPTIONAL 符号）
+### 调试器 ABI（spec 088/090，OPTIONAL 符号）
 
 `fjs.h` 只为调试器加了两个函数，遵守 `fjs_vm_heap` 的 OPTIONAL 规则：宿主
-lookup 失败按"此引擎构建不支持调试"降级，不是错误。
+lookup 失败按"此引擎构建不支持调试"降级，不是错误。**这两个符号由可插拔
+模块 `libfjs_debugger` 导出，不是 libfjs**（spec 090）——引擎里只有一个空的
+inspector 钩子表和一个 `FjsDebuggerTransport` 槽位，release 不带这个模块就
+物理上没有调试器。整套分层见 [debugger.md](debugger.md)。
 
 ```c
 int32_t fjs_vm_debugger_attach(FJSVM *vm, const char *host, int32_t port);
@@ -161,7 +164,8 @@ attach 让 VM 作为 TCP **客户端**外连 `fjs debug` 的中继（与 dev Web
 方向，手机不开端口），之后 CDP 消息在 JS 线程上直接被引擎消费——运行中由
 `fjs_vm_pump` 顺带轮询，断点暂停时引擎回调宿主阻塞等服务。调试流量不过
 Dart，所以没有新事件号；三处同步为 `fjs.h` / `ffi.dart` /
-本文件。引擎内 CDP 语义由 vendored PrimJS 提供（`native/primjs/VENDORED.md`）。
+本文件。CDP 语义由 vendored PrimJS 的 inspector 提供，编译进模块而不是引擎
+（`native/primjs/VENDORED.md`）。
 
 ## fetch：异步宿主模块的范式
 

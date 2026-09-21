@@ -54,6 +54,10 @@ commands:
                             WeChat DevTools
       --analyze             print a size report: per-artifact js/gzip/
                             bytecode sizes and the packages inside them
+      --devtools            keep the devtools data plane in the bundle, so
+                            the Elements/Network panels of fjs debug work on
+                            a non-dev build (fjs dev always has it; a plain
+                            build drops it)
       --pages               split build: <out>/app/shared.js (prelude) +
                             <out>/app/bundle.js + <out>/app/pages/<id>.js
       --release             emit bytecode and copy release assets to

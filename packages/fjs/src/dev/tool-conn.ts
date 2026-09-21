@@ -27,6 +27,96 @@ export function connectDevServer(opts: DevToolOptions): Promise<WebSocket> {
   });
 }
 
+export interface DevServerLink {
+  /** Stop reconnecting and drop the current socket, if any. */
+  stop(): void;
+  /** The live socket, or null while disconnected. */
+  readonly socket: WebSocket | null;
+}
+
+/** Keeps a tool connection to `fjs dev` alive across dev server restarts.
+ *
+ * `fjs debug` outlives the server it talks to: `fjs run ios` restarts the
+ * dev server, the user restarts `fjs dev`, or the relay is started first
+ * and the server comes up later. A one-shot connect leaves the relay
+ * running with nothing to tell the app, which looks exactly like a broken
+ * debugger — so reconnect instead, and re-announce on every link.
+ *
+ * `onLink` runs after the tool handshake; `onDrop` runs once per
+ * disconnected streak, not once per retry. */
+export function keepDevServerLinked(
+  opts: DevToolOptions,
+  handlers: {
+    onLink: (socket: WebSocket, hello: { apps: number }) => void;
+    onDrop?: () => void;
+  },
+  retryMs = 1000,
+): DevServerLink {
+  let stopped = false;
+  let current: WebSocket | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let dropReported = false;
+
+  const drop = (): void => {
+    current = null;
+    if (!dropReported) {
+      dropReported = true;
+      handlers.onDrop?.();
+    }
+    retry();
+  };
+
+  const retry = (): void => {
+    if (stopped || timer) return;
+    timer = setTimeout(() => {
+      timer = null;
+      void attempt();
+    }, retryMs);
+    timer.unref?.();
+  };
+
+  const attempt = async (): Promise<void> => {
+    if (stopped) return;
+    let socket: WebSocket;
+    try {
+      socket = await connectDevServer(opts);
+      const hello = await handshakeTool(socket);
+      if (stopped) {
+        socket.close();
+        return;
+      }
+      current = socket;
+      dropReported = false;
+      handlers.onLink(socket, hello);
+    } catch {
+      drop();
+      return;
+    }
+    socket.on('close', () => {
+      if (current === socket) drop();
+    });
+    // 'error' always precedes 'close' on a broken socket; swallowing it
+    // here keeps ws from throwing it at the process
+    socket.on('error', () => {});
+  };
+
+  void attempt();
+
+  return {
+    stop() {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+      const socket = current;
+      current = null;
+      socket?.close();
+    },
+    get socket() {
+      return current;
+    },
+  };
+}
+
 /** Announces this connection as a tool, so the server never pushes app
  * traffic — a stray "reload" — at it, and answers with how many apps are
  * listening. */

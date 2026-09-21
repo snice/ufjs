@@ -1,23 +1,25 @@
 // fjs debug — attach Chrome DevTools to the JS VM running on the device.
 //
 //   fjs debug
-//   fjs debug --port 38902 --vm-port 38903
+//   fjs debug --cdp-port 38902 --vm-port 38903
 //
 // Starts the CDP relay (src/debug/cdp-server.ts) and prints how to open
-// Chrome DevTools. When a `fjs dev` server is reachable, it also connects
-// as a tool (same handshake as `fjs log`) and asks the server to push
-// `debug on <vm-port>` at every app. The engine (vendored PrimJS, spec
+// Chrome DevTools. It also stays connected to `fjs dev` as a tool (same
+// handshake as `fjs log`) and registers the relay there, so the server
+// pushes `debug on <vm-port>` at every app — including apps that connect
+// later, which is the normal case while `fjs run ios` is still building. The engine (vendored PrimJS, spec
 // 088) implements CDP itself; this command is transport plus discovery.
 // The relay is standalone: a desktop VM can dial it directly via
 // `fjsrun --debug-connect 127.0.0.1:<vm-port>` with no dev server at all.
 //
 // Ctrl-C detaches and exits.
+import { spawnSync } from 'node:child_process';
 import {
-  connectDevServer,
-  handshakeTool,
+  keepDevServerLinked,
   parseDevToolArgs,
   type DevToolOptions,
 } from '../dev/tool-conn.js';
+import { adbDevices, resolveAdb } from '../dev/adb.js';
 import { startCdpRelay } from '../debug/cdp-server.js';
 
 interface DebugOptions extends DevToolOptions {
@@ -52,47 +54,74 @@ export async function debugCommand(argv: string[]): Promise<void> {
     log: (line) => console.log(`[fjs debug] ${line}`),
   });
 
-  let dev: import('ws').WebSocket | null = null;
-  try {
-    dev = await connectDevServer(opts);
-    const hello = await handshakeTool(dev);
-    if (hello.apps > 0) {
-      // The dev server relays this at every app as `debug on <port>`; each
-      // app then dials vmPort itself (the relay accepts exactly one).
-      dev.send(
-        JSON.stringify({ fjs: 'debug-relay', on: true, port: opts.vmPort }),
+  // OPTIONAL accelerator, not a requirement: publish the VM channel on every
+  // adb device as a reverse tunnel, so the app's first dial candidate
+  // (127.0.0.1:<vmPort> on itself) connects instantly and USB devices with
+  // no Wi-Fi route work at all. The direct dial against the dev-server host
+  // is the primary path and needs no adb — a machine without it simply gets
+  // no tunnel here. Resolved from PATH plus the default SDK locations; synced
+  // every few seconds so a device started after `fjs debug` gets covered;
+  // teardown is best effort — a stale tunnel just refuses at dial time.
+  const adb = resolveAdb();
+  const reversed = new Set<string>();
+  const syncReverse = (announce: boolean) => {
+    if (!adb) return;
+    for (const serial of adbDevices()) {
+      const r = spawnSync(
+        adb,
+        ['-s', serial, 'reverse', `tcp:${opts.vmPort}`, `tcp:${opts.vmPort}`],
+        { stdio: 'ignore' },
       );
-    } else {
-      console.log(
-        `[fjs debug] no app on the dev server yet — the attach push goes ` +
-          'out to apps as they connect',
+      if (r.status === 0 && !reversed.has(serial)) {
+        reversed.add(serial);
+        if (announce) {
+          console.log(
+            `[fjs debug] adb reverse tcp:${opts.vmPort} on ${serial} — ` +
+              `the app reaches the channel at 127.0.0.1:${opts.vmPort}`,
+          );
+        }
+      }
+    }
+  };
+  syncReverse(true);
+  const reverseTimer = setInterval(() => syncReverse(false), 5000);
+  reverseTimer.unref?.();
+  const removeReverse = () => {
+    clearInterval(reverseTimer);
+    if (!adb) return;
+    for (const serial of reversed) {
+      spawnSync(
+        adb,
+        ['-s', serial, 'reverse', '--remove', `tcp:${opts.vmPort}`],
+        { stdio: 'ignore' },
       );
     }
-    dev.on('message', (raw) => {
-      const msg = (() => {
-        try {
-          return JSON.parse(String(raw)) as Record<string, unknown>;
-        } catch {
-          return null;
-        }
-      })();
-      if (msg?.fjs === 'hello' && dev) {
-        dev.send(
-          JSON.stringify({ fjs: 'debug-relay', on: true, port: opts.vmPort }),
+  };
+
+  // The link is kept up for the whole session: `fjs run ios` restarts the
+  // dev server under us, and a relay that stopped announcing itself is a
+  // debugger that silently never attaches.
+  const link = keepDevServerLinked(opts, {
+    onLink: (socket, hello) => {
+      // The server remembers this and greets apps as they connect, so one
+      // announce per link covers apps that are not up yet.
+      socket.send(
+        JSON.stringify({ fjs: 'debug-relay', on: true, port: opts.vmPort }),
+      );
+      if (hello.apps === 0) {
+        console.log(
+          '[fjs debug] no app on the dev server yet — it gets the attach ' +
+            'push as soon as it connects',
         );
       }
-    });
-    dev.on('close', () => {
-      console.log('[fjs debug] dev server closed the connection — the relay ' +
-        'stays up for apps that dial it directly');
-      dev = null;
-    });
-  } catch {
-    console.log(
-      `[fjs debug] no dev server at ${opts.host}:${opts.port} — for a ` +
-        `desktop VM, run:  fjsrun --debug-connect 127.0.0.1:${opts.vmPort} <script.js>`,
-    );
-  }
+    },
+    onDrop: () => {
+      console.log(
+        `[fjs debug] no dev server at ${opts.host}:${opts.port} — retrying; ` +
+          `for a desktop VM run:  fjsrun --debug-connect 127.0.0.1:${opts.vmPort} <script.js>`,
+      );
+    },
+  });
 
   console.log('fjs debug — Chrome DevTools for the fjs VM (spec 088)');
   console.log('');
@@ -118,10 +147,12 @@ export async function debugCommand(argv: string[]): Promise<void> {
 
   const detach = () => {
     try {
-      dev?.send(JSON.stringify({ fjs: 'debug-relay', on: false }));
+      link.socket?.send(JSON.stringify({ fjs: 'debug-relay', on: false }));
     } catch {
       // dev server gone; nothing to detach
     }
+    removeReverse();
+    link.stop();
     void relay.close().then(() => process.exit(0));
   };
   process.on('SIGINT', detach);

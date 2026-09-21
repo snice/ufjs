@@ -82,6 +82,7 @@ QuickJS 上实现的是一套**框架无关的命令式 element API**，前端�
 |---|------|--------|
 | 13 | [pnpm monorepo 规范](monorepo.md) | npm 与 pub 两套包管理的边界、依赖写法、加包流程 |
 | 14 | [工具链](toolchain.md) | 全部 CLI 命令 |
+| 14.5 | [调试器内部实现](debugger.md) | `fjs debug` 怎么搭起来：引擎原生 CDP、可插拔的 `libfjs_debugger`、中继与面板桥接 |
 | 15 | [发布 npm 与 pub.dev](publishing.md) | 三个包版本咬合、预编译产物 |
 | 16 | [性能测试](performance.md) | 基准方法、实测数据、热点 |
 | 17 | [Roadmap](roadmap.md) | 已交付 / 近期 / 中期 / 远期 |
@@ -103,6 +104,7 @@ QuickJS 上实现的是一套**框架无关的命令式 element API**，前端�
 | 加一个 workspace 包 | [monorepo.md 第 5 节](monorepo.md#5-加一个新包) |
 | 在 demo/example 里用仓库内的包 | [monorepo.md 第 3 节](monorepo.md#3-在-workspace-里装一个本地包) |
 | 卡帧 / 列表慢 | [threading-model.md](threading-model.md) + [performance.md](performance.md) |
+| 改调试器 / 加一个 DevTools 面板能力 | [debugger.md](debugger.md)（用法在 [toolchain.md](toolchain.md#断点调试fjs-debug)） |
 | 页面打开慢（vant / 第三方组件库） | [vant-mount-perf.md](vant-mount-perf.md) |
 | 拆 `[nav] mounted` 临时打点 | [navmount-probe.md](navmount-probe.md) |
 

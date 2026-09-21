@@ -93,6 +93,16 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
       } catch {
         // not JSON: forward it like any other line
       }
+      // The app signals a reload through the session it kept open (the VM
+      // was rebuilt, the socket was not): its fetch-id space restarts from
+      // 1, so the Network rows of the previous VM must stop suppressing the
+      // new ones. Session stays up, so the poll keeps running if it ran.
+      if (msg && (msg as { fjs?: string }).fjs === 'debug-reload') {
+        netSent.clear();
+        netDone.clear();
+        bodyCache.clear();
+        continue; // internal traffic — never reaches DevTools
+      }
       if (msg && typeof msg.id === 'number' && msg.id >= 1e9) {
         const pending = bridgePending.get(msg.id);
         if (pending) {
@@ -114,6 +124,10 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
       vm.write(devBuf.endsWith('\n') ? devBuf : devBuf + '\n');
       devBuf = '';
     }
+    // vm === null: nothing is attached, so the request would sit in devBuf
+    // forever and flush as stale garbage into whichever VM attaches next —
+    // resetSessionCaches (vm left, DevTools left, new vm attached) drops it.
+    // The frontend that sent it is gone or will retry on its own.
   };
 
   let bridgeSeq = 1_000_000_000;
@@ -424,11 +438,18 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
     bodyCache.clear();
     networkEnabled = false;
     stopNetPoll();
+    // requests buffered while nothing was attached would flush into the
+    // next VM as stale protocol traffic from a dead session
+    devBuf = '';
   };
 
   // ---- sockets ---------------------------------------------------------------
 
   const vmListener = createTcpServer((socket) => {
+    // remoteAddress matters when a dial mysteriously never completes: the
+    // Android emulator's network proxy fronts every guest connection, so a
+    // relay-side trace of who knocked and when is the only ground truth
+    log(`vm channel dial from ${socket.remoteAddress ?? '?'}`);
     if (vm) {
       log('a second app tried to attach the debugger — rejected (one session at a time)');
       socket.destroy();

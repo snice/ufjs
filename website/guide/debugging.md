@@ -53,6 +53,43 @@ npx fjs eval 'Object.keys(globalThis).length'
 
 在正在运行的 JS 虚拟机里执行表达式，打印结果。排查「页面上到底是什么状态」时很好用。
 
+## 断点调试
+
+用 Chrome DevTools 直连设备上正在跑的 JS：断点（含条件断点）、单步、调用栈、局部变量、在暂停的帧上求值，全都可用。
+
+`fjs dev` 或 `fjs run` 跑着的时候，另开一个终端：
+
+```bash
+npx fjs debug
+```
+
+它会打印一条打开 DevTools 的命令，复制执行即可：
+
+```bash
+open -a "Google Chrome" \
+  "devtools://devtools/bundled/inspector.html?ws=127.0.0.1:38902/cdp"
+```
+
+然后在 Sources 面板里选脚本、点行号下断点，在设备上触发那段代码就会停下来。
+
+::: warning 别走 chrome://inspect
+那条路要靠 Chrome 自己发现目标，实测经常一片空白而且不给任何报错。另外 `devtools://` 地址**粘进地址栏会被 Chrome 拦掉**，只能像上面这样从命令行 `open`。
+:::
+
+Elements 和 Network 两个面板也在工作：
+
+| 面板 | 能看到什么 | 注意 |
+|---|---|---|
+| Elements | 当前页的元素树（标签 / class / style / 文本），选中节点后 Computed 侧栏是最终生效的样式 | 快照式，运行中的变化不会自动推送，重开 DevTools 再拉一次 |
+| Network | 应用里 `fetch()` 的请求行和响应体预览 | 行有最多 500ms 延迟；响应体在**应用自己读取它**（`text()` / `json()` 等）之后才看得到，上限 512 KB |
+
+几件需要知道的事：
+
+- **断点停住的时候整个界面是冻结的**。JS 跑在 UI 线程上，暂停 JS 就是暂停界面，resume 后恢复。
+- **Sources 里是编译后的 JS**，文件名是 `bundle.js`、`pages/<页面>.js` 这样的真实脚本名，看不到 Vue SFC 原文。
+- **只能调开发构建的 App 端**。release 包里根本没有调试器（这是有意的，调试模块不参与发布构建）；Web 端直接用浏览器自带的 DevTools。
+- 调试器连上期间，`console.log` 会出现在 DevTools 的 Console 里（带调用栈），`fjs log` 那边可能就看不到了。
+
 ## 性能面板
 
 dev server 终端按 **`p`**，App 右上角浮出一个可拖动的面板：

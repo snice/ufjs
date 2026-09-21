@@ -587,6 +587,9 @@ fjs: nope is not defined
 
 ## 断点调试：`fjs debug`
 
+> 这一节是用法。内部实现（引擎原生 CDP、可插拔的 `libfjs_debugger`、中继的
+> 域桥接、运行时数据平面）见 [debugger.md](debugger.md)。
+
 Chrome DevTools 直连正在跑的 app：断点（含条件断点）、单步、调用栈、局部
 变量、`evaluateOnCallFrame`、Console 全部可用；**Elements 与 Network 面板也
 在工作**（spec 089）：
@@ -626,20 +629,26 @@ open -a "Google Chrome" \
 
 `fjs debug` 起一个 CDP 中继：DevTools 侧 WebSocket 只绑 `127.0.0.1`（CDP 能
 求值任意代码，不像 dev server 那样绑 `0.0.0.0`），app 侧是 VM 自己拨出来的
-TCP 通道（默认 `:38903`，与 dev WebSocket 同方向，手机不开任何端口）。引擎
-（PrimJS，spec 088）原生实现 CDP，中继只搬运字节：
+TCP 通道（默认 `:38903`，与 dev WebSocket 同方向，手机不开任何端口）。app 的
+拨号地址两个候选依次尝试：`127.0.0.1`（当机器上有 adb 时，`fjs debug` 自动
+用 `adb reverse` 把通道发布到每台 Android 设备——从 PATH 和默认 SDK 位置解析，
+**没有配置 adb 也能正常工作**，只是没有这条零延迟隧道）→ dev server 的
+host（模拟器 `10.0.2.2`、真机走 LAN）。attach 失败会带原因重试，"re-attach
+failed:" 后面不再是空串。引擎（PrimJS，spec 088）原生实现 CDP，中继只搬运字节：
 
 | 端口 | 用途 | 绑定 |
 |---|---|---|
 | 38902 | DevTools 发现（`/json/list`）+ CDP WebSocket | 127.0.0.1 |
 | 38903 | app VM 的调试通道 | 0.0.0.0（局域网内手机可达） |
 
-`--port` / `--vm-port` 可覆盖。
+`--cdp-port` / `--vm-port` 可覆盖（`--port` / `--host` 是 dev server 的地址）。
 
 行为与限制：
 
-- **attach 即重载**。`fjs debug` 通过 dev server 向 app 推 `debug on <端口>`
-  （之后重连的 app 也会收到），app 挂上调试通道后整包重载一遍，让所有脚本
+- **启动顺序无所谓**。`fjs debug` 把中继注册在 dev server 上，dev server
+  记着它，app 每次连上（首次、热重启、`fjs run ios` 编译完才起来）都会收到
+  `debug on <端口>`；dev server 自己重启了，`fjs debug` 也会重连并重新注册。
+- **attach 即重载**。app 挂上调试通道后整包重载一遍，让所有脚本
   进入调试器的脚本表；之后 DevTools 任何时候连上来，`Debugger.enable` 都会
   补发全部 `scriptParsed`，连接先后顺序无所谓。DevTools 断开时中继会向 app
   补发 `Debugger.disable`：会话复位（重连可重放脚本），若 app 当时停在断点
@@ -724,7 +733,7 @@ fjs devices --json
 把 `-d` 要填的 id 单独成列。排序和 `fjs run` 的挑选规则一致：模拟器优先，因为它
 用主机本地地址就能连上 dev server，真机则依赖局域网可达。ohos 设备只有装了
 OpenHarmony fork 的 Flutter SDK 才会出现（标准 flutter 的设备发现看不见它们；
-fork 靠 `DEVECO_SDK_HOME` 定位 hdc）。
+fork 还要求 `flutter config --enable-ohos`，见下文「鸿蒙」一节）。
 
 ## 清理
 
@@ -799,8 +808,16 @@ SDK**（如 [flutter_flutter](https://gitcode.com/CPF-Flutter/flutter_flutter)�
 
 - `PATH` 上是 fork 的 `flutter`（`fjs` 探测 fork 的方式：SDK 源码里有
   `packages/flutter_tools/lib/src/ohos`；探测不到时一切保持 android/ios 原样）；
-- `DEVECO_SDK_HOME` 指向 DevEco 的 sdk 目录 —— fork 靠它定位 `hdc`，不设的
-  话设备列表是空的；
+- **`flutter config --enable-ohos`**：fork 的设备发现被这个 feature 开关
+  门控（`ohos_workflow.dart` 里 `canListDevices = isOhosEnabled && SDK 就绪`），
+  **默认 false**。新装 fork 后的典型症状是 `hdc list targets` 看得到模拟器、
+  `flutter devices` 却没有它，`flutter doctor` 也不显示 HarmonyOS toolchain
+  一节。开一次即可，配置落在 `~/.config/flutter/settings`，换 shell 不用重设；
+- SDK 目录的定位顺序（`ohos_sdk.dart` 的 `localOhosSdk`）：`flutter config` 的
+  `ohos-sdk` → 环境变量 `OHOS_HOME` / `OHOS_SDK_HOME` → 沿 `PATH` 找 `hdc`
+  反推。把 DevEco 自带的 `…/sdk/default/openharmony/toolchains` 加进 `PATH`
+  就够了，不必设 `DEVECO_SDK_HOME`——fork 只在 HarmonyOS NEXT 侧的
+  `localHmosSdk` 里读它，OpenHarmony 设备发现走不到；
 - ohos 宿主目录只能由 fork 生成：`flutter create --platforms ohos .`（在
   `.fjs/flutter` 里）。`fjs run ohos` 不负责补建它，缺失时直接报错。
 

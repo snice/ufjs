@@ -24,7 +24,7 @@
 │   LEPUS_NewCFunction 宿主函数：JS 值直传，无序列化    │
 │   console / timers / uiOps / invokeHost natives     │
 │   源码 eval（NUL 结尾约束）/ 字节码 ReadObject        │
-│   内置 CDP 调试器（fjs debug，见 toolchain.md）       │
+│   CDP 调试器是可插拔模块（见 debugger.md）            │
 ├──────────────── dart:ffi（纯 C ABI）────────────────┤
 │ flutter_fjs（Flutter 插件）                          │
 │   NativeCallable.isolateLocal 同步回调               │

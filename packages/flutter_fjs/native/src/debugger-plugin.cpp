@@ -43,9 +43,17 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <string>
+
+#ifdef __ANDROID__
+#include <android/log.h>
+#define DBG_LOG(...) __android_log_print(ANDROID_LOG_INFO, "fjs-debug", __VA_ARGS__)
+#else
+#define DBG_LOG(...) fprintf(stderr, __VA_ARGS__)
+#endif
 
 #include "quickjs.h"
 #include "quickjs/include/inspector_hooks.h" // the engine-side seam
@@ -73,7 +81,11 @@ constexpr int32_t kCallbackCount = 23;
 struct Transport {
     int fd = -1;
     bool in_pause = false;
-    std::string rbuf;
+    /* Partial CDP line carried across recv boundaries: TCP does not
+     * preserve the relay's '\n' framing, and a >64KB scriptParsed
+     * split over two recvs used to lose its tail (the buffer was a
+     * local). Both feed paths drain through this one buffer. */
+    std::string line_buf;
     void *callback_funcs[kCallbackCount];
 };
 
@@ -110,24 +122,25 @@ void drop_socket() {
 
 void cb_run_message_loop_on_pause(LEPUSContext *ctx) {
     g_transport.in_pause = true;
-    std::string buf;
     char tmp[65536];
     while (g_transport.in_pause && g_transport.fd >= 0) {
         pollfd p = {g_transport.fd, POLLIN, 0};
         if (::poll(&p, 1, 500) <= 0) continue;
         ssize_t n = ::recv(g_transport.fd, tmp, sizeof(tmp), 0);
         if (n <= 0) {
+            DBG_LOG("debug channel closed while paused (recv %zd)", n);
             drop_socket();
             break;
         }
-        buf.append(tmp, (size_t)n);
+        g_transport.line_buf.append(tmp, (size_t)n);
         size_t pos;
-        while ((pos = buf.find('\n')) != std::string::npos) {
-            std::string line = buf.substr(0, pos);
-            buf.erase(0, pos + 1);
+        while ((pos = g_transport.line_buf.find('\n')) != std::string::npos) {
+            std::string line = g_transport.line_buf.substr(0, pos);
+            g_transport.line_buf.erase(0, pos + 1);
             if (!line.empty()) ProcessPausedMessages(ctx, line.c_str());
         }
     }
+    g_transport.line_buf.clear();
 }
 
 void cb_quit_message_loop_on_pause(LEPUSContext *) {
@@ -211,25 +224,28 @@ void transport_feed(void *opaque, FJSVM *vm) {
     char tmp[65536];
     ssize_t n = ::recv(g_transport.fd, tmp, sizeof(tmp), 0);
     if (n <= 0) {
+        DBG_LOG("debug channel closed by relay (recv %zd)", n);
         drop_socket();
         return;
     }
-    std::string buf;
-    buf.append(tmp, (size_t)n);
+    g_transport.line_buf.append(tmp, (size_t)n);
     size_t pos;
-    while ((pos = buf.find('\n')) != std::string::npos) {
-        std::string line = buf.substr(0, pos);
-        buf.erase(0, pos + 1);
+    while ((pos = g_transport.line_buf.find('\n')) != std::string::npos) {
+        std::string line = g_transport.line_buf.substr(0, pos);
+        g_transport.line_buf.erase(0, pos + 1);
         if (!line.empty()) PushAndProcessProtocolMessages(info, line.c_str());
     }
 }
 
 void transport_close(void *opaque) {
     (void)opaque;
-    drop_socket();
     g_transport.in_pause = false;
-    /* VM teardown: pull the hooks with it, or the engine would keep a live
-     * path into an inspector whose context is gone. */
+    g_transport.line_buf.clear();
+    /* VM teardown only: pull the hooks with the dying VM's inspector state.
+     * The TCP session deliberately SURVIVES the reload (that is the whole
+     * point — see fjs_vm_debugger_attach); the next VM's attach reuses it
+     * without a dial, so a reload can never lose the channel to the dial
+     * race or to a second app that grabbed the slot in between. */
     QJSSetInspectorHooks(nullptr);
 }
 
@@ -237,41 +253,26 @@ void transport_close(void *opaque) {
 
 // ---- exported by THIS module (libfjs_debugger.so) --------------------------
 
-extern "C" {
+namespace {
 
-int32_t fjs_vm_debugger_attach(FJSVM *vm, const char *host, int32_t port) {
-    if (!vm || !vm->ctx || !host || port <= 0) return -1;
-    if (g_transport.fd >= 0) return -1; // already attached
+/* Copies a failure reason into the engine's last-error slot so the Dart side
+ * can log WHY an attach failed — an empty "re-attach failed:" once cost an
+ * afternoon of guessing between a busy relay and a dead network. */
+void attach_fail(FJSVM *vm, const char *fmt, ...) {
+    if (!vm) return;
+    char msg[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+    snprintf(vm->last_error, sizeof(vm->last_error), "%s", msg);
+    DBG_LOG("attach failed: %s", msg);
+}
 
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return -1;
-    /* Non-blocking connect, bounded to 2s: Dart calls this on the UI
-     * isolate, so an unreachable relay must fail fast, not freeze a frame. */
-    int fl = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, fl | O_NONBLOCK);
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(static_cast<uint16_t>(port));
-    if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
-        close(fd);
-        return -1;
-    }
-    if (connect(fd, (sockaddr *)&addr, sizeof(addr)) != 0) {
-        if (errno != EINPROGRESS) { close(fd); return -1; }
-        pollfd p = {fd, POLLOUT, 0};
-        if (poll(&p, 1, 2000) <= 0) { close(fd); return -1; }
-        int soerr = 0;
-        socklen_t slen = sizeof(soerr);
-        getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &slen);
-        if (soerr != 0) { close(fd); return -1; }
-    }
-    fcntl(fd, F_SETFL, fl & ~O_NONBLOCK);
-    int one = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-
-    g_transport.fd = fd;
-    /* Open the seam first: everything below runs inspector code that the
-     * engine must already be able to call back into. */
+/* Installs this VM's slice of the debug session: the process-wide hooks plus
+ * the per-context inspector state. Runs on first attach AND after every
+ * reload (a fresh VM means a fresh runtime/context to wire up). */
+void install_vm_state(FJSVM *vm) {
     QJSSetInspectorHooks(&kInspectorHooks);
     RegisterQJSDebuggerCallbacks(vm->rt, const_cast<void **>(kCallbacks),
                                  kCallbackCount);
@@ -289,6 +290,82 @@ int32_t fjs_vm_debugger_attach(FJSVM *vm, const char *host, int32_t port) {
         [](void *op) { transport_close(op); },
     };
     fjs_debugger_set_transport(vm, &kTransport);
+}
+
+} // namespace
+
+extern "C" {
+
+int32_t fjs_vm_debugger_attach(FJSVM *vm, const char *host, int32_t port) {
+    if (!vm || !vm->ctx || !host || port <= 0) {
+        attach_fail(vm, "invalid attach arguments (vm/host/port)");
+        return -1;
+    }
+
+    if (g_transport.fd < 0) {
+        /* No live session: dial the relay. Once the socket is up it stays
+         * open across reloads (transport_close keeps it), so this path runs
+         * once per `debug on` — not once per reload — and a reload can never
+         * lose the channel to the close-then-redial race or to another app
+         * that grabbed the slot in between. */
+        int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (fd < 0) {
+            attach_fail(vm, "socket() failed: errno %d", errno);
+            return -1;
+        }
+        /* Non-blocking connect, bounded to 2s: Dart calls this on the UI
+         * isolate, so an unreachable relay must fail fast, not freeze a frame. */
+        int fl = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(static_cast<uint16_t>(port));
+        if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
+            close(fd);
+            attach_fail(vm, "invalid relay host '%s' (not an IPv4 address)", host);
+            return -1;
+        }
+        if (connect(fd, (sockaddr *)&addr, sizeof(addr)) != 0) {
+            if (errno != EINPROGRESS) {
+                int e = errno;
+                close(fd);
+                attach_fail(vm, "relay %s:%d refused: errno %d (%s)", host, port,
+                            e, strerror(e));
+                return -1;
+            }
+            int pr;
+            pollfd p = {fd, POLLOUT, 0};
+            do { pr = poll(&p, 1, 2000); } while (pr < 0 && errno == EINTR);
+            if (pr <= 0) {
+                close(fd);
+                attach_fail(vm, "relay %s:%d unreachable (connect %s)", host,
+                            port, pr < 0 ? "interrupted" : "timed out");
+                return -1;
+            }
+            int soerr = 0;
+            socklen_t slen = sizeof(soerr);
+            getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &slen);
+            if (soerr != 0) {
+                close(fd);
+                attach_fail(vm, "relay %s:%d refused: errno %d (%s) — another "
+                                "app may hold the debug channel, or fjs debug "
+                                "exited", host, port, soerr, strerror(soerr));
+                return -1;
+            }
+        }
+        fcntl(fd, F_SETFL, fl & ~O_NONBLOCK);
+        int one = 1;
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+
+        g_transport.fd = fd;
+        DBG_LOG("debug channel open to %s:%d", host, port);
+    } else {
+        /* Session already live: this is a reload. Tell the relay so it can
+         * drop per-VM bookkeeping (the fetch-id space restarts from 1). */
+        write_line("{\"fjs\":\"debug-reload\"}");
+    }
+
+    install_vm_state(vm);
     return 0;
 }
 
@@ -296,10 +373,12 @@ int32_t fjs_vm_debugger_detach(FJSVM *vm) {
     if (!vm) return 0;
     drop_socket();
     g_transport.in_pause = false;
+    g_transport.line_buf.clear();
     fjs_debugger_set_transport(vm, nullptr);
     QJSDebuggerFree(vm->ctx);
     /* Last, so the teardown above can still call back in. */
     QJSSetInspectorHooks(nullptr);
+    DBG_LOG("debug channel detached");
     return 0;
 }
 

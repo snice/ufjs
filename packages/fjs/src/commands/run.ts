@@ -6,6 +6,7 @@ import http from 'node:http';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildBundle, flutterModeArgs, releaseBuild, type BuildOptions } from '../bundler/build.js';
+import { resolveAdb } from '../dev/adb.js';
 import {
   autolinkDartModule,
   autolinkEntries,
@@ -75,6 +76,7 @@ export async function runCommand(argv: string[]): Promise<void> {
     };
     const res = await buildBundle(buildOpts);
     releaseBuild(buildOpts, res);
+    stopStaleApp(opts.platform, device.id, flutterDir);
     const args = [
       'run',
       ...flutterModeArgs(opts.mode, opts.flutterArgs),
@@ -107,6 +109,7 @@ export async function runCommand(argv: string[]): Promise<void> {
   }
 
   const target = deviceAddress(opts.platform, dev.port, device);
+  stopStaleApp(opts.platform, device.id, flutterDir);
   // no --debug: that is `flutter run`'s own default, and passing it would
   // override a `-- --profile` meant as "AOT host, but keep the live JS"
   const args = ['run', '-d', device.id, `--dart-define=FJS_DEV=${target}`, ...opts.flutterArgs];
@@ -1251,11 +1254,51 @@ export function resolveDevice(platform: Platform, explicit?: string): FlutterDev
   return chosen;
 }
 
+/** Force-stops a still-running instance of this app on the device before
+ * `flutter run` reinstalls it (spec 088 regression: a `flutter run` that
+ * died — terminal closed hard, "Lost connection to device" — leaves the app
+ * process alive on Android, and the zombie keeps its `fjs debug` channel:
+ * the relay serves one VM at a time, so the freshly launched app's attach is
+ * rejected with an empty error and the session looks broken. The zombie also
+ * fights the live app over dev-server reloads.) Best effort on purpose:
+ * without a locatable adb (see dev/adb.ts) the debugger's attach retry
+ * covers a surviving instance, so this just skips silently. */
+function stopStaleApp(platform: Platform, deviceId: string, flutterDir: string): void {
+  const id = hostBundleId(flutterDir);
+  const adb = platform === 'android' ? resolveAdb() : null;
+  if (!id || platform === 'ohos') return;
+  if (platform === 'android' && adb) {
+    spawnSync(adb, ['-s', deviceId, 'shell', 'am', 'force-stop', id], { stdio: 'ignore' });
+  } else if (platform === 'ios' && process.platform === 'darwin') {
+    spawnSync('xcrun', ['simctl', 'terminate', deviceId, id], { stdio: 'ignore' });
+  }
+}
+
+/** The host app's applicationId / bundle identifier, read back from the
+ * generated project — the same values `fjs host id` reports. */
+function hostBundleId(flutterDir: string): string | null {
+  for (const gradle of [
+    path.join(flutterDir, 'android', 'app', 'build.gradle'),
+    path.join(flutterDir, 'android', 'app', 'build.gradle.kts'),
+  ]) {
+    if (!fs.existsSync(gradle)) continue;
+    const found = /applicationId\s*=?\s*["']([^"']+)["']/.exec(fs.readFileSync(gradle, 'utf8'));
+    if (found) return found[1];
+  }
+  const pbxproj = path.join(flutterDir, 'ios', 'Runner.xcodeproj', 'project.pbxproj');
+  if (fs.existsSync(pbxproj)) {
+    for (const m of fs.readFileSync(pbxproj, 'utf8').matchAll(/PRODUCT_BUNDLE_IDENTIFIER = ([^;]+);/g)) {
+      const value = m[1].trim();
+      if (!value.endsWith('.RunnerTests')) return value;
+    }
+  }
+  return null;
+}
+
 /** Where the app should look for `fjs dev`. An emulator reaches the host
  * through a fixed alias; a physical device has to come back over the LAN.
  * ohos gets no alias at all — its emulator dials the host like a physical
- * device would, so the LAN address is the only answer there. */
-function deviceAddress(platform: Platform, port: number, device: FlutterDevice): string {
+ * device would, so the LAN address is the only answer there. */function deviceAddress(platform: Platform, port: number, device: FlutterDevice): string {
   if (platform === 'ohos') {
     const lan = lanAddresses()[0];
     if (lan) return `${lan}:${port}`;
