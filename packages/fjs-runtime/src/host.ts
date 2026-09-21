@@ -1,6 +1,7 @@
 // Native host access layer. `__fjs` is installed by the C++ core
 // (natives.cpp) and typed in native-global.d.ts; everything user-facing
 // goes through this module.
+import './microtask';
 import { OpWriter } from './ui/ops';
 
 export const hasNativeHost = typeof globalThis !== 'undefined' && '__fjs' in globalThis;

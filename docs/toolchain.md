@@ -1272,7 +1272,7 @@ runner，或直接执行上面的 build 脚本。App 运行时（debug 构建）
 `--dart-define=FJS_JS_ENGINE` 与二进制里真实的 engine id，不一致会打
 一次告警——这是防止"忘了物化就跑"的可见兜底。
 
-两点要配对：
+三件事要配对：
 
 - **字节码跟引擎走**。`fjs build --js-engine quickjs` 会找 quickjs flavor
   的 `fjsc`（仓库内 `native/build-native-quickjs/fjsc`；不在仓库里时按
@@ -1291,6 +1291,13 @@ runner，或直接执行上面的 build 脚本。App 运行时（debug 构建）
   cmake --build build-native-quickjs -j
   cd .. && tool/build-apple.sh      # 或 tool/build-android.sh / build-ohos.sh
   ```
+- **引擎全局差异由 runtime 兜底**。quickjs-ng 内置 `queueMicrotask`，PrimJS
+  没有（specs/091 实机踩过）——`@ufjs/runtime` 在 `host.ts` 顶部引入的
+  `microtask.ts` 里缺位补一个（Promise 微任务兜底）。以后发现某个 JS
+  全局只有一个 flavor 有：优先在 runtime 兼容层补，不要改 vendored 引擎
+  源码或 native 注册——那会让每个 flavor × 平台的引擎产物重编重发，
+  而缺的这个全局几乎总能用已验证存在的机制（promise 微任务、定时器）
+  包出来。
 
 同进程内不混用两个引擎：它们各占一套 VM 与符号，双引擎热切换意味着
 每个 App 永久背两份引擎体积，对比实验用不上；要对比就按上面整 App

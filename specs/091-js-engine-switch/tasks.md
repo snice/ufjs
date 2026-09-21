@@ -82,3 +82,24 @@
       Android APK 字节级验证同前
 - [x] T056 `docs/toolchain.md`（runner 形态 + 纯 Flutter 宿主路径）、
       `docs/fjs-go.md` 注记、roadmap 收口
+
+## 三轮：PrimJS 缺 `queueMicrotask` 全局（fjs-go 实机踩雷）
+
+默认 primjs flavor 下导航 settled 回调直接
+`ReferenceError: queueMicrotask is not defined`（markSettled →
+dispatchEvent 抛穿到 Dart）：quickjs-ng 内置该全局，PrimJS 没有，而
+router 的 settle 链（`settled.ts` / `flutter.ts`）裸调它——`host.ts`
+自己有 `typeof` 守卫，新代码没跟上这个先例。
+
+- [x] T057 `fjs-runtime/src/microtask.ts`：缺位时以 `Promise.resolve().then`
+      兜底装一个——引擎在每个 eval/宿主回调后都会清 promise 微任务队列
+      （Vue 本身就跑在上面），语义无损；从 `host.ts` 顶部引入，它是所有
+      native 面向入口的公共依赖，一处引入全覆盖。不选在 PrimJS C 层注册：
+      vendored 源码零侵入、免去双 flavor × 全平台引擎产物重编重发（约束
+      8），且与 `raf.ts` 既有"runtime 兼容引擎环境"的模式一致
+- [x] T058 验证：单测（缺位安装且异步执行 / 原生实现不被覆盖）；双 flavor
+      `fjsrun` 冒烟——primjs 裸跑 `typeof queueMicrotask` 为 undefined
+      （前提坐实），带 runtime 的 bundle 后为 function 且微任务回调真实
+      执行；quickjs 侧守卫空操作。`pnpm test`（1010 项）+ 
+      `pnpm run typecheck` 全绿；`docs/toolchain.md` 引擎差异小节补第三条
+
