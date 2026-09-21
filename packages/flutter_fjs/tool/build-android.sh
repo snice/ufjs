@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Builds the Android .so for BOTH engine flavors (spec 091) from native/,
-# then strips them. Run once per native/ change and commit.
+# then strips them. Run once per native/ change; abi/ is committed, the
+# conventional materialized dirs are NOT (gitignored) — fresh checkouts
+# materialize before building via the engine runner or these scripts.
 #
 # The flavors land in the abi cache — one directory per engine, no renaming
 # of files (Dart always opens libfjs.so):
@@ -8,9 +10,8 @@
 #   abi/quickjs/android/<abi>/   libfjs.so only — the CDP inspector exists
 #                                for PrimJS only
 # The primjs set is ALSO copied to android/src/main/jniLibs/<abi>/ (what
-# gradle packs): the committed materialized state must build without @ufjs/cli.
-# `fjs run/build --js-engine <flavor>` copies a flavor from the cache over
-# jniLibs at run time (see packages/fjs/src/project/engine.ts).
+# gradle packs) so the local tree builds out of the box; that directory is
+# gitignored — only abi/ is committed.
 #
 # spec 090: libfjs.so is the engine and goes into every build;
 # libfjs_debugger.so is the CDP inspector + transport, loaded only by debug

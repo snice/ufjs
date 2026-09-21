@@ -47,14 +47,14 @@ build-native-quickjs），互不污染。
 copy 不同引擎"的思路）：
 
 ```
-packages/flutter_fjs/abi/                     # 两个引擎的平台产物缓存（提交）
+packages/flutter_fjs/abi/                     # 两个引擎的平台产物缓存（唯一入库的产物源）
   primjs/android/<abi>/libfjs.so + libfjs_debugger.so
   primjs/{ios,macos}/fjs.xcframework + fjs_debugger.xcframework
   primjs/ohos/arm64-v8a/...
   quickjs/...                                  # 同布局，无 debugger
-android/src/main/jniLibs/<abi>/               # 物化位置（提交，默认 primjs）
-ios|macos/fjs.xcframework (+ fjs_debugger)    # 物化位置（提交，默认 primjs）
-ohos/libs/arm64-v8a/                          # 物化位置（提交，默认 primjs）
+android/src/main/jniLibs/<abi>/               # 物化位置（不入库，构建前由 runner 生成）
+ios|macos/fjs.xcframework (+ fjs_debugger)    # 物化位置（不入库）
+ohos/libs/arm64-v8a/                          # 物化位置（不入库）
 ```
 
 **选择点 = 插件侧构建钩子，输入是 dart-define**。`fjs run/build

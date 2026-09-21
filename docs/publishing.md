@@ -266,9 +266,15 @@ Flutter 宿主的依赖和注册调用，都会自动生效。清单字段和 au
 | Android | `android/src/main/jniLibs/{armeabi-v7a,arm64-v8a,x86_64}/libfjs.so` | 3.7M |
 | iOS / macOS | `ios/fjs.xcframework`、`macos/fjs.xcframework` | 各 5.9M |
 
-反过来，`native/`（QuickJS-ng + fjs C++ 源码，2.6M）和 `tool/` **不发布**——
+反过来，`native/`（引擎 + fjs C++ 源码）和 `tool/` **不发布**——
 接入方的构建里没有任何东西会编译它们，脚本离开仓库也跑不了。这由
 `packages/flutter_fjs/.pubignore` 控制。
+
+spec 091 起这些产物在 git 里也**不再跟踪**（唯一入库的产物源是
+`native/../abi/`，平台目录由 `dart run flutter_fjs:engine` / build 脚本
+物化，见 [toolchain.md](toolchain.md) 的 JS 引擎切换一节）。`dart pub
+publish` 从磁盘收集文件，所以**发布前必须先跑 `tool/build-*.sh` 或执行
+一次物化**，并用 `--dry-run` 确认 jniLibs / xcframework 在上传清单里。
 
 `.pubignore` 只影响 `pub publish` 上传的内容，**不影响 `path:` 依赖**：在仓库里
 用 workspace 调试时 `native/` 照常在。

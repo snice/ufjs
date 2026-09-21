@@ -81,8 +81,9 @@ flutter run --dart-define=FJS_JS_ENGINE=quickjs
 4. `fjs run --js-engine quickjs`（iOS 模拟器或 Android 模拟器）起得来，
    DevTools attach 提示该 flavor 无调试器；不带 flag 行为与现在完全一致。
 5. `pnpm run typecheck`、`pnpm test` 全绿。
-6. `abi/` 双 flavor 产物齐全，且 primjs 份同时物化到常规位置
-   （jniLibs / pod 根 / ohos/libs），全新 clone 直接 `flutter run` 可用。
+6. `abi/` 双 flavor 产物齐全且为唯一入库产物源；primjs 份物化到常规位置
+   （jniLibs / pod 根 / ohos/libs，均不入库），clone 后经 runner / fjs CLI
+   / build 脚本任一方式物化即可构建。
 
 ## 7. 待澄清
 

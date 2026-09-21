@@ -1265,9 +1265,10 @@ xcframework 抽取缓存（Xcode 不感知源归档内容变化，不清会静�
 flavor）并 touch 宿主 `ios/Podfile` 强制下一次 pod install 按
 `File.exist?` 重新评估 vendored 列表。
 
-物化不是默认值：提交入库的物化产物始终是 primjs，实验后提交前
-`git restore packages/flutter_fjs/{android,ios,macos,ohos}` 或重跑一次
-默认物化即可复位。App 运行时（debug 构建）会对比
+**平台产物不入库**：git 里只有 `abi/` 是产物源，jniLibs /
+xcframework / ohos libs 都是本地物化结果（已 gitignore）。全新 clone 的
+第一次构建前必须先物化——`fjs run` 会自动做，纯 Flutter 宿主手动跑一次
+runner，或直接执行上面的 build 脚本。App 运行时（debug 构建）会对比
 `--dart-define=FJS_JS_ENGINE` 与二进制里真实的 engine id，不一致会打
 一次告警——这是防止"忘了物化就跑"的可见兜底。
 

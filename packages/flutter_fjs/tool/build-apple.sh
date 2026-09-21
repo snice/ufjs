@@ -6,10 +6,9 @@
 #                                             inspector only exists for PrimJS)
 #
 # The primjs set is ALSO copied to the ios/ and macos/ pod roots (CocoaPods
-# resolves vendored paths inside the pod root, so each gets a copy) — the
-# committed materialized state must build without @ufjs/cli. `fjs run/build
-# --js-engine <flavor>` copies a flavor from the cache over the pod roots at
-# run time (see packages/fjs/src/project/engine.ts).
+# resolves vendored paths inside the pod root, so each gets a copy) so the
+# local tree builds out of the box; those pod-root frameworks are
+# gitignored — only abi/ is committed.
 #
 # The debugger archive is linked but not referenced in Release/Profile, so the
 # linker pulls nothing from it; only Classes/FlutterFjsPlugin.m's `#if DEBUG`
@@ -23,7 +22,7 @@
 # from being dead-stripped.
 #
 # Slices: ios-arm64, ios-arm64_x86_64-simulator, macos-arm64_x86_64.
-# Run on macOS with Xcode + CMake installed, then commit the result.
+# Run on macOS with Xcode + CMake installed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)

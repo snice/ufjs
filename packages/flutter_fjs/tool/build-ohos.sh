@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds the ohos libs for both engine flavors (spec 091) from native/ with
 # the DevEco Studio toolchain, then strips the output. Run once per native/
-# change and commit.
+# change; abi/ is committed, ohos/libs/ is a local materialization
+# (gitignored).
 #
 # spec 090: TWO files land in libs/, an engine and a module on top of it —
 #   libfjs.so            the engine; contains no inspector, every build
@@ -10,9 +11,9 @@
 #                        (see ohos/build-profile.json5)
 #
 # spec 091: the flavors land in the abi cache and the primjs set is ALSO
-# copied to ohos/libs/ — the HAR packager only ever reads libs/<abi> (DevEco
-# convention, no env hook), and `fjs run/build --js-engine <flavor>` copies
-# a flavor from the cache over libs at run time (see engine.ts in @ufjs/cli):
+# copied to ohos/libs/ (what the HAR packager reads, DevEco convention):
+# `fjs run/build --js-engine <flavor>` copies a flavor from the cache over
+# libs at run time (see engine.ts in @ufjs/cli).
 #   abi/primjs/ohos/arm64-v8a/    libfjs.so + libfjs_debugger.so (default)
 #   abi/quickjs/ohos/arm64-v8a/   libfjs.so only — the CDP inspector exists
 #                                 for PrimJS only
