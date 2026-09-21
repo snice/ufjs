@@ -151,3 +151,16 @@ console 事件 / resume 后继续跳动。`pnpm test` 104 文件全绿。
 - [x] C3 验证：Android app（全新安装、字面量补丁 .so）上报
       `executionContextCreated name="fjs console"`；CDP 门禁其余断点/
       局部变量/求值/console 断言机制未动（前两轮 PASS）。
+
+## 日志措辞修复：attach 计数被读成在线会话数（2026-09-21 深夜）
+
+现象：app 断开重连几次后，中继打 "app attached the debug channel
+(5 sessions total)"，看起来像 5 个会话挂着不释放。实际是 `vmCount` 只在
+attach 时 `++`、从不递减——它本来就是"第几次拨入"的累计序号（中继单会话
+设计，同一时刻最多 1 个 VM，socket 无泄漏），措辞 "N sessions total"
+却让人读成在线数。
+
+- [x] 日志改为无歧义序号：`app attached the debug channel (session #N)`
+      （`cdp-server.ts`），注释写明该计数永不递减、不得读作在线数；
+      断开日志不变。`@ufjs/cli` dist 已重建，`pnpm test` + typecheck 全绿。
+

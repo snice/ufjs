@@ -457,7 +457,9 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
     }
     vm = socket;
     vmCount++;
-    log(`app attached the debug channel (${vmCount} session${vmCount === 1 ? '' : 's'} total)`);
+    // single-session relay, so this counter is a cumulative dial ordinal —
+    // it never goes down on disconnect and must not read as a live count
+    log(`app attached the debug channel (session #${vmCount})`);
     socket.setNoDelay(true);
     // a fresh VM means a fresh fetch id space — stale per-request bookkeeping
     // from the previous VM must never suppress rows (or serve stale bodies)

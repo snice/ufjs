@@ -51,7 +51,7 @@ SPEC CHECKSUMS:
   camera_avfoundation: 281867ff09f1da66f031a184ecfbc6f2e625c9f5
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   flutter_angle: 0bb21eccd8b59beb4ece6ebea9ce1eae2da49d2c
-  flutter_fjs: e4ad6ec966b7be4af7a1df57245975753403891a
+  flutter_fjs: 15ff4539784e8a1db71a52463b6a947aef67333c
   FlutterAngle: c810891af800750361b1d0e7cc944f2338d5ae18
   integration_test: 252f60fa39af5e17c3aa9899d35d908a0721b573
   sqflite_darwin: 5a7236e3b501866c1c9befc6771dfd73ffb8702d

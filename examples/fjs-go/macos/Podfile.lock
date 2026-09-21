@@ -1,22 +1,50 @@
 PODS:
-  - flutter_fjs (0.1.0):
+  - flutter_angle (0.4.2):
+    - Flutter
+    - FlutterAngle (~> 0.0.8)
     - FlutterMacOS
+  - flutter_fjs (0.1.4):
+    - FlutterMacOS
+  - FlutterAngle (0.0.8)
   - FlutterMacOS (1.0.0)
+  - sqflite_darwin (0.0.4):
+    - Flutter
+    - FlutterMacOS
+  - webview_flutter_wkwebview (0.0.1):
+    - Flutter
+    - FlutterMacOS
 
 DEPENDENCIES:
+  - flutter_angle (from `Flutter/ephemeral/.symlinks/plugins/flutter_angle/darwin`)
   - flutter_fjs (from `Flutter/ephemeral/.symlinks/plugins/flutter_fjs/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
+  - sqflite_darwin (from `Flutter/ephemeral/.symlinks/plugins/sqflite_darwin/darwin`)
+  - webview_flutter_wkwebview (from `Flutter/ephemeral/.symlinks/plugins/webview_flutter_wkwebview/darwin`)
+
+SPEC REPOS:
+  trunk:
+    - FlutterAngle
 
 EXTERNAL SOURCES:
+  flutter_angle:
+    :path: Flutter/ephemeral/.symlinks/plugins/flutter_angle/darwin
   flutter_fjs:
     :path: Flutter/ephemeral/.symlinks/plugins/flutter_fjs/macos
   FlutterMacOS:
     :path: Flutter/ephemeral
+  sqflite_darwin:
+    :path: Flutter/ephemeral/.symlinks/plugins/sqflite_darwin/darwin
+  webview_flutter_wkwebview:
+    :path: Flutter/ephemeral/.symlinks/plugins/webview_flutter_wkwebview/darwin
 
 SPEC CHECKSUMS:
-  flutter_fjs: 39075030e5b986c00a1e6a2097e3fe7fa289b54c
-  FlutterMacOS: 8f6f14fa908a6fb3fba0cd85dbd81ec4b251fb24
+  flutter_angle: 0bb21eccd8b59beb4ece6ebea9ce1eae2da49d2c
+  flutter_fjs: be12f70aa890023a72200968be19850f0bf2b12c
+  FlutterAngle: c810891af800750361b1d0e7cc944f2338d5ae18
+  FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
+  sqflite_darwin: 5a7236e3b501866c1c9befc6771dfd73ffb8702d
+  webview_flutter_wkwebview: 29eb20d43355b48fe7d07113835b9128f84e3af4
 
-PODFILE CHECKSUM: 236401fc2c932af29a9fcf0e97baeeb2d750d367
+PODFILE CHECKSUM: 9ebaf0ce3d369aaa26a9ea0e159195ed94724cf3
 
 COCOAPODS: 1.16.2
