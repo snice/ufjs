@@ -234,7 +234,7 @@ onUnmounted(stop);
 
 <template>
   <Panel title="实例化绘制" desc="每组图形一次 draw call，位置和颜色走 divisor=1 的实例属性">
-    <canvas defer-resize ref="cv" class="gl" @resize="onResize" />
+    <canvas ref="cv" class="gl" @resize="onResize" />
     <text class="tip">{{ status }}</text>
   </Panel>
 </template>

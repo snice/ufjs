@@ -21,6 +21,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import {
   buildBundle,
   parseBuildArgs,
+  setDevtoolsBundling,
   webTitle,
   type BuildOptions,
   type BuildResult,
@@ -375,6 +376,9 @@ export async function devCommand(argv: string[]): Promise<void> {
   const qr = !takeFlag(rest, '--no-qr');
   const discovery = !takeFlag(rest, '--no-discovery');
   const opts = parseBuildArgs(rest);
+  // spec 090: the dev server's bundles always carry the DevTools data
+  // plane — the whole point of `fjs dev` is a live debug target.
+  setDevtoolsBundling(!opts.web);
   if (opts.web && port === 38900) port = 5173; // browsers, not phones
 
   // the mini-program target has no server: DevTools watches the emitted
@@ -443,7 +447,15 @@ export async function devCommand(argv: string[]): Promise<void> {
     socket.on('message', (raw) => {
       // apps that predate this protocol never send anything; anything that
       // is not our JSON is ignored rather than trusted
-      let msg: { fjs?: string; level?: number; text?: string; id?: string; source?: string };
+      let msg: {
+        fjs?: string;
+        level?: number;
+        text?: string;
+        id?: string;
+        source?: string;
+        on?: boolean;
+        port?: number;
+      };
       try {
         msg = JSON.parse(raw.toString()) as typeof msg;
       } catch {
@@ -482,6 +494,21 @@ export async function devCommand(argv: string[]): Promise<void> {
           const targets = apps();
           for (const app of targets) app.send('perf');
           socket.send(JSON.stringify({ fjs: 'perf-sent', apps: targets.length }));
+          break;
+        }
+        case 'debug-relay': {
+          // fjs debug (spec 088): tell every app where the CDP relay's TCP
+          // listener is. The app dials the relay itself — the push only
+          // carries the port. Wire form parsed in flutter_fjs's
+          // dev_client.dart (`debug on <port>` / `debug off`) — keep in
+          // sync with that parser.
+          if (msg.on === true) {
+            const port = Number(msg.port);
+            if (!Number.isInteger(port) || port <= 0) break;
+            for (const app of apps()) app.send(`debug on ${port}`);
+          } else {
+            for (const app of apps()) app.send('debug off');
+          }
           break;
         }
       }

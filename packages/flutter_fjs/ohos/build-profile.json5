@@ -1,10 +1,50 @@
 {
+  // Two prebuilt .so files ship in libs/arm64-v8a (spec 090): libfjs.so is
+  // the engine and goes into every build; libfjs_debugger.so is the CDP
+  // inspector + transport and must not reach a shipped app. Dart only ever
+  // dlopens the module under kDebugMode, so dropping it from every non-debug
+  // HAR is exactly the set of builds that could never have used it.
+  //
+  // The ohos flutter fork assembles each plugin HAR with `-p buildMode=<mode>`
+  // taken from the app build, which is what makes buildModeBinder work here.
   "apiType": "stageMode",
   "buildOption": {
   },
+  "buildOptionSet": [
+    {
+      "name": "no_debugger",
+      "nativeLib": {
+        "filter": {
+          "excludes": [
+            "**/libfjs_debugger.so"
+          ]
+        }
+      }
+    }
+  ],
   "targets": [
     {
       "name": "default"
+    }
+  ],
+  "buildModeBinder": [
+    {
+      "buildModeName": "release",
+      "mappings": [
+        {
+          "targetName": "default",
+          "buildOptionName": "no_debugger"
+        }
+      ]
+    },
+    {
+      "buildModeName": "profile",
+      "mappings": [
+        {
+          "targetName": "default",
+          "buildOptionName": "no_debugger"
+        }
+      ]
     }
   ]
 }

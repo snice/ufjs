@@ -46,6 +46,14 @@ class DevClient {
   /// request — nothing comes back, which is the point: the overlay's numbers
   /// have to survive on a release device where this socket does not exist.
   void Function()? onPerf;
+
+  /// `debug on <port>` / `debug off` (spec 088): `fjs debug` starting and
+  /// stopping its relay. The engine attaches its CDP channel to
+  /// host:port — the same host this WebSocket is already talking to — and
+  /// a successful attach is followed by a full reload so every script
+  /// lands in the debugger's script table.
+  void Function(int port)? onDebugAttach;
+  void Function()? onDebugDetach;
   bool _closed = false;
   Timer? _retryTimer;
   int _retryAttempt = 0;
@@ -180,6 +188,20 @@ class DevClient {
         }
         if (msg == 'perf') {
           onPerf?.call();
+          return;
+        }
+        if (msg.startsWith('debug ')) {
+          // Wire form (server: dev/server.ts, the `fjs:debug` case — keep
+          // in sync): `debug on <port>` / `debug off`. An unknown `debug`
+          // push from a newer server is ignored rather than guessed at:
+          // guessing could attach to a port that means something else.
+          final rest = msg.substring('debug '.length);
+          if (rest == 'off') {
+            onDebugDetach?.call();
+          } else if (rest.startsWith('on ')) {
+            final port = int.tryParse(rest.substring(3).trim());
+            if (port != null && port > 0) onDebugAttach?.call(port);
+          }
           return;
         }
         if (msg == 'reload' || msg.startsWith('reload')) {

@@ -33,6 +33,22 @@ __attribute__((used)) static const void *const kFjsKeepAlive[] = {
     (const void *)&fjs_last_error,       (const void *)&fjs_engine_id,
 };
 
+#if DEBUG
+// spec 090: the same trick decides whether this app can debug at all. The
+// inspector and its transport live in fjs_debugger.xcframework; referencing
+// attach/detach here is the ONLY thing that pulls that archive in, so a
+// Release (or Profile) build links zero bytes of it and dart:ffi finds no
+// attach symbol — which is exactly how it reports "no debugger in this
+// build" instead of shipping a dormant one.
+extern int32_t fjs_vm_debugger_attach(void *, const char *, int32_t);
+extern int32_t fjs_vm_debugger_detach(void *);
+
+__attribute__((used)) static const void *const kFjsKeepDebugger[] = {
+    (const void *)&fjs_vm_debugger_attach,
+    (const void *)&fjs_vm_debugger_detach,
+};
+#endif
+
 @implementation FlutterFjsPlugin
 + (void)registerWithRegistrar:(NSObject<FlutterPluginRegistrar>*)registrar {}
 @end

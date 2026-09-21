@@ -1,15 +1,19 @@
 flutter_fjs bundles third-party code.
 
-QuickJS-ng v0.9.0 — MIT License
+PrimJS 4.1.1 (tag 4.1.1, commit 8d129eab) — Apache License 2.0
+  Copyright 2024 The Lynx Authors
+  Full text: native/primjs/LICENSE (project repository); a copy ships
+  in the published package as LICENSE-primjs
+
+QuickJS — MIT License
   Copyright (c) 2017-2024 Fabrice Bellard
   Copyright (c) 2017-2024 Charlie Gordon
-  Copyright (c) 2023-2025 Ben Noordhuis
-  Copyright (c) 2023-2025 Saúl Ibarra Corretgé
-  Full text: LICENSE-quickjs-ng
+  PrimJS derives from QuickJS; the MIT text is preserved in
+  LICENSE-quickjs-ng.
 
-The prebuilt binaries shipped with this package are compiled from the QuickJS-ng
-sources plus this project's own C++ layer, so they contain QuickJS-ng code under
-the license above:
+The prebuilt binaries shipped with this package are compiled from the PrimJS
+sources plus this project's own C++ layer, so they contain PrimJS code under
+the Apache License 2.0 above, including QuickJS-derived portions under MIT:
 
   android/src/main/jniLibs/<abi>/libfjs.so
   ios/fjs.xcframework

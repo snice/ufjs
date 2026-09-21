@@ -674,6 +674,28 @@ CSS 收尾项（纯 Dart 侧与 JS 引擎侧，op 协议零改动）：
   没有它的 GlobalComponents 条目——新增防漂移测试把 tags.json 与
   组件类型钉在一起
 
+## Chrome DevTools 调试器 + 引擎切换 PrimJS（已完成 2026-09）
+
+远期条目「调试器协议」落地，顺带把引擎从 quickjs-ng 0.9.0 换成 Lynx 系的
+PrimJS 4.1.1（`specs/088-devtools-debugger/`）：
+
+- ✅ **`fjs debug`**：Chrome DevTools 直连跑着的 app——断点（含条件断点）、
+  单步、调用栈、局部变量、`evaluateOnCallFrame`、Console。引擎（PrimJS）
+  原生实现 CDP，CLI 侧是字节搬运中继 + `chrome://inspect` 发现端点，
+  DevTools 侧只绑 127.0.0.1。见 [toolchain.md](toolchain.md)「断点调试」。
+- ✅ **引擎切换**：vendored quickjs-ng 0.9.0 → PrimJS tag 4.1.1
+  （Apache-2.0，`native/primjs/VENDORED.md`）。理由：quickjs-ng 没有任何
+  debugger 基础（上游 #757 仅讨论），自研解释器 hook 是 1.5–2.5k 行
+  永久自维护的 C；PrimJS 把断点/栈帧/作用域/帧内求值整个给齐且由字节跳动
+  按 Lynx 节奏维护。spike 先行验证（构建/API 面/CDP 冒烟）后再迁移。
+  engine id 锁版本值变为 `primjs-4.1.1`，`.fjsbundle` 需重编。
+- 随附：esbuild target es2021 → es2019（PrimJS 的 ES 上限，web 构建不变）；
+  `fjs.h` 新增 OPTIONAL 符号 `fjs_vm_debugger_attach/detach`；fjsrun 增
+  `--debug-connect host:port`（桌面复用同一调试链路）。
+- 明确不做：release 字节码调试、Worker VM、小程序端、Vue SFC source map
+  （PrimJS 支持 sourceMapURL 字段，后续可加）、DAP/VS Code 前端（CDP 标准
+  协议，后续可接）。
+
 ## 近期计划
 
 - **App 侧真机对拍挂账**：078/079 的示例页（过渡演示新增面板、百分比间距与
@@ -713,7 +735,10 @@ CSS 收尾项（纯 Dart 侧与 JS 引擎侧，op 协议零改动）：
 
 ## 远期
 
-- Windows / Linux 桌面端（CMake 已预留，MSVC 适配 QuickJS 需少量补丁）
-- 调试器协议：Chrome DevTools 接 QuickJS debugger（`fjs log` / `fjs eval` 已经
-  把 dev socket 变成双向通道，断点和堆栈是它的超集）
+- Windows / Linux 桌面端（PrimJS 的 CMake 自带 MSVC 分支，比 quickjs-ng 时期
+  更近了一步）
+- ~~调试器协议：Chrome DevTools 接 QuickJS debugger~~ → 已完成（见上
+  「Chrome DevTools 调试器 + 引擎切换 PrimJS」）
 - 三方原生模块包管理（npm 包声明 native/ 目录，构建期合并）
+- 引擎侧追平 quickjs-ng 的 ES 等级（PrimJS 目前 ES2019，靠 esbuild 降级），
+  或评估其 compatible memory management（tracing GC）在 arm64 上带来的收益

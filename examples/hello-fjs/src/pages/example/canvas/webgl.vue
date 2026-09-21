@@ -124,7 +124,7 @@ function onResize() {
 
 <template>
   <Panel title="WebGL" desc="同一份 GL 代码：web 原生 context，App 经 ANGLE 执行">
-    <canvas defer-resize ref="cv" class="gl" @resize="onResize" />
+    <canvas ref="cv" class="gl" @resize="onResize" />
     <button class="toggle" @click="flip">切换方向</button>
     <text class="tip">绿色三角形匀速旋转</text>
   </Panel>

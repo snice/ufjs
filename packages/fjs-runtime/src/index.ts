@@ -6,6 +6,11 @@
 //   import { invokeHost } from 'fjs';                          // host modules
 //   import { fetch } from 'fjs';                               // HTTP (also global)
 import './raf';
+// spec 089/090: the DevTools data plane (__fjsDevtools — Elements/Network
+// serialization the `fjs debug` relay evaluates). Bundled only where the
+// bundler sets __FJS_DEVTOOLS__=true; plain/release builds DCE it away.
+import { bootIfEnabled } from './devtools';
+bootIfEnabled();
 
 export { h, create, createRoot, insert, remove, setText, setProps, setStyle, flush } from './ui/element';
 export type { Element, CanvasElement } from './ui/element';

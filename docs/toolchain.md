@@ -585,6 +585,95 @@ $ fjs eval 'nope.deep'
 fjs: nope is not defined
 ```
 
+## 断点调试：`fjs debug`
+
+Chrome DevTools 直连正在跑的 app：断点（含条件断点）、单步、调用栈、局部
+变量、`evaluateOnCallFrame`、Console 全部可用；**Elements 与 Network 面板也
+在工作**（spec 089）：
+
+- **Elements**：每页的元素树（tag / class / style / 业务 props / 文本），
+  选中节点后 Computed 侧栏是样式引擎算出的最终生效样式。树是快照式——
+  运行中的变更不会自动推送，重开 DevTools（或点刷新）重拉；断点暂停期间
+  树照样可查（走的是调试通道，不依赖被冻结的 Dart 事件循环）。
+- **Network**：app 里 `fetch()` 的请求行（方法 / URL / 状态 / 响应头）与
+  Response 体预览（≤512KB，超出只记长度）。行有 ≤500ms 轮询延迟；响应体
+  在**应用读取它时**才被记录（`text()/json()/arrayBuffer()`）——app 没读过
+  的响应在面板里看不到体。
+
+```bash
+fjs debug                        # 另开一个终端；fjs dev 跑着的时候
+
+# 连 DevTools：直接开前端，别绕 chrome://inspect
+open -a "Google Chrome" \
+  "devtools://devtools/bundled/inspector.html?ws=127.0.0.1:38902/cdp"
+# → Sources 面板选脚本，点行号下断点
+```
+
+`fjs debug` 的横幅会把上面这条命令按当前端口打印出来，复制即可。
+
+**为什么不用 `chrome://inspect`**：那条路要靠 Chrome 自己去发现目标，实测
+经常一片空白且不给任何报错，排查成本远高于收益。已知至少两个坑：
+
+- 配置里填 `localhost:38902` 必然失败——这个名字在 macOS 上先解析到 `::1`，
+  而中继只监听 IPv4 回环（CDP 能求值任意代码，不该绑更宽的地址）。要填也得
+  填 `127.0.0.1:38902`。
+- 填对了也未必出现。Chrome 的发现逻辑对目标端点有一些没文档化的期待，
+  失败时不提示。
+
+直连方式绕开整个发现环节，直接把前端接到中继的 WebSocket 上，是当前唯一
+可靠的入口。注意 `devtools://` **粘进地址栏会被 Chrome 拦掉**（安全策略），
+只能像上面那样从命令行 `open`，或从一个 HTML 链接点进去。
+
+`fjs debug` 起一个 CDP 中继：DevTools 侧 WebSocket 只绑 `127.0.0.1`（CDP 能
+求值任意代码，不像 dev server 那样绑 `0.0.0.0`），app 侧是 VM 自己拨出来的
+TCP 通道（默认 `:38903`，与 dev WebSocket 同方向，手机不开任何端口）。引擎
+（PrimJS，spec 088）原生实现 CDP，中继只搬运字节：
+
+| 端口 | 用途 | 绑定 |
+|---|---|---|
+| 38902 | DevTools 发现（`/json/list`）+ CDP WebSocket | 127.0.0.1 |
+| 38903 | app VM 的调试通道 | 0.0.0.0（局域网内手机可达） |
+
+`--port` / `--vm-port` 可覆盖。
+
+行为与限制：
+
+- **attach 即重载**。`fjs debug` 通过 dev server 向 app 推 `debug on <端口>`
+  （之后重连的 app 也会收到），app 挂上调试通道后整包重载一遍，让所有脚本
+  进入调试器的脚本表；之后 DevTools 任何时候连上来，`Debugger.enable` 都会
+  补发全部 `scriptParsed`，连接先后顺序无所谓。DevTools 断开时中继会向 app
+  补发 `Debugger.disable`：会话复位（重连可重放脚本），若 app 当时停在断点
+  上也会解冻——调试器没了，冻结没有意义。
+- **断点期间 UI 冻结**。暂停的是 JS 所在的 UI isolate，这是"暂停"的本义；
+  resume 后恢复，期间到达的热更新推送会在 resume 后处理。
+- **Sources 面板里的文件名是真实脚本名**：`bundle.js`、`pages/<chunk>.js`、
+  units 模式下的模块路径（`src/components/panel.vue`）。断点按 url+行号
+  匹配，别指望看到 Vue SFC 源码——那是 source map 的后续工作。
+- **Console 输出走调试通道**。调试器附加期间，`console.log` 由引擎合成为
+  `Runtime.consoleAPICalled` 送进 DevTools（带调用栈），app 侧的 `fjs log`
+  通路可能不再收到这些行。
+- **只调 dev 源码模式、主 VM**。release 字节码、Worker、小程序端不在范围
+  内；web 端用浏览器自带 DevTools。
+- **产物分层**（spec 090）：**调试器不在引擎里**。引擎只保留一张空的
+  inspector 钩子表，CDP 语义层（断点、作用域、heap/cpu profiler）和 socket
+  传输一起待在独立模块里，release 不带这个模块 = 物理上没有调试器。
+
+  | 平台 | 引擎 | 调试模块 | release 怎么剔除 |
+  |------|------|----------|------------------|
+  | Android | `libfjs.so`（arm64 1.85 MB） | `libfjs_debugger.so`（482 KB） | `android/build.gradle` 检测 release 任务，从 jniLibs 排除；`-PfjsKeepDebugger=true` 可保留 |
+  | iOS / macOS | `fjs.xcframework` | `fjs_debugger.xcframework` | 静态归档按需拉取，只有 `FlutterFjsPlugin.m` 的 `#if DEBUG` 引用它；Release/Profile 一个字节都不链 |
+  | ohos | `libfjs.so`（arm64 1.81 MB） | `libfjs_debugger.so`（422 KB） | `ohos/build-profile.json5` 的 `buildModeBinder` 把 release/profile 绑到带 `nativeLib.filter.excludes` 的构建配置，插件 HAR 里就没有这个文件 |
+  | 桌面 | `libfjs.dylib`（1.08 MB） | `libfjs_debugger.dylib`（474 KB） | `fjsrun` dlopen，文件不在就报"本构建无调试器" |
+
+  对比拆分前：Android arm64 的 release `libfjs.so` 从 2.21 MB 降到 1.85 MB，
+  桌面从 1.44 MB 降到 1.08 MB（−26%）。
+
+  运行时数据平面（元素树/fetch 记录）仍由 `__FJS_DEVTOOLS__` 门控，仅在
+  `fjs dev` 或 `fjs build --devtools` 时打包；release DCE 掉全部。
+- 桌面复用同一套链路，不需要设备：
+  `fjsrun --debug-connect 127.0.0.1:38903 <bundle.js> --pump 60000`。
+- `debug off`（Ctrl-C 退出 `fjs debug` 时自动下发）解除附加。
+
 ## 性能面板
 
 `fjs dev` 跑着的时候按 **`p`**，连着的 app 右上角会浮出一个小面板；再按一次收起。
@@ -1108,17 +1197,19 @@ server 跑起来后，终端本身就是个控制台（只在交互式终端里�
 
 ## 字节码格式
 
-`.fjsbundle` 是带头部的 QuickJS 字节码：
+`.fjsbundle` 是带头部的引擎字节码：
 
 ```text
 [0..4)   magic "FJSB"
 [4..6)   u16 format version = 1
 [6..8)   u16 engine id length
-[8..]    engine id + QuickJS bytecode
+[8..]    engine id + PrimJS bytecode
 ```
 
-App 加载时会校验 magic、格式版本和 engine id；QuickJS 或 `fjsc` 版本不一致时会
-直接报错，避免运行期出现难定位的崩溃。
+App 加载时会校验 magic、格式版本和 engine id（当前 `primjs-4.1.1`；spec 088
+起引擎从 quickjs-ng 换为 PrimJS，缘由与升级流程见
+`packages/flutter_fjs/native/primjs/VENDORED.md`）；engine id 或 `fjsc` 版本
+不一致时会直接报错，避免运行期出现难定位的崩溃。
 
 `--release --gz` 的 assets 保存为 `.fjsbundle.gz`。Flutter 侧先 gunzip，再按
 上面的 `.fjsbundle` 格式校验和执行；未压缩 assets 也可被加载。

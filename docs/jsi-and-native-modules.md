@@ -140,10 +140,28 @@ const battery = __fjs.natives.battery() as { level: number };
 ```bash
 cd packages/flutter_fjs/native
 cmake -B build-native -DFJS_BUILD_TESTS=ON && cmake --build build-native -j
-./build-native/fjs-test                 # 引擎自测（ALL PASS）
+./build-native/fjs-test                 # 引擎自测（ALL PASS，含 CDP 调试器链路）
 ./build-native/fjsrun dist/app/bundle.js    # 跑你的 bundle，打印 console + UI 帧
 ./build-native/fjsrun --tap 3 dist/app/bundle.js   # 模拟点击节点 #3
+./build-native/fjsrun --debug-connect 127.0.0.1:38903 dist/app/bundle.js --pump 60000
+                                        # 接入 `fjs debug` 的调试通道（spec 088）
 ```
+
+### 调试器 ABI（spec 088，OPTIONAL 符号）
+
+`fjs.h` 只为调试器加了两个函数，遵守 `fjs_vm_heap` 的 OPTIONAL 规则：宿主
+lookup 失败按"此引擎构建不支持调试"降级，不是错误。
+
+```c
+int32_t fjs_vm_debugger_attach(FJSVM *vm, const char *host, int32_t port);
+int32_t fjs_vm_debugger_detach(FJSVM *vm);
+```
+
+attach 让 VM 作为 TCP **客户端**外连 `fjs debug` 的中继（与 dev WebSocket 同
+方向，手机不开端口），之后 CDP 消息在 JS 线程上直接被引擎消费——运行中由
+`fjs_vm_pump` 顺带轮询，断点暂停时引擎回调宿主阻塞等服务。调试流量不过
+Dart，所以没有新事件号；三处同步为 `fjs.h` / `ffi.dart` /
+本文件。引擎内 CDP 语义由 vendored PrimJS 提供（`native/primjs/VENDORED.md`）。
 
 ## fetch：异步宿主模块的范式
 

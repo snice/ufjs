@@ -21,6 +21,7 @@ import { hasNativeHost, invokeHost } from '../host';
 import { registerSystemHandler } from '../ui/element';
 import { utf8Decode, utf8Encode } from '../ui/utf8';
 import { base64Decode, base64Encode } from './base64';
+import { devtoolsSlots } from '../devtools-hooks';
 
 const EVENT_HTTP_RESPONSE = 14;
 
@@ -185,6 +186,10 @@ export class FjsResponse {
     const buf = fns.readHandleBytes(this.bodyHandle);
     fns.releaseHandle(this.bodyHandle);
     this.bodyCache = new Uint8Array(buf);
+    // spec 089: the app read the body — THIS is the copy the Network panel
+    // records. Capturing here (not at response time) sidesteps both the
+    // empty-borrow race on fresh handles and giant speculative copies.
+    devtoolsSlots.netBodyMaterialized(this.bodyHandle, this.bodyCache);
     return this.bodyCache;
   }
 
@@ -352,6 +357,17 @@ function ensureDispatcher(): void {
         handle,
       ),
     );
+    // spec 089: after resolve — the devtools body borrow must not precede
+    // the app's own materialization options
+    devtoolsSlots.netResponse({
+      id,
+      url: wire.url ?? '',
+      status: wire.status ?? 0,
+      statusText: wire.statusText ?? '',
+      headers: wire.headers ?? {},
+      bodyBase64: wire.bodyBase64,
+      handle,
+    });
   });
 }
 
@@ -414,6 +430,12 @@ export function fetch(input: string, init: FjsRequestInit = {}): Promise<FjsResp
       onAbort = null;
     };
     pending.set(id, { resolve, reject, detach });
+    devtoolsSlots.netRequest({
+      id,
+      url,
+      method: (init.method ?? 'GET').toUpperCase(),
+      headers: headers.toJSON(),
+    });
 
     if (signal?.addEventListener) {
       onAbort = () => {

@@ -1,10 +1,25 @@
-// The fjs engine ships prebuilt: android/src/main/jniLibs/<abi>/libfjs.so, built
-// from ../native by tool/build-android.sh. Nothing native is compiled here, so
-// consumers need no NDK or CMake — Dart loads it via DynamicLibrary.open.
+// Two prebuilt .so files ship here (spec 090):
+//   android/src/main/jniLibs/<abi>/libfjs.so            the engine, always
+//   android/src/main/jniLibs/<abi>/libfjs_debugger.so   CDP inspector +
+//                                                       transport, debug only
+// built from ../native by tool/build-android.sh. Nothing native is compiled
+// here, so consumers need no NDK or CMake — Dart always opens libfjs.so and,
+// in debug builds only, loads the debugger module on top (lib/src/ffi.dart).
+// Release builds drop libfjs_debugger.so automatically (see the fjsIsRelease
+// detection below); set fjsKeepDebugger=true in gradle properties to keep it.
 def flutterRoot = null
 if (project.hasProperty('flutter.sdk')) {
     flutterRoot = project.property('flutter.sdk')
 }
+
+// Flutter fills gradle.startParameter.taskNames with the app's tasks, so a
+// release build ("flutter build apk/appbundle" or "flutter run --release")
+// shows a *release* task here while `fjs run` / `flutter run` shows a debug
+// one. Cheap, configuration-time detection — no task-graph surgery.
+def fjsIsReleaseBuild = gradle.startParameter.taskNames.any {
+    it.toLowerCase().contains('release')
+}
+def fjsKeepDebugger = project.findProperty('fjsKeepDebugger') == 'true'
 
 buildscript {
     repositories {
@@ -37,6 +52,11 @@ android {
     sourceSets {
         main {
             jniLibs.srcDirs = ['src/main/jniLibs']
+            if (fjsIsReleaseBuild && !fjsKeepDebugger) {
+                // release ships the engine only; dropping this file is what
+                // removes the debugger, since the engine holds no inspector
+                jniLibs.excludes += ['**/libfjs_debugger.so']
+            }
         }
     }
 
@@ -45,6 +65,7 @@ android {
     packagingOptions {
         jniLibs {
             keepDebugSymbols += ['**/libfjs.so']
+            keepDebugSymbols += ['**/libfjs_debugger.so']
         }
     }
 

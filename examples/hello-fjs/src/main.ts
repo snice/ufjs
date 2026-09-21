@@ -22,3 +22,13 @@ createFjsApp({
     };
   },
 }).mount();
+
+// spec 088 断点调试的目标代码：每 2s 跳一次，给 `fjs debug` + Chrome
+// DevTools 一个稳定可命中的断点位置（Sources → bundle.js 搜 "debug-probe"）。
+// console.debug 走日志通路；调试器附加期间它由引擎转成 CDP 的
+// consoleAPICalled 直送 DevTools。
+let probeCount = 0;
+setInterval(() => {
+  probeCount++;
+  console.debug('[debug-probe] tick', probeCount);
+}, 2000);

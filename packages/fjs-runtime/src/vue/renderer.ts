@@ -17,6 +17,7 @@ import { lastPointer } from '../ui/geometry';
 import { hasNativeHost, invokeHost, registerPreFlush } from '../host';
 import { usesDeclaredFont } from '../css/font-face';
 import { INHERITABLE_KEYS, StyleEngine, type PseudoStyles } from '../css/style';
+import { devtoolsSlots } from '../devtools-hooks';
 
 type HostNode = Element;
 
@@ -758,11 +759,13 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
 
   setText: (node, text) => {
     setText(node, text);
+    devtoolsSlots.recordText(node.id, text);
   },
 
   setElementText: (node, text) => {
     // v1: element text replaces the whole content (used for {{ }} on views)
     setText(node, text);
+    devtoolsSlots.recordText(node.id, text);
   },
 
   insert: (child, parent, anchor) => {
@@ -1166,6 +1169,22 @@ export function releaseRoot(root: HostNode): void {
 export function registerStyles(scope: string | null, cssText: string): void {
   styleEngine.register(scope, cssText);
 }
+
+// spec 089/090: hand the DevTools data plane the shadow tree it serializes
+// for the Elements panel — roots, structure, tags, classes and both style
+// views. Goes into the slots module rather than importing the data plane,
+// so release builds carry none of it.
+devtoolsSlots.provider = {
+  roots: () => [...pageRoots.keys()],
+  // page roots live in pageRoots, not elementsById (createRoot is an
+  // element-layer call; the renderer's own registry starts at its children)
+  exists: (id) => elementsById.has(id) || pageRoots.has(id),
+  tag: (id) => elementsById.get(id)?.tag ?? pageRoots.get(id)?.tag ?? '',
+  childIds: (id) => childrenOf.get(id) ?? [],
+  classesOf: (id) => styleEngine.classesOf(id),
+  inlineStyle: (id) => styleEngine.inlineRecord(id),
+  computedStyle: (id) => styleEngine.computedOf(id),
+};
 
 /** Manual render escape hatch (mostly for tests). */
 export { render };

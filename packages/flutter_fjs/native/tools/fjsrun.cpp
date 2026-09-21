@@ -6,8 +6,14 @@
  *   fjsrun dist/bundle.js          # source mode
  *   fjsrun dist/app.fjsbundle      # bytecode mode
  *   fjsrun --pump 2000 dist/bundle.js   # keep pumping timers for 2s
+ *   fjsrun --debug-connect 127.0.0.1:38903 dist/bundle.js --pump 60000
+ *         # attach the CDP debugger (spec 088); Chrome DevTools can then
+ *         # break in through `fjs debug` — desktop rehearsal of the
+ *         # on-device path without a phone.
  */
 #include "fjs.h"
+
+#include "debugger-module.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -144,6 +150,7 @@ int main(int argc, char **argv) {
     int pump_ms = 0;
     int tap_id = -1;
     const char *tap_text = nullptr;
+    const char *debug_addr = nullptr;
     std::vector<const char *> paths;
     /* action sequence: repeatable --tap/--pump steps executed in order */
     struct Action { enum { Tap, Pump } kind; int id; int ms; const char *text; };
@@ -157,11 +164,13 @@ int main(int argc, char **argv) {
             actions.back().text = argv[++i];
         else if (!strcmp(argv[i], "--hex")) g_hex = 1;
         else if (!strcmp(argv[i], "--frames")) g_frames = 1;
+        else if (!strcmp(argv[i], "--debug-connect") && i + 1 < argc)
+            debug_addr = argv[++i];
         else paths.push_back(argv[i]);
     }
     if (paths.size() != 1) {
         fprintf(stderr, "usage: fjsrun [--pump ms] [--tap node-id] [--hex] [--frames] "
-                        "<bundle.js | app.fjsbundle>\n");
+                        "[--debug-connect host:port] <bundle.js | app.fjsbundle>\n");
         return 2;
     }
 
@@ -178,6 +187,32 @@ int main(int argc, char **argv) {
 
     FJSVM *vm = fjs_vm_create();
     fjs_set_callbacks(vm, on_log, on_ui_ops, on_invoke_host);
+
+    /* Attach before evaluating so the scripts land in the debugger's
+     * script table (a later Debugger.enable replays them all). */
+    if (debug_addr) {
+        std::string addr = debug_addr;
+        auto colon = addr.rfind(':');
+        if (colon == std::string::npos) {
+            fprintf(stderr, "fjsrun: --debug-connect needs host:port\n");
+            return 2;
+        }
+        std::string host = addr.substr(0, colon);
+        int port = atoi(addr.substr(colon + 1).c_str());
+        /* spec 090: the debugger is a separate module, so a build that did
+         * not ship it has no attach at all — say so instead of pretending. */
+        FjsDebuggerModule dbg = fjs_load_debugger_module();
+        if (!dbg.loaded()) {
+            fprintf(stderr, "fjsrun: this build has no debugger module "
+                            "(libfjs_debugger) next to the engine\n");
+            return 1;
+        }
+        if (dbg.attach(vm, host.c_str(), port) != 0) {
+            fprintf(stderr, "fjsrun: %s\n", fjs_last_error(vm));
+            return 1;
+        }
+        printf("[fjsrun] debugger attached to %s\n", debug_addr);
+    }
 
     /* Announce what dump_ops above can decode, exactly as the Flutter host
      * does. Without this the runtime assumes a pre-interning host and falls

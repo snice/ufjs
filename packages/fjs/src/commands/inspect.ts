@@ -8,19 +8,20 @@
 //
 //   fjs log            console output from the app, as it happens
 //   fjs eval '1 + 1'   evaluate an expression in the running VM
-import { WebSocket } from 'ws';
 import { colorSupported } from '../dev/qrcode.js';
+import {
+  connectDevServer as connect,
+  handshakeTool as handshake,
+  parseDevToolArgs as parseCommon,
+  parseJsonMessage,
+  type DevToolOptions as Options,
+} from '../dev/tool-conn.js';
 
 /** Marks an eval answer inside the ordinary log stream, so getting a value
  * back needs no second message type — and no new native call. The NUL
  * prefix keeps it out of `fjs log`'s output and out of anything a real
  * console.log would produce. */
 const EVAL_MARK = '\u0000fjs-eval:';
-
-interface Options {
-  port: number;
-  host: string;
-}
 
 export async function logCommand(argv: string[]): Promise<void> {
   const { opts, rest } = parseCommon(argv);
@@ -37,7 +38,7 @@ export async function logCommand(argv: string[]): Promise<void> {
   }
 
   socket.on('message', (raw) => {
-    const msg = parse(raw.toString());
+    const msg = parseJsonMessage(raw.toString());
     if (msg?.fjs !== 'log') return;
     const text = String(msg.text ?? '');
     if (text.startsWith(EVAL_MARK)) return; // another tool's answer
@@ -84,7 +85,7 @@ export async function evalCommand(argv: string[]): Promise<void> {
       reject(new Error(`no answer in ${timeout}ms — the app may be busy or not listening`));
     }, timeout);
     socket.on('message', (raw) => {
-      const msg = parse(raw.toString());
+      const msg = parseJsonMessage(raw.toString());
       if (msg?.fjs !== 'log') return;
       const text = String(msg.text ?? '');
       if (!text.startsWith(`${EVAL_MARK}${id}:`)) return;
@@ -124,67 +125,6 @@ export function wrap(id: string, expression: string): string {
 
 function url(opts: Options): string {
   return `ws://${opts.host}:${opts.port}/ws`;
-}
-
-function connect(opts: Options): Promise<WebSocket> {
-  return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url(opts));
-    socket.once('open', () => resolve(socket));
-    socket.once('error', () => {
-      reject(
-        new Error(
-          `cannot reach a dev server at ${url(opts)}\n` +
-            '  start one with `fjs dev` (or `fjs run android|ios`), or pass --port',
-        ),
-      );
-    });
-  });
-}
-
-/** Announces this connection as a tool, so the server never pushes app
- * traffic — a stray "reload" — at it, and answers with how many apps are
- * listening. */
-function handshake(socket: WebSocket): Promise<{ apps: number }> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error('the dev server did not answer — is it an older fjs?'));
-    }, 3000);
-    socket.on('message', function hello(raw) {
-      const msg = parse(raw.toString());
-      if (msg?.fjs !== 'hello') return;
-      clearTimeout(timer);
-      socket.off('message', hello);
-      resolve({ apps: Number(msg.apps ?? 0) });
-    });
-    socket.send(JSON.stringify({ fjs: 'tool' }));
-  });
-}
-
-function parse(text: string): Record<string, unknown> | null {
-  try {
-    const value: unknown = JSON.parse(text);
-    return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
-
-function parseCommon(argv: string[]): { opts: Options; rest: string[] } {
-  const opts: Options = { port: 38900, host: '127.0.0.1' };
-  const rest: string[] = [];
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === '--port') {
-      const value = Number(argv[++i]);
-      if (!Number.isInteger(value)) throw new Error('--port needs a number');
-      opts.port = value;
-    } else if (arg === '--host') {
-      const value = argv[++i];
-      if (!value) throw new Error('--host needs a value');
-      opts.host = value;
-    } else rest.push(arg);
-  }
-  return { opts, rest };
 }
 
 /** The engine's levels are the console methods that produced them:

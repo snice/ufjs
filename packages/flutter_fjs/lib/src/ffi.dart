@@ -8,6 +8,7 @@ import 'dart:io' show Platform;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 
 /// FJSValue — mirrors native/include/fjs.h (flat struct, 32 bytes):
 /// tag@0 i@4 d@8 s@16 len@24 pad@28.
@@ -154,6 +155,15 @@ typedef _HandleBytesD =
 typedef _HandleReleaseC = ffi.Void Function(FJSVMHandle, ffi.Int64);
 typedef _HandleReleaseD = void Function(FJSVMHandle, int);
 
+// Devtools debugger (spec 088/090): the debugger module dials out to the
+// `fjs debug` relay and serves CDP on the JS thread. Only scalars cross —
+// the debug traffic itself never touches Dart.
+typedef _DebuggerAttachC =
+    ffi.Int32 Function(FJSVMHandle, ffi.Pointer<ffi.Uint8>, ffi.Int32);
+typedef _DebuggerAttachD = int Function(FJSVMHandle, ffi.Pointer<ffi.Uint8>, int);
+typedef _DebuggerDetachC = ffi.Int32 Function(FJSVMHandle);
+typedef _DebuggerDetachD = int Function(FJSVMHandle);
+
 /// Native entry points of libfjs, resolved once.
 class FjsBindings {
   FjsBindings._(this.lib)
@@ -191,7 +201,11 @@ class FjsBindings {
       ),
       handleRelease = lib.lookupFunction<_HandleReleaseC, _HandleReleaseD>(
         'fjs_handle_release',
-      );
+      ) {
+    final module = _openDebuggerModule();
+    debuggerAttach = module == null ? null : _maybeDebuggerAttach(module);
+    debuggerDetach = module == null ? null : _maybeDebuggerDetach(module);
+  }
 
   /// `fjs_vm_heap` landed after FJS_ABI_VERSION 1, so an engine binary can
   /// predate it — the Android `libfjs.so` is a committed prebuilt, and a
@@ -205,19 +219,67 @@ class FjsBindings {
     }
   }
 
+  /// Opens the debugger module (spec 090) — the inspector and its transport
+  /// live there, never in the engine, so "no module" is how a release build
+  /// ends up undebuggable. Absent is the normal case, not an error: release
+  /// Android APKs have the .so stripped from jniLibs, non-debug ohos HARs
+  /// drop it too, and release Apple binaries never force-load the archive.
+  static ffi.DynamicLibrary? _openDebuggerModule() {
+    if (!kDebugMode) return null;
+    try {
+      if (_loadsEngineFromFile) {
+        return ffi.DynamicLibrary.open('libfjs_debugger.so');
+      }
+      // iOS/macOS link the module's slices into the app binary (Debug
+      // configuration only), so it is already in the process image.
+      return ffi.DynamicLibrary.process();
+    } on ArgumentError {
+      return null;
+    } on Object {
+      return null;
+    }
+  }
+
+  /// `fjs_vm_debugger_*` are exported by the debugger module, never by the
+  /// engine — same OPTIONAL rule as [heap]: missing simply means "debugging
+  /// not supported in this build", reported once, never a crash.
+  static _DebuggerAttachD? _maybeDebuggerAttach(ffi.DynamicLibrary lib) {
+    try {
+      return lib.lookupFunction<_DebuggerAttachC, _DebuggerAttachD>(
+        'fjs_vm_debugger_attach',
+      );
+    } on ArgumentError {
+      return null;
+    }
+  }
+
+  static _DebuggerDetachD? _maybeDebuggerDetach(ffi.DynamicLibrary lib) {
+    try {
+      return lib.lookupFunction<_DebuggerDetachC, _DebuggerDetachD>(
+        'fjs_vm_debugger_detach',
+      );
+    } on ArgumentError {
+      return null;
+    }
+  }
+
   static FjsBindings? _instance;
 
-  /// Android and ohos load the prebuilt libfjs.so shipped inside the app
-  /// (jniLibs / the ohos plugin HAR's libs); iOS/macOS link the static slices
-  /// of fjs.xcframework straight into the app binary, so the symbols are
-  /// already in the process. The ohos fork's Dart runtime reports
+  /// Android and ohos ship the engine as a .so inside the app (jniLibs / the
+  /// ohos plugin HAR's libs) and load it by name; iOS/macOS link the static
+  /// slices of fjs.xcframework straight into the app binary, so the symbols
+  /// are already in the process image. The ohos fork's Dart runtime reports
   /// `Platform.operatingSystem == 'ohos'` and `isAndroid` false there, so
   /// checking isAndroid alone would send ohos into process() and crash.
+  static bool get _loadsEngineFromFile =>
+      Platform.isAndroid || Platform.operatingSystem == 'ohos';
+
   static FjsBindings instance() {
     final cached = _instance;
     if (cached != null) return cached;
-    final os = Platform.operatingSystem;
-    final lib = (Platform.isAndroid || os == 'ohos')
+    // One engine for every build (spec 090): the debugger is a separate
+    // module loaded on top of it, see _openDebuggerModule.
+    final lib = _loadsEngineFromFile
         ? ffi.DynamicLibrary.open('libfjs.so')
         : ffi.DynamicLibrary.process();
     _instance = FjsBindings._(lib);
@@ -245,6 +307,32 @@ class FjsBindings {
   final _HandlePutBytesD handlePutBytes;
   final _HandleBytesD handleBytes;
   final _HandleReleaseD handleRelease;
+
+  /// Null when this build ships no debugger module; see
+  /// [_openDebuggerModule]. The Dart side treats that as "debugging not
+  /// supported by this build" and says so once.
+  late final _DebuggerAttachD? debuggerAttach;
+  late final _DebuggerDetachD? debuggerDetach;
+
+  /// Dials out to the `fjs debug` relay. Returns 0 on success, -1 on
+  /// failure (message via lastError).
+  int debuggerAttachHost(FJSVMHandle vm, String host, int port) {
+    final attach = debuggerAttach;
+    if (attach == null) return -1;
+    final hostPtr = toCString(host);
+    try {
+      return attach(vm, hostPtr, port);
+    } finally {
+      malloc.free(hostPtr);
+    }
+  }
+
+  /// Closes the debug channel; 0 whether or not it was attached.
+  int debuggerDetachVm(FJSVMHandle vm) {
+    final detach = debuggerDetach;
+    if (detach == null) return 0;
+    return detach(vm);
+  }
 
   /// Copies [bytes] into the VM's handle table and returns the handle id
   /// (a fresh monotonic one — pass [id] 0).

@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# Builds ohos/libs/arm64-v8a/libfjs.so from native/ with the DevEco Studio
-# toolchain, then strips it. Run once per native/ change and commit.
+# Builds ohos/libs/arm64-v8a/ from native/ with the DevEco Studio toolchain,
+# then strips the output. Run once per native/ change and commit.
+#
+# spec 090: TWO files land in libs/, an engine and a module on top of it —
+#   libfjs.so            the engine; contains no inspector, every build
+#   libfjs_debugger.so   CDP inspector + transport, loaded only by debug
+#                        builds; release/profile HAPs drop the file
+#                        (see ohos/build-profile.json5)
 #
 # The ohos flutter fork ships no CMake toolchain file, so CMake is pointed at
 # the DevEco llvm wrapper compilers (they bake -target/--sysroot/-D__MUSL__)
@@ -36,10 +42,12 @@ cmake -S "$ROOT/native" -B "$OUT" \
     -DCMAKE_BUILD_TYPE=Release \
     -DFJS_BUILD_TESTS=OFF \
     >/dev/null
-cmake --build "$OUT" --target fjs -j"$(getconf _NPROCESSORS_ONLN)" >/dev/null
+cmake --build "$OUT" --target fjs fjs_debugger -j"$(getconf _NPROCESSORS_ONLN)" >/dev/null
 mkdir -p "$LIBS"
-cp "$OUT/libfjs.so" "$LIBS/libfjs.so"
-"$STRIP" --strip-unneeded "$LIBS/libfjs.so"
+for so in libfjs.so libfjs_debugger.so; do
+    cp "$OUT/$so" "$LIBS/$so"
+    "$STRIP" --strip-unneeded "$LIBS/$so"
+done
 
 echo "built:"
-ls -lh "$LIBS/libfjs.so" | awk '{print "  " $NF " " $5}'
+ls -lh "$LIBS"/libfjs*.so | awk '{print "  " $NF " " $5}'

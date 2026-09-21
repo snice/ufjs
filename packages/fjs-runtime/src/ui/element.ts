@@ -11,6 +11,7 @@ import type { FjsCanvasRenderingContext2D } from '../canvas/context-2d';
  * name. */
 const INNER_CANVAS_TAG = 'inner-canvas';
 import { decodeTouchEvent, isTouchEvent, type FjsTouchEvent } from './touch';
+import { devtoolsSlots } from '../devtools-hooks';
 import { boundingRectOf, type FjsRect } from './geometry';
 
 /** Event names accepted in props; handlers never cross the JSI boundary —
@@ -626,6 +627,7 @@ export function setProps(el: Element, props: Record<string, unknown>): void {
   }
   if (!changed) return; // nothing the peer can observe
   getWriter().setProps(el.id, clean);
+  devtoolsSlots.recordProps(el.id, clean);
   scheduleFlush();
 }
 

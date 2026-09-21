@@ -26,6 +26,7 @@ import { splashCommand } from './commands/splash.js';
 import { previewCommand } from './commands/preview.js';
 import { upgradeCommand } from './commands/upgrade.js';
 import { evalCommand, logCommand } from './commands/inspect.js';
+import { debugCommand } from './commands/debug.js';
 import { doctorCommand } from './commands/doctor.js';
 import { lintCommand } from './commands/lint.js';
 import { typesCommand } from './commands/types.js';
@@ -171,6 +172,12 @@ commands:
       --host <addr>          dev server address (default: 127.0.0.1)
   fjs eval <expression>      evaluate an expression in the running VM
       --timeout <ms>         how long to wait for the answer (default: 5000)
+  fjs debug                  Chrome DevTools for the running VM: breakpoints,
+                             stepping, scopes, console (spec 088)
+      --cdp-port <n>         CDP port for chrome://inspect (default: 38902)
+      --vm-port <n>          debug channel the app dials (default: 38903)
+      --port <n>             dev server port to talk to (default: 38900)
+      --host <addr>          dev server address (default: 127.0.0.1)
   fjs clean                  remove generated output
       --out <dir>            build output directory (default: dist)
       --flutter-dir <dir>    Flutter host dir (default: .fjs/flutter)
@@ -266,6 +273,9 @@ async function main() {
       break;
     case 'eval':
       await evalCommand(argv);
+      break;
+    case 'debug':
+      await debugCommand(argv);
       break;
     case 'run':
       await runCommand(argv);

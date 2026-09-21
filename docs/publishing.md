@@ -357,12 +357,15 @@ pub 发布的是 **git 跟踪的文件**，不是工作区快照。新生成的�
 
 ## 许可
 
+spec 088 起引擎从 quickjs-ng（MIT）换为 PrimJS（Apache-2.0，内含 QuickJS
+MIT 衍生代码）。发布物的许可文件随引擎走：
+
 | 文件 | 内容 | 发布 |
 |---|---|---|
 | `LICENSE` | 项目自己的 MIT | ✅ |
-| `LICENSE-quickjs-ng` | QuickJS-ng 的 MIT 全文 | ✅ |
-| `NOTICE` | 说明预编译产物里含 QuickJS 代码 | ✅ |
-| `native/quickjs/LICENSE` | 上游原件，`LICENSE-quickjs-ng` 是它的副本 | ❌ |
+| `LICENSE-quickjs-ng` | QuickJS 系 MIT 全文（PrimJS 的 quickjs 内核衍生自它，保留以覆盖该部分） | ✅ |
+| `native/primjs/LICENSE`（+ `LICENSE.nodejs` / `LICENSE.v8` / `NOTICE`） | PrimJS 上游原件，Apache-2.0 | ❌（发布物引用包内的 `LICENSE-primjs` 副本，见下） |
 
-升级 QuickJS-ng 时，`LICENSE-quickjs-ng` 和 `NOTICE` 里的版本号要跟着
-`native/quickjs/VERSION-quickjs-ng.txt` 一起更新。
+升级 PrimJS 时，`native/primjs/VENDORED.md` 里的 tag/commit、复制出的
+`LICENSE-primjs` 和 `NOTICE` 里的版本号要一起更新。`NOTICE` 仍需声明
+预编译产物里含 QuickJS 衍生代码（现经 PrimJS）。

@@ -219,6 +219,54 @@ const char *fjs_last_error(FJSVM *vm);
 int32_t fjs_compile_bundle(FJSVM *vm, const uint8_t *src, int32_t len,
                            uint8_t *out, int32_t cap);
 
+/* ---- devtools debugger (spec 088/090) --------------------------------- */
+
+/* The engine contains NO debugger: the inspector (CDP semantics) and the
+ * transport (a TCP client that dials the `fjs debug` relay) both live in
+ * the separate module libfjs_debugger, which release builds do not ship.
+ * All the engine holds is an empty hook table the module fills at attach,
+ * so before attach — and in any build without the module — there is
+ * nothing to reach. Dart opens the module and calls its attach/detach:
+ *
+ *   int32_t fjs_vm_debugger_attach(FJSVM *vm, const char *host, int32_t port);
+ *   int32_t fjs_vm_debugger_detach(FJSVM *vm);
+ *
+ * Attach enables the inspector for this VM before scripts are evaluated
+ * (the Dart side reloads afterwards so every script registers), then serves
+ * the CDP session on the JS thread. Both symbols are OPTIONAL for hosts
+ * (same rule as fjs_vm_heap): a build without the plugin module simply has
+ * no debugger. */
+
+/* Transport seam between the engine and libfjs_debugger. The module owns
+ * the socket and ALL line I/O; the engine only says WHEN to pump queued
+ * frontend messages (fjs_vm_pump) and WHEN everything must be shut down
+ * (VM teardown). The OTHER seam — the six inspector entry points the
+ * interpreter calls — is internal to the vendored engine; see
+ * primjs/src/interpreter/quickjs/include/inspector_hooks.h. */
+typedef struct FjsDebuggerTransport FjsDebuggerTransport;
+struct FjsDebuggerTransport {
+    void *opaque;
+    /* Called from fjs_vm_pump: feed any queued frontend lines. */
+    void (*feed)(void *opaque, FJSVM *vm);
+    /* Called when the frontend sends Debugger.resume: the transport must
+     * unblock its pause loop so the engine can continue. */
+    void (*quit)(void *opaque);
+    /* Called once at VM teardown, before the context is freed. */
+    void (*close)(void *opaque);
+};
+
+/* Installs (t != NULL) or clears (t == NULL) the transport for this VM.
+ * While installed, fjs_vm_pump feeds frontend messages through it and the
+ * inspector's pause loop reads from it. NOT part of the exported ABI
+ * contract beyond the engine itself — the pluggable module uses it. */
+void fjs_debugger_set_transport(FJSVM *vm, const FjsDebuggerTransport *t);
+
+/* Exported by the PLUGGABLE MODULE (libfjs_debugger), not by libfjs — see
+ * the comment above. Signatures kept here so hosts that ship the module
+ * have the exact contract in one place. */
+int32_t fjs_vm_debugger_attach(FJSVM *vm, const char *host, int32_t port);
+int32_t fjs_vm_debugger_detach(FJSVM *vm);
+
 /* ---- binary handles (FJS_ABI_VERSION 2, spec 038) -------------------- */
 
 /* Bytes live in a VM-owned table so binary bodies (fetch request/response)

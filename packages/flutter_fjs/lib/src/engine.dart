@@ -597,7 +597,7 @@ class FjsEngine extends ChangeNotifier {
     if (bytes == null) throw FjsException('page chunk "$chunk" not found');
     if (_disposed || _vm == null) return;
     final fetchedAt = DateTime.now();
-    _eval(bytes);
+    _eval(bytes, filename: 'pages/$chunk.js');
     _loadedChunks.add(chunk);
     final evaluatedAt = DateTime.now();
     onLog?.call(
@@ -620,7 +620,7 @@ class FjsEngine extends ChangeNotifier {
       final bytes = await unitLoader!(raw);
       if (bytes == null) throw FjsException('dev unit "$raw" not found');
       if (_disposed || _vm == null) return;
-      _eval(bytes);
+      _eval(bytes, filename: raw);
       _loadedUnits.add(raw);
     }
   }
@@ -738,12 +738,14 @@ class FjsEngine extends ChangeNotifier {
   }
 
   /// Runs a chunk in either wire format (bytecode bundle or utf8 source).
-  void _eval(Uint8List chunk) {
+  /// [filename] is what the VM (and the spec 088 debugger's Sources panel)
+  /// sees: dev units carry their module path, page chunks their chunk name.
+  void _eval(Uint8List chunk, {String filename = 'prelude.js'}) {
     final bytes = fjsMaybeGunzip(chunk);
     if (_looksLikeFjsBundle(bytes)) {
       runBundle(bytes);
     } else {
-      runSource(utf8.decode(bytes), filename: 'prelude.js');
+      runSource(utf8.decode(bytes), filename: filename);
     }
   }
 
@@ -890,6 +892,36 @@ class FjsEngine extends ChangeNotifier {
       }
     };
     dev.onPerf = () => perfOverlay.value = !perfOverlay.value;
+    dev.onDebugAttach = (port) {
+      // spec 088. An engine binary older than the debugger reports once
+      // and keeps running — the app itself is unaffected (constitution V).
+      if (bind.debuggerAttach == null) {
+        onLog?.call(2,
+            '[fjs/debug] this engine build has no debugger — the native lib '
+            'predates spec 088; rebuild flutter_fjs');
+        return;
+      }
+      onLog?.call(1, '[fjs/debug] relay on port $port — reloading so every '
+          'script registers with the debugger');
+      _debugPort = port;
+      unawaited(
+        () async {
+          try {
+            final effectiveUnits = await _renegotiateUnits(dev);
+            await _loadFromDev(dev, split, effectiveUnits);
+          } catch (e) {
+            onLog?.call(3, '[fjs/debug] post-attach reload failed: $e');
+          }
+        }(),
+      );
+    };
+    dev.onDebugDetach = () {
+      if (_debugPort == null) return;
+      _debugPort = null;
+      final vm = _vm;
+      if (vm != null) bind.debuggerDetachVm(vm);
+      onLog?.call(1, '[fjs/debug] detached');
+    };
     dev.onEval = (id, source) {
       try {
         runSource(source, filename: 'fjs-eval.js');
@@ -955,7 +987,7 @@ class FjsEngine extends ChangeNotifier {
         if (!_loadedChunks.contains(chunk)) continue;
         final bytes = await dev.fetch('/pages/$chunk.js');
         if (_disposed || _vm == null) return true;
-        _eval(bytes);
+        _eval(bytes, filename: 'pages/$chunk.js');
         swapped.add(chunk);
       }
     } catch (e) {
@@ -995,7 +1027,7 @@ class FjsEngine extends ChangeNotifier {
         if (_disposed || _vm == null) return true;
       }
       for (final entry in fetched.entries) {
-        _eval(entry.value);
+        _eval(entry.value, filename: entry.key);
         _loadedUnits.add(entry.key);
       }
       for (final id in reload.units) {
@@ -1009,7 +1041,7 @@ class FjsEngine extends ChangeNotifier {
         if (!_loadedChunks.contains(chunk)) continue;
         final bytes = await dev.fetch('/pages/$chunk.js');
         if (_disposed || _vm == null) return true;
-        _eval(bytes);
+        _eval(bytes, filename: 'pages/$chunk.js');
       }
     } catch (e) {
       onLog?.call(2, '[dev] unit swap failed ($e) — reloading everything');
@@ -1040,6 +1072,27 @@ class FjsEngine extends ChangeNotifier {
     return fresh?['units'] == true;
   }
 
+  /// Relay port of a live `fjs debug` session (spec 088), or null. Deliberately
+  /// NOT cleared by reset(): a full reload rebuilds the VM, and a debugging
+  /// session that silently died on the first reload would be worse than the
+  /// re-attach cost — the debug channel has to survive every reload.
+  int? _debugPort;
+
+  /// Attaches the CDP channel to the current VM when a debug session is
+  /// active. Called right after reset() inside [_loadFromDev] — BEFORE any
+  /// script evals — so every script of the fresh VM lands in the debugger's
+  /// script table.
+  void _reattachDebugger() {
+    final port = _debugPort;
+    if (port == null) return;
+    final dev = _dev;
+    final vm = _vm;
+    if (dev == null || vm == null) return;
+    if (bind.debuggerAttachHost(vm, dev.host, port) != 0) {
+      onLog?.call(2, '[fjs/debug] re-attach failed: ${_lastError()}');
+    }
+  }
+
   /// One dev load: fresh VM, then the shared prelude (split builds only),
   /// then the app bundle. Fetched before [reset] so a failed fetch leaves
   /// the previous screen up instead of blanking it.
@@ -1064,6 +1117,9 @@ class FjsEngine extends ChangeNotifier {
     } else {
       reset();
     }
+    // spec 088: before ANY script evals — the debugger records scripts at
+    // parse time, so a late attach would leave half the app invisible.
+    _reattachDebugger();
     _unitsMode = units;
     if (unitBundle != null) {
       _eval(unitBundle);
@@ -1182,7 +1238,9 @@ class FjsEngine extends ChangeNotifier {
     if (_looksLikeFjsBundle(bytes)) {
       runBundle(bytes);
     } else {
-      runSource(utf8.decode(bytes), filename: 'dev-bundle.js');
+      // a real name, not a generic one: the spec 088 debugger's Sources
+      // panel and setBreakpointByUrl key on exactly this string
+      runSource(utf8.decode(bytes), filename: 'bundle.js');
     }
   }
 

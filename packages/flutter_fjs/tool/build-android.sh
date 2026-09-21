@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# Builds android/src/main/jniLibs/<abi>/libfjs.so from native/ for every ABI the
+# Builds android/src/main/jniLibs/<abi>/ from native/ for every ABI the
 # plugin ships, then strips them. Run once per native/ change and commit.
+#
+# spec 090: TWO files land in jniLibs, an engine and a module on top of it —
+#   libfjs.so            the engine; contains no inspector, every build
+#   libfjs_debugger.so   CDP inspector + transport, loaded only by debug
+#                        builds; release APKs drop the file automatically
+#                        (see android/build.gradle)
 #
 # Needs ANDROID_NDK_HOME (or ANDROID_NDK_ROOT / ANDROID_HOME with an ndk/ dir),
 # r28 or newer: from r28 the NDK aligns LOAD segments to 16 KB by default, which
@@ -47,11 +53,15 @@ for abi in "${ABIS[@]}"; do
         -DCMAKE_BUILD_TYPE=Release \
         -DFJS_BUILD_TESTS=OFF \
         >/dev/null
-    cmake --build "$OUT/$abi" --target fjs -j"$(getconf _NPROCESSORS_ONLN)" >/dev/null
+    # two targets: the engine (libfjs.so) and the pluggable debugger
+    # module — inspector + transport (libfjs_debugger.so, spec 090)
+    cmake --build "$OUT/$abi" --target fjs fjs_debugger -j"$(getconf _NPROCESSORS_ONLN)" >/dev/null
     mkdir -p "$JNILIBS/$abi"
     cp "$OUT/$abi/libfjs.so" "$JNILIBS/$abi/libfjs.so"
     "$STRIP" --strip-unneeded "$JNILIBS/$abi/libfjs.so"
+    cp "$OUT/$abi/libfjs_debugger.so" "$JNILIBS/$abi/libfjs_debugger.so"
+    "$STRIP" --strip-unneeded "$JNILIBS/$abi/libfjs_debugger.so"
 done
 
 echo "built:"
-ls -lh "$JNILIBS"/*/libfjs.so | awk '{print "  " $NF " " $5}'
+ls -lh "$JNILIBS"/*/libfjs*.so | awk '{print "  " $NF " " $5}'

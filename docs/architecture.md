@@ -20,10 +20,11 @@
 │   UI 帧批量提交（op writer → Uint8Array）            │
 │   Vue3 自定义渲染器（createRenderer + nodeOps）      │
 ├──────────────── JSI 边界 ──────────────────────────┤
-│ libfjs（C++，vendored QuickJS-ng 0.9.0）            │
-│   JS_NewCFunction 宿主函数：JS 值直传，无序列化       │
+│ libfjs（C++，vendored PrimJS 4.1.1，spec 088 起）    │
+│   LEPUS_NewCFunction 宿主函数：JS 值直传，无序列化    │
 │   console / timers / uiOps / invokeHost natives     │
 │   源码 eval（NUL 结尾约束）/ 字节码 ReadObject        │
+│   内置 CDP 调试器（fjs debug，见 toolchain.md）       │
 ├──────────────── dart:ffi（纯 C ABI）────────────────┤
 │ flutter_fjs（Flutter 插件）                          │
 │   NativeCallable.isolateLocal 同步回调               │

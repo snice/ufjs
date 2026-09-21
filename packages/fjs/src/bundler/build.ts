@@ -221,6 +221,12 @@ export interface BuildOptions {
    * running VM instead of rebuilding it. Never set for release: the
    * bytecode/asset pipeline stays exactly the shape it always was. */
   units?: boolean;
+  /** spec 090: bundle the DevTools data plane (`__fjsDevtools` — element
+   * tree / fetch rows the `fjs debug` relay evaluates for the Elements and
+   * Network panels). `fjs dev` sets it; `fjs build` opts in with
+   * `--devtools`. Without it the define is false and esbuild drops the
+   * whole data plane from the output. */
+  devtools?: boolean;
 }
 
 /** An entry esbuild reads straight from memory.
@@ -275,6 +281,7 @@ export function parseBuildArgs(argv: string[]): BuildOptions {
     flutterDir: configuredFlutterDir(),
     flutterArgs: [],
     analyze: false,
+    devtools: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -303,6 +310,7 @@ export function parseBuildArgs(argv: string[]): BuildOptions {
     else if (a === '--flutter-dir') opts.flutterDir = argv[++i] ?? opts.flutterDir;
     else if (a === '--analyze') opts.analyze = true;
     else if (a === '--pages') opts.pages = true;
+    else if (a === '--devtools') opts.devtools = true;
     else if (a === '--web') opts.web = true;
     else if (a === '--mp') opts.mp = true;
     else if (a === '--shared-runtime' || a === '--shared') {
@@ -310,6 +318,8 @@ export function parseBuildArgs(argv: string[]): BuildOptions {
     }
     else if (!a.startsWith('-')) opts.entry = a;
   }
+  // spec 090: the DevTools data plane ships only where the build opts in
+  setDevtoolsBundling(opts.devtools === true);
   // Per-target output layout (spec 047): app builds land in <outDir>/app and
   // web builds in <outDir>/web (buildWeb appends it), so the two targets
   // never clobber each other's artifacts — and a third target (miniprogram,
@@ -328,6 +338,21 @@ const VUE_DEFINES = {
   __VUE_PROD_DEVTOOLS__: 'false',
   __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: 'false',
 };
+
+/** spec 090: set from the build options before any esbuild call — the
+ * DevTools data plane is bundled only where this is true. */
+let devtoolsBundling = false;
+export function setDevtoolsBundling(v: boolean): void {
+  devtoolsBundling = v;
+}
+/** Per-build define set: VUE_DEFINES plus the devtools gate. The web build
+ * forces the gate off (the browser has its own DevTools). */
+function fjsDefines(forceOff = false): Record<string, string> {
+  return {
+    ...VUE_DEFINES,
+    __FJS_DEVTOOLS__: String(devtoolsBundling && !forceOff),
+  };
+}
 
 export interface BuildResult {
   jsPath: string;
@@ -436,12 +461,12 @@ export async function buildBundle(opts: BuildOptions): Promise<BuildResult> {
     outdir: outDir,
     entryNames: baseName,
     format: 'iife',
-    target: 'es2021',
+    target: 'es2019', /* PrimJS engine (spec 088) */
     ...flutterEsbuildPlatform(),
     minify: opts.minify,
     alias,
     plugins,
-    define: VUE_DEFINES,
+    define: fjsDefines(),
     ...assetOutputOptions(),
     metafile: opts.analyze,
     logLevel: 'warning',
@@ -539,7 +564,7 @@ async function appModuleGraph(
     // against the Node cwd silently mismatches and the graph comes out empty
     absWorkingDir: root,
     format: 'iife',
-    target: 'es2021',
+    target: 'es2019', /* PrimJS engine (spec 088) */
     ...flutterEsbuildPlatform(),
     alias: { ...flutterAliases(), ...moduleAliases(root, fjsModules) },
     plugins: [
@@ -552,7 +577,7 @@ async function appModuleGraph(
       srcAliasPlugin(root),
       moduleDataPlugin(root, fjsModules),
     ],
-    define: VUE_DEFINES,
+    define: fjsDefines(),
     // write:false, so this never emits an asset — but without the loaders it
     // fails on the first `import png from …` and the split build dies before
     // it starts
@@ -674,7 +699,7 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
     outdir: outDir,
     entryNames: 'shared',
     format: 'iife',
-    target: 'es2021',
+    target: 'es2019', /* PrimJS engine (spec 088) */
     ...flutterEsbuildPlatform(),
     minify: opts.minify,
     alias: { ...flutterAliases(), ...moduleAliases(root, modules) },
@@ -688,7 +713,7 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
       srcAliasPlugin(root),
       moduleDataPlugin(root, modules),
     ],
-    define: VUE_DEFINES,
+    define: fjsDefines(),
     ...assetOutputOptions(),
     metafile: opts.analyze,
     logLevel: 'warning',
@@ -707,11 +732,11 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
     outdir: outDir,
     entryNames: 'bundle',
     format: 'iife',
-    target: 'es2021',
+    target: 'es2019', /* PrimJS engine (spec 088) */
     ...flutterEsbuildPlatform(),
     minify: opts.minify,
     plugins: stubbed(),
-    define: VUE_DEFINES,
+    define: fjsDefines(),
     ...assetOutputOptions(),
     metafile: opts.analyze,
     logLevel: 'warning',
@@ -732,11 +757,11 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
       outdir: outDir,
       entryNames: `pages/${page.chunk}`,
       format: 'iife',
-      target: 'es2021',
+      target: 'es2019', /* PrimJS engine (spec 088) */
       ...flutterEsbuildPlatform(),
       minify: opts.minify,
       plugins: stubbed(),
-      define: VUE_DEFINES,
+      define: fjsDefines(),
       ...assetOutputOptions(),
       metafile: opts.analyze,
       logLevel: 'warning',
@@ -873,7 +898,7 @@ async function buildDevUnits(args: {
       // same reason as the probe: inputStamps() reads metafile paths back
       absWorkingDir: root,
       format: 'cjs',
-      target: 'es2021',
+      target: 'es2019', /* PrimJS engine (spec 088) */
       ...flutterEsbuildPlatform(),
       minify: opts.minify,
       plugins: [
@@ -884,7 +909,7 @@ async function buildDevUnits(args: {
         srcAliasPlugin(root),
         moduleDataPlugin(root, modules),
       ],
-      define: VUE_DEFINES,
+      define: fjsDefines(),
       ...assetOutputOptions(),
       metafile: true,
       logLevel: 'warning',
@@ -1047,7 +1072,7 @@ async function buildWeb(opts: BuildOptions, outDir: string): Promise<BuildResult
       srcAliasPlugin(root),
       moduleDataPlugin(root, webModules),
     ],
-    define: VUE_DEFINES,
+    define: fjsDefines(true),
     ...assetOutputOptions(),
     metafile: opts.analyze,
     logLevel: 'warning',
