@@ -666,12 +666,18 @@ failed:" 后面不再是空串。引擎（PrimJS，spec 088）原生实现 CDP�
 - **产物分层**（spec 090）：**调试器不在引擎里**。引擎只保留一张空的
   inspector 钩子表，CDP 语义层（断点、作用域、heap/cpu profiler）和 socket
   传输一起待在独立模块里，release 不带这个模块 = 物理上没有调试器。
+  spec 091 四轮起这是**一等机制**而非兜底：引擎 runner 物化时区分
+  debug / 非 debug——`fjs build`（release/profile）和 `fjs run
+  --release/--profile` 物化引擎时连 primjs 的调试模块一起物理删除
+  （Dart 侧 `kDebugMode` 门控本来就不可能 dlopen 它），下次 debug 运行
+  再从 abi 缓存恢复。下表的构建期剔除服务于不经 CLI 的路径（纯 Flutter
+  宿主直接 `flutter build`）。
 
-  | 平台 | 引擎 | 调试模块 | release 怎么剔除 |
-  |------|------|----------|------------------|
-  | Android | `libfjs.so`（arm64 1.85 MB） | `libfjs_debugger.so`（482 KB） | `android/build.gradle` 检测 release 任务，从 jniLibs 排除；`-PfjsKeepDebugger=true` 可保留 |
-  | iOS / macOS | `fjs.xcframework` | `fjs_debugger.xcframework` | 静态归档按需拉取，只有 `FlutterFjsPlugin.m` 的 `#if DEBUG` 引用它；Release/Profile 一个字节都不链 |
-  | ohos | `libfjs.so`（arm64 1.81 MB） | `libfjs_debugger.so`（422 KB） | `ohos/build-profile.json5` 的 `buildModeBinder` 把 release/profile 绑到带 `nativeLib.filter.excludes` 的构建配置，插件 HAR 里就没有这个文件 |
+  | 平台 | 引擎 | 调试模块 | 非 debug 怎么剔除 |
+  |------|------|----------|-------------------|
+  | Android | `libfjs.so`（arm64 1.85 MB） | `libfjs_debugger.so`（482 KB） | runner 物化即删；`android/build.gradle` 检测 release/profile 任务名兜底排除；`-PfjsKeepDebugger=true` 可保留 |
+  | iOS / macOS | `fjs.xcframework` | `fjs_debugger.xcframework` | runner 物化即删（连 pod vendored 列表一起消失）；纯宿主路径靠静态归档按需拉取——只有 `FlutterFjsPlugin.m` 的 `#if DEBUG` 引用它，Release/Profile 一个字节都不链 |
+  | ohos | `libfjs.so`（arm64 1.81 MB） | `libfjs_debugger.so`（422 KB） | runner 物化即删；`ohos/build-profile.json5` 的 `buildModeBinder` 把 release/profile 绑到带 `nativeLib.filter.excludes` 的构建配置兜底，插件 HAR 里就没有这个文件 |
   | 桌面 | `libfjs.dylib`（1.08 MB） | `libfjs_debugger.dylib`（474 KB） | `fjsrun` dlopen，文件不在就报"本构建无调试器" |
 
   对比拆分前：Android arm64 的 release `libfjs.so` 从 2.21 MB 降到 1.85 MB，
@@ -1248,6 +1254,10 @@ fjs run ios                          # 默认即 primjs
 cd <宿主项目根>
 dart run flutter_fjs:engine quickjs
 flutter run
+
+# 纯宿主要出无调试器的 release 包（CLI 路径会自动做这一步）：
+dart run flutter_fjs:engine primjs --no-debugger
+flutter build ios --release
 ```
 
 切换只有**一条物化路径**：`bin/engine.dart`（`dart run
@@ -1255,15 +1265,18 @@ flutter_fjs:engine <flavor>`，`fjs run/build --js-engine` 内部就是调它）
 它在 flutter 构建开始之前，把选中 flavor 从 abi 缓存 copy 到各平台真正
 消费的位置——`android/src/main/jniLibs/<abi>/`、
 `ios|macos/fjs.xcframework`、`ohos/libs/arm64-v8a/`——并写
-`abi/.materialized` 戳记；重复运行是 no-op，切回默认同样只是一次 copy。
-quickjs 物化会顺手删掉 `libfjs_debugger.so` /
-`fjs_debugger.xcframework`（CDP inspector 只存在于 PrimJS），并改写
+`abi/.materialized` 戳记（两行：引擎 flavor + 是否带调试模块）；
+重复运行是 no-op，切回默认同样只是一次 copy。
+quickjs 物化、以及任何带 `--no-debugger` 的物化（`fjs build` 与
+`fjs run --release/--profile` 自动传，见上文"产物分层"），都会删掉
+`libfjs_debugger.so` / `fjs_debugger.xcframework`；物化同时会改写
 `ios|macos/Classes/fjs_engine_flavor.h`——插件 shim 按它决定是否声明
 debugger ABI，quickjs 下连 DEBUG 构建都不会引用
 `fjs_vm_debugger_*`。物化同时会清掉宿主 build 目录里 Xcode 的
 xcframework 抽取缓存（Xcode 不感知源归档内容变化，不清会静默链上一个
 flavor）并 touch 宿主 `ios/Podfile` 强制下一次 pod install 按
-`File.exist?` 重新评估 vendored 列表。
+`File.exist?` 重新评估 vendored 列表。下次 debug 运行不带 flag 物化，
+调试模块从 abi 缓存原样恢复。
 
 **平台产物不入库**：git 里只有 `abi/` 是产物源，jniLibs /
 xcframework / ohos libs 都是本地物化结果（已 gitignore）。全新 clone 的

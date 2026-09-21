@@ -103,3 +103,28 @@ router 的 settle 链（`settled.ts` / `flutter.ts`）裸调它——`host.ts`
       执行；quickjs 侧守卫空操作。`pnpm test`（1010 项）+ 
       `pnpm run typecheck` 全绿；`docs/toolchain.md` 引擎差异小节补第三条
 
+## 四轮：非 debug 构建剔除 debugger 产物（primjs 也剔）
+
+此前只有 quickjs 物化才删 debugger 产物；primjs 无论什么构建模式都带，
+Release 只剩两道兜底（gradle 任务名剔除、iOS 静态库无引用不链入），
+Android profile 连兜底都没有。改为一等机制：物化本身区分 debug / 非
+debug——非 debug 时 primjs 的 debugger 产物也物理删除，链接器兜底只服务
+纯 Flutter 宿主不经 CLI 的路径。
+
+- [x] T060 `bin/engine.dart`：`--no-debugger`（默认带 debugger）——
+      primjs 物化时同样删 jniLibs / ohos 的 `libfjs_debugger.so` 与
+      ios/macos 的 `fjs_debugger.xcframework`；`abi/.materialized` 记
+      engine + debugger 两行；翻转回 debug 时从 abi 缓存恢复（primjs 缓存
+      本就带 debugger 产物），Podfile touch + Xcode 缓存清理机制原样复用
+- [x] T061 CLI：`materializeJsEngine` 增 `debugger` 选项（默认 true）；
+      `fjs build`（release/profile，无 debug 档）与 `fjs run
+      --release/--profile` 传 false；`fjs run` debug 与 `fjs dev` 不传
+- [x] T062 `android/build.gradle`：release 剔除扩展到 profile（任务名
+      `Release|Profile` 都算非 debug；`fjsKeepDebugger` 仍然可强制保留）
+- [x] T063 验证：runner 双向翻转——`--no-debugger` 后四个平台的 debugger
+      产物消失、engine 产物不动、`.materialized` 双行；不带 flag 恢复后
+      产物齐全；`pnpm test` + `pnpm run typecheck` 全绿
+- [x] T064 文档：`docs/toolchain.md` 调试器小节补"非 debug 物化即删"与
+      纯 Flutter 宿主的 `--no-debugger` 命令；`docs/fjs-go.md` 注记；
+      podspec / build-apple.sh 注释同步
+

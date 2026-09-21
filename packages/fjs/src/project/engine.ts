@@ -33,13 +33,19 @@ export function resolveJsEngine(explicit?: string): JsEngine {
 /** Runs the flutter_fjs engine runner from [flutterDir] (the host project —
  * `dart run` resolves the flutter_fjs executable through the host's
  * package_config, which is what makes the same command work for pure
- * Flutter hosts). Idempotent: an already-materialized flavor is a no-op. */
+ * Flutter hosts). Idempotent: an already-materialized flavor is a no-op.
+ * `debugger: false` also drops the CDP debugger module (spec 091 round 4)
+ * — every non-debug build passes that, since Dart never dlopens the module
+ * outside kDebugMode. */
 export function materializeJsEngine(
   engine: JsEngine,
-  opts: { flutterDir?: string; explicit?: boolean } = {},
+  opts: { flutterDir?: string; explicit?: boolean; debugger?: boolean } = {},
 ): void {
   const cwd = opts.flutterDir ? path.resolve(opts.flutterDir) : process.cwd();
-  const r = spawnSync('dart', ['run', 'flutter_fjs:engine', engine, '--host', cwd], {
+  const runnerArgs = ['run', 'flutter_fjs:engine', engine];
+  if (opts.debugger === false) runnerArgs.push('--no-debugger');
+  runnerArgs.push('--host', cwd);
+  const r = spawnSync('dart', runnerArgs, {
     cwd,
     stdio: 'pipe',
   });

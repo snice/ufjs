@@ -85,7 +85,13 @@ export async function runCommand(argv: string[]): Promise<void> {
     };
     const res = await buildBundle(buildOpts);
     releaseBuild(buildOpts, res);
-    materializeJsEngine(opts.jsEngine, { flutterDir, explicit: opts.jsEngineExplicit });
+    // non-debug host: the debugger module could never be dlopened, so the
+    // materialization drops it (spec 091 round 4)
+    materializeJsEngine(opts.jsEngine, {
+      flutterDir,
+      explicit: opts.jsEngineExplicit,
+      debugger: false,
+    });
     stopStaleApp(opts.platform, device.id, flutterDir);
     const args = [
       'run',

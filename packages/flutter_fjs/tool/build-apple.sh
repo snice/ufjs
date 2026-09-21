@@ -12,7 +12,9 @@
 #
 # The debugger archive is linked but not referenced in Release/Profile, so the
 # linker pulls nothing from it; only Classes/FlutterFjsPlugin.m's `#if DEBUG`
-# keep-alive table drags it into a Debug binary.
+# keep-alive table drags it into a Debug binary. Since spec 091 round 4 the
+# engine runner (bin/engine.dart) additionally deletes it outright for
+# non-debug builds; this dead-strip story is the pure-Flutter-host fallback.
 #
 # The slices are static libraries, not frameworks: pub.dev refuses to publish
 # packages containing directory symlinks, and a versioned macOS framework bundle

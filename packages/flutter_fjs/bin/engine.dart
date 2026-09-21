@@ -11,6 +11,11 @@
 // `flutter run`, or pass --dart-define=FJS_JS_ENGINE=... and let the build
 // hooks (gradle task / podspec script / ohos hvigorfile) copy during the
 // build.
+//
+// --no-debugger drops the debugger module too (spec 091 round 4): a
+// non-debug build can never dlopen it (ffi.dart gates on kDebugMode), so
+// `fjs build` and `fjs run --release/--profile` materialize without it.
+// Without the flag the debugger artifacts are restored from the abi cache.
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
@@ -24,16 +29,25 @@ void main(List<String> args) {
   final engine = args.isNotEmpty ? args.first : (Platform.environment['FJS_JS_ENGINE'] ?? '');
   if (engine != 'primjs' && engine != 'quickjs') {
     stderr.writeln(
-        "usage: dart run flutter_fjs:engine <primjs|quickjs> — got '${args.isEmpty ? '' : args.first}'");
+        "usage: dart run flutter_fjs:engine <primjs|quickjs> [--no-debugger] — "
+        "got '${args.isEmpty ? '' : args.first}'");
     exit(64);
   }
   // --host <dir>: the host project, so the Xcode caches under its build/
   // can be invalidated too. Pure Flutter hosts: run this from the project
   // root and the same caches are found via the CWD fallback.
   String? hostDir;
-  for (var i = 1; i < args.length - 1; i++) {
-    if (args[i] == '--host') hostDir = args[i + 1].replaceAll(RegExp(r'/+$'), '');
+  var noDebugger = false;
+  for (var i = 1; i < args.length; i++) {
+    if (args[i] == '--no-debugger') {
+      noDebugger = true;
+    } else if (args[i] == '--host' && i < args.length - 1) {
+      hostDir = args[i + 1].replaceAll(RegExp(r'/+$'), '');
+    }
   }
+  // quickjs never ships a debugger module at all; for primjs the flag is
+  // what keeps the CDP inspector out of a release/profile build
+  final wantDebugger = engine == 'primjs' && !noDebugger;
 
   final root = _findPackageRoot();
   var changed = false;
@@ -45,9 +59,10 @@ void main(List<String> args) {
       for (final so in abi.listSync().whereType<File>()) {
         if (_copyFile(so.path, '${dest.path}/${_name(so.path)}')) changed = true;
       }
-      if (engine == 'quickjs') {
+      if (!wantDebugger) {
         // the CDP inspector binds LEPUS_* symbols; it can never work
-        // against a quickjs engine and must not reach an APK
+        // against a quickjs engine and must not reach an APK — and a
+        // non-debug build could never dlopen it anyway
         final dbg = File('${dest.path}/libfjs_debugger.so');
         if (dbg.existsSync()) {
           dbg.deleteSync();
@@ -68,7 +83,7 @@ void main(List<String> args) {
     }
     final dbgSrc = Directory('${src.path}/fjs_debugger.xcframework');
     final dbgDest = Directory('$root/$platform/fjs_debugger.xcframework');
-    if (dbgSrc.existsSync()) {
+    if (wantDebugger && dbgSrc.existsSync()) {
       if (_copyDir(dbgSrc.path, dbgDest.path)) changed = true;
     } else if (dbgDest.existsSync()) {
       dbgDest.deleteSync(recursive: true);
@@ -83,7 +98,7 @@ void main(List<String> args) {
         changed = true;
       }
     }
-    if (engine == 'quickjs') {
+    if (!wantDebugger) {
       final dbg = File('$root/ohos/libs/arm64-v8a/libfjs_debugger.so');
       if (dbg.existsSync()) {
         dbg.deleteSync();
@@ -129,7 +144,10 @@ void main(List<String> args) {
     }
   }
 
-  File('$root/abi/.materialized').writeAsStringSync('$engine\n');
+  // two lines: the engine flavor, then whether the debugger module is
+  // part of the materialized state (spec 091 round 4)
+  File('$root/abi/.materialized')
+      .writeAsStringSync('$engine\n${wantDebugger ? 'debugger' : 'no-debugger'}\n');
   if (changed) {
     // The debugger framework's PRESENCE is decided by the podspecs at pod
     // install (quickjs ships none), and flutter skips pod install when the
@@ -142,9 +160,13 @@ void main(List<String> args) {
       final f = File(podfile);
       if (f.existsSync()) f.setLastModifiedSync(DateTime.now());
     }
-    stdout.writeln('fjs: materialized ${_engineIds[engine]} engine into the flutter_fjs plugin');
+    stdout.writeln(
+        'fjs: materialized ${_engineIds[engine]} engine'
+        '${wantDebugger ? '' : ' without the debugger module'} into the flutter_fjs plugin');
   } else {
-    stdout.writeln('fjs: engine flavor already ${_engineIds[engine]} — nothing to copy');
+    stdout.writeln(
+        'fjs: engine flavor already ${_engineIds[engine]}'
+        '${wantDebugger ? '' : ' without the debugger module'} — nothing to copy');
   }
 }
 

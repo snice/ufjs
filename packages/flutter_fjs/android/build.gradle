@@ -5,19 +5,23 @@
 // built from ../native by tool/build-android.sh. Nothing native is compiled
 // here, so consumers need no NDK or CMake — Dart always opens libfjs.so and,
 // in debug builds only, loads the debugger module on top (lib/src/ffi.dart).
-// Release builds drop libfjs_debugger.so automatically (see the fjsIsRelease
-// detection below); set fjsKeepDebugger=true in gradle properties to keep it.
+// Non-debug builds drop libfjs_debugger.so: the fjs engine runner deletes it
+// before the build (spec 091 round 4), and the detection below is the
+// fallback for pure Flutter hosts that never ran the runner — set
+// fjsKeepDebugger=true in gradle properties to keep it.
 def flutterRoot = null
 if (project.hasProperty('flutter.sdk')) {
     flutterRoot = project.property('flutter.sdk')
 }
 
 // Flutter fills gradle.startParameter.taskNames with the app's tasks, so a
-// release build ("flutter build apk/appbundle" or "flutter run --release")
-// shows a *release* task here while `fjs run` / `flutter run` shows a debug
-// one. Cheap, configuration-time detection — no task-graph surgery.
-def fjsIsReleaseBuild = gradle.startParameter.taskNames.any {
-    it.toLowerCase().contains('release')
+// non-debug build ("flutter build apk/appbundle", "flutter run
+// --release/--profile") shows a *release/profile* task here while `fjs run`
+// / `flutter run` shows a debug one. Cheap, configuration-time detection —
+// no task-graph surgery.
+def fjsIsNonDebugBuild = gradle.startParameter.taskNames.any {
+    def n = it.toLowerCase()
+    n.contains('release') || n.contains('profile')
 }
 def fjsKeepDebugger = project.findProperty('fjsKeepDebugger') == 'true'
 
@@ -52,9 +56,10 @@ android {
     sourceSets {
         main {
             jniLibs.srcDirs = ['src/main/jniLibs']
-            if (fjsIsReleaseBuild && !fjsKeepDebugger) {
-                // release ships the engine only; dropping this file is what
-                // removes the debugger, since the engine holds no inspector
+            if (fjsIsNonDebugBuild && !fjsKeepDebugger) {
+                // non-debug ships the engine only; dropping this file is
+                // what removes the debugger, since the engine holds no
+                // inspector
                 jniLibs.excludes += ['**/libfjs_debugger.so']
             }
         }

@@ -17,7 +17,11 @@ Pod::Spec.new do |s|
   # shim's own declarations are gated on the generated fjs_engine_flavor.h.
   # A static archive contributes only the members something references, and
   # only Classes/FlutterFjsPlugin.m's `#if DEBUG` keep-alive table does.
-  # Release and Profile binaries therefore contain none of it.
+  # Release and Profile binaries therefore contain none of it — and since
+  # spec 091 round 4 the engine runner deletes this framework outright for
+  # non-debug builds (`fjs build`, `fjs run --release/--profile`); the
+  # linker-level story is what still protects a pure Flutter host's release
+  # build that never ran the runner.
   s.source_files        = 'Classes/**/*'
   s.public_header_files = 'Classes/FlutterFjsPlugin.h'
   s.vendored_frameworks = ['fjs.xcframework'] +

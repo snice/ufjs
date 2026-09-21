@@ -1313,8 +1313,14 @@ export function releaseBuild(opts: BuildOptions, res: BuildResult): void {
   ensureFlutterHost(flutterDir, appName, !isEjected(root));
   // spec 091: the flavor bytecode above was compiled for must be the flavor
   // the app links — materialize before any `flutter build` runs (and before
-  // the caller's `flutter run`, for fjs run's release path)
-  materializeJsEngine(opts.jsEngine ?? resolveJsEngine(), { flutterDir });
+  // the caller's `flutter run`, for fjs run's release path). A release or
+  // profile build never dlopens the debugger module, so it ships without it
+  // (spec 091 round 4); `fjs build` has no debug mode, but the check keeps
+  // this honest about why.
+  materializeJsEngine(opts.jsEngine ?? resolveJsEngine(), {
+    flutterDir,
+    debugger: opts.mode !== 'debug',
+  });
 
   const pagesOut = path.join(assets, 'pages');
   fs.mkdirSync(pagesOut, { recursive: true });

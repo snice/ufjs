@@ -100,6 +100,10 @@ http://192.168.1.20:38900/bundle.js
   构建前在 fjs go 目录下手动物化：`dart run flutter_fjs:engine quickjs`
   （或 `primjs` 切回），然后正常 `flutter run`；debug 构建里 define 与
   实际引擎不一致时 App 会打告警
+- fjs go 出非 debug 包时加 `--no-debugger` 把调试模块一并物化掉
+  （spec 091 四轮）：`dart run flutter_fjs:engine primjs --no-debugger`；
+  不加的话 iOS/macOS release 靠静态归档"无引用不链入"兜底，Android
+  release 靠 gradle 任务名排除——CLI 路径的 `fjs build` 没有这层依赖
 
 ## 相关
 
