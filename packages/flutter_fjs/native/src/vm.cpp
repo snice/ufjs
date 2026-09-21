@@ -17,7 +17,7 @@ constexpr uint16_t kBundleFormat = 1;
 
 thread_local char t_error_buf[1024] = {0};
 
-/* quickjs-ng's LEPUS_Eval requires input[input_len] == '\0'. Callers (Dart FFI,
+/* Both engines' Eval requires input[input_len] == '\0'. Callers (Dart FFI,
  * file readers) hand us raw non-terminated bytes, so copy into a
  * NUL-terminated buffer first. */
 static std::vector<char> nul_terminated(const uint8_t *src, int32_t len) {
@@ -50,35 +50,35 @@ void log_line(FJSVM *vm, int32_t level, const char *msg, int32_t len) {
     if (vm && vm->on_log) vm->on_log(level, msg, len);
 }
 
-std::string format_exception(FJSVM *vm, LEPUSValue exc) {
-    LEPUSContext *ctx = vm->ctx;
+std::string format_exception(FJSVM *vm, fjsengine::Value exc) {
+    fjsengine::Context *ctx = vm->ctx;
     std::string out;
-    const char *cstr = LEPUS_ToCString(ctx, exc);
+    const char *cstr = fjsengine::to_cstring(ctx, exc);
     if (cstr) {
         out = cstr;
-        LEPUS_FreeCString(ctx, cstr);
+        fjsengine::free_cstring(ctx, cstr);
     } else {
         out = "<unprintable exception>";
     }
-    if (LEPUS_IsError(ctx, exc)) {
-        LEPUSValue stack = LEPUS_GetPropertyStr(ctx, exc, "stack");
-        if (!LEPUS_IsUndefined(stack) && !LEPUS_IsException(stack)) {
-            const char *s = LEPUS_ToCString(ctx, stack);
+    if (fjsengine::is_error(ctx, exc)) {
+        fjsengine::Value stack = fjsengine::get_property_str(ctx, exc, "stack");
+        if (!fjsengine::is_undefined(stack) && !fjsengine::is_exception(stack)) {
+            const char *s = fjsengine::to_cstring(ctx, stack);
             if (s && s[0]) {
                 out += "\n";
                 out += s;
             }
-            if (s) LEPUS_FreeCString(ctx, s);
+            if (s) fjsengine::free_cstring(ctx, s);
         }
-        LEPUS_FreeValue(ctx, stack);
+        fjsengine::free_value(ctx, stack);
     }
     return out;
 }
 
 bool fail_with_pending_exception(FJSVM *vm, const char *where) {
-    LEPUSValue exc = LEPUS_GetException(vm->ctx);
+    fjsengine::Value exc = fjsengine::get_exception(vm->ctx);
     std::string msg = format_exception(vm, exc);
-    LEPUS_FreeValue(vm->ctx, exc);
+    fjsengine::free_value(vm->ctx, exc);
     std::string full = std::string("[fjs/") + where + "] " + msg;
     set_error(vm, "%s", full.c_str());
     log_line(vm, FJS_LOG_ERROR, full.c_str(), (int32_t)full.size());
@@ -97,30 +97,37 @@ double now_ms(FJSVM *vm) {
 extern "C" {
 
 /* spec 088: engine switched from quickjs-ng 0.9.0 to the vendored PrimJS
- * fork (tag 4.1.1, Apache-2.0) for its built-in CDP debugger. Same lockstep
- * rule as before: this id is embedded in every .fjsbundle header and a
- * mismatch is rejected at load (docs/toolchain.md). */
-const char *fjs_engine_id(void) { return "primjs-4.1.1"; }
+ * fork (tag 4.1.1, Apache-2.0) for its built-in CDP debugger. spec 091
+ * brought quickjs-ng back as a build flavor (FJS_JS_ENGINE=quickjs). Same
+ * lockstep rule as before: this id is embedded in every .fjsbundle header
+ * and a mismatch is rejected at load (docs/toolchain.md). */
+const char *fjs_engine_id(void) {
+#if defined(FJS_ENGINE_QUICKJS)
+    return "quickjs-ng-0.9.0";
+#else
+    return "primjs-4.1.1";
+#endif
+}
 int32_t fjs_abi_version(void) { return FJS_ABI_VERSION; }
 
 FJSVM *fjs_vm_create(void) {
     FJSVM *vm = new (std::nothrow) FJSVM();
     if (!vm) return nullptr;
-    vm->rt = LEPUS_NewRuntime();
+    vm->rt = fjsengine::new_runtime();
     if (!vm->rt) { delete vm; return nullptr; }
-    LEPUS_SetRuntimeInfo(vm->rt, "ufjs");
-    vm->ctx = LEPUS_NewContext(vm->rt);
-    if (!vm->ctx) { LEPUS_FreeRuntime(vm->rt); delete vm; return nullptr; }
+    fjsengine::set_runtime_info(vm->rt, "ufjs");
+    vm->ctx = fjsengine::new_context(vm->rt);
+    if (!vm->ctx) { fjsengine::free_runtime(vm->rt); delete vm; return nullptr; }
     /* PrimJS has no JS_UpdateStackTop equivalent, so the per-entry
      * re-anchoring quickjs-ng needed is replaced by a fixed, generous
      * budget: Dart FFI callbacks (a Flutter-frame callback mounting a
      * whole page) enter JS from much deeper native stacks than app
      * startup, and the default budget tripped there. 32 MiB is well
      * under the main-thread stack on every target platform. */
-    LEPUS_SetMaxStackSize(vm->ctx, 32u * 1024 * 1024);
+    fjsengine::set_max_stack_size(vm->ctx, 32u * 1024 * 1024);
     if (!fjs::install_natives(vm)) {
-        LEPUS_FreeContext(vm->ctx);
-        LEPUS_FreeRuntime(vm->rt);
+        fjsengine::free_context(vm->ctx);
+        fjsengine::free_runtime(vm->rt);
         delete vm;
         return nullptr;
     }
@@ -130,10 +137,10 @@ FJSVM *fjs_vm_create(void) {
 void fjs_vm_destroy(FJSVM *vm) {
     if (!vm) return;
     fjs::dbg::transport_closed(vm); /* lets the transport release before the ctx */
-    for (auto &t : vm->timers) LEPUS_FreeValue(vm->ctx, t.callback);
+    for (auto &t : vm->timers) fjsengine::free_value(vm->ctx, t.callback);
     vm->timers.clear();
-    LEPUS_FreeContext(vm->ctx);
-    LEPUS_FreeRuntime(vm->rt);
+    fjsengine::free_context(vm->ctx);
+    fjsengine::free_runtime(vm->rt);
     delete vm; /* the handle table dies here too — every outstanding
                   binary handle becomes permanently stale */
 }
@@ -184,13 +191,13 @@ int32_t fjs_vm_eval_source(FJSVM *vm, const uint8_t *src, int32_t len,
     }
     vm->last_error[0] = '\0';
     std::vector<char> code = nul_terminated(src, len);
-    LEPUSValue result = LEPUS_Eval(vm->ctx, code.data(), (size_t)len, filename,
-                             LEPUS_EVAL_TYPE_GLOBAL);
-    if (LEPUS_IsException(result)) {
+    fjsengine::Value result = fjsengine::eval(vm->ctx, code.data(), (size_t)len, filename,
+                             fjsengine::eval_type_global);
+    if (fjsengine::is_exception(result)) {
         fjs::fail_with_pending_exception(vm, "eval");
         return -1;
     }
-    LEPUS_FreeValue(vm->ctx, result);
+    fjsengine::free_value(vm->ctx, result);
     /* run jobs enqueued during evaluation */
     fjs_vm_pump(vm, (int64_t)fjs::now_ms(vm));
     return 0;
@@ -247,18 +254,18 @@ int32_t fjs_vm_eval_bundle(FJSVM *vm, const uint8_t *bundle, int32_t len) {
                        id, fjs_engine_id());
         return -1;
     }
-    LEPUSValue fun = LEPUS_ReadObject(vm->ctx, bundle + off, (size_t)plen,
-                                LEPUS_READ_OBJ_BYTECODE);
-    if (LEPUS_IsException(fun)) {
+    fjsengine::Value fun = fjsengine::read_object(vm->ctx, bundle + off, (size_t)plen,
+                                fjsengine::read_obj_bytecode);
+    if (fjsengine::is_exception(fun)) {
         fjs::fail_with_pending_exception(vm, "bytecode-load");
         return -1;
     }
-    LEPUSValue result = LEPUS_EvalFunction(vm->ctx, fun, LEPUS_UNDEFINED);
-    if (LEPUS_IsException(result)) {
+    fjsengine::Value result = fjsengine::eval_function(vm->ctx, fun);
+    if (fjsengine::is_exception(result)) {
         fjs::fail_with_pending_exception(vm, "eval");
         return -1;
     }
-    LEPUS_FreeValue(vm->ctx, result);
+    fjsengine::free_value(vm->ctx, result);
     fjs_vm_pump(vm, (int64_t)fjs::now_ms(vm));
     return 0;
 }
@@ -269,8 +276,8 @@ void fjs_vm_heap(FJSVM *vm, int64_t *bytes, int64_t *objects) {
     if (bytes) *bytes = 0;
     if (objects) *objects = 0;
     if (!vm || !vm->ctx) return;
-    LEPUSMemoryUsage usage;
-    LEPUS_ComputeMemoryUsage(LEPUS_GetRuntime(vm->ctx), &usage);
+    fjsengine::MemoryUsage usage;
+    fjsengine::compute_memory_usage(fjsengine::get_runtime(vm->ctx), &usage);
     if (bytes) *bytes = (int64_t)usage.malloc_size;
     if (objects) *objects = (int64_t)usage.obj_count;
 }
@@ -290,35 +297,35 @@ int32_t fjs_vm_pump(FJSVM *vm, int64_t now_ms_) {    if (!vm) return -1;
         for (size_t i = 0; i < vm->timers.size(); i++) {
             FjsTimer &t = vm->timers[i];
             if (t.next_ms > (double)now_ms_) continue;
-            LEPUSValue cb = t.callback;
-            LEPUS_DupValue(vm->ctx, cb); /* keep alive across possible removal */
+            fjsengine::Value cb = t.callback;
+            fjsengine::dup_value(vm->ctx, cb); /* keep alive across possible removal */
             if (t.interval) {
                 t.next_ms += t.interval_ms;
                 if (t.next_ms <= (double)now_ms_) /* catch-up after jank */
                     t.next_ms = (double)now_ms_ + t.interval_ms;
             } else {
-                LEPUS_FreeValue(vm->ctx, t.callback);
+                fjsengine::free_value(vm->ctx, t.callback);
                 vm->timers.erase(vm->timers.begin() + (long)i);
             }
-            LEPUSValue ret = LEPUS_Call(vm->ctx, cb, LEPUS_UNDEFINED, 0, nullptr);
-            LEPUS_FreeValue(vm->ctx, cb);
+            fjsengine::Value ret = fjsengine::call(vm->ctx, cb, fjsengine::undefined(), 0, nullptr);
+            fjsengine::free_value(vm->ctx, cb);
             executed++;
             ran_timer = true;
-            if (LEPUS_IsException(ret)) {
-                LEPUS_FreeValue(vm->ctx, ret);
+            if (fjsengine::is_exception(ret)) {
+                fjsengine::free_value(vm->ctx, ret);
                 /* A throwing timer must not skip the rest of the pump: the
                  * early return also abandoned the pending-job drain, i.e.
                  * every microtask queued behind it — Vue's scheduler flush
                  * among them. One vant `useRect` throw per tick used to
                  * freeze whole pages mid-mount (specs/070 D1). Report like
                  * a browser would and move on. */
-                LEPUSValue exc = LEPUS_GetException(vm->ctx);
+                fjsengine::Value exc = fjsengine::get_exception(vm->ctx);
                 std::string msg = format_exception(vm, exc);
-                LEPUS_FreeValue(vm->ctx, exc);
+                fjsengine::free_value(vm->ctx, exc);
                 std::string out = "[fjs/timer] " + msg;
                 log_line(vm, FJS_LOG_ERROR, out.c_str(), (int32_t)out.size());
             } else {
-                LEPUS_FreeValue(vm->ctx, ret);
+                fjsengine::free_value(vm->ctx, ret);
             }
             break; /* restart scan: vector was mutated */
         }
@@ -330,12 +337,12 @@ int32_t fjs_vm_pump(FJSVM *vm, int64_t now_ms_) {    if (!vm) return -1;
      * flush used to blank the whole page with no error surfaced anywhere
      * (vant Tabs throws `window is not defined` from a nextTick chain). */
     for (int i = 0; i < 10000; i++) {
-        LEPUSContext *ctx1 = nullptr;
-        int r = LEPUS_ExecutePendingJob(vm->rt, &ctx1);
+        fjsengine::Context *ctx1 = nullptr;
+        int r = fjsengine::execute_pending_job(vm->rt, &ctx1);
         if (r < 0) {
-            LEPUSValue exc = LEPUS_GetException(ctx1);
+            fjsengine::Value exc = fjsengine::get_exception(ctx1);
             std::string msg = format_exception(vm, exc);
-            LEPUS_FreeValue(ctx1, exc);
+            fjsengine::free_value(ctx1, exc);
             std::string out = "[fjs] unhandled rejection in a microtask job: " + msg;
             log_line(vm, FJS_LOG_ERROR, out.c_str(), (int32_t)out.size());
             executed++;
@@ -350,30 +357,30 @@ int32_t fjs_vm_pump(FJSVM *vm, int64_t now_ms_) {    if (!vm) return -1;
 int32_t fjs_vm_dispatch_event(FJSVM *vm, int32_t node_id, int32_t event_type,
                               const uint8_t *params, int32_t len) {
     if (!vm) return -1;
-    LEPUSValue global = LEPUS_GetGlobalObject(vm->ctx);
-    LEPUSValue fn = LEPUS_GetPropertyStr(vm->ctx, global, "__fjsDispatchEvent");
-    LEPUS_FreeValue(vm->ctx, global);
-    if (LEPUS_IsUndefined(fn)) {
-        LEPUS_FreeValue(vm->ctx, fn);
+    fjsengine::Value global = fjsengine::get_global_object(vm->ctx);
+    fjsengine::Value fn = fjsengine::get_property_str(vm->ctx, global, "__fjsDispatchEvent");
+    fjsengine::free_value(vm->ctx, global);
+    if (fjsengine::is_undefined(fn)) {
+        fjsengine::free_value(vm->ctx, fn);
         return 0; /* runtime not installed yet — fine */
     }
-    LEPUSValueConst argv[3];
-    argv[0] = LEPUS_NewInt32(vm->ctx, node_id);
-    argv[1] = LEPUS_NewInt32(vm->ctx, event_type);
+    fjsengine::ValueConst argv[3];
+    argv[0] = fjsengine::new_int32(vm->ctx, node_id);
+    argv[1] = fjsengine::new_int32(vm->ctx, event_type);
     argv[2] = (params && len > 0)
-                  ? LEPUS_NewStringLen(vm->ctx, (const char *)params, (size_t)len)
-                  : LEPUS_NULL;
-    LEPUSValue ret = LEPUS_Call(vm->ctx, fn, LEPUS_UNDEFINED, 3, argv);
-    LEPUS_FreeValue(vm->ctx, argv[0]);
-    LEPUS_FreeValue(vm->ctx, argv[1]);
-    LEPUS_FreeValue(vm->ctx, argv[2]);
-    LEPUS_FreeValue(vm->ctx, fn);
-    if (LEPUS_IsException(ret)) {
-        LEPUS_FreeValue(vm->ctx, ret);
+                  ? fjsengine::new_string_len(vm->ctx, (const char *)params, (size_t)len)
+                  : fjsengine::null();
+    fjsengine::Value ret = fjsengine::call(vm->ctx, fn, fjsengine::undefined(), 3, argv);
+    fjsengine::free_value(vm->ctx, argv[0]);
+    fjsengine::free_value(vm->ctx, argv[1]);
+    fjsengine::free_value(vm->ctx, argv[2]);
+    fjsengine::free_value(vm->ctx, fn);
+    if (fjsengine::is_exception(ret)) {
+        fjsengine::free_value(vm->ctx, ret);
         fjs::fail_with_pending_exception(vm, "dispatch-event");
         return -1;
     }
-    LEPUS_FreeValue(vm->ctx, ret);
+    fjsengine::free_value(vm->ctx, ret);
     /* handlers typically queue UI frames via microtasks — drain them now so
      * a gesture produces its frame synchronously */
     fjs_vm_pump(vm, (int64_t)fjs::now_ms(vm));
@@ -393,15 +400,15 @@ int32_t fjs_compile_bundle(FJSVM *vm, const uint8_t *src, int32_t len,
     }
     /* global compile only — no execution (compile-only eval) */
     std::vector<char> code = nul_terminated(src, len);
-    LEPUSValue fun = LEPUS_Eval(vm->ctx, code.data(), (size_t)len, "<bundle>",
-                          LEPUS_EVAL_TYPE_GLOBAL | LEPUS_EVAL_FLAG_COMPILE_ONLY);
-    if (LEPUS_IsException(fun)) {
+    fjsengine::Value fun = fjsengine::eval(vm->ctx, code.data(), (size_t)len, "<bundle>",
+                          fjsengine::eval_type_global | fjsengine::eval_flag_compile_only);
+    if (fjsengine::is_exception(fun)) {
         fjs::fail_with_pending_exception(vm, "compile");
         return -1;
     }
     size_t bc_len = 0;
-    uint8_t *bc = LEPUS_WriteObject(vm->ctx, &bc_len, fun, LEPUS_WRITE_OBJ_BYTECODE);
-    LEPUS_FreeValue(vm->ctx, fun);
+    uint8_t *bc = fjsengine::write_object(vm->ctx, &bc_len, fun, fjsengine::write_obj_bytecode);
+    fjsengine::free_value(vm->ctx, fun);
     if (!bc) {
         fjs::fail_with_pending_exception(vm, "write-object");
         return -1;
@@ -423,7 +430,7 @@ int32_t fjs_compile_bundle(FJSVM *vm, const uint8_t *src, int32_t len,
         total = 0; /* caller misjudged size: signal nothing written */
         fjs::set_error(vm, "fjs_compile_bundle: output buffer too small");
     }
-    lepus_free(vm->ctx, bc);
+    fjsengine::free_buffer(vm->ctx, bc);
     if (out && cap >= 0 && total == 0) return -1;
     return (int32_t)total;
 }

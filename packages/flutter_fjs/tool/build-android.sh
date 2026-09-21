@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
-# Builds android/src/main/jniLibs/<abi>/ from native/ for every ABI the
-# plugin ships, then strips them. Run once per native/ change and commit.
+# Builds the Android .so for BOTH engine flavors (spec 091) from native/,
+# then strips them. Run once per native/ change and commit.
 #
-# spec 090: TWO files land in jniLibs, an engine and a module on top of it —
-#   libfjs.so            the engine; contains no inspector, every build
-#   libfjs_debugger.so   CDP inspector + transport, loaded only by debug
-#                        builds; release APKs drop the file automatically
-#                        (see android/build.gradle)
+# The flavors land in the abi cache — one directory per engine, no renaming
+# of files (Dart always opens libfjs.so):
+#   abi/primjs/android/<abi>/    libfjs.so + libfjs_debugger.so (default)
+#   abi/quickjs/android/<abi>/   libfjs.so only — the CDP inspector exists
+#                                for PrimJS only
+# The primjs set is ALSO copied to android/src/main/jniLibs/<abi>/ (what
+# gradle packs): the committed materialized state must build without @ufjs/cli.
+# `fjs run/build --js-engine <flavor>` copies a flavor from the cache over
+# jniLibs at run time (see packages/fjs/src/project/engine.ts).
+#
+# spec 090: libfjs.so is the engine and goes into every build;
+# libfjs_debugger.so is the CDP inspector + transport, loaded only by debug
+# builds; release APKs drop the file automatically (see android/build.gradle).
 #
 # Needs ANDROID_NDK_HOME (or ANDROID_NDK_ROOT / ANDROID_HOME with an ndk/ dir),
 # r28 or newer: from r28 the NDK aligns LOAD segments to 16 KB by default, which
@@ -16,6 +24,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 OUT="$ROOT/build/android"
+ABI_CACHE="$ROOT/abi"
 JNILIBS="$ROOT/android/src/main/jniLibs"
 API=21
 ABIS=(armeabi-v7a arm64-v8a x86_64)
@@ -42,26 +51,54 @@ HOST_TAG=$(uname -s | tr '[:upper:]' '[:lower:]')-x86_64
 [ "$(uname -s)" = "Darwin" ] && HOST_TAG=darwin-x86_64
 STRIP="$NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin/llvm-strip"
 
-rm -rf "$OUT" "$JNILIBS"
+rm -rf "$OUT" "$ABI_CACHE"/primjs/android "$ABI_CACHE"/quickjs/android "$JNILIBS"
+
+# flavor <engine> <build-debugger? ON|OFF>
+flavor() {
+    local engine=$1 debugger=$2
+    for abi in "${ABIS[@]}"; do
+        echo "==> building $engine/$abi"
+        cmake -S "$ROOT/native" -B "$OUT/$engine-$abi" \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI="$abi" \
+            -DANDROID_PLATFORM="android-$API" \
+            -DANDROID_STL=c++_static \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFJS_BUILD_TESTS=OFF \
+            -DFJS_JS_ENGINE="$engine" \
+            -DFJS_DEBUGGER="$debugger" \
+            >/dev/null
+        if [ "$debugger" = "ON" ]; then
+            # two targets: the engine (libfjs.so) and the pluggable debugger
+            # module — inspector + transport (libfjs_debugger.so, spec 090)
+            cmake --build "$OUT/$engine-$abi" --target fjs fjs_debugger \
+                -j"$(getconf _NPROCESSORS_ONLN)" >/dev/null
+        else
+            cmake --build "$OUT/$engine-$abi" --target fjs \
+                -j"$(getconf _NPROCESSORS_ONLN)" >/dev/null
+        fi
+        mkdir -p "$ABI_CACHE/$engine/android/$abi"
+        for so in libfjs.so; do
+            cp "$OUT/$engine-$abi/$so" "$ABI_CACHE/$engine/android/$abi/$so"
+            "$STRIP" --strip-unneeded "$ABI_CACHE/$engine/android/$abi/$so"
+        done
+        if [ "$debugger" = "ON" ]; then
+            for so in libfjs_debugger.so; do
+                cp "$OUT/$engine-$abi/$so" "$ABI_CACHE/$engine/android/$abi/$so"
+                "$STRIP" --strip-unneeded "$ABI_CACHE/$engine/android/$abi/$so"
+            done
+        fi
+    done
+}
+
+flavor primjs  ON
+flavor quickjs OFF
+
+# default materialization: primjs into the committed jniLibs
 for abi in "${ABIS[@]}"; do
-    echo "==> building $abi"
-    cmake -S "$ROOT/native" -B "$OUT/$abi" \
-        -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
-        -DANDROID_ABI="$abi" \
-        -DANDROID_PLATFORM="android-$API" \
-        -DANDROID_STL=c++_static \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DFJS_BUILD_TESTS=OFF \
-        >/dev/null
-    # two targets: the engine (libfjs.so) and the pluggable debugger
-    # module — inspector + transport (libfjs_debugger.so, spec 090)
-    cmake --build "$OUT/$abi" --target fjs fjs_debugger -j"$(getconf _NPROCESSORS_ONLN)" >/dev/null
     mkdir -p "$JNILIBS/$abi"
-    cp "$OUT/$abi/libfjs.so" "$JNILIBS/$abi/libfjs.so"
-    "$STRIP" --strip-unneeded "$JNILIBS/$abi/libfjs.so"
-    cp "$OUT/$abi/libfjs_debugger.so" "$JNILIBS/$abi/libfjs_debugger.so"
-    "$STRIP" --strip-unneeded "$JNILIBS/$abi/libfjs_debugger.so"
+    cp "$ABI_CACHE"/primjs/android/"$abi"/*.so "$JNILIBS/$abi/"
 done
 
 echo "built:"
-ls -lh "$JNILIBS"/*/libfjs*.so | awk '{print "  " $NF " " $5}'
+ls -lh "$ABI_CACHE"/{primjs,quickjs}/android/*/libfjs*.so | awk '{print "  " $NF " " $5}'

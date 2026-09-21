@@ -17,6 +17,7 @@ import { gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import esbuild from 'esbuild';
 import { WORKERS_DIR, writeWorkers } from '../project/workers.js';
+import { materializeJsEngine, resolveJsEngine, type JsEngine } from '../project/engine.js';
 import { ensureFlutterHost, projectName } from '../commands/run.js';
 import {
   vueSfcPlugin,
@@ -175,6 +176,15 @@ export function flutterModeArgs(mode: FlutterMode, flutterArgs: string[]): strin
   return flutterArgs.some((arg) => explicit.includes(arg)) ? [] : [`--${mode}`];
 }
 
+/** spec 091: the engine flavor travels to flutter as a dart-define, so the
+ * plugin's build hooks (gradle's fjsMaterializeEngine, the podspecs' script
+ * phase) can swap the abi-cached engine for ANY host — including plain
+ * `flutter run` ones like fjs-go. Placed before flutterArgs so a
+ * user-passed duplicate keeps the usual last-one-wins. */
+export function engineDefineArgs(engine?: JsEngine): string[] {
+  return [`--dart-define=FJS_JS_ENGINE=${engine ?? resolveJsEngine()}`];
+}
+
 export interface BuildOptions {
   entry?: string;
   outDir: string;
@@ -227,6 +237,11 @@ export interface BuildOptions {
    * `--devtools`. Without it the define is false and esbuild drops the
    * whole data plane from the output. */
   devtools?: boolean;
+  /** spec 091: engine flavor for bytecode (`--js-engine`) — the .fjsbundle
+   * engine id must match the engine embedded in the app, and the fjsc
+   * binary is per flavor. Also materialized into the plugin before any
+   * `flutter build` a release build kicks off. */
+  jsEngine?: JsEngine;
 }
 
 /** An entry esbuild reads straight from memory.
@@ -282,6 +297,7 @@ export function parseBuildArgs(argv: string[]): BuildOptions {
     flutterArgs: [],
     analyze: false,
     devtools: false,
+    jsEngine: resolveJsEngine(),
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -308,6 +324,7 @@ export function parseBuildArgs(argv: string[]): BuildOptions {
     }
     else if (a === '--out') opts.outDir = argv[++i] ?? opts.outDir;
     else if (a === '--flutter-dir') opts.flutterDir = argv[++i] ?? opts.flutterDir;
+    else if (a === '--js-engine') opts.jsEngine = resolveJsEngine(argv[++i]);
     else if (a === '--analyze') opts.analyze = true;
     else if (a === '--pages') opts.pages = true;
     else if (a === '--devtools') opts.devtools = true;
@@ -477,7 +494,7 @@ export async function buildBundle(opts: BuildOptions): Promise<BuildResult> {
   const res: BuildResult = { jsPath, warnings };
   if (result.metafile) res.metafiles = { [jsPath]: result.metafile };
   if (opts.bytecode) {
-    res.bytecodePath = compileBytecode(jsPath, outDir, baseName);
+    res.bytecodePath = compileBytecode(jsPath, outDir, baseName, opts.jsEngine);
   }
   return res;
 }
@@ -794,11 +811,11 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
   const res: BuildResult = { jsPath, sharedPath, pageChunks, warnings, devUnits };
   if (opts.analyze) res.metafiles = metafiles;
   if (opts.bytecode) {
-    res.bytecodePath = compileBytecode(jsPath, outDir, 'bundle');
-    res.sharedBytecodePath = compileBytecode(sharedPath, outDir, 'shared');
+    res.bytecodePath = compileBytecode(jsPath, outDir, 'bundle', opts.jsEngine);
+    res.sharedBytecodePath = compileBytecode(sharedPath, outDir, 'shared', opts.jsEngine);
     res.pageBytecodeChunks = {};
     for (const [chunk, file] of Object.entries(pageChunks)) {
-      res.pageBytecodeChunks[chunk] = compileBytecode(file, pagesOut, chunk);
+      res.pageBytecodeChunks[chunk] = compileBytecode(file, pagesOut, chunk, opts.jsEngine);
     }
   }
   return res;
@@ -1105,7 +1122,9 @@ export function fjscPackageName(): string {
 }
 
 /** Locates the fjsc binary: $FJSC_PATH, a repo checkout's own cmake build, or
- * the prebuilt npm package.
+ * the prebuilt npm package. [engine] picks the flavor — the binary embeds the
+ * engine (bytecode + engine id come from it), so a quickjs build must use the
+ * quickjs flavor built into native/build-native-quickjs.
  *
  * The checkout wins over the npm package on purpose. @ufjs/cli declares the
  * prebuilt binary as an optional dependency, so a workspace install pulls it in
@@ -1113,23 +1132,32 @@ export function fjscPackageName(): string {
  * compiling bundles with the *published* engine instead of the one they just
  * built. None of these paths can match from inside node_modules, so an
  * installed copy still lands on the npm package. */
-export function findFjsc(): string | null {
+export function findFjsc(engine?: JsEngine): string | null {
   if (process.env.FJSC_PATH && fs.existsSync(process.env.FJSC_PATH)) {
     return process.env.FJSC_PATH;
   }
 
   const exe = process.platform === 'win32' ? 'fjsc.exe' : 'fjsc';
   const here = import.meta.dirname ?? '.';
-  const candidates = [
-    // running from packages/fjs/{src,dist} inside the monorepo checkout
-    path.resolve(here, '..', '..', 'flutter_fjs', 'native', 'build-native', exe),
-    path.resolve(here, '..', '..', '..', 'flutter_fjs', 'native', 'build-native', exe),
-    // repo root as cwd
-    path.resolve(process.cwd(), 'packages', 'flutter_fjs', 'native', 'build-native', exe),
-  ];
+  // The npm package ships the primjs flavor only, so a quickjs request can
+  // never fall through to it — that would silently mint bundles with the
+  // wrong engine id and wrong bytecode.
+  const quickjs = engine === 'quickjs';
+  const buildDirs = quickjs ? ['build-native-quickjs'] : ['build-native', 'build-native-quickjs'];
+  const candidates: string[] = [];
+  for (const dir of buildDirs) {
+    candidates.push(
+      // running from packages/fjs/{src,dist} inside the monorepo checkout
+      path.resolve(here, '..', '..', 'flutter_fjs', 'native', dir, exe),
+      path.resolve(here, '..', '..', '..', 'flutter_fjs', 'native', dir, exe),
+      // repo root as cwd
+      path.resolve(process.cwd(), 'packages', 'flutter_fjs', 'native', dir, exe),
+    );
+  }
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
   }
+  if (quickjs) return null;
 
   const require = createRequire(import.meta.url);
   try {
@@ -1143,9 +1171,25 @@ export function findFjsc(): string | null {
   return null;
 }
 
-export function compileBytecode(jsPath: string, outDir: string, baseName = 'app'): string {
-  const fjsc = findFjsc();
+export function compileBytecode(
+  jsPath: string,
+  outDir: string,
+  baseName = 'app',
+  engine?: JsEngine,
+): string {
+  const fjsc = findFjsc(engine);
   if (!fjsc) {
+    if (engine === 'quickjs') {
+      throw new Error(
+        'quickjs fjsc not found — the npm-distributed binary is primjs-only.\n' +
+          'Build the quickjs flavor and point FJSC_PATH at it:\n' +
+          '\n' +
+          '  cd packages/flutter_fjs/native\n' +
+          '  cmake -B build-native-quickjs -DFJS_JS_ENGINE=quickjs -DFJS_DEBUGGER=OFF\n' +
+          '  cmake --build build-native-quickjs -j\n' +
+          '  export FJSC_PATH=$PWD/build-native-quickjs/fjsc',
+      );
+    }
     throw new Error(
       `fjsc compiler not found — bytecode and release builds need it.\n` +
         `\n` +
@@ -1267,6 +1311,10 @@ export function releaseBuild(opts: BuildOptions, res: BuildResult): void {
   // (specs/017-local-image-assets).
   syncPublicAssets(root, path.resolve(opts.outDir), assets);
   ensureFlutterHost(flutterDir, appName, !isEjected(root));
+  // spec 091: the flavor bytecode above was compiled for must be the flavor
+  // the app links — materialize before any `flutter build` runs (and before
+  // the caller's `flutter run`, for fjs run's release path)
+  materializeJsEngine(opts.jsEngine ?? resolveJsEngine(), { flutterDir });
 
   const pagesOut = path.join(assets, 'pages');
   fs.mkdirSync(pagesOut, { recursive: true });
@@ -1315,7 +1363,7 @@ export function releaseBuild(opts: BuildOptions, res: BuildResult): void {
   console.log(`synced release assets to ${path.relative(root, assets)}`);
 
   if (opts.apk) {
-    const args = ['build', 'apk', ...flutterModeArgs(opts.mode, opts.flutterArgs), ...opts.flutterArgs];
+    const args = ['build', 'apk', ...flutterModeArgs(opts.mode, opts.flutterArgs), ...engineDefineArgs(opts.jsEngine), ...opts.flutterArgs];
     const result = spawnSync('flutter', args, { cwd: flutterDir, stdio: 'inherit' });
     if (result.status !== 0) throw new Error('flutter build apk failed');
     console.log(`built APK under ${path.relative(root, path.join(flutterDir, 'build', 'app', 'outputs', 'flutter-apk'))}`);
@@ -1323,19 +1371,19 @@ export function releaseBuild(opts: BuildOptions, res: BuildResult): void {
   if (opts.hap) {
     // `build hap` is an OpenHarmony-fork subcommand; the stock tool would
     // fail with an unknown-command error naming flutter, which reads fine
-    const args = ['build', 'hap', ...flutterModeArgs(opts.mode, opts.flutterArgs), ...opts.flutterArgs];
+    const args = ['build', 'hap', ...flutterModeArgs(opts.mode, opts.flutterArgs), ...engineDefineArgs(opts.jsEngine), ...opts.flutterArgs];
     const result = spawnSync('flutter', args, { cwd: flutterDir, stdio: 'inherit' });
     if (result.status !== 0) throw new Error('flutter build hap failed');
     console.log(`built HAP under ${path.relative(root, path.join(flutterDir, 'ohos', 'entry', 'build', 'default', 'outputs', 'default'))}`);
   }
   if (opts.aab) {
-    const args = ['build', 'appbundle', ...flutterModeArgs(opts.mode, opts.flutterArgs), ...opts.flutterArgs];
+    const args = ['build', 'appbundle', ...flutterModeArgs(opts.mode, opts.flutterArgs), ...engineDefineArgs(opts.jsEngine), ...opts.flutterArgs];
     const result = spawnSync('flutter', args, { cwd: flutterDir, stdio: 'inherit' });
     if (result.status !== 0) throw new Error('flutter build appbundle failed');
     console.log(`built AAB under ${path.relative(root, path.join(flutterDir, 'build', 'app', 'outputs', 'bundle', 'release'))}`);
   }
   if (opts.ipa) {
-    const args = ['build', 'ipa', ...flutterModeArgs(opts.mode, opts.flutterArgs), ...opts.flutterArgs];
+    const args = ['build', 'ipa', ...flutterModeArgs(opts.mode, opts.flutterArgs), ...engineDefineArgs(opts.jsEngine), ...opts.flutterArgs];
     const result = spawnSync('flutter', args, { cwd: flutterDir, stdio: 'inherit' });
     if (result.status !== 0) {
       // the usual failure is the signed EXPORT, not the archive: point at

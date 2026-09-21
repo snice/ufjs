@@ -1220,13 +1220,80 @@ server 跑起来后，终端本身就是个控制台（只在交互式终端里�
 [0..4)   magic "FJSB"
 [4..6)   u16 format version = 1
 [6..8)   u16 engine id length
-[8..]    engine id + PrimJS bytecode
+[8..]    engine id + engine bytecode
 ```
 
-App 加载时会校验 magic、格式版本和 engine id（当前 `primjs-4.1.1`；spec 088
-起引擎从 quickjs-ng 换为 PrimJS，缘由与升级流程见
-`packages/flutter_fjs/native/primjs/VENDORED.md`）；engine id 或 `fjsc` 版本
-不一致时会直接报错，避免运行期出现难定位的崩溃。
+App 加载时会校验 magic、格式版本和 engine id（`primjs-4.1.1`，或 quickjs
+flavor 的 `quickjs-ng-0.9.0`；spec 088 起默认引擎从 quickjs-ng 换为 PrimJS，
+缘由与升级流程见 `packages/flutter_fjs/native/primjs/VENDORED.md`）；
+engine id 或 `fjsc` 版本不一致时会直接报错，避免运行期出现难定位的崩溃。
+
+## JS 引擎切换（spec 091）
+
+引擎有两个 flavor，都预编译缓存在 `packages/flutter_fjs/abi/`：
+
+| flavor | 引擎 | engine id | CDP 调试器 |
+| --- | --- | --- | --- |
+| `primjs`（默认） | PrimJS 4.1.1 | `primjs-4.1.1` | 有（`fjs debug` 只在此 flavor 可用） |
+| `quickjs` | quickjs-ng 0.9.0 | `quickjs-ng-0.9.0` | 无（inspector 只存在于 PrimJS） |
+
+```bash
+fjs run ios --js-engine quickjs      # 运行时切换（debug 模式）
+fjs build --js-engine quickjs --release --apk
+FJS_JS_ENGINE=quickjs fjs run android  # 环境变量等价
+fjs run ios                          # 默认即 primjs
+
+# 纯 Flutter 宿主（不经过 fjs CLI，比如 fjs-go）：flutter run 之前手动跑
+# 一次物化，然后正常构建
+cd <宿主项目根>
+dart run flutter_fjs:engine quickjs
+flutter run
+```
+
+切换只有**一条物化路径**：`bin/engine.dart`（`dart run
+flutter_fjs:engine <flavor>`，`fjs run/build --js-engine` 内部就是调它）。
+它在 flutter 构建开始之前，把选中 flavor 从 abi 缓存 copy 到各平台真正
+消费的位置——`android/src/main/jniLibs/<abi>/`、
+`ios|macos/fjs.xcframework`、`ohos/libs/arm64-v8a/`——并写
+`abi/.materialized` 戳记；重复运行是 no-op，切回默认同样只是一次 copy。
+quickjs 物化会顺手删掉 `libfjs_debugger.so` /
+`fjs_debugger.xcframework`（CDP inspector 只存在于 PrimJS），并改写
+`ios|macos/Classes/fjs_engine_flavor.h`——插件 shim 按它决定是否声明
+debugger ABI，quickjs 下连 DEBUG 构建都不会引用
+`fjs_vm_debugger_*`。物化同时会清掉宿主 build 目录里 Xcode 的
+xcframework 抽取缓存（Xcode 不感知源归档内容变化，不清会静默链上一个
+flavor）并 touch 宿主 `ios/Podfile` 强制下一次 pod install 按
+`File.exist?` 重新评估 vendored 列表。
+
+物化不是默认值：提交入库的物化产物始终是 primjs，实验后提交前
+`git restore packages/flutter_fjs/{android,ios,macos,ohos}` 或重跑一次
+默认物化即可复位。App 运行时（debug 构建）会对比
+`--dart-define=FJS_JS_ENGINE` 与二进制里真实的 engine id，不一致会打
+一次告警——这是防止"忘了物化就跑"的可见兜底。
+
+两点要配对：
+
+- **字节码跟引擎走**。`fjs build --js-engine quickjs` 会找 quickjs flavor
+  的 `fjsc`（仓库内 `native/build-native-quickjs/fjsc`；不在仓库里时按
+  报错信息构建并设 `FJSC_PATH`）。npm 预编译的 `@ufjs/fjsc-*` 只有
+  primjs 份，quickjs 请求不会悄悄回落到它——那会产出引擎 id 错误的
+  bundle。纯 Flutter 宿主没有 CLI 字节码步骤，`fjs build` 照常产出
+  对应引擎的 bundle 即可。
+- **重编引擎**（改了 `native/` 之后）每个 flavor 一个 build 目录，互不
+  污染：
+
+  ```bash
+  cd packages/flutter_fjs/native
+  cmake -B build-native -DFJS_BUILD_TESTS=ON && cmake --build build-native -j
+  cmake -B build-native-quickjs -DFJS_JS_ENGINE=quickjs \
+        -DFJS_BUILD_TESTS=ON -DFJS_DEBUGGER=OFF && \
+  cmake --build build-native-quickjs -j
+  cd .. && tool/build-apple.sh      # 或 tool/build-android.sh / build-ohos.sh
+  ```
+
+同进程内不混用两个引擎：它们各占一套 VM 与符号，双引擎热切换意味着
+每个 App 永久背两份引擎体积，对比实验用不上；要对比就按上面整 App
+切 flavor。
 
 `--release --gz` 的 assets 保存为 `.fjsbundle.gz`。Flutter 侧先 gunzip，再按
 上面的 `.fjsbundle` 格式校验和执行；未压缩 assets 也可被加载。

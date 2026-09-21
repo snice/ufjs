@@ -76,6 +76,9 @@ commands:
       --flutter-dir <dir>    Flutter host dir for --release/--apk
                             (default: .fjs/flutter, or package.json
                             fjs.flutterDir once ejected)
+      --js-engine <name>     with bytecode/release: compile for primjs
+                            (default) or quickjs and materialize that flavor
+                            into the plugin
       builds warn when a page exceeds fjs.performance.nodeBudget
   fjs dev    [entry]        dev server: HTTP bundle + WebSocket reload
       --port <n>            port (default: 38900, or 5173 with --web)
@@ -199,11 +202,18 @@ commands:
                             on that platform; 'flutter devices' lists them)
       --port <n>             fjs dev port (default: 38900)
       --flutter-dir <dir>    host project dir (default: .fjs/flutter)
+      --js-engine <name>     engine flavor to run: primjs (default, has the
+                             CDP debugger) or quickjs (quickjs-ng, no
+                             debugger) — copies the prebuilt flavor from
+                             packages/flutter_fjs/abi/ into the plugin;
+                             FJS_JS_ENGINE sets the same thing
 
 env:
   FJSC_PATH                 path to the fjsc bytecode compiler binary
                             (default: the @ufjs/fjsc-<platform> package npm
                             installs alongside this one)
+  FJS_JS_ENGINE             engine flavor for fjs run/build/debug
+                            (default: primjs)
 `);
   process.exit(1);
 }

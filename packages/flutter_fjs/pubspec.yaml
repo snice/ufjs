@@ -22,6 +22,13 @@ environment:
   sdk: ">=3.10.0 <4.0.0"
   flutter: ">=3.38.0"
 
+# spec 091: `dart run flutter_fjs:engine <primjs|quickjs>` materializes an
+# engine flavor from abi/ over the plugin's platform locations — the manual
+# path for pure Flutter hosts (fjs-go); @ufjs/cli shells out to the same
+# runner for `fjs run/build --js-engine`.
+executables:
+  engine:
+
 dependencies:
   flutter:
     sdk: flutter

@@ -13,13 +13,15 @@ Pod::Spec.new do |s|
   # DynamicLibrary.process().
   #
   # fjs_debugger.xcframework (spec 090) carries the CDP inspector + transport.
-  # It is listed unconditionally on purpose: a static archive contributes only
-  # the members something references, and only Classes/FlutterFjsPlugin.m's
-  # `#if DEBUG` keep-alive table does. Release and Profile binaries therefore
-  # contain none of it.
+  # It is listed only when present: the quickjs engine flavor ships none — the
+  # shim's own declarations are gated on the generated fjs_engine_flavor.h.
+  # A static archive contributes only the members something references, and
+  # only Classes/FlutterFjsPlugin.m's `#if DEBUG` keep-alive table does.
+  # Release and Profile binaries therefore contain none of it.
   s.source_files        = 'Classes/**/*'
   s.public_header_files = 'Classes/FlutterFjsPlugin.h'
-  s.vendored_frameworks = ['fjs.xcframework', 'fjs_debugger.xcframework']
+  s.vendored_frameworks = ['fjs.xcframework'] +
+      (File.exist?(File.expand_path('../fjs_debugger.xcframework', __FILE__)) ? ['fjs_debugger.xcframework'] : [])
   # the prebuilt slices are C++; the plugin shim itself is plain ObjC
   s.libraries = 'c++'
   s.dependency 'FlutterMacOS'

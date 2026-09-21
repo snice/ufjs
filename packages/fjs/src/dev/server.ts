@@ -30,6 +30,7 @@ import {
 import { pagesFor, ROUTE_TYPES_FILE, writeRouteTypes } from '../project/pages.js';
 import { ASSET_TYPES_FILE, writeAssetTypes } from '../project/assets.js';
 import { WORKERS_DIR, bundleWorker, workerFileForUrl } from '../project/workers.js';
+import { materializeJsEngine, resolveJsEngine } from '../project/engine.js';
 import {
   MODULE_COMPONENT_TYPES_FILE,
   MODULE_TYPES_FILE,
@@ -381,6 +382,26 @@ export async function devCommand(argv: string[]): Promise<void> {
   // plane — the whole point of `fjs dev` is a live debug target.
   setDevtoolsBundling(!opts.web);
   if (opts.web && port === 38900) port = 5173; // browsers, not phones
+  // spec 091: dev serves JS source (no bytecode), so the flavor barely
+  // matters here — but a `fjs dev --js-engine quickjs` on a project that
+  // also has a Flutter host should still materialize it, or the flag would
+  // be silently accepted and ignored. Best effort only: JS-only projects
+  // (no host dir) and a missing runner must not take the dev server down —
+  // the next `fjs run` materializes for real.
+  const engineOpts = opts.jsEngine ?? resolveJsEngine();
+  if (engineOpts !== 'primjs' || fs.existsSync(path.resolve(opts.flutterDir))) {
+    try {
+      materializeJsEngine(engineOpts, {
+        flutterDir: opts.flutterDir,
+        explicit: opts.jsEngine !== undefined,
+      });
+    } catch (e) {
+      console.warn(
+        `fjs: engine materialization skipped (${(e as Error).message.split('\n')[0]}) — ` +
+          'the next `fjs run` materializes the flavor before building',
+      );
+    }
+  }
 
   // the mini-program target has no server: DevTools watches the emitted
   // files itself (compileHotReLoad), so dev = rebuild on change

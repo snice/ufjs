@@ -22,31 +22,31 @@
 
 namespace {
 
-LEPUSValue fjs_fail(FJSVM *vm, const char *msg) {
-    return LEPUS_ThrowTypeError(vm->ctx, "%s", msg);
+fjsengine::Value fjs_fail(FJSVM *vm, const char *msg) {
+    return fjsengine::throw_type_error(vm->ctx, "%s", msg);
 }
 
 /* ---- console --------------------------------------------------------- */
 
-LEPUSValue console_print(FJSVM *vm, int32_t level, int argc, LEPUSValueConst *argv) {
+fjsengine::Value console_print(FJSVM *vm, int32_t level, int argc, fjsengine::ValueConst *argv) {
     std::string line;
     for (int i = 0; i < argc; i++) {
         size_t len = 0;
-        const char *s = LEPUS_ToCStringLen(vm->ctx, &len, argv[i]);
-        if (!s) return LEPUS_EXCEPTION;
+        const char *s = fjsengine::to_cstring_len(vm->ctx, &len, argv[i]);
+        if (!s) return fjsengine::exception();
         if (i > 0) line += ' ';
         line.append(s, len);
-        LEPUS_FreeCString(vm->ctx, s);
+        fjsengine::free_cstring(vm->ctx, s);
     }
     fjs::log_line(vm, level, line.c_str(), (int32_t)line.size());
-    return LEPUS_UNDEFINED;
+    return fjsengine::undefined();
 }
 
 #define CONSOLE_FN(name, LEVEL)                                                \
-    static LEPUSValue js_console_##name(LEPUSContext *ctx, LEPUSValueConst this_val,    \
-                                     int argc, LEPUSValueConst *argv) {           \
+    static fjsengine::Value js_console_##name(fjsengine::Context *ctx, fjsengine::ValueConst this_val,    \
+                                     int argc, fjsengine::ValueConst *argv) {           \
         (void)this_val;                                                        \
-        FJSVM *vm = (FJSVM *)LEPUS_GetContextOpaque(ctx);                         \
+        FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);                         \
         return console_print(vm, LEVEL, argc, argv);                           \
     }
 
@@ -58,14 +58,14 @@ CONSOLE_FN(error, FJS_LOG_ERROR)
 
 /* ---- timers ----------------------------------------------------------- */
 
-static LEPUSValue js_set_timeout(LEPUSContext *ctx, LEPUSValueConst this_val, int argc,
-                              LEPUSValueConst *argv) {
+static fjsengine::Value js_set_timeout(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                              fjsengine::ValueConst *argv) {
     (void)this_val;
-    FJSVM *vm = (FJSVM *)LEPUS_GetContextOpaque(ctx);
-    if (argc < 1 || !LEPUS_IsFunction(ctx, argv[0]))
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
+    if (argc < 1 || !fjsengine::is_function(ctx, argv[0]))
         return fjs_fail(vm, "setTimeout(callback, ms): callback required");
     double ms = 0;
-    if (argc >= 2) LEPUS_ToFloat64(ctx, &ms, argv[1]);
+    if (argc >= 2) fjsengine::to_float64(ctx, &ms, argv[1]);
     if (ms < 0) ms = 0;
 
     FjsTimer t{};
@@ -73,19 +73,19 @@ static LEPUSValue js_set_timeout(LEPUSContext *ctx, LEPUSValueConst this_val, in
     t.interval = false;
     t.next_ms = fjs::now_ms(vm) + ms;
     t.interval_ms = 0;
-    t.callback = LEPUS_DupValue(ctx, argv[0]);
+    t.callback = fjsengine::dup_value(ctx, argv[0]);
     vm->timers.push_back(t);
-    return LEPUS_NewInt32(ctx, t.id);
+    return fjsengine::new_int32(ctx, t.id);
 }
 
-static LEPUSValue js_set_interval(LEPUSContext *ctx, LEPUSValueConst this_val, int argc,
-                               LEPUSValueConst *argv) {
+static fjsengine::Value js_set_interval(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                               fjsengine::ValueConst *argv) {
     (void)this_val;
-    FJSVM *vm = (FJSVM *)LEPUS_GetContextOpaque(ctx);
-    if (argc < 1 || !LEPUS_IsFunction(ctx, argv[0]))
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
+    if (argc < 1 || !fjsengine::is_function(ctx, argv[0]))
         return fjs_fail(vm, "setInterval(callback, ms): callback required");
     double ms = 0;
-    if (argc >= 2) LEPUS_ToFloat64(ctx, &ms, argv[1]);
+    if (argc >= 2) fjsengine::to_float64(ctx, &ms, argv[1]);
     if (ms < 1) ms = 1; /* no busy loops */
 
     FjsTimer t{};
@@ -93,18 +93,18 @@ static LEPUSValue js_set_interval(LEPUSContext *ctx, LEPUSValueConst this_val, i
     t.interval = true;
     t.next_ms = fjs::now_ms(vm) + ms;
     t.interval_ms = ms;
-    t.callback = LEPUS_DupValue(ctx, argv[0]);
+    t.callback = fjsengine::dup_value(ctx, argv[0]);
     vm->timers.push_back(t);
-    return LEPUS_NewInt32(ctx, t.id);
+    return fjsengine::new_int32(ctx, t.id);
 }
 
-static bool clear_timer(FJSVM *vm, int argc, LEPUSValueConst *argv) {
+static bool clear_timer(FJSVM *vm, int argc, fjsengine::ValueConst *argv) {
     if (argc < 1) return false;
     int32_t id = 0;
-    if (LEPUS_ToInt32(vm->ctx, &id, argv[0]) != 0) return false;
+    if (fjsengine::to_int32(vm->ctx, &id, argv[0]) != 0) return false;
     for (auto it = vm->timers.begin(); it != vm->timers.end(); ++it) {
         if (it->id == id) {
-            LEPUS_FreeValue(vm->ctx, it->callback);
+            fjsengine::free_value(vm->ctx, it->callback);
             vm->timers.erase(it);
             return true;
         }
@@ -112,90 +112,90 @@ static bool clear_timer(FJSVM *vm, int argc, LEPUSValueConst *argv) {
     return false;
 }
 
-static LEPUSValue js_clear_timer(LEPUSContext *ctx, LEPUSValueConst this_val, int argc,
-                              LEPUSValueConst *argv) {
+static fjsengine::Value js_clear_timer(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                              fjsengine::ValueConst *argv) {
     (void)this_val;
-    FJSVM *vm = (FJSVM *)LEPUS_GetContextOpaque(ctx);
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
     clear_timer(vm, argc, argv);
-    return LEPUS_UNDEFINED;
+    return fjsengine::undefined();
 }
 
 /* ---- UI op buffer ------------------------------------------------------ */
 
-static LEPUSValue js_ui_ops(LEPUSContext *ctx, LEPUSValueConst this_val, int argc,
-                         LEPUSValueConst *argv) {
+static fjsengine::Value js_ui_ops(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                         fjsengine::ValueConst *argv) {
     (void)this_val;
-    FJSVM *vm = (FJSVM *)LEPUS_GetContextOpaque(ctx);
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
     if (argc < 1) return fjs_fail(vm, "uiOps(buffer) requires an argument");
-    if (!vm->on_ui_ops) return LEPUS_UNDEFINED; /* no host attached yet */
+    if (!vm->on_ui_ops) return fjsengine::undefined(); /* no host attached yet */
 
-    LEPUSValueConst buf = argv[0];
+    fjsengine::ValueConst buf = argv[0];
     size_t size = 0;
     uint8_t *bytes = nullptr;
-    if (LEPUS_IsObject(buf)) {
+    if (fjsengine::is_object(buf)) {
         /* ArrayBuffer directly */
         size_t asize = 0;
-        uint8_t *abuf = LEPUS_GetArrayBuffer(ctx, &asize, buf);
+        uint8_t *abuf = fjsengine::get_array_buffer(ctx, &asize, buf);
         if (abuf) {
             bytes = abuf;
             size = asize;
         } else {
             /* typed array (e.g. Uint8Array): read view over its buffer */
-            LEPUSValue bo2 = LEPUS_GetPropertyStr(ctx, buf, "byteOffset");
-            LEPUSValue bl = LEPUS_GetPropertyStr(ctx, buf, "byteLength");
-            LEPUSValue ab = LEPUS_GetPropertyStr(ctx, buf, "buffer");
+            fjsengine::Value bo2 = fjsengine::get_property_str(ctx, buf, "byteOffset");
+            fjsengine::Value bl = fjsengine::get_property_str(ctx, buf, "byteLength");
+            fjsengine::Value ab = fjsengine::get_property_str(ctx, buf, "buffer");
             uint32_t byteOffset = 0;
             int64_t byteLength = 0;
-            if (!LEPUS_IsException(bo2) && !LEPUS_IsException(bl) &&
-                LEPUS_ToUint32(ctx, &byteOffset, bo2) == 0 &&
-                LEPUS_ToInt64(ctx, &byteLength, bl) == 0) {
+            if (!fjsengine::is_exception(bo2) && !fjsengine::is_exception(bl) &&
+                fjsengine::to_uint32(ctx, &byteOffset, bo2) == 0 &&
+                fjsengine::to_int64(ctx, &byteLength, bl) == 0) {
                 size_t basize = 0;
-                uint8_t *base = LEPUS_GetArrayBuffer(ctx, &basize, ab);
+                uint8_t *base = fjsengine::get_array_buffer(ctx, &basize, ab);
                 if (base && byteOffset + byteLength <= (int64_t)basize) {
                     bytes = base + byteOffset;
                     size = (size_t)byteLength;
                 }
             }
-            LEPUS_FreeValue(ctx, bo2);
-            LEPUS_FreeValue(ctx, bl);
-            LEPUS_FreeValue(ctx, ab);
+            fjsengine::free_value(ctx, bo2);
+            fjsengine::free_value(ctx, bl);
+            fjsengine::free_value(ctx, ab);
         }
     }
     if (!bytes) return fjs_fail(vm, "uiOps expects a Uint8Array/ArrayBuffer");
     /* The host copies synchronously inside the callback. */
     vm->on_ui_ops(bytes, (int32_t)size);
-    return LEPUS_UNDEFINED;
+    return fjsengine::undefined();
 }
 
 /* ---- synchronous host-module invocation (JSI) --------------------------- */
 
-static LEPUSValue js_invoke_host(LEPUSContext *ctx, LEPUSValueConst this_val, int argc,
-                              LEPUSValueConst *argv) {
+static fjsengine::Value js_invoke_host(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                              fjsengine::ValueConst *argv) {
     (void)this_val;
-    FJSVM *vm = (FJSVM *)LEPUS_GetContextOpaque(ctx);
-    if (argc < 1 || !LEPUS_IsString(argv[0]))
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
+    if (argc < 1 || !fjsengine::is_string(argv[0]))
         return fjs_fail(vm, "invokeHost(name, ...args): name required");
     if (!vm->on_invoke_host)
         return fjs_fail(vm, "no host module handler installed");
 
     size_t name_len = 0;
-    const char *name = LEPUS_ToCStringLen(ctx, &name_len, argv[0]);
-    if (!name) return LEPUS_EXCEPTION;
+    const char *name = fjsengine::to_cstring_len(ctx, &name_len, argv[0]);
+    if (!name) return fjsengine::exception();
 
     int32_t nargs = argc - 1;
     FJSValue *cargs = nullptr;
     if (nargs > 0) {
         cargs = (FJSValue *)calloc((size_t)nargs, sizeof(FJSValue));
         if (!cargs) {
-            LEPUS_FreeCString(ctx, name);
-            return LEPUS_EXCEPTION;
+            fjsengine::free_cstring(ctx, name);
+            return fjsengine::exception();
         }
         for (int32_t i = 0; i < nargs; i++) {
             if (!fjs::to_fjs_value(vm, argv[1 + i], &cargs[i])) {
                 for (int32_t k = 0; k < i; k++) fjs::fjs_free_abi_value(vm, &cargs[k]);
                 free(cargs);
-                LEPUS_FreeCString(ctx, name);
-                return LEPUS_EXCEPTION;
+                fjsengine::free_cstring(ctx, name);
+                return fjsengine::exception();
             }
         }
     }
@@ -206,7 +206,7 @@ static LEPUSValue js_invoke_host(LEPUSContext *ctx, LEPUSValueConst this_val, in
     /* free converted args (string ptrs owned by QuickJS) */
     for (int32_t i = 0; i < nargs; i++) fjs::fjs_free_abi_value(vm, &cargs[i]);
     free(cargs);
-    LEPUS_FreeCString(ctx, name);
+    fjsengine::free_cstring(ctx, name);
 
     if (rc != 0) {
         fjs::fjs_free_abi_value(vm, &out);
@@ -224,83 +224,83 @@ static LEPUSValue js_invoke_host(LEPUSContext *ctx, LEPUSValueConst this_val, in
 
 /* Shared shape with js_ui_ops: ArrayBuffer directly, or a typed-array view
  * over its buffer. Returns null (with size 0) for anything else. */
-static uint8_t *read_buffer_arg(LEPUSContext *ctx, LEPUSValueConst buf,
+static uint8_t *read_buffer_arg(fjsengine::Context *ctx, fjsengine::ValueConst buf,
                                 size_t *size) {
     *size = 0;
     size_t asize = 0;
-    uint8_t *abuf = LEPUS_GetArrayBuffer(ctx, &asize, buf);
+    uint8_t *abuf = fjsengine::get_array_buffer(ctx, &asize, buf);
     if (abuf) {
         *size = asize;
         return abuf;
     }
-    if (!LEPUS_IsObject(buf)) return nullptr;
-    LEPUSValue bo2 = LEPUS_GetPropertyStr(ctx, buf, "byteOffset");
-    LEPUSValue bl = LEPUS_GetPropertyStr(ctx, buf, "byteLength");
-    LEPUSValue ab = LEPUS_GetPropertyStr(ctx, buf, "buffer");
+    if (!fjsengine::is_object(buf)) return nullptr;
+    fjsengine::Value bo2 = fjsengine::get_property_str(ctx, buf, "byteOffset");
+    fjsengine::Value bl = fjsengine::get_property_str(ctx, buf, "byteLength");
+    fjsengine::Value ab = fjsengine::get_property_str(ctx, buf, "buffer");
     uint32_t byteOffset = 0;
     int64_t byteLength = 0;
     uint8_t *bytes = nullptr;
-    if (!LEPUS_IsException(bo2) && !LEPUS_IsException(bl) &&
-        LEPUS_ToUint32(ctx, &byteOffset, bo2) == 0 &&
-        LEPUS_ToInt64(ctx, &byteLength, bl) == 0) {
+    if (!fjsengine::is_exception(bo2) && !fjsengine::is_exception(bl) &&
+        fjsengine::to_uint32(ctx, &byteOffset, bo2) == 0 &&
+        fjsengine::to_int64(ctx, &byteLength, bl) == 0) {
         size_t basize = 0;
-        uint8_t *base = LEPUS_GetArrayBuffer(ctx, &basize, ab);
+        uint8_t *base = fjsengine::get_array_buffer(ctx, &basize, ab);
         if (base && byteOffset + byteLength <= (int64_t)basize) {
             bytes = base + byteOffset;
             *size = (size_t)byteLength;
         }
     }
-    LEPUS_FreeValue(ctx, bo2);
-    LEPUS_FreeValue(ctx, bl);
-    LEPUS_FreeValue(ctx, ab);
+    fjsengine::free_value(ctx, bo2);
+    fjsengine::free_value(ctx, bl);
+    fjsengine::free_value(ctx, ab);
     return bytes;
 }
 
-static LEPUSValue js_handle_bytes(LEPUSContext *ctx, LEPUSValueConst this_val,
-                               int argc, LEPUSValueConst *argv) {
+static fjsengine::Value js_handle_bytes(fjsengine::Context *ctx, fjsengine::ValueConst this_val,
+                               int argc, fjsengine::ValueConst *argv) {
     (void)this_val;
-    FJSVM *vm = (FJSVM *)LEPUS_GetContextOpaque(ctx);
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
     if (argc < 1) return fjs_fail(vm, "handleBytes(data): data required");
     size_t size = 0;
     uint8_t *bytes = read_buffer_arg(ctx, argv[0], &size);
     if (!bytes) return fjs_fail(vm, "handleBytes expects a Uint8Array/ArrayBuffer");
     int64_t id = fjs_handle_put_bytes(vm, 0, bytes, (int32_t)size);
-    if (!id) return LEPUS_EXCEPTION;
-    return LEPUS_NewInt64(ctx, id);
+    if (!id) return fjsengine::exception();
+    return fjsengine::new_int64(ctx, id);
 }
 
-static LEPUSValue js_read_handle_bytes(LEPUSContext *ctx, LEPUSValueConst this_val,
-                                    int argc, LEPUSValueConst *argv) {
+static fjsengine::Value js_read_handle_bytes(fjsengine::Context *ctx, fjsengine::ValueConst this_val,
+                                    int argc, fjsengine::ValueConst *argv) {
     (void)this_val;
-    FJSVM *vm = (FJSVM *)LEPUS_GetContextOpaque(ctx);
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
     int64_t id = 0;
-    if (argc < 1 || LEPUS_ToInt64(ctx, &id, argv[0]) != 0)
+    if (argc < 1 || fjsengine::to_int64(ctx, &id, argv[0]) != 0)
         return fjs_fail(vm, "readHandleBytes(id): id required");
     const uint8_t *data = nullptr;
     int32_t len = 0;
     fjs_handle_bytes(vm, id, &data, &len);
     if (!data) return fjs_fail(vm, "readHandleBytes: unknown or released handle");
-    return LEPUS_NewArrayBufferCopy(ctx, data, (size_t)len);
+    return fjsengine::new_array_buffer_copy(ctx, data, (size_t)len);
 }
 
-static LEPUSValue js_release_handle(LEPUSContext *ctx, LEPUSValueConst this_val,
-                                 int argc, LEPUSValueConst *argv) {
+static fjsengine::Value js_release_handle(fjsengine::Context *ctx, fjsengine::ValueConst this_val,
+                                 int argc, fjsengine::ValueConst *argv) {
     (void)this_val;
-    FJSVM *vm = (FJSVM *)LEPUS_GetContextOpaque(ctx);
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
     int64_t id = 0;
-    if (argc < 1 || LEPUS_ToInt64(ctx, &id, argv[0]) != 0)
+    if (argc < 1 || fjsengine::to_int64(ctx, &id, argv[0]) != 0)
         return fjs_fail(vm, "releaseHandle(id): id required");
     fjs_handle_release(vm, id);
-    return LEPUS_UNDEFINED;
+    return fjsengine::undefined();
 }
 
 /* ---- misc --------------------------------------------------------------- */
 
-static LEPUSValue js_now_ms(LEPUSContext *ctx, LEPUSValueConst this_val, int argc,
-                         LEPUSValueConst *argv) {
+static fjsengine::Value js_now_ms(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                         fjsengine::ValueConst *argv) {
     (void)this_val; (void)argc; (void)argv;
-    FJSVM *vm = (FJSVM *)LEPUS_GetContextOpaque(ctx);
-    return LEPUS_NewFloat64(ctx, fjs::now_ms(vm));
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
+    return fjsengine::new_float64(ctx, fjs::now_ms(vm));
 }
 
 /* Collects now, and reports what the heap looked like on either side.
@@ -310,57 +310,57 @@ static LEPUSValue js_now_ms(LEPUSContext *ctx, LEPUSValueConst this_val, int arg
  * collection lands wherever the allocation happens to cross it, which on a
  * busy frame is in the middle of the work the user is watching. Handing the
  * decision to the host is the first step to moving it somewhere idle. */
-static LEPUSValue js_gc(LEPUSContext *ctx, LEPUSValueConst this_val, int argc,
-                     LEPUSValueConst *argv) {
+static fjsengine::Value js_gc(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                     fjsengine::ValueConst *argv) {
     (void)this_val; (void)argc; (void)argv;
-    LEPUSRuntime *rt = LEPUS_GetRuntime(ctx);
-    LEPUSMemoryUsage before, after;
-    LEPUS_ComputeMemoryUsage(rt, &before);
-    LEPUS_RunGC(rt);
-    LEPUS_ComputeMemoryUsage(rt, &after);
-    LEPUSValue out = LEPUS_NewObject(ctx);
-    LEPUS_SetPropertyStr(ctx, out, "before", LEPUS_NewInt64(ctx, before.malloc_size));
-    LEPUS_SetPropertyStr(ctx, out, "after", LEPUS_NewInt64(ctx, after.malloc_size));
-    LEPUS_SetPropertyStr(ctx, out, "objects", LEPUS_NewInt64(ctx, after.obj_count));
+    fjsengine::Runtime *rt = fjsengine::get_runtime(ctx);
+    fjsengine::MemoryUsage before, after;
+    fjsengine::compute_memory_usage(rt, &before);
+    fjsengine::run_gc(rt);
+    fjsengine::compute_memory_usage(rt, &after);
+    fjsengine::Value out = fjsengine::new_object(ctx);
+    fjsengine::set_property_str(ctx, out, "before", fjsengine::new_int64(ctx, before.malloc_size));
+    fjsengine::set_property_str(ctx, out, "after", fjsengine::new_int64(ctx, after.malloc_size));
+    fjsengine::set_property_str(ctx, out, "objects", fjsengine::new_int64(ctx, after.obj_count));
     return out;
 }
 
-static LEPUSValue js_toast(LEPUSContext *ctx, LEPUSValueConst this_val, int argc,
-                        LEPUSValueConst *argv) {
+static fjsengine::Value js_toast(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                        fjsengine::ValueConst *argv) {
     (void)this_val;
-    FJSVM *vm = (FJSVM *)LEPUS_GetContextOpaque(ctx);
-    if (argc < 1 || !vm->on_toast) return LEPUS_UNDEFINED;
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
+    if (argc < 1 || !vm->on_toast) return fjsengine::undefined();
     size_t len = 0;
-    const char *msg = LEPUS_ToCStringLen(ctx, &len, argv[0]);
-    if (!msg) return LEPUS_EXCEPTION;
+    const char *msg = fjsengine::to_cstring_len(ctx, &len, argv[0]);
+    if (!msg) return fjsengine::exception();
     vm->on_toast(msg, (int32_t)len);
-    LEPUS_FreeCString(ctx, msg);
-    return LEPUS_UNDEFINED;
+    fjsengine::free_cstring(ctx, msg);
+    return fjsengine::undefined();
 }
 
 /* ---- demo native module: fibonacci (pure C++, called straight from JS) -- */
 
 static int64_t fib(int64_t n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
 
-static LEPUSValue js_fibonacci(LEPUSContext *ctx, LEPUSValueConst this_val, int argc,
-                            LEPUSValueConst *argv) {
+static fjsengine::Value js_fibonacci(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                            fjsengine::ValueConst *argv) {
     (void)this_val;
-    if (argc < 1) return LEPUS_ThrowTypeError(ctx, "fibonacci(n) requires n");
+    if (argc < 1) return fjsengine::throw_type_error(ctx, "fibonacci(n) requires n");
     int64_t n = 0;
-    if (LEPUS_ToInt64(ctx, &n, argv[0]) != 0)
-        return LEPUS_ThrowTypeError(ctx, "fibonacci(n): n must be an integer");
+    if (fjsengine::to_int64(ctx, &n, argv[0]) != 0)
+        return fjsengine::throw_type_error(ctx, "fibonacci(n): n must be an integer");
     if (n < 0 || n > 45)
-        return LEPUS_ThrowRangeError(ctx, "fibonacci(n): n out of range [0, 45]");
-    return LEPUS_NewInt64(ctx, fib(n));
+        return fjsengine::throw_range_error(ctx, "fibonacci(n): n out of range [0, 45]");
+    return fjsengine::new_int64(ctx, fib(n));
 }
 
-static LEPUSValue js_engine_info(LEPUSContext *ctx, LEPUSValueConst this_val, int argc,
-                              LEPUSValueConst *argv) {
+static fjsengine::Value js_engine_info(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                              fjsengine::ValueConst *argv) {
     (void)this_val; (void)argc; (void)argv;
-    FJSVM *vm = (FJSVM *)LEPUS_GetContextOpaque(ctx);
-    LEPUSValue obj = LEPUS_NewObject(ctx);
-    LEPUS_SetPropertyStr(ctx, obj, "engineId", LEPUS_NewString(ctx, fjs_engine_id()));
-    LEPUS_SetPropertyStr(ctx, obj, "abiVersion", LEPUS_NewInt32(ctx, fjs_abi_version()));
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
+    fjsengine::Value obj = fjsengine::new_object(ctx);
+    fjsengine::set_property_str(ctx, obj, "engineId", fjsengine::new_string(ctx, fjs_engine_id()));
+    fjsengine::set_property_str(ctx, obj, "abiVersion", fjsengine::new_int32(ctx, fjs_abi_version()));
     (void)vm;
     return obj;
 }
@@ -370,47 +370,47 @@ static LEPUSValue js_engine_info(LEPUSContext *ctx, LEPUSValueConst this_val, in
 namespace fjs {
 
 bool install_natives(FJSVM *vm) {
-    LEPUSContext *ctx = vm->ctx;
-    LEPUS_SetContextOpaque(ctx, vm);
+    fjsengine::Context *ctx = vm->ctx;
+    fjsengine::set_context_opaque(ctx, vm);
 
-    LEPUSValue global = LEPUS_GetGlobalObject(ctx);
+    fjsengine::Value global = fjsengine::get_global_object(ctx);
 
     /* console */
-    LEPUSValue console = LEPUS_NewObject(ctx);
-    LEPUS_SetPropertyStr(ctx, console, "log", LEPUS_NewCFunction(ctx, js_console_log, "log", 1));
-    LEPUS_SetPropertyStr(ctx, console, "debug", LEPUS_NewCFunction(ctx, js_console_debug, "debug", 1));
-    LEPUS_SetPropertyStr(ctx, console, "info", LEPUS_NewCFunction(ctx, js_console_info, "info", 1));
-    LEPUS_SetPropertyStr(ctx, console, "warn", LEPUS_NewCFunction(ctx, js_console_warn, "warn", 1));
-    LEPUS_SetPropertyStr(ctx, console, "error", LEPUS_NewCFunction(ctx, js_console_error, "error", 1));
-    LEPUS_SetPropertyStr(ctx, global, "console", console);
+    fjsengine::Value console = fjsengine::new_object(ctx);
+    fjsengine::set_property_str(ctx, console, "log", fjsengine::new_c_function(ctx, js_console_log, "log", 1));
+    fjsengine::set_property_str(ctx, console, "debug", fjsengine::new_c_function(ctx, js_console_debug, "debug", 1));
+    fjsengine::set_property_str(ctx, console, "info", fjsengine::new_c_function(ctx, js_console_info, "info", 1));
+    fjsengine::set_property_str(ctx, console, "warn", fjsengine::new_c_function(ctx, js_console_warn, "warn", 1));
+    fjsengine::set_property_str(ctx, console, "error", fjsengine::new_c_function(ctx, js_console_error, "error", 1));
+    fjsengine::set_property_str(ctx, global, "console", console);
 
     /* __fjs */
-    LEPUSValue fns = LEPUS_NewObject(ctx);
-    LEPUS_SetPropertyStr(ctx, fns, "setTimeout", LEPUS_NewCFunction(ctx, js_set_timeout, "setTimeout", 2));
-    LEPUS_SetPropertyStr(ctx, fns, "clearTimeout", LEPUS_NewCFunction(ctx, js_clear_timer, "clearTimeout", 1));
-    LEPUS_SetPropertyStr(ctx, fns, "setInterval", LEPUS_NewCFunction(ctx, js_set_interval, "setInterval", 2));
-    LEPUS_SetPropertyStr(ctx, fns, "clearInterval", LEPUS_NewCFunction(ctx, js_clear_timer, "clearInterval", 1));
-    LEPUS_SetPropertyStr(ctx, fns, "uiOps", LEPUS_NewCFunction(ctx, js_ui_ops, "uiOps", 1));
-    LEPUS_SetPropertyStr(ctx, fns, "invokeHost", LEPUS_NewCFunction(ctx, js_invoke_host, "invokeHost", 1));
-    LEPUS_SetPropertyStr(ctx, fns, "handleBytes", LEPUS_NewCFunction(ctx, js_handle_bytes, "handleBytes", 1));
-    LEPUS_SetPropertyStr(ctx, fns, "readHandleBytes", LEPUS_NewCFunction(ctx, js_read_handle_bytes, "readHandleBytes", 1));
-    LEPUS_SetPropertyStr(ctx, fns, "releaseHandle", LEPUS_NewCFunction(ctx, js_release_handle, "releaseHandle", 1));
-    LEPUS_SetPropertyStr(ctx, fns, "nowMs", LEPUS_NewCFunction(ctx, js_now_ms, "nowMs", 0));
-    LEPUS_SetPropertyStr(ctx, fns, "toast", LEPUS_NewCFunction(ctx, js_toast, "toast", 1));
-    LEPUS_SetPropertyStr(ctx, fns, "gc", LEPUS_NewCFunction(ctx, js_gc, "gc", 0));
-    LEPUS_SetPropertyStr(ctx, fns, "engine", js_engine_info(ctx, LEPUS_UNDEFINED, 0, nullptr));
+    fjsengine::Value fns = fjsengine::new_object(ctx);
+    fjsengine::set_property_str(ctx, fns, "setTimeout", fjsengine::new_c_function(ctx, js_set_timeout, "setTimeout", 2));
+    fjsengine::set_property_str(ctx, fns, "clearTimeout", fjsengine::new_c_function(ctx, js_clear_timer, "clearTimeout", 1));
+    fjsengine::set_property_str(ctx, fns, "setInterval", fjsengine::new_c_function(ctx, js_set_interval, "setInterval", 2));
+    fjsengine::set_property_str(ctx, fns, "clearInterval", fjsengine::new_c_function(ctx, js_clear_timer, "clearInterval", 1));
+    fjsengine::set_property_str(ctx, fns, "uiOps", fjsengine::new_c_function(ctx, js_ui_ops, "uiOps", 1));
+    fjsengine::set_property_str(ctx, fns, "invokeHost", fjsengine::new_c_function(ctx, js_invoke_host, "invokeHost", 1));
+    fjsengine::set_property_str(ctx, fns, "handleBytes", fjsengine::new_c_function(ctx, js_handle_bytes, "handleBytes", 1));
+    fjsengine::set_property_str(ctx, fns, "readHandleBytes", fjsengine::new_c_function(ctx, js_read_handle_bytes, "readHandleBytes", 1));
+    fjsengine::set_property_str(ctx, fns, "releaseHandle", fjsengine::new_c_function(ctx, js_release_handle, "releaseHandle", 1));
+    fjsengine::set_property_str(ctx, fns, "nowMs", fjsengine::new_c_function(ctx, js_now_ms, "nowMs", 0));
+    fjsengine::set_property_str(ctx, fns, "toast", fjsengine::new_c_function(ctx, js_toast, "toast", 1));
+    fjsengine::set_property_str(ctx, fns, "gc", fjsengine::new_c_function(ctx, js_gc, "gc", 0));
+    fjsengine::set_property_str(ctx, fns, "engine", js_engine_info(ctx, fjsengine::undefined(), 0, nullptr));
 
-    LEPUSValue root = LEPUS_NewObject(ctx);
-    LEPUS_SetPropertyStr(ctx, root, "fns", fns);
+    fjsengine::Value root = fjsengine::new_object(ctx);
+    fjsengine::set_property_str(ctx, root, "fns", fns);
     /* expose demo natives directly for discoverability */
-    LEPUSValue natives = LEPUS_NewObject(ctx);
-    LEPUS_SetPropertyStr(ctx, natives, "fibonacci",
-                      LEPUS_NewCFunction(ctx, js_fibonacci, "fibonacci", 1));
-    LEPUS_SetPropertyStr(ctx, root, "natives", natives);
-    LEPUS_SetPropertyStr(ctx, root, "engine", js_engine_info(ctx, LEPUS_UNDEFINED, 0, nullptr));
-    LEPUS_SetPropertyStr(ctx, global, "__fjs", root);
+    fjsengine::Value natives = fjsengine::new_object(ctx);
+    fjsengine::set_property_str(ctx, natives, "fibonacci",
+                      fjsengine::new_c_function(ctx, js_fibonacci, "fibonacci", 1));
+    fjsengine::set_property_str(ctx, root, "natives", natives);
+    fjsengine::set_property_str(ctx, root, "engine", js_engine_info(ctx, fjsengine::undefined(), 0, nullptr));
+    fjsengine::set_property_str(ctx, global, "__fjs", root);
 
-    LEPUS_FreeValue(ctx, global);
+    fjsengine::free_value(ctx, global);
     return true;
 }
 

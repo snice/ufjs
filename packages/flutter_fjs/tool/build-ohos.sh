@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
-# Builds ohos/libs/arm64-v8a/ from native/ with the DevEco Studio toolchain,
-# then strips the output. Run once per native/ change and commit.
+# Builds the ohos libs for both engine flavors (spec 091) from native/ with
+# the DevEco Studio toolchain, then strips the output. Run once per native/
+# change and commit.
 #
 # spec 090: TWO files land in libs/, an engine and a module on top of it —
 #   libfjs.so            the engine; contains no inspector, every build
 #   libfjs_debugger.so   CDP inspector + transport, loaded only by debug
 #                        builds; release/profile HAPs drop the file
 #                        (see ohos/build-profile.json5)
+#
+# spec 091: the flavors land in the abi cache and the primjs set is ALSO
+# copied to ohos/libs/ — the HAR packager only ever reads libs/<abi> (DevEco
+# convention, no env hook), and `fjs run/build --js-engine <flavor>` copies
+# a flavor from the cache over libs at run time (see engine.ts in @ufjs/cli):
+#   abi/primjs/ohos/arm64-v8a/    libfjs.so + libfjs_debugger.so (default)
+#   abi/quickjs/ohos/arm64-v8a/   libfjs.so only — the CDP inspector exists
+#                                 for PrimJS only
 #
 # The ohos flutter fork ships no CMake toolchain file, so CMake is pointed at
 # the DevEco llvm wrapper compilers (they bake -target/--sysroot/-D__MUSL__)
@@ -19,7 +28,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 OUT="$ROOT/build/ohos"
-LIBS="$ROOT/ohos/libs/arm64-v8a"
+ABI_CACHE="$ROOT/abi"
+LIBS="$ROOT/ohos/libs"
 
 NATIVE=${DEVECO_SDK_HOME:-/Applications/DevEco-Studio.app/Contents/sdk}/default/openharmony/native
 CLANG="$NATIVE/llvm/bin/aarch64-unknown-linux-ohos-clang"
@@ -32,22 +42,51 @@ if [ ! -x "$CLANGXX" ]; then
 fi
 echo "==> ohos native toolchain ($NATIVE)"
 
-rm -rf "$OUT" "$LIBS"
-cmake -S "$ROOT/native" -B "$OUT" \
-    -DCMAKE_SYSTEM_NAME=Linux \
-    -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-    -DCMAKE_C_COMPILER="$CLANG" \
-    -DCMAKE_CXX_COMPILER="$CLANGXX" \
-    -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -Wl,-z,max-page-size=16384" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DFJS_BUILD_TESTS=OFF \
-    >/dev/null
-cmake --build "$OUT" --target fjs fjs_debugger -j"$(getconf _NPROCESSORS_ONLN)" >/dev/null
-mkdir -p "$LIBS"
-for so in libfjs.so libfjs_debugger.so; do
-    cp "$OUT/$so" "$LIBS/$so"
-    "$STRIP" --strip-unneeded "$LIBS/$so"
-done
+rm -rf "$OUT" "$OUT"-primjs "$OUT"-quickjs \
+    "$ABI_CACHE"/primjs/ohos "$ABI_CACHE"/quickjs/ohos "$LIBS"
+
+# flavor <engine> <build-debugger? ON|OFF>
+flavor() {
+    local engine=$1 debugger=$2
+    echo "==> building $engine"
+    cmake -S "$ROOT/native" -B "$OUT-$engine" \
+        -DCMAKE_SYSTEM_NAME=Linux \
+        -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+        -DCMAKE_C_COMPILER="$CLANG" \
+        -DCMAKE_CXX_COMPILER="$CLANGXX" \
+        -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -Wl,-z,max-page-size=16384" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DFJS_BUILD_TESTS=OFF \
+        -DFJS_JS_ENGINE="$engine" \
+        -DFJS_DEBUGGER="$debugger" \
+        >/dev/null
+    if [ "$debugger" = "ON" ]; then
+        cmake --build "$OUT-$engine" --target fjs fjs_debugger \
+            -j"$(getconf _NPROCESSORS_ONLN)" >/dev/null
+    else
+        cmake --build "$OUT-$engine" --target fjs \
+            -j"$(getconf _NPROCESSORS_ONLN)" >/dev/null
+    fi
+    mkdir -p "$ABI_CACHE/$engine/ohos/arm64-v8a"
+    for so in libfjs.so; do
+        cp "$OUT-$engine/$so" "$ABI_CACHE/$engine/ohos/arm64-v8a/$so"
+        "$STRIP" --strip-unneeded "$ABI_CACHE/$engine/ohos/arm64-v8a/$so"
+    done
+    if [ "$debugger" = "ON" ]; then
+        for so in libfjs_debugger.so; do
+            cp "$OUT-$engine/$so" "$ABI_CACHE/$engine/ohos/arm64-v8a/$so"
+            "$STRIP" --strip-unneeded "$ABI_CACHE/$engine/ohos/arm64-v8a/$so"
+        done
+    fi
+}
+
+flavor primjs  ON
+flavor quickjs OFF
+
+# default materialization: primjs into the committed ohos/libs
+mkdir -p "$LIBS/arm64-v8a"
+cp "$ABI_CACHE"/primjs/ohos/arm64-v8a/*.so "$LIBS/arm64-v8a/"
 
 echo "built:"
-ls -lh "$LIBS"/libfjs*.so | awk '{print "  " $NF " " $5}'
+ls -lh "$ABI_CACHE"/{primjs,quickjs}/ohos/arm64-v8a/libfjs*.so \
+    | awk '{print "  " $NF " " $5}'

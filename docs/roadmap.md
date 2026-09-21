@@ -696,6 +696,31 @@ PrimJS 4.1.1（`specs/088-devtools-debugger/`）：
   （PrimJS 支持 sourceMapURL 字段，后续可加）、DAP/VS Code 前端（CDP 标准
   协议，后续可接）。
 
+## 双引擎缓存与切换入口（已完成 2026-09）
+
+spec 088 删掉 quickjs-ng 时留下了对比与退路缺口，补上
+（`specs/091-js-engine-switch/`）：
+
+- ✅ **quickjs-ng 0.9.0 回归**：从 git 历史恢复 vendored 源码，native core
+  走新的引擎 facade（`native/src/engine.h`），一份核心对两个引擎编译
+  （`FJS_JS_ENGINE=primjs|quickjs`）。facade 只有约 45 个原语；两引擎
+  实际差异比预期小——`EvalFunction` 元数、`SetMaxStackSize` 收 runtime、
+  flag 位值不同由 facade 拥有。
+- ✅ **双 flavor 预编译缓存 + 运行时物化**：`packages/flutter_fjs/abi/`
+  按引擎×平台缓存全部 so/a/xcframework。物化只有一条实现——插件自带的
+  Dart runner（`dart run flutter_fjs:engine <flavor>`，bin/engine.dart）：
+  `fjs run/build --js-engine` 内部调它，纯 Flutter 宿主（fjs-go）在
+  `flutter run` 前手动跑一次即可。runner 把选中 flavor copy 到 jniLibs /
+  xcframework / ohos libs、改写 shim 的 flavor 头文件、清 Xcode 抽取缓存
+  并 touch Podfile 强制 pod install 重评估（quickjs flavor 无 debugger
+  产物，podspec 按 File.exist? 列出）。App 内 define 与实际引擎不一致时
+  debug 下告警。字节码由对应 flavor 的 `fjsc` 编出，跨引擎 bundle 加载
+  明确报 mismatch。
+- ✅ **fjs debug 联动**：quickjs flavor 无 CDP 调试器（inspector 是
+  PrimJS 专属），`fjs debug` 在 quickjs 环境下启动即提示。
+- 明确不做：同进程双引擎热切换（每个 App 永久背两份引擎体积）；
+  npm 预编译 quickjs 版 fjsc（仓库自建 + `FJSC_PATH` 覆盖）。
+
 ## 近期计划
 
 - **App 侧真机对拍挂账**：078/079 的示例页（过渡演示新增面板、百分比间距与

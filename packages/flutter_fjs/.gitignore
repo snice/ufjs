@@ -1,11 +1,2 @@
-# CMake output of tool/build-*.sh (the artifacts they produce are committed:
-# android/src/main/jniLibs/ and ios|macos/fjs.xcframework)
-build/
-native/build-native/
-*.o
-*.dylib
-.cxx/
-.dart_tool/
-.packages
-pubspec.lock
-.DS_Store
+abi/.materialized
+native/build-native*/

@@ -21,6 +21,7 @@ import {
 } from '../dev/tool-conn.js';
 import { adbDevices, resolveAdb } from '../dev/adb.js';
 import { startCdpRelay } from '../debug/cdp-server.js';
+import { resolveJsEngine } from '../project/engine.js';
 
 interface DebugOptions extends DevToolOptions {
   cdpPort: number;
@@ -30,6 +31,16 @@ interface DebugOptions extends DevToolOptions {
 export async function debugCommand(argv: string[]): Promise<void> {
   const { opts: base, rest } = parseDevToolArgs(argv);
   const opts: DebugOptions = { ...base, cdpPort: 38902, vmPort: 38903 };
+  // spec 091: the CDP inspector only exists in the primjs flavor. The env
+  // var is the same source `fjs run` uses, so a quickjs session warns before
+  // anyone wonders why chrome://inspect never lists the app.
+  if (resolveJsEngine() === 'quickjs') {
+    console.warn(
+      'fjs debug: FJS_JS_ENGINE=quickjs — the quickjs-ng engine has no CDP ' +
+        'inspector, so breakpoints/Elements/Network cannot attach. Run the ' +
+        'primjs flavor (`fjs run --js-engine primjs`) to debug.',
+    );
+  }
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     // NOT --port: parseDevToolArgs already claimed that one for the dev

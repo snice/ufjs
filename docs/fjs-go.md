@@ -96,6 +96,10 @@ http://192.168.1.20:38900/bundle.js
 - 广播发现受网络环境影响，跨网段、访客网络、AP 隔离都可能发现不到
 - 扫码应对准 `fjs dev` / `fjs dev --pages`（默认 38900），不是 `fjs dev --web`
 - 工程如果依赖自定义 Dart host module，需要在 fjs go 里补对应注册逻辑
+- fjs go 是纯 Flutter 项目，不走 `fjs run`。要换 JS 引擎（spec 091），
+  构建前在 fjs go 目录下手动物化：`dart run flutter_fjs:engine quickjs`
+  （或 `primjs` 切回），然后正常 `flutter run`；debug 构建里 define 与
+  实际引擎不一致时 App 会打告警
 
 ## 相关
 

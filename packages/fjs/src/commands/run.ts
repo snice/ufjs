@@ -5,7 +5,7 @@ import net from 'node:net';
 import http from 'node:http';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildBundle, flutterModeArgs, releaseBuild, type BuildOptions } from '../bundler/build.js';
+import { buildBundle, engineDefineArgs, flutterModeArgs, releaseBuild, type BuildOptions } from '../bundler/build.js';
 import { resolveAdb } from '../dev/adb.js';
 import {
   autolinkDartModule,
@@ -23,6 +23,7 @@ import {
   type AppOrientation,
   type PlistValue,
 } from '../project/config.js';
+import { ENGINE_IDS, materializeJsEngine, resolveJsEngine, type JsEngine } from '../project/engine.js';
 import type { FlutterMode } from '../bundler/build.js';
 import { lanAddresses } from '../dev/server.js';
 
@@ -42,6 +43,13 @@ interface RunOptions {
   pages: boolean;
   minify: boolean;
   gz: boolean;
+  /** Which prebuilt engine flavor to materialize into the plugin before
+   * flutter runs (spec 091). Bytecode in --release/--profile mode is
+   * compiled by the matching fjsc. */
+  jsEngine: JsEngine;
+  /** True when the user passed --js-engine (vs env/default): a bad request
+   * must fail loudly when there is no abi cache to materialize from. */
+  jsEngineExplicit: boolean;
   flutterArgs: string[];
 }
 
@@ -71,22 +79,26 @@ export async function runCommand(argv: string[]): Promise<void> {
       hap: false,
       ipa: false,
       aab: false,
+      jsEngine: opts.jsEngine,
       flutterDir: opts.flutterDir,
       flutterArgs: [],
     };
     const res = await buildBundle(buildOpts);
     releaseBuild(buildOpts, res);
+    materializeJsEngine(opts.jsEngine, { flutterDir, explicit: opts.jsEngineExplicit });
     stopStaleApp(opts.platform, device.id, flutterDir);
     const args = [
       'run',
       ...flutterModeArgs(opts.mode, opts.flutterArgs),
       '-d',
       device.id,
+      ...engineDefineArgs(opts.jsEngine),
       ...opts.flutterArgs,
     ];
     console.log(
       `fjs run ${opts.platform} --${opts.mode} — Flutter host: ${path.relative(root, flutterDir)}`,
     );
+    console.log(`js engine: ${ENGINE_IDS[opts.jsEngine]}`);
     const status = spawnSync('flutter', args, {
       cwd: flutterDir,
       stdio: 'inherit',
@@ -95,6 +107,7 @@ export async function runCommand(argv: string[]): Promise<void> {
   }
 
   ensureFlutterHost(flutterDir, projectName(root), !isEjected(root));
+  materializeJsEngine(opts.jsEngine, { flutterDir, explicit: opts.jsEngineExplicit });
 
   const dev = await startDevServer(opts.port, opts.host);
   const cleanup = () => {
@@ -112,8 +125,16 @@ export async function runCommand(argv: string[]): Promise<void> {
   stopStaleApp(opts.platform, device.id, flutterDir);
   // no --debug: that is `flutter run`'s own default, and passing it would
   // override a `-- --profile` meant as "AOT host, but keep the live JS"
-  const args = ['run', '-d', device.id, `--dart-define=FJS_DEV=${target}`, ...opts.flutterArgs];
+  const args = [
+    'run',
+    '-d',
+    device.id,
+    `--dart-define=FJS_DEV=${target}`,
+    ...engineDefineArgs(opts.jsEngine),
+    ...opts.flutterArgs,
+  ];
   console.log(`fjs run ${opts.platform} — Flutter host: ${path.relative(root, flutterDir)}`);
+  console.log(`js engine: ${ENGINE_IDS[opts.jsEngine]}`);
   console.log(`FJS_DEV=${target}`);
   const status = spawnSync('flutter', args, {
     cwd: flutterDir,
@@ -128,7 +149,8 @@ function parseRunArgs(argv: string[]): RunOptions {
   if (first !== 'android' && first !== 'ios' && first !== 'ohos') {
     throw new Error(
       'usage: fjs run <android|ios|ohos> [--release|--profile] [--no-minify] [--gz] ' +
-        '[--device <id>] [--port <n>] [--flutter-dir <dir>] [-- <flutter args>]',
+        '[--device <id>] [--port <n>] [--flutter-dir <dir>] ' +
+        '[--js-engine <primjs|quickjs>] [-- <flutter args>]',
     );
   }
   const opts: RunOptions = {
@@ -140,6 +162,9 @@ function parseRunArgs(argv: string[]): RunOptions {
     pages: true,
     minify: true,
     gz: false,
+    // env fallback lives here; a bad FJS_JS_ENGINE fails before any build
+    jsEngine: resolveJsEngine(),
+    jsEngineExplicit: false,
     flutterArgs: [],
   };
   for (let i = 0; i < argv.length; i++) {
@@ -152,6 +177,11 @@ function parseRunArgs(argv: string[]): RunOptions {
     else if (arg === '--port') opts.port = Number(requireValue(argv, ++i, arg));
     else if (arg === '--host') opts.host = requireValue(argv, ++i, arg);
     else if (arg === '--flutter-dir') opts.flutterDir = requireValue(argv, ++i, arg);
+    else if (arg === '--js-engine') {
+      // resolveJsEngine throws with the accepted list on a bad value
+      opts.jsEngine = resolveJsEngine(requireValue(argv, ++i, arg));
+      opts.jsEngineExplicit = true;
+    }
     else if (arg === '--release') opts.mode = 'release';
     else if (arg === '--profile') opts.mode = 'profile';
     else if (arg === '--debug') opts.mode = 'debug';

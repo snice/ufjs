@@ -66,6 +66,7 @@ class FjsEngine extends ChangeNotifier {
   FjsEngine() {
     _bind();
     _createVm();
+    _warnEngineFlavorMismatch();
     _setupWorkerModules();
     _setupPlatformModule();
     _setupViewportModule();
@@ -97,6 +98,29 @@ class FjsEngine extends ChangeNotifier {
   }
 
   VoidCallback? _unwatchPointer;
+
+  /// spec 091: a flavor requested through --dart-define but not actually
+  /// materialized before the build is the one silent failure this feature
+  /// could produce — make it loud once per VM in debug builds.
+  void _warnEngineFlavorMismatch() {
+    if (!kDebugMode) return;
+    const requested = String.fromEnvironment('FJS_JS_ENGINE', defaultValue: 'primjs');
+    final actual = bind.engineIdString;
+    final actualFlavor = actual.startsWith('quickjs')
+        ? 'quickjs'
+        : actual.startsWith('primjs')
+            ? 'primjs'
+            : '';
+    if (actualFlavor.isEmpty || actualFlavor == requested) return;
+    const hint =
+        'dart run flutter_fjs:engine $requested   # then rebuild the app\n'
+        '(or drop the --dart-define to stay on the engine this app embeds)';
+    final message =
+        '[fjs] FJS_JS_ENGINE=$requested but this app embeds "$actual".\n'
+        'Materialize the requested flavor before building:\n$hint';
+    onLog?.call(2, message);
+    debugPrint(message);
+  }
 
   /// Backs the runtime's fetch() — see http.dart for the wire protocol.
   late final FjsHttp _http = FjsHttp(

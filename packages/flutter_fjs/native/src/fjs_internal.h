@@ -8,14 +8,16 @@
 #include <unordered_map>
 #include <vector>
 
-#include "quickjs.h"
+/* Engine boundary (spec 091): core code only ever sees fjsengine::*, never
+ * a concrete engine's C API. */
+#include "engine.h"
 
 struct FjsTimer {
     int32_t id;
     bool interval;
     double next_ms;    /* absolute deadline on the host clock */
     double interval_ms;
-    LEPUSValue callback;  /* owns a reference */
+    fjsengine::Value callback;  /* owns a reference */
 };
 
 struct FJSVM;
@@ -27,8 +29,8 @@ struct FJSVM;
 struct FjsDebuggerTransport;
 
 struct FJSVM {
-    LEPUSRuntime *rt = nullptr;
-    LEPUSContext *ctx = nullptr;
+    fjsengine::Runtime *rt = nullptr;
+    fjsengine::Context *ctx = nullptr;
     fjs_on_log_fn on_log = nullptr;
     fjs_on_ui_ops_fn on_ui_ops = nullptr;
     fjs_invoke_host_fn on_invoke_host = nullptr;
@@ -55,7 +57,7 @@ double now_ms(FJSVM *vm);
 /* Helpers shared across translation units. */
 void set_error(FJSVM *vm, const char *fmt, ...);
 void log_line(FJSVM *vm, int32_t level, const char *msg, int32_t len);
-std::string format_exception(FJSVM *vm, LEPUSValue exc);
+std::string format_exception(FJSVM *vm, fjsengine::Value exc);
 /* Clears the pending exception, records + logs it. Returns false. */
 bool fail_with_pending_exception(FJSVM *vm, const char *where);
 
@@ -69,13 +71,13 @@ void transport_feed(FJSVM *vm);
 void transport_closed(FJSVM *vm);
 } // namespace dbg
 
-/* value.cpp: FJSValue (C ABI tagged value) <-> LEPUSValue conversion.
+/* value.cpp: FJSValue (C ABI tagged value) <-> fjsengine::Value conversion.
  * to_fjs_value: string pointers are QuickJS-owned, valid until the
  *   matching fjs_free_abi_value() (ref-holding for strings).
  * from_fjs_value: consumes malloc'ed strings (free()d here). */
-bool to_fjs_value(FJSVM *vm, LEPUSValueConst v, FJSValue *out);
+bool to_fjs_value(FJSVM *vm, fjsengine::ValueConst v, FJSValue *out);
 void fjs_free_abi_value(FJSVM *vm, FJSValue *v);
-LEPUSValue from_fjs_value(FJSVM *vm, const FJSValue *v);
+fjsengine::Value from_fjs_value(FJSVM *vm, const FJSValue *v);
 
 } // namespace fjs
 
