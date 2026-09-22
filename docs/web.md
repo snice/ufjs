@@ -277,8 +277,9 @@ iOS 上会带系统触感反馈；web 没有触感，这是 picker 系列目前�
 ## 已知差异
 
 - **`fjs debug` 仅 App 端**（spec 088）：断点调试器是开发者工具而非页面能力，
-  不适用两端同源——web 构建在浏览器里跑，用浏览器自带 DevTools。页面代码
-  零改动，两端契约不受影响。
+  不适用两端同源——web 构建在浏览器里跑，用浏览器自带 DevTools（Vite 的
+  source map）。App 的 dev 模式由 spec 094 把 Vue SFC map 接到同一套
+  Chrome DevTools 上。页面代码零改动，两端契约不受影响。
 - **dev 热更新**：`fjs dev --web` 下页面收到任何变更推送都是整页刷新
   （`fjs dev --pages` 对 App 端可以做到 unit / page 级热替换，spec 037）。
   浏览器没有「VM 重建」的成本，整页刷新与热替换开销同量级；用户自建 vite

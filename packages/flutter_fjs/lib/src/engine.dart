@@ -644,7 +644,10 @@ class FjsEngine extends ChangeNotifier {
       final bytes = await unitLoader!(raw);
       if (bytes == null) throw FjsException('dev unit "$raw" not found');
       if (_disposed || _vm == null) return;
-      _eval(bytes, filename: raw);
+      // `units/<id>.js`, not the source path: the source map's `sources`
+      // entry is that path, and DevTools treats a script url equal to a
+      // source url as the same file (spec 094).
+      _eval(bytes, filename: 'units/$raw.js');
       _loadedUnits.add(raw);
     }
   }
@@ -726,10 +729,11 @@ class FjsEngine extends ChangeNotifier {
 
   // ---- code splitting (preludes) -----------------------------------------
 
-  final List<Uint8List> _preludes = [];
+  final List<({Uint8List bytes, String filename})> _preludes = [];
 
   /// Shared chunks every app program depends on, in evaluation order.
-  List<Uint8List> get preludes => List.unmodifiable(_preludes);
+  List<Uint8List> get preludes =>
+      List.unmodifiable(_preludes.map((p) => p.bytes));
 
   /// Registers a split-off chunk that app bundles need in scope before they
   /// run — e.g. the shared vue/fjs runtime built with
@@ -744,9 +748,12 @@ class FjsEngine extends ChangeNotifier {
   ///
   /// A prelude lives in the VM alongside whatever app runs next, so keep it
   /// to code that only defines globals: no UI, no timers, no mount.
-  void addPrelude(Uint8List bundle) {
-    _preludes.add(bundle);
-    if (_vm != null) _eval(bundle);
+  ///
+  /// [filename] is the debugger script url. Dev passes `shared.js`; the
+  /// default stays `prelude.js` for hosts that register a release chunk.
+  void addPrelude(Uint8List bundle, {String filename = 'prelude.js'}) {
+    _preludes.add((bytes: bundle, filename: filename));
+    if (_vm != null) _eval(bundle, filename: filename);
   }
 
   /// Drops all registered preludes. Takes effect in the next VM ([reset]);
@@ -756,14 +763,16 @@ class FjsEngine extends ChangeNotifier {
   }
 
   void _runPreludes() {
-    for (final chunk in _preludes) {
-      _eval(chunk);
+    for (final prelude in _preludes) {
+      _eval(prelude.bytes, filename: prelude.filename);
     }
   }
 
   /// Runs a chunk in either wire format (bytecode bundle or utf8 source).
   /// [filename] is what the VM (and the spec 088 debugger's Sources panel)
-  /// sees: dev units carry their module path, page chunks their chunk name.
+  /// sees: page chunks are `pages/<chunk>.js`, dev units are
+  /// `units/<id>.js` (not the source path — that collides with the source
+  /// map, spec 094).
   void _eval(Uint8List chunk, {String filename = 'prelude.js'}) {
     final bytes = fjsMaybeGunzip(chunk);
     if (_looksLikeFjsBundle(bytes)) {
@@ -1055,7 +1064,7 @@ class FjsEngine extends ChangeNotifier {
         if (_disposed || _vm == null) return true;
       }
       for (final entry in fetched.entries) {
-        _eval(entry.value, filename: entry.key);
+        _eval(entry.value, filename: 'units/${entry.key}.js');
         _loadedUnits.add(entry.key);
       }
       for (final id in reload.units) {
@@ -1232,7 +1241,7 @@ class FjsEngine extends ChangeNotifier {
       // the shell lives in the prelude, so a reload has to replace it too
       clearPreludes();
       reset();
-      addPrelude(shared);
+      addPrelude(shared, filename: 'shared.js');
     } else {
       reset();
     }
@@ -1241,7 +1250,10 @@ class FjsEngine extends ChangeNotifier {
     _reattachDebugger();
     _unitsMode = units;
     if (unitBundle != null) {
-      _eval(unitBundle);
+      // The whole unit set, define-only. Not `prelude.js`: shared.js is
+      // already that name's neighbor, and two scripts with one url collapse
+      // in DevTools. Per-unit evals (units/<id>.js) are what actually run.
+      _eval(unitBundle, filename: 'units.js');
     }
     _runProgram(bundle);
     _log(1, '[dev] bundle loaded (${bundle.length} bytes)');

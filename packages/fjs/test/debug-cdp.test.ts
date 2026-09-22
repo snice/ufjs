@@ -3,6 +3,9 @@
 // WebSocket, plus the /json discovery endpoints. These tests pin the pipe
 // semantics (framing survives, one session at a time) without a real VM.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createServer, type AddressInfo } from 'node:net';
 import { connect } from 'node:net';
 import { WebSocket } from 'ws';
@@ -663,5 +666,67 @@ describe('fjs debug relay synthesis (spec 092)', () => {
     await send(24, 'CSS.enable');
     await s.waitFor(() => sheets().length === 2);
     await s.close();
+  });
+
+  it('inlines a fjs-map: sourceMappingURL and refuses anything else (spec 094)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fjs-map-'));
+    const mapPath = path.join(dir, 'page.js.map');
+    const mapJson = JSON.stringify({
+      version: 3,
+      sources: ['src/pages/index.vue'],
+      sourcesContent: ['<template><view/></template>'],
+      names: [],
+      mappings: '',
+    });
+    fs.writeFileSync(mapPath, mapJson);
+    const secret = path.join(dir, 'secret.txt');
+    fs.writeFileSync(secret, 'SECRET');
+
+    const seen: string[] = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${cdpPort}/cdp`);
+    await new Promise<void>((done) => ws.once('open', done));
+    const vm = connect(vmPort, '127.0.0.1');
+    await new Promise<void>((done) => vm.once('connect', done));
+    ws.on('message', (raw) => seen.push(String(raw)));
+
+    const encoded = mapPath
+      .replace(/%/g, '%25')
+      .replace(/ /g, '%20');
+    vm.write(
+      JSON.stringify({
+        method: 'Debugger.scriptParsed',
+        params: { url: 'pages/index.js', sourceMapURL: `fjs-map:${encoded}` },
+      }) + '\n',
+    );
+    vm.write(
+      JSON.stringify({
+        method: 'Debugger.scriptParsed',
+        params: { url: 'nope.js', sourceMapURL: `fjs-map:${secret}` },
+      }) + '\n',
+    );
+
+    await new Promise<void>((done) => {
+      const timer = setInterval(() => {
+        if (seen.length >= 2) {
+          clearInterval(timer);
+          done();
+        }
+      }, 10);
+    });
+
+    const ok = JSON.parse(seen[0]) as { params: { sourceMapURL: string } };
+    expect(ok.params.sourceMapURL.startsWith('data:application/json;base64,') ||
+      ok.params.sourceMapURL.startsWith('data:application/json;charset=utf-8;base64,')).toBe(true);
+    const b64 = ok.params.sourceMapURL.split(',')[1];
+    expect(Buffer.from(b64, 'base64').toString('utf8')).toBe(mapJson);
+
+    const refused = JSON.parse(seen[1]) as { params: { sourceMapURL: string } };
+    expect(refused.params.sourceMapURL).toBe(`fjs-map:${secret}`);
+    expect(refused.params.sourceMapURL).not.toContain('SECRET');
+
+    vm.destroy();
+    ws.terminate();
+    await new Promise<void>((done) => ws.once('close', done));
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

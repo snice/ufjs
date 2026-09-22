@@ -18,7 +18,10 @@
 // Two kinds of traffic share the DevTools WebSocket:
 //
 //  - Debugger.* / Runtime.*: the engine (vendored PrimJS, spec 088) speaks
-//    these natively — bytes pass through untouched.
+//    these natively — bytes pass through, except `Debugger.scriptParsed`:
+//    a `fjs-map:` sourceMappingURL is rewritten to a data URL before
+//    Chrome sees it (spec 094). DevTools cannot fetch the map itself;
+//    Network.* is bridged and the target has no loadNetworkResource.
 //  - The browser-only domains (DOM / CSS / Network / Page / Overlay /
 //    Emulation / Console / Log / Performance): the engine has no idea what a
 //    DOM even is. The relay intercepts them BEFORE the engine and serves them
@@ -32,6 +35,7 @@
 // `Debugger.enable` arrives. On disconnect the relay sends
 // `Debugger.disable` so a reconnecting session gets the replay again and an
 // app frozen at a breakpoint unfreezes.
+import fs from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { createServer as createTcpServer, type Socket } from 'node:net';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -71,6 +75,51 @@ const BRIDGED = new Set([
   'Log',
   'Performance',
 ]);
+
+/** spec 094. PrimJS forwards `//# sourceMappingURL=fjs-map:<path>` as the
+ * script's sourceMapURL. Chrome runs at `devtools://` and will not fetch
+ * that path (Network.* never reaches a browser stack). Inline the JSON so
+ * the frontend decodes it with no network. A missing or non-map path leaves
+ * the original URL: DevTools then shows the compiled script instead of
+ * failing the session. */
+function rewriteScriptMap(line: string, msg: unknown): string {
+  if (!msg || typeof msg !== 'object') return line;
+  const rec = msg as { method?: string; params?: { sourceMapURL?: unknown } };
+  if (rec.method !== 'Debugger.scriptParsed') return line;
+  const url = rec.params?.sourceMapURL;
+  if (typeof url !== 'string' || !url.startsWith('fjs-map:')) return line;
+  const data = readFjsMap(url);
+  if (!data || !rec.params) return line;
+  rec.params.sourceMapURL = data;
+  return JSON.stringify(msg);
+}
+
+function readFjsMap(url: string): string | null {
+  let raw: string;
+  try {
+    raw = decodeURIComponent(url.slice('fjs-map:'.length));
+  } catch {
+    return null;
+  }
+  // The string is chosen by the device. Check the suffix before touching
+  // the filesystem so a crafted URL cannot read arbitrary files; realpath
+  // afterwards so a `.js.map` symlink to something else is refused too.
+  if (!raw.endsWith('.js.map')) return null;
+  let real: string;
+  try {
+    real = fs.realpathSync(raw);
+  } catch {
+    return null;
+  }
+  if (!real.endsWith('.js.map')) return null;
+  try {
+    return (
+      'data:application/json;charset=utf-8;base64,' + fs.readFileSync(real).toString('base64')
+    );
+  } catch {
+    return null;
+  }
+}
 
 export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
   const log = opts.log ?? (() => {});
@@ -121,7 +170,7 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
           continue; // internal traffic — never reaches DevTools
         }
       }
-      if (devtools?.readyState === WebSocket.OPEN) devtools.send(line);
+      if (devtools?.readyState === WebSocket.OPEN) devtools.send(rewriteScriptMap(line, msg));
     }
   };
 

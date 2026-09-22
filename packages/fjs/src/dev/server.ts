@@ -839,6 +839,9 @@ function bundleServer(opts: BuildOptions, root: string, state: DevState): Server
         minify: false,
         bytecode: false,
         units: unitsMode && opts.pages,
+        // spec 094: Chrome DevTools reads these maps through `fjs debug`.
+        // Web dev is a different server and keeps Vite's own maps.
+        sourcemap: true,
       });
       lastResult = result;
       prints = fingerprint(result, root);

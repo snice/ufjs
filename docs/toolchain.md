@@ -664,9 +664,10 @@ failed:" 后面不再是空串。引擎（PrimJS，spec 088）原生实现 CDP�
   上也会解冻——调试器没了，冻结没有意义。
 - **断点期间 UI 冻结**。暂停的是 JS 所在的 UI isolate，这是"暂停"的本义；
   resume 后恢复，期间到达的热更新推送会在 resume 后处理。
-- **Sources 面板里的文件名是真实脚本名**：`bundle.js`、`pages/<chunk>.js`、
-  units 模式下的模块路径（`src/components/panel.vue`）。断点按 url+行号
-  匹配，别指望看到 Vue SFC 源码——那是 source map 的后续工作。
+- **Sources 面板能打开 Vue SFC 原文**（spec 094）。编译产物的脚本名是
+  `bundle.js`、`pages/<chunk>.js`、`units/<id>.js`（不是源路径）。dev
+  构建另写 `.js.map`，中继把它内联进 `scriptParsed`，所以断点可以下在
+  `<script setup>` 上，Call Stack 显示原文行号。`fjs build` 不带 map。
 - **Console 输出走调试通道**。调试器附加期间，`console.log` 由引擎合成为
   `Runtime.consoleAPICalled` 送进 DevTools（带调用栈），app 侧的 `fjs log`
   通路可能不再收到这些行。

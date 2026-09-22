@@ -236,8 +236,10 @@ DevTools 无论什么时候连上来，`Debugger.enable` 都会补发全部 `scr
 连接先后无所谓。
 
 断点按 **url + 行号**匹配，url 就是 eval 时传的文件名，所以文件名必须是
-真名而不是 `<eval>`：`bundle.js`、`pages/<chunk>.js`、units 模式下的模块
-路径、`prelude.js`、`fjs-eval.js`（`engine.dart` L600 / L1030 / L1241）。
+真名而不是 `<eval>`：`bundle.js`、`pages/<chunk>.js`、`units/<id>.js`、
+`shared.js`、`units.js`、`fjs-eval.js`。单元不用源路径当 url——source map
+的 `sources` 已经是 `src/components/Foo.vue`，两边同名时 DevTools 会把
+产物和原文当成同一个脚本（spec 094）。
 
 ## 5. 中继层（`fjs debug`）
 
@@ -373,7 +375,8 @@ release 包：
 | 手段 | 位置 | 覆盖 |
 |---|---|---|
 | 原生 loopback 全链路 | `native/test/main.cpp` L286-372（`FJS_DEBUGGER` 下） | dlopen 模块 → 本机 listener → attach → `setBreakpointByUrl` → 命中 → 另一线程发 `resume` → 断言脚本跑完 |
-| 中继单测 | `packages/fjs/test/debug-cdp.test.ts` | 发现端点、双向分帧转发、`DOM.getDocument` 经 evaluate 桥、第二个 DevTools 被拒 |
+| 中继单测 | `packages/fjs/test/debug-cdp.test.ts` | 发现端点、双向分帧转发、`DOM.getDocument` 经 evaluate 桥、第二个 DevTools 被拒、`fjs-map:` 内联 |
+| Vue source map | `packages/fjs/test/vue-sourcemap.test.ts`、`dev-units.test.ts` | script / template 行映回 `.vue`；dev 才写 map；单元包装后行号下移 |
 | 数据平面单测 | `packages/fjs-runtime/test/devtools.test.ts` | 元素树序列化、computed/inline 样式、drain arming、body 在 materialize 时落库、512 KB 路径 |
 | 桌面彩排 | `fjsrun --debug-connect` + `fjs debug` | 不用设备跑通断点/面板 |
 | 设备端到端（手动） | `specs/088-devtools-debugger/spike/cdp-client-device.mjs`、`specs/089-devtools-panels/panels-client.mjs` | 真机/模拟器断点与面板 |
@@ -384,8 +387,19 @@ release 包：
 - **只调 dev 源码模式的主 VM**。release 字节码、Worker（独立 isolate +
   独立 runtime）、小程序端都不在范围内；web 端用浏览器自带 DevTools
   （[web.md 已知差异](web.md#已知差异)登记了这一行）。
-- **没有 source map**。Sources 面板里是编译后的 JS，不是 Vue SFC。
-  PrimJS 的 `scriptParsed` 带 `sourceMapURL` 字段，要做另起 spec。
+- **dev 有 Vue SFC source map**（spec 094）。`fjs dev` 给 bundle、page
+  chunk、单元写 `.js.map`，脚本末尾是 `//# sourceMappingURL=fjs-map:<路径>`。
+  PrimJS 只把这个字符串放进 `scriptParsed.sourceMapURL`，不解释 map。
+  中继在转发给 Chrome 之前把 `fjs-map:` 读成 data URL——DevTools 跑在
+  `devtools://`，不会自己去拉 dev server，而 `Network.*` 又被中继桥接走了。
+  Sources 里因此能打开 `.vue` 和它 import 的项目 `.ts` / `.js`（`src/stores/counter.ts`
+  这类，路径按脚本 URL 折回 `src/...`，不会堆在 `units/` 下面）。断点下在
+  `<script setup>` 和这些模块的可执行行上。`pinia` / `vue` / `vant` 在 `shared.js`
+  里，没有 map。
+  `<style>` 不在 map 里。template 行有映射就停，没有独立语句的行不停。
+  `shared.js` 不出 map（依赖为主，组件在各自的单元里）。`fjs build` /
+  字节码不写 map。路径里的空格会被编码，因为引擎的 magic-comment 扫描
+  拒绝空格。
 - **`chrome://inspect` 不可靠**：填 `localhost:38902` 必然失败（macOS 先解析
   到 `::1`，中继只监听 IPv4 回环），填对了也未必出现且不报错。用直连命令。
 - **调试器附加期间 `console.log` 走 CDP**，被合成 `Runtime.consoleAPICalled`

@@ -111,10 +111,56 @@ function write(rel: string, source: string | Uint8Array): void {
   fs.writeFileSync(full, source);
 }
 
+const VLQ = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function vlqDecode(segment: string): number[] {
+  const out: number[] = [];
+  let value = 0;
+  let shift = 0;
+  for (let i = 0; i < segment.length; i++) {
+    const integer = VLQ.indexOf(segment[i]);
+    if (integer < 0) continue;
+    const cont = integer & 32;
+    value += (integer & 31) * 2 ** shift;
+    if (cont) {
+      shift += 5;
+      continue;
+    }
+    const neg = value & 1;
+    value = Math.floor(value / 2);
+    out.push(neg ? -value : value);
+    value = 0;
+    shift = 0;
+  }
+  return out;
+}
+
+/** 1-based generated lines whose mapping names the 1-based original line. */
+function generatedLinesForOriginal(mappings: string, origLine1: number): number[] {
+  const want = origLine1 - 1;
+  const lines = mappings.split(';');
+  let origLine = 0;
+  const hits: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i]) continue;
+    for (const part of lines[i].split(',')) {
+      if (!part) continue;
+      const v = vlqDecode(part);
+      if (v.length >= 4) {
+        origLine += v[2];
+        if (origLine === want) hits.push(i + 1);
+      }
+    }
+  }
+  return hits;
+}
+
 const PAGE = (tag: string) =>
   `<template><view>${tag}</view></template>\n<script setup>\nimport Tag from '../components/tag.vue';\n</script>\n`;
 
-async function buildUnits(): Promise<{ result: Awaited<ReturnType<typeof buildBundle>>; outDir: string }> {
+async function buildUnits(
+  extra: Partial<BuildOptions> = {},
+): Promise<{ result: Awaited<ReturnType<typeof buildBundle>>; outDir: string }> {
   write(
     'src/main.ts',
     "import { greeting } from './lib/greeting';\nconsole.log(greeting);\n",
@@ -145,6 +191,7 @@ async function buildUnits(): Promise<{ result: Awaited<ReturnType<typeof buildBu
     flutterArgs: [],
     analyze: false,
     units: true,
+    ...extra,
   };
   return { result: await buildBundle(opts), outDir };
 }
@@ -200,6 +247,59 @@ describe('units-mode split build', () => {
     const second = await buildUnits();
     const secondTag = fs.readFileSync(second.result.devUnits!.files['src/components/tag.vue'], 'utf8');
     expect(secondTag).toBe(first);
+  });
+
+  it('writes Vue source maps only when asked (spec 094)', async () => {
+    const off = await buildUnits();
+    const tagOff = off.result.devUnits!.files['src/components/tag.vue'];
+    expect(fs.readFileSync(tagOff, 'utf8')).not.toContain('sourceMappingURL');
+    expect(fs.existsSync(`${tagOff}.map`)).toBe(false);
+
+    const on = await buildUnits({ sourcemap: true });
+    const tag = on.result.devUnits!.files['src/components/tag.vue'];
+    const js = fs.readFileSync(tag, 'utf8');
+    expect(js).toContain('//# sourceMappingURL=fjs-map:');
+    // the concatenated prelude must not inherit one unit's map
+    const unitsJs = fs.readFileSync(path.join(on.outDir, 'units.js'), 'utf8');
+    expect(unitsJs).not.toContain('sourceMappingURL');
+    expect(fs.existsSync(`${on.result.sharedPath}.map`)).toBe(false);
+
+    const map = JSON.parse(fs.readFileSync(`${tag}.map`, 'utf8')) as {
+      sources: string[];
+      sourcesContent?: string[];
+    };
+    // script URL is units/src/components/tag.vue.js; the source has to be
+    // relative to that directory or DevTools nests it under units/
+    expect(map.sources).toContain(
+      path.posix.relative('units/src/components', 'src/components/tag.vue'),
+    );
+    expect(map.sources.some((s) => s.includes('fjs-shared-stub'))).toBe(false);
+    expect((map.sourcesContent ?? []).join('\n')).toContain('<text>tag</text>');
+
+    const pageMap = JSON.parse(
+      fs.readFileSync(`${on.result.pageChunks!.index}.map`, 'utf8'),
+    ) as { sources?: string[]; sourcesContent?: string[] };
+    expect(pageMap.sources).toContain(path.posix.relative('pages', 'src/pages/index.vue'));
+    expect((pageMap.sources ?? []).some((s) => s.includes('fjs-shared-stub'))).toBe(false);
+    expect((pageMap.sourcesContent ?? []).join('\n')).toContain('<view>index</view>');
+
+    // the __fjsDefineUnit wrapper is an extra generated line esbuild did not
+    // map. Original line 1 of greeting.ts has to land below it.
+    const greeting = on.result.devUnits!.files['src/lib/greeting.ts'];
+    const gMap = JSON.parse(fs.readFileSync(`${greeting}.map`, 'utf8')) as {
+      mappings: string;
+      sources: string[];
+      sourcesContent?: string[];
+    };
+    expect(gMap.sources).toContain(path.posix.relative('units/src/lib', 'src/lib/greeting.ts'));
+    expect((gMap.sourcesContent ?? []).join('\n')).toContain("export const greeting = 'hi'");
+    const gLines = fs.readFileSync(greeting, 'utf8').split('\n');
+    const hits = generatedLinesForOriginal(gMap.mappings, 1);
+    expect(hits.length).toBeGreaterThan(0);
+    for (const line of hits) {
+      expect(line).toBeGreaterThan(1);
+      expect(gLines[line - 1]).not.toContain('__fjsDefineUnit');
+    }
   });
 
   it('keeps imported assets inline — never units (spec 038 fix)', async () => {

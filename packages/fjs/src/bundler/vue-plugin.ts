@@ -84,6 +84,10 @@ export interface SfcOptions {
   /** Extra tags to compile as elements rather than components: the widget
    * tags the modules' Flutter side renders (see widgetNativeTags). */
   nativeTags?: readonly string[];
+  /** Dev debugger (spec 094): map the compiled module back to the .vue
+   * file. Release builds leave this off — Chrome DevTools is the only
+   * consumer, and it is not attached to a release bundle. */
+  sourceMap?: boolean;
 }
 
 /** Compiler options for the SFC template → render function step, shared by
@@ -144,6 +148,7 @@ export function runtimeDir(): string {
 
 export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
   const web = options.web === true;
+  const sourceMap = options.sourceMap === true;
   const moduleTags = new Set(options.nativeTags ?? []);
   return {
     name: 'fjs-vue-sfc',
@@ -183,27 +188,49 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
 
         const bindings = {};
         let scriptCode = '';
+        // compileScript's map already points at the SFC (block line offsets
+        // included). Kept only for the dev debugger — release never asks.
+        let scriptMappings: string | undefined;
 
         if (descriptor.script || descriptor.scriptSetup) {
           const compiled = compileScript(descriptor, { id });
           scriptCode = compiled.content;
+          scriptMappings = compiled.map?.mappings;
           Object.assign(bindings, compiled.bindings ?? {});
         } else {
           scriptCode = 'const __sfc__ = {};';
         }
 
         let code = scriptCode;
+        // `export default` and `const __sfc__ =` are both 14 characters, so
+        // this rewrite does not move any column the script map recorded.
+        // The other branch inserts a line, which the map has to follow.
+        let scriptLineShift = 0;
         if (code.includes('export default')) {
           code = code.replace(/export default/, 'const __sfc__ =');
         } else if (!code.includes('const __sfc__')) {
           code = 'const __sfc__ = {};\n' + code;
+          scriptLineShift = 1;
         }
+
+        // 1-based line where the template compiler's line 1 lands in `code`.
+        // 0 when there is no template. Computed BEFORE the template is
+        // appended; style registration comes after and does not shift it.
+        let templateStartLine = 0;
+        let templateMappings: string | undefined;
 
         if (descriptor.template) {
           const tpl = compileTemplate({
             source: descriptor.template.content,
             filename: args.path,
             id,
+            // inMap chains the render function through the template block
+            // back to the .vue file. Without it the map's line 1 is the
+            // first line of the <template> block, not of the SFC.
+            // Skipped unless a map was requested: mapLines is pure cost on
+            // a release build, and passing an AST would make compiler-sfc
+            // ignore inMap entirely.
+            ...(sourceMap ? { inMap: descriptor.template.map } : {}),
             compilerOptions: templateCompilerOptions({
               web,
               moduleTags,
@@ -231,6 +258,12 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
                 /(_resolveComponent\("list-view"), true\)/g,
                 '$1)',
               );
+          // The list-view rewrite drops `, true` on one generated line. It
+          // does not add or remove lines, so the template map's line numbers
+          // still land; that one line's columns can drift, which DevTools
+          // tolerates (it snaps to the nearest mapping).
+          templateMappings = tpl.map?.mappings;
+          templateStartLine = countNewlines(code) + 2;
           code += `\n${templateCode}\n__sfc__.render = render;\nexport default __sfc__;`;
         } else {
           code += '\nexport default __sfc__;';
@@ -278,6 +311,22 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
         }
         if (styles.some((s) => s.scoped)) {
           code += `\n__sfc__.__scopeId = ${JSON.stringify(id)};`;
+        }
+
+        // esbuild 0.23's onLoad cannot take a `map` (the flag is rejected).
+        // The compiled module is what esbuild's own map calls "original";
+        // rememberSfcMap lets stampDebuggerMap rebase those lines onto the
+        // .vue file after the bundle exists.
+        if (sourceMap) {
+          const record = composeSfcMap({
+            source,
+            scriptMappings,
+            scriptLineShift,
+            templateMappings,
+            templateStartLine,
+          });
+          if (record) rememberSfcMap(args.path, record);
+          else forgetSfcMap(args.path);
         }
 
         return { contents: code, resolveDir: path.dirname(args.path), loader: 'ts' };
@@ -684,4 +733,278 @@ function rewriteCssVBind(css: string, id: string): string {
     lastIndex = end + 1;
   }
   return out + css.slice(lastIndex);
+}
+
+// ---- SFC source map (spec 094) ---------------------------------------------
+//
+// compiler-sfc hands back two maps: script (already in SFC coordinates) and
+// template (in SFC coordinates only when `inMap` chained the block). The
+// module we return is those two texts concatenated, plus a few glue lines.
+// A library would rebase the VLQ deltas across that boundary; both maps use
+// a single source and an empty names array, so decoding to absolute
+// positions, shifting the generated line, and re-encoding is the whole job.
+// No new dependency — release builds never call this.
+
+const VLQ_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function countNewlines(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
+  return n;
+}
+
+function vlqDecode(segment: string): number[] {
+  const out: number[] = [];
+  let value = 0;
+  let shift = 0;
+  for (let i = 0; i < segment.length; i++) {
+    const integer = VLQ_CHARS.indexOf(segment[i]);
+    if (integer < 0) continue;
+    const cont = integer & 32;
+    value += (integer & 31) * 2 ** shift;
+    if (cont) {
+      shift += 5;
+      continue;
+    }
+    const neg = value & 1;
+    value = Math.floor(value / 2);
+    out.push(neg ? -value : value);
+    value = 0;
+    shift = 0;
+  }
+  return out;
+}
+
+function vlqEncode(n: number): string {
+  let vlq = n < 0 ? -n * 2 + 1 : n * 2;
+  let encoded = '';
+  do {
+    let digit = vlq & 31;
+    vlq = Math.floor(vlq / 32);
+    if (vlq > 0) digit |= 32;
+    encoded += VLQ_CHARS[digit];
+  } while (vlq > 0);
+  return encoded;
+}
+
+interface MappedSeg {
+  genLine: number;
+  genCol: number;
+  src: number;
+  origLine: number;
+  origCol: number;
+  name?: number;
+}
+
+/** Absolute positions. Segments without an original location are dropped. */
+function decodeMappings(mappings: string): MappedSeg[] {
+  const segs: MappedSeg[] = [];
+  const lines = mappings.split(';');
+  let src = 0;
+  let origLine = 0;
+  let origCol = 0;
+  let name = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i]) continue;
+    let genCol = 0;
+    for (const part of lines[i].split(',')) {
+      if (!part) continue;
+      const v = vlqDecode(part);
+      if (v.length === 0) continue;
+      genCol += v[0];
+      if (v.length >= 4) {
+        src += v[1];
+        origLine += v[2];
+        origCol += v[3];
+        const seg: MappedSeg = { genLine: i + 1, genCol, src, origLine, origCol };
+        if (v.length >= 5) {
+          name += v[4];
+          seg.name = name;
+        }
+        segs.push(seg);
+      }
+    }
+  }
+  return segs;
+}
+
+function encodeMappings(segs: MappedSeg[]): string {
+  const byLine = new Map<number, MappedSeg[]>();
+  let max = 0;
+  for (const s of segs) {
+    if (s.genLine < 1) continue;
+    if (s.genLine > max) max = s.genLine;
+    const list = byLine.get(s.genLine);
+    if (list) list.push(s);
+    else byLine.set(s.genLine, [s]);
+  }
+  let src = 0;
+  let origLine = 0;
+  let origCol = 0;
+  let name = 0;
+  const lines: string[] = [];
+  for (let line = 1; line <= max; line++) {
+    const list = byLine.get(line) ?? [];
+    list.sort((a, b) => a.genCol - b.genCol);
+    let genCol = 0;
+    const parts: string[] = [];
+    for (const s of list) {
+      let piece =
+        vlqEncode(s.genCol - genCol) +
+        vlqEncode(s.src - src) +
+        vlqEncode(s.origLine - origLine) +
+        vlqEncode(s.origCol - origCol);
+      genCol = s.genCol;
+      src = s.src;
+      origLine = s.origLine;
+      origCol = s.origCol;
+      if (s.name != null) {
+        piece += vlqEncode(s.name - name);
+        name = s.name;
+      }
+      parts.push(piece);
+    }
+    lines.push(parts.join(','));
+  }
+  return lines.join(';');
+}
+
+interface SfcMapRecord {
+  source: string;
+  segs: MappedSeg[];
+}
+
+/** Keyed by the absolute .vue path. One dev-server process, overwritten on
+ * each rebuild of that file. Not consulted unless the build asked for maps. */
+const sfcMaps = new Map<string, SfcMapRecord>();
+
+function rememberSfcMap(file: string, record: SfcMapRecord): void {
+  sfcMaps.set(path.resolve(file), record);
+}
+
+function forgetSfcMap(file: string): void {
+  sfcMaps.delete(path.resolve(file));
+}
+
+function composeSfcMap(args: {
+  source: string;
+  scriptMappings?: string;
+  scriptLineShift: number;
+  templateMappings?: string;
+  templateStartLine: number;
+}): SfcMapRecord | undefined {
+  const segs: MappedSeg[] = [];
+  if (args.scriptMappings) {
+    for (const s of decodeMappings(args.scriptMappings)) {
+      segs.push({ ...s, src: 0, genLine: s.genLine + args.scriptLineShift });
+    }
+  }
+  if (args.templateMappings && args.templateStartLine >= 1) {
+    const shift = args.templateStartLine - 1;
+    for (const s of decodeMappings(args.templateMappings)) {
+      segs.push({ ...s, src: 0, genLine: s.genLine + shift });
+    }
+  }
+  if (segs.length === 0) return undefined;
+  return { source: args.source, segs };
+}
+
+/** esbuild's map points at the compiled module (that is what onLoad returned).
+ * Where we recorded an SFC map for that file, rewrite the original position
+ * to the .vue line and swap sourcesContent for the SFC text. Other sources
+ * (plain .ts / .js) stay as esbuild emitted them; [retargetDebuggerSources]
+ * is what makes those paths survive Chrome's script-URL resolution. */
+export function rebaseVueSources(
+  map: { sources?: string[]; sourcesContent?: Array<string | null>; mappings?: string },
+  mapDir: string,
+): void {
+  const sources = map.sources ?? [];
+  const tables = sources.map((s) => sfcMaps.get(path.resolve(mapDir, s)) ?? null);
+  if (!tables.some(Boolean)) return;
+  const out: MappedSeg[] = [];
+  for (const seg of decodeMappings(map.mappings ?? '')) {
+    const table = tables[seg.src];
+    if (!table) {
+      out.push(seg);
+      continue;
+    }
+    const hit = segmentAt(table.segs, seg.origLine + 1, seg.origCol);
+    if (!hit) {
+      out.push(seg);
+      continue;
+    }
+    out.push({
+      genLine: seg.genLine,
+      genCol: seg.genCol,
+      src: seg.src,
+      origLine: hit.origLine,
+      origCol: hit.origCol,
+    });
+  }
+  map.mappings = encodeMappings(out);
+  const prev = map.sourcesContent ?? [];
+  map.sourcesContent = sources.map((s, i) => tables[i]?.source ?? prev[i] ?? null);
+}
+
+/** Publish project files as paths relative to the eval script.
+ *
+ * The map travels as a data URL, so DevTools resolves `sources` against the
+ * script URL, not the map file. `src/stores/counter.ts` on a script named
+ * `units/src/stores/counter.ts.js` becomes
+ * `units/src/stores/src/stores/counter.ts` and disappears under that folder.
+ * A path relative to the script (`../../../src/stores/counter.ts` from
+ * `pages/about.js`'s sibling `../src/pages/about.vue`) resolves back to
+ * `src/...` for every script, which is where a breakpoint on an imported
+ * module has to land.
+ *
+ * `fjs-shared-stub` entries are the `module.exports = __fjsRequireUnit(...)`
+ * stand-ins. They are not the module; leaving them in makes the import look
+ * mapped when the real file is a different script. */
+export function retargetDebuggerSources(
+  map: { sources?: string[]; sourcesContent?: Array<string | null>; mappings?: string },
+  mapDir: string,
+  root: string,
+  scriptUrl: string,
+): void {
+  const sources = map.sources ?? [];
+  const prev = map.sourcesContent ?? [];
+  const scriptDir = path.posix.dirname(scriptUrl.replace(/\\/g, '/'));
+  const fromDir = scriptDir === '.' ? '' : scriptDir;
+  const nextIndex = new Map<number, number>();
+  const nextSources: string[] = [];
+  const nextContent: Array<string | null> = [];
+  sources.forEach((source, i) => {
+    const rel = projectSource(source, mapDir, root);
+    if (!rel) return;
+    nextIndex.set(i, nextSources.length);
+    // path.posix.relative('.', x) is x; from a nested script it inserts `..`
+    nextSources.push(path.posix.relative(fromDir || '.', rel));
+    nextContent.push(prev[i] ?? null);
+  });
+  const segs = decodeMappings(map.mappings ?? '')
+    .filter((seg) => nextIndex.has(seg.src))
+    .map((seg) => ({ ...seg, src: nextIndex.get(seg.src)! }));
+  map.sources = nextSources;
+  map.sourcesContent = nextContent;
+  map.mappings = encodeMappings(segs);
+}
+
+function projectSource(source: string, mapDir: string, root: string): string | null {
+  if (!source || source.startsWith('data:') || source.includes('fjs-shared-stub')) return null;
+  const abs = path.isAbsolute(source) ? source : path.resolve(mapDir, source);
+  const rel = path.relative(root, abs);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  const normalized = rel.split(path.sep).join('/');
+  const file = path.join(root, normalized);
+  if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return null;
+  return normalized;
+}
+
+function segmentAt(segs: MappedSeg[], genLine: number, genCol: number): MappedSeg | undefined {
+  let best: MappedSeg | undefined;
+  for (const s of segs) {
+    if (s.genLine !== genLine || s.genCol > genCol) continue;
+    if (!best || s.genCol >= best.genCol) best = s;
+  }
+  return best ?? segs.find((s) => s.genLine === genLine);
 }

@@ -692,9 +692,8 @@ PrimJS 4.1.1（`specs/088-devtools-debugger/`）：
 - 随附：esbuild target es2021 → es2019（PrimJS 的 ES 上限，web 构建不变）；
   `fjs.h` 新增 OPTIONAL 符号 `fjs_vm_debugger_attach/detach`；fjsrun 增
   `--debug-connect host:port`（桌面复用同一调试链路）。
-- 明确不做：release 字节码调试、Worker VM、小程序端、Vue SFC source map
-  （PrimJS 支持 sourceMapURL 字段，后续可加）、DAP/VS Code 前端（CDP 标准
-  协议，后续可接）。
+- 明确不做：release 字节码调试、Worker VM、小程序端、DAP/VS Code 前端
+  （CDP 标准协议，后续可接）。Vue SFC source map 已由 spec 094 补上。
 
 ## 双引擎缓存与切换入口（已完成 2026-09）
 
@@ -778,6 +777,21 @@ spec 088 删掉 quickjs-ng 时留下了对比与退路缺口，补上
   `fjs/src/debug/cdp-server.ts`（三方法真实现 + 冷却 + 结构轮询）；
   测试覆盖三方法形状、选择器命中/未命中/伪态剥离、结构版本跨阈值推一次且
   冷却内不重推、纯属性不触发（`debug-cdp.test.ts` / `devtools.test.ts`）。
+
+## DevTools 的 Vue SFC source map（已完成 2026-09）
+
+`fjs debug` 此前只能在编译后的 bundle 上下断点（`specs/094-devtools-vue-sourcemap/`）：
+
+- ✅ **dev 构建出 map**：`fjs dev` 让 esbuild 写 external `.js.map`（`shared.js`
+  除外）。Vue 插件把 script 与 template 的 map 拼回 `.vue`，`sourcesContent`
+  是 SFC 原文。单元文件在 `__fjsDefineUnit` 包装后再把生成行下移一行。
+- ✅ **中继内联**：脚本注释是 `fjs-map:<路径>`，PrimJS 原样放进
+  `sourceMapURL`。中继读 `.js.map` 改成 data URL 再给 Chrome——DevTools
+  不会自己去拉，`Network.*` 又被桥接走了。不是 `.js.map` 的路径不读。
+- ✅ **脚本 url 与源路径错开**：单元 eval 文件名是 `units/<id>.js`，
+  `shared.js` / `units.js` 不再共用 `prelude.js`。
+- 明确不做：release / 字节码、小程序、web（Vite 自有 map）、`<style>` 断点。
+  template 行有映射就停，不作为一一对应的承诺。
 
 ## 近期计划
 

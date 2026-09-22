@@ -21,6 +21,8 @@ import { materializeJsEngine, resolveJsEngine, type JsEngine } from '../project/
 import { ensureFlutterHost, projectName } from '../commands/run.js';
 import {
   vueSfcPlugin,
+  rebaseVueSources,
+  retargetDebuggerSources,
   flutterAliases,
   webAliases,
   moduleDataPlugin,
@@ -242,6 +244,10 @@ export interface BuildOptions {
    * binary is per flavor. Also materialized into the plugin before any
    * `flutter build` a release build kicks off. */
   jsEngine?: JsEngine;
+  /** spec 094: write a sibling `.js.map` and a `//# sourceMappingURL=fjs-map:`
+   * comment so `fjs debug` can show Vue SFC / TS sources. Dev server only.
+   * Release never sets it — the map would ship the original source. */
+  sourcemap?: boolean;
 }
 
 /** An entry esbuild reads straight from memory.
@@ -405,6 +411,52 @@ export interface DevUnitsInfo {
   order: string[];
 }
 
+/** esbuild option for spec 094. `'external'` writes the `.map` and does not
+ * append its own comment — we add `fjs-map:` ourselves, because PrimJS only
+ * forwards that string and Chrome cannot fetch a relative URL from a script
+ * named `bundle.js`. */
+function esbuildSourcemap(on: boolean | undefined): { sourcemap: 'external' } | Record<string, never> {
+  return on ? { sourcemap: 'external' } : {};
+}
+
+/** Point the map at project-relative sources, then append the comment PrimJS
+ * copies into `Debugger.scriptParsed.sourceMapURL`.
+ *
+ * [shiftLines] is for the dev-unit wrapper: esbuild mapped the unwrapped
+ * file, and `__fjsDefineUnit(...) {` pushes every generated line down by
+ * one. Prepending `;` is that shift — one empty generated line per semicolon.
+ *
+ * The comment is appended AFTER the shift, so it is not itself a mapped
+ * line. Paths are percent-encoded for the characters `FindDebuggerMagicContent`
+ * rejects (space, tab, quotes); slashes stay so the relay can open the file. */
+function stampDebuggerMap(jsFile: string, root: string, outDir: string, shiftLines = 0): void {
+  const mapFile = `${jsFile}.map`;
+  if (!fs.existsSync(mapFile)) return;
+  const map = JSON.parse(fs.readFileSync(mapFile, 'utf8')) as {
+    mappings?: string;
+    sources?: string[];
+    sourcesContent?: Array<string | null>;
+  };
+  // Before the path rewrite: esbuild's sources still resolve to the files
+  // the plugin recorded. The +1 line shift is applied after, so it moves
+  // the rebased positions together with the wrapper.
+  rebaseVueSources(map, path.dirname(mapFile));
+  if (shiftLines > 0) map.mappings = ';'.repeat(shiftLines) + (map.mappings ?? '');
+  // script URL is the path the engine evals (`pages/about.js`,
+  // `units/<id>.js`), which is the file's path under outDir
+  const scriptUrl = path.relative(outDir, jsFile).split(path.sep).join('/');
+  retargetDebuggerSources(map, path.dirname(mapFile), root, scriptUrl);
+  fs.writeFileSync(mapFile, JSON.stringify(map));
+  const encoded = path
+    .resolve(mapFile)
+    .replace(/%/g, '%25')
+    .replace(/ /g, '%20')
+    .replace(/\t/g, '%09')
+    .replace(/"/g, '%22')
+    .replace(/'/g, '%27');
+  fs.appendFileSync(jsFile, `\n//# sourceMappingURL=fjs-map:${encoded}\n`);
+}
+
 export async function buildBundle(opts: BuildOptions): Promise<BuildResult> {
   const root = process.cwd();
   const outDir = path.resolve(opts.outDir);
@@ -459,7 +511,10 @@ export async function buildBundle(opts: BuildOptions): Promise<BuildResult> {
     nodeBuiltinStubs(),
     pagesPlugin(pagesFor(root, 'app'), 'app', true),
     pluginsPlugin(pluginsFor(root, 'app'), modules),
-    vueSfcPlugin({ nativeTags: widgetNativeTags(modules, 'app') }),
+    vueSfcPlugin({
+      nativeTags: widgetNativeTags(modules, 'app'),
+      sourceMap: opts.sourcemap === true,
+    }),
     vuePinPlugin(),
     viteAppHooksPlugin(appHooks),
     srcAliasPlugin(root),
@@ -485,10 +540,12 @@ export async function buildBundle(opts: BuildOptions): Promise<BuildResult> {
     plugins,
     define: fjsDefines(),
     ...assetOutputOptions(),
+    ...esbuildSourcemap(opts.sourcemap),
     metafile: opts.analyze,
     logLevel: 'warning',
     legalComments: 'none',
   });
+  if (opts.sourcemap) stampDebuggerMap(jsPath, root, outDir);
   const warnings = [...perfWarnings, ...result.warnings.map((w) => w.text)];
 
   const res: BuildResult = { jsPath, warnings };
@@ -694,7 +751,10 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
   };
   const stubbed = (): esbuild.Plugin[] => [
     nodeBuiltinStubs(),
-    vueSfcPlugin({ nativeTags: widgetNativeTags(modules, 'app') }),
+    vueSfcPlugin({
+      nativeTags: widgetNativeTags(modules, 'app'),
+      sourceMap: opts.sourcemap === true,
+    }),
     viteAppHooksPlugin(appHooks),
     sharedStubPlugin(appModules, shared, unitsMode ? { record: recordStub } : undefined),
     srcAliasPlugin(root),
@@ -755,10 +815,12 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
     plugins: stubbed(),
     define: fjsDefines(),
     ...assetOutputOptions(),
+    ...esbuildSourcemap(opts.sourcemap),
     metafile: opts.analyze,
     logLevel: 'warning',
     legalComments: 'none',
   });
+  if (opts.sourcemap) stampDebuggerMap(jsPath, root, outDir);
   warnings.push(...appResult.warnings.map((w) => w.text));
   if (appResult.metafile) metafiles[jsPath] = appResult.metafile;
 
@@ -780,10 +842,12 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
       plugins: stubbed(),
       define: fjsDefines(),
       ...assetOutputOptions(),
+      ...esbuildSourcemap(opts.sourcemap),
       metafile: opts.analyze,
       logLevel: 'warning',
       legalComments: 'none',
     });
+    if (opts.sourcemap) stampDebuggerMap(chunkPath, root, outDir);
     warnings.push(...pageResult.warnings.map((w) => w.text));
     if (pageResult.metafile) metafiles[chunkPath] = pageResult.metafile;
     pageChunks[page.chunk] = chunkPath;
@@ -833,7 +897,15 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
  * cache, and `fjs build` runs are separate processes. */
 const unitBuildCache = new Map<
   string,
-  { stamps: string; file: string; definePart: string; records: Array<{ importer: string; id: string }> }
+  {
+    stamps: string;
+    file: string;
+    definePart: string;
+    records: Array<{ importer: string; id: string }>;
+    /** spec 094: a hit must not reuse a unit built without a map (or the
+     * other way around) — the flag is not part of the input stamps. */
+    sourcemap: boolean;
+  }
 >();
 
 function inputStamps(metafile: Metafile): string {
@@ -890,8 +962,16 @@ async function buildDevUnits(args: {
     const id = key.slice('./'.length);
     const file = path.join(unitsDir, `${id}.js`);
     files[id] = file;
+    const wantMap = opts.sourcemap === true;
     const cached = unitBuildCache.get(abs);
-    if (cached && cached.file === file && stampsUnchanged(cached.stamps) && fs.existsSync(file)) {
+    if (
+      cached &&
+      cached.file === file &&
+      cached.sourcemap === wantMap &&
+      stampsUnchanged(cached.stamps) &&
+      fs.existsSync(file) &&
+      (!wantMap || fs.existsSync(`${file}.map`))
+    ) {
       parts.push(cached.definePart);
       // replay the records a fresh build would have produced: the import
       // graph must be complete even when nothing rebuilt
@@ -920,7 +1000,10 @@ async function buildDevUnits(args: {
       minify: opts.minify,
       plugins: [
         nodeBuiltinStubs(),
-        vueSfcPlugin({ nativeTags: widgetNativeTags(modules, 'app') }),
+        vueSfcPlugin({
+          nativeTags: widgetNativeTags(modules, 'app'),
+          sourceMap: wantMap,
+        }),
         viteAppHooksPlugin(appHooks),
         sharedStubPlugin(others, shared, { record: (importer, dep) => records.push({ importer, id: dep }) }),
         srcAliasPlugin(root),
@@ -928,6 +1011,7 @@ async function buildDevUnits(args: {
       ],
       define: fjsDefines(),
       ...assetOutputOptions(),
+      ...esbuildSourcemap(opts.sourcemap),
       metafile: true,
       logLevel: 'warning',
       legalComments: 'none',
@@ -939,8 +1023,13 @@ async function buildDevUnits(args: {
     // factories run lazily on first require, which is what makes cycles
     // and the define-then-trigger hot swap both behave like a fresh start.
     const raw = fs.readFileSync(file, 'utf8');
+    // definePart stays comment-free: units.js is the concatenation of every
+    // factory, and a sourceMappingURL inside it would attach one unit's map
+    // to the whole prelude. The comment lives only on the per-unit file the
+    // engine evals when that factory actually runs.
     const definePart = `__fjsDefineUnit(${JSON.stringify(id)}, function(require, module, exports) {\n${raw}\n});`;
     fs.writeFileSync(file, `${definePart}\n`);
+    if (wantMap) stampDebuggerMap(file, root, outDir, 1);
     parts.push(definePart);
     for (const record of records) {
       // every stub in a unit build belongs to the unit's own file
@@ -951,6 +1040,7 @@ async function buildDevUnits(args: {
       file,
       definePart,
       records,
+      sourcemap: wantMap,
     });
   }
 
