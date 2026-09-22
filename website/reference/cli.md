@@ -90,6 +90,7 @@
 | `--device <id>` | 设备 id |
 | `--port <n>` | dev server 端口 |
 | `--flutter-dir <dir>` | 宿主目录 |
+| `--js-engine <primjs\|quickjs>` | 运行时用哪个引擎 flavor，默认 `primjs`（`fjs debug` 只在它上面可用）；`quickjs` 是无调试器的回退 |
 
 ### `fjs devices`
 
@@ -102,6 +103,34 @@
 ### `fjs eval <expression>`
 
 在运行中的 JS 虚拟机里求值。`--timeout <ms>` 默认 5000。
+
+### `fjs debug`
+
+起一个 CDP 中继，让 Chrome DevTools 直连正在跑的 App：断点、单步、调用栈、局部变量，以及 Elements / Network / Console 面板。`fjs dev` 或 `fjs run` 跑着的时候另开一个终端执行；用法与限制见[调试](/guide/debugging#断点调试)。
+
+| 参数 | 说明 |
+|---|---|
+| `--cdp-port <n>` | DevTools 侧端口，默认 38902（只绑 `127.0.0.1`） |
+| `--vm-port <n>` | App 虚拟机侧通道端口，默认 38903 |
+| `--port <n>` / `--host <addr>` | dev server 的地址（中继注册在它上面） |
+
+### `fjs lint [paths...]`
+
+静态检查 CSS：把「引擎不支持、写了也不生效」的规则提前报到命令行，扫描 `src/**/*.vue` 的 `<style>` 块与静态 `style` 属性、`src/**/*.css`。支持矩阵与引擎行为一一对应，见[样式](/guide/styling)。
+
+| 参数 | 说明 |
+|---|---|
+| `--strict` | warn 也算失败（CI / pre-commit 用） |
+
+`[drop]`（整条不生效，如 `#id` 选择器、`@import`）退出码 1；只有 `[warn]`（两端分叉，如位图背景、`transition: filter`）退出码 0。
+
+### `fjs types`
+
+立即写出 / 刷新 `src/fjs-routes.d.ts`、`fjs-assets.d.ts`、`fjs-modules.d.ts`、`fjs-components.d.ts` 四个生成文件（与 dev / build 同一条写入规则，变了才写）。刚 checkout 的项目不用先跑 dev 就有补全。
+
+| 参数 | 说明 |
+|---|---|
+| `--check` | 只读；有过期文件时列出并退出码 1（CI 用） |
 
 ## 构建
 
@@ -122,6 +151,8 @@
 | `--web` | 浏览器静态站点 → `dist/web` |
 | `--mp` | 微信小程序 → `dist/mp` |
 | `--analyze` | 体积报告 |
+| `--devtools` | 非 dev 构建保留 Elements / Network 面板的数据平面（`fjs dev` 天然有；普通构建会剔掉，release 始终没有） |
+| `--js-engine <primjs\|quickjs>` | 字节码 / release 构建用哪个引擎 flavor：`primjs`（默认，带 CDP 调试器）或 `quickjs`（quickjs-ng，无调试器），同时把该 flavor 物化进插件 |
 | `--no-minify` | 不压缩 |
 | `--out <dir>` | 输出根目录，默认 `dist` |
 | `--flutter-dir <dir>` | 宿主目录 |
@@ -186,3 +217,4 @@ eject 过的宿主、pnpm workspace 里的 path 依赖会自动跳过。
 | 变量 | 说明 |
 |---|---|
 | `FJSC_PATH` | 字节码编译器 fjsc 的路径 |
+| `FJS_JS_ENGINE` | 引擎 flavor，等价于 `--js-engine`，默认 `primjs` |

@@ -9,7 +9,7 @@
 ```text
 Flutter UI isolate
 ├── Flutter 渲染管线（build / layout / paint）
-├── FjsEngine ──► libfjs ──► QuickJS runtime + context
+├── FjsEngine ──► libfjs ──► JS 引擎 runtime + context
 └── Timer.periodic(16ms) ──► fjs_vm_pump()
 ```
 
@@ -19,7 +19,7 @@ Flutter UI isolate
 
 ## 泵：JS 的异步是怎么推进的
 
-QuickJS 自己没有事件循环。Dart 每 16ms（约一帧）调一次 `pump()`：
+JS 引擎自己没有事件循环。Dart 每 16ms（约一帧）调一次 `pump()`：
 
 1. 执行到期的 `setTimeout` / `setInterval`
 2. 排空 Promise 微任务队列
@@ -80,11 +80,11 @@ onPageSettled(() => buildTheExpensiveThing());
 
 ```text
 UI isolate                          Worker isolate
-FjsEngine / QuickJS #1   ◄── SendPort ──►   QuickJS #2
+FjsEngine / 引擎 #1        ◄── SendPort ──►   引擎 #2
    16ms pump                                   8ms pump
 ```
 
-Worker 是 `Isolate.spawn` 出来的另一个 isolate，里面是**独立的 QuickJS runtime**，自己每 8ms 泵一次。两个 runtime 不共享任何 JS 对象，通信只有 `postMessage` 的字符串。用法见[Worker](/guide/events-and-data#worker)。
+Worker 是 `Isolate.spawn` 出来的另一个 isolate，里面是**独立的引擎 runtime**，自己每 8ms 泵一次。两个 runtime 不共享任何 JS 对象，通信只有 `postMessage` 的字符串。用法见[Worker](/guide/events-and-data#worker)。
 
 ## 异步的宿主调用
 
@@ -102,7 +102,7 @@ Dart                         HttpClient 异步执行
 ## 生命周期
 
 ```text
-FjsEngine()            → 创建 QuickJS runtime + context，安装原生函数
+FjsEngine()            → 创建引擎 runtime + context，安装原生函数
 addPrelude(chunk)      → 执行共享 chunk；每次 reset 自动重放
 runBundle              → 执行入口 → 泵微任务 → 首帧 op 落到镜像树
 startEventLoop         → 启动 16ms 周期泵

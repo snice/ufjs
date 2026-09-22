@@ -151,7 +151,7 @@ onUnmounted(() => worker.terminate());
 - `src/workers/` 下的每个文件会被单独打成自包含脚本，可以 import 本地模块
 - Worker 里没有 Vue 和 fjs 运行时，只有 `onmessage` / `postMessage` / `console` / 定时器
 - 消息是字符串，传对象自己 `JSON.stringify`
-- App 上它是一个独立的 Dart isolate + 独立的 QuickJS 实例，真并行；Web 上是真正的 Web Worker；小程序上是 `wx.createWorker`（同时只能有一个）
+- App 上它是一个独立的 Dart isolate + 独立的 JS 引擎实例，真并行；Web 上是真正的 Web Worker；小程序上是 `wx.createWorker`（同时只能有一个）
 
 ## 调用原生能力
 

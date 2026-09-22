@@ -7,7 +7,7 @@ App 端用 **esbuild** 打包（不是 Vite），由 `@ufjs/cli` 的 `bundler/` 
 ```text
 src/main.ts ─┐
 .vue SFC     ├─► esbuild + fjs 的 Vue 插件 ─► dist/app/*.js ─► fjsc ─► *.fjsbundle
-npm 依赖     ┘     （SFC 编译、虚拟模块、           （JS）         （QuickJS 字节码）
+npm 依赖     ┘     （SFC 编译、虚拟模块、           （JS）         （引擎字节码）
                     CSS 注入、alias）
 ```
 
@@ -19,7 +19,7 @@ fjs 的 esbuild 插件做了这几件事：
 - **alias**：`vue` → `@vue/runtime-core`（不拉 DOM 运行时），`fjs/router` → Flutter 实现
 - **桩掉 Node 内置模块**：`util`、`fs` 等指向调用即抛的桩，只 import 不调用的库能过
 
-esbuild 以 `platform: 'neutral'`（QuickJS 既不是 Node 也不是浏览器）输出 IIFE 格式的单文件。
+esbuild 以 `platform: 'neutral'`（JS 引擎环境既不是 Node 也不是浏览器）输出 IIFE 格式的单文件。
 
 ## pages 分包
 
@@ -57,17 +57,17 @@ engine.runBundle(bundle);
 
 ## 字节码
 
-`--release` 自动开启 `--bytecode`：用 `fjsc` 把每个 JS 产物编译成 QuickJS 字节码。
+`--release` 自动开启 `--bytecode`：用 `fjsc` 把每个 JS 产物编译成引擎字节码。
 
 ```text
 .fjsbundle 格式
 [0..4)   magic "FJSB"
 [4..6)   u16 格式版本
 [6..8)   u16 engine id 长度
-[8..]    engine id + QuickJS 字节码
+[8..]    engine id + 引擎字节码
 ```
 
-App 加载时用 `JS_ReadObject` 直接读入，跳过词法和语法分析。加载前校验 magic、格式版本和 **engine id** —— fjsc 和 App 里的引擎必须来自同一份 QuickJS 源码，版本不一致会直接拒绝加载，而不是运行到一半崩溃。
+App 加载时用 `JS_ReadObject` 直接读入，跳过词法和语法分析。加载前校验 magic、格式版本和 **engine id**（`primjs-4.1.1` 或 `quickjs-ng-0.9.0`）—— fjsc 和 App 必须是同一 flavor 的引擎，id 不一致会直接拒绝加载，而不是运行到一半崩溃。默认 flavor 是 PrimJS，`fjs build --js-engine quickjs` 可切到 quickjs-ng；引擎性能差异见仓库的 [engine-perf.md](https://github.com/snice/ufjs/blob/main/docs/engine-perf.md)。
 
 `fjsc` 随 `@ufjs/cli` 按平台安装（`@ufjs/fjsc-<平台>`）。查找顺序：环境变量 `FJSC_PATH` → ufjs 仓库内自编的版本 → npm 包。
 

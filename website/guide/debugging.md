@@ -10,15 +10,14 @@ npx fjs doctor
 
 ## 热更新
 
-`fjs dev --pages`（`fjs run` 会自动启动它）按改动的范围选择最小的更新方式：
+`fjs dev --pages`（`fjs run` 会自动启动它）按改动的范围选择最小的更新方式，只有两档：
 
 | 改了什么 | 设备上发生什么 |
 |---|---|
-| 页面自己的代码（页面 `.vue` 和只有它用的模块） | 只重新加载这一页，其它页面不动 |
-| 多个页面共享的模块（公共组件、工具函数、store） | 同一个 JS 虚拟机里热替换这些模块并重挂受影响的页面；**页面栈和全局状态保留** |
-| Shell、入口、路由表、`app.config.ts` | 整个虚拟机重建，回到首页 |
+| 某个页面自己的代码（页面 `.vue` 和只被这一页 import 的模块） | 只重新加载这一页，其它页面和页面栈不动 |
+| 其它一切：Shell、入口、路由表、`app.config.ts`、被多页或入口引用的组件与 ts、插件、配置 | 整个虚拟机重建，回到首页 |
 
-Web 端（`dev:web`）是 Vite 原生的组件级 HMR。
+共享模块打进 `shared.js`，页面通过同一份实例取用。Web 端（`dev:web`）是 Vite 原生的组件级 HMR。
 
 ## dev server 终端快捷键
 
@@ -32,6 +31,7 @@ Web 端（`dev:web`）是 Vite 原生的组件级 HMR。
 | `c` | 再打印一次地址和二维码 |
 | `p` | 在 App 上开关**性能面板** |
 | `o` | `--web` 模式下用浏览器打开 |
+| `?` | 再打印一次快捷键列表 |
 | `q` | 退出 |
 
 ## 看日志
@@ -80,15 +80,16 @@ Elements 和 Network 两个面板也在工作：
 
 | 面板 | 能看到什么 | 注意 |
 |---|---|---|
-| Elements | 当前页的元素树（标签 / class / style / 文本），选中节点后 Computed 侧栏是最终生效的样式 | 结构变化（增删元素、路由切页）约 2 秒内自动刷新；文本和属性变化在同一窗口内就地更新；纯样式变化点节点时自愈 |
+| Elements | 当前页的元素树（标签 / class / style / 文本），展开箭头按需拉取子树，任意深度都能展开；选中节点后 Styles 侧栏依次是 inline、**命中规则**（选择器原文 + 声明，按特异性排序）、Computed（最终生效的样式） | 结构变化（增删元素、路由切页）约 1–2 秒内自动刷新；文本和属性变化就地更新；纯样式变化点节点时自愈 |
 | Network | 应用里 `fetch()` 的请求行和响应体预览 | 行有最多 500ms 延迟；响应体在**应用自己读取它**（`text()` / `json()` 等）之后才看得到，上限 512 KB |
 
 几件需要知道的事：
 
-- **断点停住的时候整个界面是冻结的**。JS 跑在 UI 线程上，暂停 JS 就是暂停界面，resume 后恢复。
-- **Sources 里是编译后的 JS**，文件名是 `bundle.js`、`pages/<页面>.js` 这样的真实脚本名，看不到 Vue SFC 原文。
-- **只能调开发构建的 App 端**。release 包里根本没有调试器（这是有意的，调试模块不参与发布构建）；Web 端直接用浏览器自带的 DevTools。
-- 调试器连上期间，`console.log` 会出现在 DevTools 的 Console 里（带调用栈），`fjs log` 那边可能就看不到了。
+- **断点停住的时候整个界面是冻结的**。JS 跑在 UI 线程上，暂停 JS 就是暂停界面，resume 后恢复；期间到达的热更新推送会等 resume 后再处理。
+- **Sources 里能打开 `.vue` 原文**。dev 构建带 source map：断点可以下在 `<script setup>` 的行上，Call Stack 显示原文行号；Vue 里 import 的项目 `.ts` 同样可下断点。`shared.js` 里来自 `node_modules` 的依赖（pinia、vue……）没有 map，还是编译后的样子。
+- **Console 收全两侧日志**。JS 的 `console.*` 带调用栈进 Console；终端里 `[dev]` / `[nav]` 这些 Dart 侧日志也由 `fjs debug` 合成进来，终端看到的流 DevTools 里都有。调试器连上期间 App 侧的 `fjs log` 可能收不到 JS 日志。
+- **启动顺序无所谓**。`fjs debug` 先起、后起、dev server 中途重启都能接上；App 连上调试通道时会整包重载一次，让所有脚本进入调试器的脚本表。
+- **只能调开发构建的 App 端，且默认引擎才有调试器**。调试器物理编在独立模块里：release 包不含它；quickjs flavor（`--js-engine quickjs`）没有它。非 dev 构建想看 Elements / Network 面板，构建时加 `fjs build --devtools` 保留数据平面。Web 端直接用浏览器自带的 DevTools。
 
 ## 性能面板
 
@@ -157,7 +158,7 @@ flutter analyze
 |---|---|
 | 真机连不上 dev server，`No route to host (errno = 65)` | iOS 本地网络 / 无线数据权限没给；手机和电脑不在同一网段 |
 | 页面白屏，日志里有 `Maximum call stack size exceeded` | 页面文件名和内置标签同名，被当成组件自引用。加 `defineOptions({ name: 'XxxPage' })` |
-| 某条 CSS 不生效 | 看日志里的告警：不支持的写法会告警一次，不会静默 |
+| 某条 CSS 不生效 | 先 `npx fjs lint` 静态查一遍；运行期也看日志里的告警：不支持的写法会告警一次，不会静默 |
 | 两个页面的 pinia 状态不通 | store 实例建在插件函数里，或者没有登记 `fjs.shared` |
 | `invokeHost: no native host` | 在 Web 端调用了宿主函数，加 `hasNativeHost` 判断 |
 | 转场动画卡一下 | 页面 setup 里有重计算，挪进 `onPageSettled` |

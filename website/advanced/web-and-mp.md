@@ -11,7 +11,7 @@
 | `<style scoped>` | fjs CSS 引擎 | 真 CSS |
 | 路由 | 原生 Navigator | vue-router（默认 hash 模式） |
 | `toast()` | 原生浮层 | DOM 浮层 |
-| Worker | Dart isolate + 独立 QuickJS | 真 Web Worker |
+| Worker | Dart isolate + 独立 JS 引擎 | 真 Web Worker |
 
 **切换点在 SFC 编译**：App 构建给 `@vue/compiler-dom` 的 `isNativeTag` 声明「内置标签是元素」，模板里的 `<view>` 编译成 `createElementVNode('view')`，原样交给渲染器；Web 构建声明「内置标签是组件」，同一个 `<view>` 编译成对应 Vue 组件的引用，由 DOM 适配层渲染。
 

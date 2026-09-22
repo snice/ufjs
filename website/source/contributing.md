@@ -24,6 +24,14 @@ cmake --build build-native -j
 
 产物：`fjs-test`（自测）、`fjsrun`（命令行宿主）、`fjsc`（字节码编译器）、`libfjs.dylib`（给 `flutter test` 用）。
 
+引擎有两个 flavor，各有独立 build 目录、互不污染（默认 `primjs`；`quickjs` 是无调试器的回退）：
+
+```bash
+cmake -B build-native-quickjs -DFJS_JS_ENGINE=quickjs \
+      -DFJS_BUILD_TESTS=ON -DFJS_DEBUGGER=OFF
+cmake --build build-native-quickjs -j
+```
+
 ::: warning 自编的 fjsc 优先
 仓库里编出来的 `fjsc` 会**优先于** npm 上的 `@ufjs/fjsc-<平台>`。这是刻意的：否则改完引擎，字节码还是用旧引擎编的。改过 `native/` 就重新 `cmake --build` 一次。
 :::
@@ -69,6 +77,7 @@ cd examples/fjs-go && flutter test
 | `fjsrun <bundle>` | 不起 Flutter 跑 bundle，打印 console 和每帧 op |
 | `fjsrun --tap <id> <bundle>` | 模拟点击某个节点 |
 | `fjs log` / `fjs eval` | 连着设备看日志、求值 |
+| `fjs debug` | Chrome DevTools 断点 / Elements / Network，连正在跑的 App |
 | dev server 按 `p` | 性能面板：ui / gpu 帧耗时、JS 堆、节点数 |
 | `fjs build --analyze` | 产物体积构成 |
 | `examples/bench` | 性能基准，见 `docs/performance.md` |
@@ -82,7 +91,7 @@ cd examples/fjs-go && flutter test
 3. **两端同源**：任何面向用户的能力，Flutter（`lib/src/`）和 Web（`fjs-runtime/src/web/`）都要实现，小程序映射也要核对；事件载荷一律字符串
 4. **JS 能包就不下沉 Dart**：新标签先考虑能否在 `fjs-runtime/src/components/` 用现有标签拼出来
 5. **内置组件外观照 WeUI**，两端取同一组数值
-6. **改了 native 要重新生成预编译产物**并提交：
+6. **改了 native 要重新生成预编译产物**：跑下面的脚本，入库的是 `abi/` 产物缓存（两个 flavor 各一份），物化到 `jniLibs` / `xcframework` 的平台目录不入库：
 
 ```bash
 cd packages/flutter_fjs

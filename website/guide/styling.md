@@ -113,7 +113,7 @@ Flutter 上 `flex-grow: 1` 等于 `Expanded`，Web 上被自动改写成 `flex: 
 
 **不支持**：`display: grid`、`~` 组合器、`:nth-child` / `:not()` 等其它伪类、`#id`、`class` 以外的属性选择器、`filter` / `backdrop-filter`、行内格式化上下文（基线对齐、文字绕排）。
 
-完整的支持矩阵（每条都标了两端差异）在仓库的 [CSS 兼容清单](https://github.com/snice/ufjs/blob/main/docs/css-compat.md)。不支持的写法**不会静默失效**，引擎会打一次告警。
+完整的支持矩阵（每条都标了两端差异）在仓库的 [CSS 兼容清单](https://github.com/snice/ufjs/blob/main/docs/css-compat.md)。不支持的写法**不会静默失效**，引擎会打一次告警；写完想提前把「写了也不生效」的规则报到命令行，跑 `npx fjs lint`（见 [CLI 参考](/reference/cli)）。
 
 ## 继承
 

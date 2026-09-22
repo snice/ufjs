@@ -85,7 +85,7 @@ JS    pending 表按 callId 落定 Promise
 
 ## fetch 是怎么实现的
 
-QuickJS 没有 socket，`fetch` 由 Dart 的 `HttpClient` 实现，走的仍然是上面两条通道，**没有新增任何 C 接口**：
+JS 引擎没有 socket，`fetch` 由 Dart 的 `HttpClient` 实现，走的仍然是上面两条通道，**没有新增任何 C 接口**：
 
 ```text
 fetch(url)   → invokeHost('fjs.http.request', id, requestJson)
@@ -112,9 +112,9 @@ JS_SetPropertyStr(ctx, natives, "battery",
 
 要注意：
 
-- QuickJS 引用计数规则：`JS_New*` 返回的引用由调用方负责；`JS_Get*` 拿到的要 `JS_FreeValue`；返回给引擎的 `JSValue` 不要释放
+- 引擎的引用计数规则（两个 flavor 的 `JS_*` API 一致）：`JS_New*` 返回的引用由调用方负责；`JS_Get*` 拿到的要 `JS_FreeValue`；返回给引擎的 `JSValue` 不要释放
 - `packages/fjs-runtime/src/native-global.d.ts` 是这条边界唯一的类型描述，是手写的，要同步更新
-- 这意味着要重新编译 `libfjs`，并重新生成预编译产物，只能在 ufjs 仓库里做。见[本地开发 ufjs](/source/contributing)
+- 这意味着要重新编译 `libfjs`、更新 `abi/` 产物缓存，只能在 ufjs 仓库里做。见[本地开发 ufjs](/source/contributing)
 
 ## 对照表
 

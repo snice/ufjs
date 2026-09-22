@@ -136,7 +136,7 @@ export default defineConfig({
 ## 6. 发布构建
 
 ```bash
-npm run build:release   # JS → QuickJS 字节码，复制进 Flutter 宿主 assets
+npm run build:release   # JS → 引擎字节码，复制进 Flutter 宿主 assets
 npm run build:apk       # 再执行 flutter build apk
 npm run build:web       # 浏览器静态站点
 ```

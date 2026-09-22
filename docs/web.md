@@ -281,7 +281,7 @@ iOS 上会带系统触感反馈；web 没有触感，这是 picker 系列目前�
   source map）。App 的 dev 模式由 spec 094 把 Vue SFC map 接到同一套
   Chrome DevTools 上。页面代码零改动，两端契约不受影响。
 - **dev 热更新**：`fjs dev --web` 下页面收到任何变更推送都是整页刷新
-  （`fjs dev --pages` 对 App 端可以做到 unit / page 级热替换，spec 037）。
+  （`fjs dev --pages` 对 App 端只有页面级 / 整包两档热更新，spec 095）。
   浏览器没有「VM 重建」的成本，整页刷新与热替换开销同量级；用户自建 vite
   工程（`dev:web`）则是 vite 原生的组件级 HMR。
 - **`flex-direction: row` 的交叉轴默认值**：Flutter 是 `center`，CSS 是

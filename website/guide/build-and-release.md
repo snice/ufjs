@@ -22,7 +22,7 @@ npm run build:release        # = fjs build --pages --release
 
 1. 按页面分包打包：共享运行时一个 chunk、入口一个、每个页面一个
 2. 压缩 JS（`--no-minify` 可关闭）
-3. 用 `fjsc` 编译成 **QuickJS 字节码**（`.fjsbundle`），App 启动时跳过解析
+3. 用 `fjsc` 编译成**引擎字节码**（`.fjsbundle`，头部锁 engine id），App 启动时跳过解析
 4. 创建或更新 Flutter 宿主，把字节码和静态资源复制进 `assets/fjs/`
 
 ```text
@@ -72,7 +72,7 @@ export default defineConfig({ version: '1.2.0+3' });   // versionName 1.2.0，ve
 
 - 升级了 `@ufjs/runtime` 或 `vue` 之后，**所有** `.fjsbundle` 要一起重新构建（shared、bundle、pages 之间是 API 级耦合）
 - 升级三件套（`@ufjs/cli` / `@ufjs/runtime` / `flutter_fjs`）用 `fjs upgrade`，三者必须同一 minor，别手动各升各的
-- 字节码带引擎版本校验：QuickJS 版本对不上时 App 会直接报错拒绝加载，不会运行到一半崩溃
+- 字节码带 engine id 校验（`primjs-4.1.1` / `quickjs-ng-0.9.0`）：与 App 内引擎不一致时会直接报错拒绝加载，不会运行到一半崩溃
 
 ## Web
 

@@ -8,7 +8,7 @@ ufjs 让你**用 Vue 3 / TypeScript 写界面，用 Flutter 负责原生渲染**
 |---|---|---|
 | `@ufjs/cli` | npm | 命令行 `fjs`：创建项目、dev server、打包、生成 Flutter 宿主、编译小程序 |
 | `@ufjs/runtime` | npm | 打进你 bundle 的运行时：内置标签、路由、Vue 渲染器、CSS 引擎 |
-| `flutter_fjs` | pub.dev | Flutter 插件：内嵌 QuickJS 引擎，把 JS 发来的节点操作画成 Flutter Widget |
+| `flutter_fjs` | pub.dev | Flutter 插件：内嵌 JS 引擎（默认 PrimJS，可切 quickjs-ng），把 JS 发来的节点操作画成 Flutter Widget |
 
 你平时只和前两个打交道，第三个由 `fjs run` 自动放进生成的 Flutter 工程里。
 
@@ -20,7 +20,7 @@ Vue 3 / TypeScript / Vite                你写的代码
         ▼
 fjs CLI：create / dev / run / build
         │
-        ├─ fjs build        → Flutter 应用（QuickJS 字节码，Android / iOS / 鸿蒙 / 桌面）
+        ├─ fjs build        → Flutter 应用（引擎字节码，Android / iOS / 鸿蒙 / 桌面）
         ├─ fjs build --web  → 浏览器静态站点 dist/web
         └─ fjs build --mp   → 微信小程序 dist/mp（Skyline + glass-easel）
         │
@@ -28,7 +28,7 @@ fjs CLI：create / dev / run / build
 @ufjs/runtime：内置标签 + 路由 + Vue 渲染器 + CSS 引擎
         │
         ▼
-flutter_fjs：QuickJS-ng + Dart FFI + Flutter Widget
+flutter_fjs：PrimJS（默认引擎）+ Dart FFI + Flutter Widget
 ```
 
 ## 和其它方案有什么不同

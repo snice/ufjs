@@ -15,7 +15,7 @@
 │   Vue 渲染器 → element API → op 帧编码              │
 │   CSS 引擎、路由、fetch、Worker                     │
 ├──────────────── JSI 边界 ──────────────────────────┤
-│ libfjs（C++，内嵌 QuickJS-ng）                      │
+│ libfjs（C++，内嵌 JS 引擎：PrimJS 默认）            │
 │   宿主函数直接收发 JSValue，无序列化                │
 ├──────────────── dart:ffi（纯 C ABI）────────────────┤
 │ flutter_fjs（Flutter 插件）                         │
@@ -28,7 +28,7 @@
 
 ## 决策一：嵌引擎，不用 WebView
 
-WebView 方案里，JS 和原生是两套运行时，所有交互都过 `postMessage` 字符串桥。ufjs 把 **QuickJS-ng 以 C++ 源码**编进 `libfjs`，和 App 链接在一起：
+WebView 方案里，JS 和原生是两套运行时，所有交互都过 `postMessage` 字符串桥。ufjs 把 **JS 引擎（默认 PrimJS 4.1.1，可切 quickjs-ng）以 C++ 源码**编进 `libfjs`，和 App 链接在一起：
 
 | | WebView | ufjs |
 |---|---|---|
@@ -101,10 +101,10 @@ App 和 Web 的切换点在 SFC 编译时：给 `@vue/compiler-dom` 传不同的
 
 | | dev | release |
 |---|---|---|
-| 产物 | JS 源码，HTTP 拉取 | QuickJS 字节码 `.fjsbundle` |
+| 产物 | JS 源码，HTTP 拉取 | 引擎字节码 `.fjsbundle` |
 | 加载 | `JS_Eval` 解析执行 | `JS_ReadObject`，跳过解析 |
-| 更新 | WebSocket 推送，页面 / 模块级热替换 | 随包发布 |
-| 校验 | — | 引擎版本不匹配直接拒绝加载 |
+| 更新 | WebSocket 推送，页面级 / 整包两档热更新 | 随包发布 |
+| 校验 | — | engine id 不匹配直接拒绝加载 |
 
 ## 接下来
 

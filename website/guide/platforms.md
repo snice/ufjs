@@ -14,7 +14,7 @@ ufjs 的第一原则是**两端同源**：任何面向用户的能力（标签�
 | 内置标签 | Dart 侧 Flutter Widget | fjs 的 DOM 组件 | 小程序同名组件 |
 | `<style>` | fjs 自己的 CSS 引擎 | 真 CSS | WXSS |
 | 路由 | Flutter `Navigator` 原生页面栈 | vue-router | 小程序页面栈 |
-| 发布产物 | QuickJS 字节码 | 静态站点 | TS 源码，微信开发者工具编译 |
+| 发布产物 | 引擎字节码 `.fjsbundle` | 静态站点 | TS 源码，微信开发者工具编译 |
 
 ## 按平台分叉
 
@@ -65,7 +65,7 @@ if (hasNativeHost) {
 | `getBoundingClientRect` / `offset*` | App 端页面**刚 push 进来的当次**不强制重排（首帧布局还没跑），第一拍可能量到 0；web 始终可强制重排 | 挂载帧测量按 rAF 重试几帧，或挪到 `onPageSettled` 之后 |
 | `.svg` 图片 | App 不支持 | 用图标模块或位图；模板里手写的内联 `<svg>` 两端可用（`<text>` / `<use>` / 渐变填充不支持，适合图标类图形） |
 | `invokeHost` | Web / 小程序没有 Dart 宿主 | `hasNativeHost` 判断 |
-| dev 热更新 | Web 是 Vite HMR；App 是页面级 / 模块级热替换 | — |
+| dev 热更新 | Web 是 Vite HMR；App 只有页面级 / 整包两档 | — |
 
 完整差异见仓库文档：[Web 平台](https://github.com/snice/ufjs/blob/main/docs/web.md#已知差异)、[小程序](https://github.com/snice/ufjs/blob/main/docs/miniprogram.md)。
 

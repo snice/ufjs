@@ -12,7 +12,7 @@ git clone https://github.com/snice/ufjs && cd ufjs
 |------|------|--------|
 | `packages/fjs` | TS | npm 包 `@ufjs/cli`：命令行、打包、dev server、小程序编译 |
 | `packages/fjs-runtime` | TS | npm 包 `@ufjs/runtime`：element API、op 编码、Vue 渲染器、CSS 引擎、路由、Web 适配层、wx 运行时 |
-| `packages/flutter_fjs` | Dart + C++ | pub 包 `flutter_fjs`：QuickJS 引擎、FFI、镜像树、Widget 渲染 |
+| `packages/flutter_fjs` | Dart + C++ | pub 包 `flutter_fjs`：JS 引擎（PrimJS 默认，可切 quickjs-ng）、FFI、镜像树、Widget 渲染 |
 | `packages/fjsc` | C++ 产物 | 字节码编译器（按平台发 npm 的预编译二进制） |
 | `packages/fjs-iconmind` `fjs-webview` `fjs-webgl` `fjs-spine` | TS + Dart | 官方模块，也是写模块的范例 |
 | `demo` | Vue | 标准 Vue 3 + Vite 项目，create → run → build 的回归验证场 |
@@ -30,7 +30,7 @@ JS 侧是 pnpm workspace，Flutter 侧走 pub 的 path 依赖。
 ```text
 @ufjs/cli (packages/fjs)          构建期：把你的源码变成 bundle / 字节码 / 小程序
         │
-@ufjs/runtime (packages/fjs-runtime)   运行期 JS：打进 bundle，跑在 QuickJS 里
+@ufjs/runtime (packages/fjs-runtime)   运行期 JS：打进 bundle，跑在 JS 引擎里
         │  JSI
 flutter_fjs (packages/flutter_fjs)     运行期原生：C++ 引擎 + Dart 渲染
 ```
@@ -42,9 +42,10 @@ src/
   cli.ts              命令分发入口（esbuild entry → dist/cli.js）
   vite.ts             Vite 插件 fjs()（esbuild entry → dist/vite.js）
   config.ts           defineConfig（@ufjs/cli/config）
-  commands/           一个命令一个文件：create、run、host、add、module、doctor…
+  commands/           一个命令一个文件：create、run、host、add、module、debug、lint、types、doctor…
   bundler/            esbuild 层：build.ts（含分包）、vue-plugin.ts（SFC 编译）、analyze.ts
-  dev/                dev server：server.ts、热更新判断、局域网发现、二维码
+  dev/                dev server：server.ts、热更新判断、局域网发现、二维码、调试中继
+  debug/              CDP 中继的数据面：cdp-server.ts（DevTools 面板的域桥）
   mp/                 小程序编译：wxml.ts、script.ts、css.ts、project.ts、subpackage.ts
   project/            读用户工程：config.ts（fjs 字段）、pages.ts（路由扫描）、plugins.ts、modules.ts、assets.ts
   registry/           fjs add 的数据：packages.json
@@ -83,12 +84,15 @@ src/
 
 ```text
 native/
-  quickjs/            内嵌的 QuickJS-ng 源码
+  primjs/             内嵌的 PrimJS 源码（默认 flavor，带 CDP 调试器）
+  quickjs/            内嵌的 quickjs-ng 源码（`--js-engine quickjs` 可切，无调试器）
   include/fjs.h       纯 C ABI（Dart FFI 绑定的就是它）
   src/vm.cpp          VM 生命周期、eval、字节码加载、事件派发、pump
   src/natives.cpp     JS 可调用的原生函数（uiOps、invokeHost、fibonacci…）
   tools/fjsrun.cpp    不起 Flutter 跑 bundle 的命令行工具
   tools/fjsc.cpp      字节码编译器
+abi/                  两个 flavor 的预编译产物缓存 —— 唯一入库的产物源，
+                      平台目录（jniLibs / xcframework）由 runner 物化，不入库
 lib/src/
   ffi.dart            FFI 绑定
   engine.dart         FjsEngine：VM 宿主、host 注册表、事件派发、dev 连接
@@ -116,6 +120,7 @@ tool/                 预编译产物的构建脚本（Android / Apple / 鸿蒙�
 | 事件编号 | `fjs-runtime/src/ui/element.ts` 的 `EventType` ↔ Dart 的 `FjsEvent` ↔ `fjs.h` |
 | JSI 类型 | `native/src/natives.cpp` ↔ `fjs-runtime/src/native-global.d.ts` |
 | 内置标签 | Dart `widgets/` ↔ `fjs-runtime/src/web/components/` ↔ 小程序映射 `fjs/src/mp/wxml.ts` |
+| 调试器 | 引擎钩子表 ↔ inspector 模块 ↔ dev server 文本命令 ↔ `__fjsDevtools.cmd`，四条见仓库 [debugger.md §3](https://github.com/snice/ufjs/blob/main/docs/debugger.md) |
 
 ## 读源码的建议顺序
 

@@ -45,7 +45,7 @@ import type { RouteLocation } from 'fjs/router';
 | `hasNativeHost: boolean` | 是否跑在 App 里（有 Dart 宿主） |
 | `invokeHost<T>(name, ...args)` | 同步调用 Dart 宿主函数。参数只能是 `string \| number \| boolean \| null`。无宿主时抛错 |
 | `invokeHostAsync<T>(name, ...args)` | 异步调用，返回 Promise。无宿主时 reject |
-| `engineInfo` | 引擎信息（ABI 版本等） |
+| `engineInfo` | 引擎信息：`engineId`（`primjs-4.1.1` / `quickjs-ng-0.9.0`，Web 端为 `none`）与 `abiVersion` |
 
 ### 网络
 
