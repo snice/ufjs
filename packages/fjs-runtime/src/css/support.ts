@@ -115,9 +115,11 @@ export const SUPPORTED_PSEUDO_CLASSES = new Set([
  * together); anything else drops the rule. */
 export const SUPPORTED_NOT_ARGS = new Set([':first-child', ':last-child']);
 
-/** Pseudo-elements: only the decorative pair exists. Others
- * (`::placeholder`, `::selection`, …) drop the whole rule. */
-export const SUPPORTED_PSEUDO_ELEMENTS = new Set(['before', 'after']);
+/** Pseudo-elements the engine understands: the decorative pair, plus
+ * `::placeholder` (specs/100 — it styles the input's hint text, carried to
+ * the peer as the `placeholderStyle` prop instead of a box). Anything else
+ * (`::selection`, …) drops the whole rule. */
+export const SUPPORTED_PSEUDO_ELEMENTS = new Set(['before', 'after', 'placeholder']);
 
 /** Attribute selectors match ONLY the class attribute
  * (`[class*=van-hairline]`, specs/069); any other attribute drops the

@@ -65,9 +65,16 @@ describe('support table vs engine: selectors', () => {
     expect(parseSelector('.p:not(.x)')).toBeNull();
   });
 
-  it('unsupported pseudo-element drops the rule; the decorative pair survives', () => {
-    expect(parseSelector('input::placeholder')).toBeNull();
-    expect(parseSelector('.a::before')).not.toBeNull();
+  it('::placeholder parses as the placeholder pseudo; the rest still drop', () => {
+    // specs/100: it styles the input's hint text (carried as the
+    // placeholderStyle prop), so it joined the supported set
+    expect(parseSelector('input::placeholder')?.pseudo).toBe('placeholder');
+    expect(parseSelector('.a::before')?.pseudo).toBe('before');
+    expect(parseSelector('.a::selection')).toBeNull();
+    // -webkit-input-placeholder is NOT stripped: only ::placeholder is a
+    // recognized tail, so the legacy spelling falls into the
+    // unsupported-syntax branch and drops (web doesn't need the engine)
+    expect(parseSelector('input::-webkit-input-placeholder')).toBeNull();
   });
 
   it('attribute selectors match only [class]', () => {

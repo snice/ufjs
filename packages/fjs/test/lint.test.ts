@@ -38,6 +38,7 @@ describe('drops', () => {
 .legacy ~ .b { color: red; }
 .row:nth-child(2) { color: red; }
 .cell:not(.x) { color: red; }
+input::selection { color: red; }
 input::placeholder { color: red; }
 .card[type=big] { color: red; }
 .t { word-break: break-all; }
@@ -58,7 +59,9 @@ input::placeholder { color: red; }
     expect(msgs.join('\n')).toContain('~ sibling combinator');
     expect(msgs.join('\n')).toContain(':nth-child');
     expect(msgs.join('\n')).toContain(':not(.x)');
-    expect(msgs.join('\n')).toContain('::placeholder');
+    expect(msgs.join('\n')).toContain('::selection');
+    // ::placeholder is engine-supported since specs/100 — no drop finding
+    expect(msgs.join('\n')).not.toContain('::placeholder');
     expect(msgs.join('\n')).toContain('[type=big]');
     expect(hasDecl('word-break')).toBe(true);
     expect(hasDecl('text-overflow')).toBe(true);

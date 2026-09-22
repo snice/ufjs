@@ -60,15 +60,21 @@ export interface ClassAttrTest {
  * supports. Anything else in brackets stays unsupported syntax. */
 const CLASS_ATTR_RE = /\[\s*class\s*([~|^$*]?=)\s*(?:"([^"]*)"|'([^']*)'|([\w-]+))\s*\]/g;
 
+/** The pseudo-element kinds a selector/rule can carry. `placeholder` has no
+ * decoration box: its declarations style the input's hint text and leave the
+ * element alone, exactly like the decorative pair (specs/100). */
+export type PseudoKind = 'before' | 'after' | 'placeholder';
+
 export interface Selector {
   compounds: Compound[]; // source order; the last one is the subject
   combinators: Combinator[]; // combinators[i] joins compounds[i] and [i+1]
   deep: boolean; // matched via :deep() — scope checked on an ancestor
   active: boolean; // subject carries :active — only applies while pressed
   hover: boolean; // subject carries :hover — only applies while hovered
-  /** Subject carries `::before` / `::after` (single-colon spellings too).
-   * The rule styles the synthesized decoration box, not the element. */
-  pseudo?: 'before' | 'after';
+  /** Subject carries `::before` / `::after` / `::placeholder`
+   * (single-colon spellings for the decorative pair too). The rule styles
+   * that pseudo, never the element itself. */
+  pseudo?: PseudoKind;
   specificity: number; // classes*10 + tags (+10 per pseudo-class)
   /** The source text, kept for the DevTools matched-rules view (spec 092).
    * The engine itself matches on the compounds and never reads it. */
@@ -91,7 +97,7 @@ export interface CssRule {
   /** Every selector of this rule styles the same pseudo-element. Rules that
    * mix pseudo and non-pseudo selectors are split at parse time, so one
    * rule never spans two worlds. */
-  pseudo?: 'before' | 'after';
+  pseudo?: PseudoKind;
 }
 
 // ---- @media conditions ------------------------------------------------------
@@ -326,7 +332,7 @@ export function parseStylesheet(
     // element, so it cannot ride along in `selectors`
     if (root) rules.push({ selectors: [], decls, order: order++, scope, root: true });
     if (selectors.length !== 0) rules.push({ selectors, decls, order: order++, scope });
-    for (const kind of ['before', 'after'] as const) {
+    for (const kind of ['before', 'after', 'placeholder'] as const) {
       const group = pseudoSelectors.filter((s) => s.pseudo === kind);
       if (group.length !== 0) {
         rules.push({ selectors: group, decls, order: order++, scope, pseudo: kind });
@@ -541,14 +547,14 @@ export function parseSelector(raw: string): Selector | null {
     warnOnce(`selector "${raw.trim()}" puts :hover on something other than its last compound, skipped`);
     return null
   }
-  // A trailing ::before / ::after (the single-colon legacy spelling too)
-  // makes this selector style a synthesized decoration box instead of the
+  // A trailing ::before / ::after (the single-colon legacy spelling too) or
+  // ::placeholder makes this selector style that pseudo instead of the
   // element itself. CSS allows them only on the subject; anything earlier
   // falls through to the unsupported-syntax check below.
-  let pseudo: 'before' | 'after' | undefined;
-  const pm = /::?(before|after)$/.exec(text);
+  let pseudo: PseudoKind | undefined;
+  const pm = /::?(before|after|placeholder)$/.exec(text);
   if (pm) {
-    pseudo = pm[1] as 'before' | 'after';
+    pseudo = pm[1] as PseudoKind;
     text = text.slice(0, -pm[0].length).trim();
   }
   // :first-child / :last-child are structural — computable for any compound

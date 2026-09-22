@@ -97,8 +97,10 @@ border-box` 的列 flexbox，对齐 Flutter 的「padding 在盒内、margin 在
 样式照常覆盖默认值——`border-color` 单独出现时按 CSS 语义算 1px 边框。
 
 `input` 的边框、圆角、内边距一律由页面样式决定（Material 自带的
-`OutlineInputBorder` 会和页面画的框叠成两层，已关掉），placeholder 两边都钉成
-`#999999`。
+`OutlineInputBorder` 会和页面画的框叠成两层，已关掉）。占位文字：页面没有
+`::placeholder` 规则时两边都钉成 `#999999`；有规则时两端都按规则算——web 是
+原生 CSS，App 端由引擎解析成 `placeholderStyle` prop（specs/100，见
+[css-compat](css-compat.md) 选择器表）。
 
 `button` 自带按下态：`.fjs-button:active` 叠一层 10% 黑（WeUI 的
 `--weui-BTN-ACTIVE-MASK`——白底按钮变灰、填充按钮变深）。Flutter 侧用 pointer

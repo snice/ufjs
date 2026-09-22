@@ -307,6 +307,69 @@ function syncPseudoBoxes(el: Element, styles: PseudoStyles | null): void {
   }
 }
 
+// ---- ::placeholder -> `placeholderStyle` prop (specs/100) ----
+//
+// The hint is not a box the mirror tree could draw: it lives inside the
+// input widget, which reads the `placeholderStyle` prop — the same
+// four-key, CSS-shaped string the `placeholder-style` attribute takes
+// (textarea/props.ts), parsed by input.dart's _hintStyle. So the computed
+// ::placeholder style is serialized into that string instead of becoming a
+// child; '' clears it, dropping the widget back to the grey both ends pin
+// for an input with no ::placeholder rule (base-css.ts).
+//
+// An element that only carries an authored placeholder-style attribute is
+// left alone while no ::placeholder rule matches — that prop belongs to the
+// page. A matching rule overrides it (on web the page's own CSS would win
+// or lose by source order; there is one prop here, and CSS is the side
+// both platforms share).
+
+/** Last string this layer pushed per element id — `undefined` means "we
+ * never wrote one", which is what keeps the clear from touching a page's
+ * own placeholder-style. */
+const placeholderStyled = new Map<number, string>();
+
+/** The four `placeholder-style` keys, from a computed PseudoStyles entry to
+ * the prop string the peer parses. */
+function placeholderStyleString(ph: Record<string, unknown>, elStyle: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (typeof ph.color === 'string') parts.push(`color:${ph.color}`);
+  if (ph.fontSize !== undefined) {
+    parts.push(`font-size:${typeof ph.fontSize === 'number' ? `${ph.fontSize}px` : ph.fontSize}`);
+  }
+  if (ph.fontWeight !== undefined) parts.push(`font-weight:${ph.fontWeight}`);
+  const lh = ph.lineHeight;
+  if (lh !== undefined) {
+    // Flutter's TextStyle.height multiplies the font size, so an absolute
+    // line-height ("24px") goes over as the ratio against the placeholder's
+    // own size. A bare number passes through untouched — and must: the peer
+    // would read "24" as a 24× multiplier (a 336px hint box).
+    const abs = /^(-?\d*\.?\d+)px$/.exec(String(lh).trim());
+    if (abs) {
+      const raw = typeof ph.fontSize === 'number' ? ph.fontSize : elStyle.fontSize;
+      const base = typeof raw === 'number' && raw > 0 ? raw : 14;
+      parts.push(`line-height:${Math.round((parseFloat(abs[1]) / base) * 1000) / 1000}`);
+    } else {
+      parts.push(`line-height:${lh}`);
+    }
+  }
+  return parts.join(';');
+}
+
+function syncPlaceholderStyle(
+  el: Element,
+  ph: Record<string, unknown> | undefined,
+  elStyle: Record<string, unknown>,
+): void {
+  const next = ph === undefined ? '' : placeholderStyleString(ph, elStyle);
+  if (next === '') {
+    if (placeholderStyled.delete(el.id)) setProps(el, { placeholderStyle: '' });
+    return;
+  }
+  if (placeholderStyled.get(el.id) === next) return;
+  placeholderStyled.set(el.id, next);
+  setProps(el, { placeholderStyle: next });
+}
+
 /** Shared engine instance; css-vars.ts also drives it (useCssVars). */
 export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, activeStyle, hoverStyle, pseudo) => {
   const el = elementsById.get(id);
@@ -324,7 +387,11 @@ export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, act
   // elements that never matched a hover rule (the common case — no bytes at
   // all) and null to clear one the native side may still hold.
   if (hoverStyle !== undefined) setHoverStyle(el, hoverStyle);
-  if (pseudo !== undefined) syncPseudoBoxes(el, pseudo);
+  if (pseudo !== undefined) {
+    syncPseudoBoxes(el, pseudo);
+    // ::placeholder has no box — it styles the input's hint text
+    syncPlaceholderStyle(el, pseudo === null ? undefined : pseudo.placeholder, style);
+  }
   if (style.position === 'fixed') hoistIfNeeded(el, style);
 });
 
@@ -492,6 +559,7 @@ function forgetSubtree(id: number) {
     hadActiveStyle.delete(current);
     htmlDefaults.delete(current);
     textValues.delete(current);
+    placeholderStyled.delete(current);
     if (onceFired.size) for (const key of onceFired) if (key.startsWith(`${current}:`)) onceFired.delete(key);
     forgetElementStyle(current);
     // event handlers too, and for the same reason the engine state goes:
@@ -556,8 +624,8 @@ const H: Record<string, HtmlTagMapping> = {
   ol: { tag: 'view', style: { flexShrink: 1 } },
   li: { tag: 'view', style: { flexShrink: 1 } },
   // `label` is an fjs tag of its own now (it forwards taps); it stays in
-  // this table so the defaults an HTML page relied on still apply, mapping
-  // to itself. `form` is NOT here: on this path it resolves to the Vue
+  // this table mapping to itself, but with NO style defaults — see the
+  // entry below. `form` is NOT here: on this path it resolves to the Vue
   // component in components/form.ts, which renders a plain view.
   table: { tag: 'view', style: { flexShrink: 1 } },
   tr: { tag: 'view', style: { flexDirection: 'row', flexShrink: 1 } },
@@ -591,8 +659,13 @@ const H: Record<string, HtmlTagMapping> = {
   // before (render/style.dart resolves the two the way CSS does).
   button: { tag: 'button' },
   input: { tag: 'input' },
-  // same numbers the web base stylesheet gives `label` (base-css.ts)
-  label: { tag: 'label', style: { margin: 4, fontSize: 14, color: '#666666' } },
+  // No style defaults: a margin/color/font-size declared on the element
+  // beats inheritance, so vant's `.van-field__label { color: … }` could
+  // never reach the text and the 4px margin pushed the label off the
+  // input's line — on both platforms (specs/100). A browser UA declares
+  // none of these either; the web base stylesheet's `label` rule shrank to
+  // its container behavior for the same reason (base-css.ts).
+  label: { tag: 'label' },
   // `textarea` used to be an alias for `input multiline`. It is a real
   // component now (components/textarea.ts); an alias here would rewrite the
   // tag before the component is ever instantiated. A render function that

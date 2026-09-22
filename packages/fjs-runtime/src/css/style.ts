@@ -46,7 +46,7 @@ export const INHERITABLE = new Set<string>(INHERITABLE_KEYS);
 const FLEX_DISPLAYS = new Set(['flex', 'inline-flex', '-webkit-flex']);
 /** CSS initial font-size; em lengths chain up to this through inheritance. */
 const INITIAL_FONT_PX = 16;
-/** Pseudo-style comparison for the notification decision: both kinds
+/** Pseudo-style comparison for the notification decision: all kinds
  * compared shallowly — values are normalized scalars by the time they get
  * here (numbers, strings, resolved var()/em output). */
 function pseudoChanged(next: PseudoStyles, prev: PseudoStyles | null | undefined): boolean {
@@ -56,7 +56,11 @@ function pseudoChanged(next: PseudoStyles, prev: PseudoStyles | null | undefined
     for (const k in b) if (!(k in a)) return true;
     return false;
   };
-  return kind(next.before, prev?.before) || kind(next.after, prev?.after);
+  return (
+    kind(next.before, prev?.before) ||
+    kind(next.after, prev?.after) ||
+    kind(next.placeholder, prev?.placeholder)
+  );
 }
 
 // CSS allows a leading-dot decimal without an integer part (`.8em`) —
@@ -292,12 +296,17 @@ export interface MatchedRuleReport {
   decls: Record<string, unknown>;
 }
 
-/** Computed `::before` / `::after` styles for one element, each already
- * var()-resolved and em-folded, with the element's inheritable properties as
- * the base (a pseudo-element inherits from its originating element). */
+/** Computed pseudo-element styles for one element, each already
+ * var()-resolved and em-folded. `before`/`after` carry the element's
+ * inheritable properties as the base (a pseudo-element inherits from its
+ * originating element); `placeholder` holds ONLY its matched declarations —
+ * CSS's UA default for the hint is grey rather than the inherited text
+ * color, so a rule without `color` must leave the peer's pinned grey
+ * placeholder alone (specs/100). */
 export interface PseudoStyles {
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;
+  placeholder?: Record<string, unknown>;
 }
 
 interface MatchResult {
@@ -308,14 +317,15 @@ interface MatchResult {
   activeDecls?: Record<string, unknown>;
   /** Same shape for `:hover` rules. */
   hoverDecls?: Record<string, unknown>;
-  /** Cascaded `::before` / `::after` declarations, present only when the
-   * stylesheet set contains pseudo-element rules at all (the common page
-   * pays nothing). Matched by the same selectors; the declarations style
-   * the synthesized decoration box, never the element. State variants
+  /** Cascaded `::before` / `::after` / `::placeholder` declarations, present
+   * only when the stylesheet set contains pseudo-element rules at all (the
+   * common page pays nothing). Matched by the same selectors; the
+   * declarations style that pseudo, never the element itself. State variants
    * (`:active::before`) stay out — the plain variant is the supported
    * subset, registered in css-compat.md. */
   beforeDecls?: Record<string, unknown>;
   afterDecls?: Record<string, unknown>;
+  placeholderDecls?: Record<string, unknown>;
   id: number; // identity token for the compute cache key
   /** Computed styles for this rule set, keyed by the PARENT's computed-style
    * id. That one number is a complete key: a parent's computed style and its
@@ -553,8 +563,8 @@ export class StyleEngine {
       hoverStyle?: Record<string, unknown> | null,
       // same convention as hoverStyle: undefined = unchanged since the last
       // push, null = the element stopped matching any pseudo-element rule,
-      // an object = the current ::before/::after styles (either kind may be
-      // absent)
+      // an object = the current pseudo-element styles (before / after /
+      // placeholder — any kind may be absent)
       pseudo?: PseudoStyles | null,
     ) => void,
   ) {}
@@ -1291,6 +1301,7 @@ export class StyleEngine {
     // its own width/background must NOT leak into the decoration box), the
     // matched pseudo declarations layer on top, and both var() and em go
     // through the same resolution as the element's own style.
+    let pseudo: PseudoStyles | undefined;
     if (matched.beforeDecls !== undefined || matched.afterDecls !== undefined) {
       const inheritable: Record<string, unknown> = {};
       for (let i = 0; i < INHERITABLE_KEYS.length; i++) {
@@ -1318,13 +1329,24 @@ export class StyleEngine {
         }
         return merged0;
       };
-      const pseudo: PseudoStyles = {};
+      pseudo = {};
       if (matched.beforeDecls !== undefined) pseudo.before = build(matched.beforeDecls);
       if (matched.afterDecls !== undefined) pseudo.after = build(matched.afterDecls);
-      s.pseudo = pseudo;
-    } else {
-      s.pseudo = undefined;
     }
+    if (matched.placeholderDecls !== undefined) {
+      // `::placeholder` starts from its matched declarations ALONE (see
+      // PseudoStyles): the hint's UA default grey must survive a rule that
+      // says nothing about color, so the element's inherited color is not
+      // layered in here — only an explicit `color` (or `currentColor`,
+      // which resolveInheritKeyword maps to the element's) reaches it.
+      // em chains from the element's own font-size: the placeholder
+      // inherits from its originating element, not from its parent.
+      const ph = resolveVars({ ...matched.placeholderDecls }, custom);
+      resolveEm(ph, fontSizePx(style.fontSize, parentFontPx));
+      resolveInheritKeyword(ph, style);
+      (pseudo ??= {}).placeholder = ph;
+    }
+    s.pseudo = pseudo;
     if (s.hoverComputed) s.hadHover = true;
     s.computedId = this.nextObjId++;
     s.customId = custom ? this.nextObjId++ : 0;
@@ -1616,14 +1638,16 @@ export class StyleEngine {
     // (`:active::before` is not the supported subset — see MatchResult).
     let beforeDecls: Record<string, unknown> | undefined;
     let afterDecls: Record<string, unknown> | undefined;
+    let placeholderDecls: Record<string, unknown> | undefined;
     if (this.hasPseudo) {
       const before: Array<{ rule: CssRule; spec: number }> = [];
       const after: Array<{ rule: CssRule; spec: number }> = [];
+      const placeholder: Array<{ rule: CssRule; spec: number }> = [];
       for (const cls of s.classes) {
-        this.scanPseudoBucket(this.pseudoBuckets.byClass.get(cls), stamp, id, s, before, after);
+        this.scanPseudoBucket(this.pseudoBuckets.byClass.get(cls), stamp, id, s, before, after, placeholder);
       }
-      this.scanPseudoBucket(this.pseudoBuckets.byTag.get(s.tag), stamp, id, s, before, after);
-      this.scanPseudoBucket(this.pseudoBuckets.catchAll, stamp, id, s, before, after);
+      this.scanPseudoBucket(this.pseudoBuckets.byTag.get(s.tag), stamp, id, s, before, after, placeholder);
+      this.scanPseudoBucket(this.pseudoBuckets.catchAll, stamp, id, s, before, after, placeholder);
       const fold = (bucket: Array<{ rule: CssRule; spec: number }>) => {
         if (bucket.length === 0) return undefined;
         bucket.sort(byCascade);
@@ -1639,6 +1663,7 @@ export class StyleEngine {
       };
       beforeDecls = fold(before);
       afterDecls = fold(after);
+      placeholderDecls = fold(placeholder);
     }
     const result: MatchResult = {
       decls,
@@ -1647,6 +1672,7 @@ export class StyleEngine {
       hoverDecls,
       beforeDecls,
       afterDecls,
+      placeholderDecls,
       id: this.nextObjId++,
       byParent: new Map(),
     };
@@ -1704,8 +1730,9 @@ export class StyleEngine {
     }
   }
 
-  /** Same walk for the `::before`/`::after` rule set: per-rule body is the
-   * old pseudo scan verbatim, cascaded per pseudo kind by the caller. */
+  /** Same walk for the pseudo-element rule set (::before / ::after /
+   * ::placeholder): per-rule body is the old pseudo scan verbatim,
+   * cascaded per pseudo kind by the caller. */
   private scanPseudoBucket(
     bucket: CssRule[] | undefined,
     stamp: number,
@@ -1713,6 +1740,7 @@ export class StyleEngine {
     s: ElementState,
     before: Array<{ rule: CssRule; spec: number }>,
     after: Array<{ rule: CssRule; spec: number }>,
+    placeholder: Array<{ rule: CssRule; spec: number }>,
   ): void {
     if (bucket === undefined) return;
     for (const rule of bucket) {
@@ -1732,7 +1760,10 @@ export class StyleEngine {
       }
       if (best < 0) continue;
       const spec = best + (rule.scope != null ? 10 : 0);
-      (rule.pseudo === 'before' ? before : after).push({ rule, spec });
+      (rule.pseudo === 'before' ? before : rule.pseudo === 'placeholder' ? placeholder : after).push({
+        rule,
+        spec,
+      });
     }
   }
 

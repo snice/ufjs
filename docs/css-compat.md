@@ -38,6 +38,7 @@
 | 相邻兄弟组合器 `+` | ✅ | 匹配**紧邻的前一个参与兄弟**（跳过裸文字，与结构伪类同规则）；`a + b + c` 链与 `>` 混用可正常回溯。层叠权重与后代/子代组合器相同（组合器本身不计分）。缓存正确性：存在 `+` 规则时前兄弟的签名进 chainKey——前者类名/scope 切换、兄弟插入删除都会即时重算后者（vant 的 `.van-button__loading + .van-button__text { margin-left: 4px }` 图标间距靠它）；没有 `+` 规则的页面零额外开销 |
 | 后续兄弟组合器 `~` | ❌ | |
 | 伪元素 `::before` / `::after` | ⚠️ | **装饰型**（specs/069）：只能在最后一个复合选择器上；`content` 只认 `''`/引号字符串（`none`/`normal` 不生成盒子），`attr()`/`counter()` 不支持（告警、不生成）；码点全在私有区的 iconfont 字形：盒子的字体栈命中某个 `@font-face` 声明的字体时正常渲染（specs/071），否则不渲染文字、只留装饰盒（同 web 字体缺失时的空盒）；盒内文字带上伪元素的可继承文字属性，`content` 随 class 切换同步更新。引擎按同一条层叠算样式（继承、`var()`、`em`、`inherit`），renderer 合成为真实子节点——`::before` 在最前、`::after` 在最后，布局/绘制/命中复用既有管道。不支持 `:active::before` 这类状态 + 伪元素组合。`content` 为**纯空白**（`" "`）时生成不带文字的空盒——vant 发丝线的惯用写法，真实空格子曾让 `scaleY(.5)` 的线浮起约 6px |
+| 伪元素 `::placeholder` | ✅ | 只作用于 input / textarea 的占位文字，**不生成盒子**（specs/100）。声明按同一条层叠算出来（`var()` / `em` / `inherit` / `currentColor` 取宿主元素的颜色），落成元素的 `placeholderStyle` prop——就是 `placeholder-style` 属性那四个键（color / font-size / font-weight / line-height），`input.dart` 的 hint TextStyle 消费。**不继承元素的文字色**：规则没写 `color` 时占位保持两端钉死的灰（对齐浏览器 UA 占位默认灰，而不是跟随输入文字）。`line-height` 是绝对值（`24px`）时按占位字号换算成倍率传给对端（Flutter 的 `TextStyle.height` 是倍率）。web 端原生 CSS，不经引擎；`::-webkit-input-placeholder` 旧式变体不解析（标准 `::placeholder` 已覆盖，web 也只用标准写法） |
 | `@media` | ✅ | 见下方「@media 媒体查询」小节 |
 | `@font-face` | ⚠️ | specs/071。App 端：构建期把 `src` 里的 WOFF2 / WOFF（`data:` 内联或相对路径文件）统一转成 TrueType 并内联为 `data:font/ttf`，运行时经宿主方法 `fjs.font.load` 注册进 Flutter 字体表，加载完成后文字自动重排（首帧可能先空）。**不支持**：远程 `http(s)` / `//host` 源（跳过；没有其他可用源时 warnOnce 指名 family）、`local()`、`unicode-range`（告警后整字体生效）、可变字体轴、`font-display`、`document.fonts`。字体按内联计入 JS 包（TTF 约为 WOFF2 的 2–3 倍，>1 MB 构建期告警；大字体走资源文件是后续项）。Web 端浏览器原生 |
 | `@supports` / `@import` / 其他 at-rule | ❌ | 整块 `warnOnce` 跳过 |
@@ -393,9 +394,12 @@ type、未知特性（如 `prefers-reduced-motion`）、非 px 长度值、嵌�
   Flutter 会把一帧内多指移动合成一条
 - **`<label>` / `<form>` 不再是 HTML 兼容标签**：它们现在是 fjs 自己的标签
   （label 转发点击、form 收集子控件），不再分别映射成 `text` 和 `view`。
-  `<label>` 原来自带的 `font-size: 14 / color: #666666 / margin: 4` 保留成了新
-  标签的默认样式，所以只写文字的老页面外观不变；但它现在是容器，`<label>` 里
-  混排元素的行为和以前的 text 节点不同
+  `<label>` 曾经自带 `font-size: 14 / color: #666666 / margin: 4` 当默认样式，
+  **specs/100 把这三个默认值删了**：元素自身声明的 margin/颜色/字号会赢过
+  继承，库按标准 CSS 写的 `.van-field__label { color: … }` 只能染到外层容器，
+  内层文字永远留着默认灰，4px margin 还把 label 顶出输入行（web 与 App 两端
+  同时错位）。浏览器 UA 对 label 同样什么都不声明，fjs 页面要这些值就自己写。
+  `<label>` 现在是容器，里面混排元素的行为和以前的 text 节点不同
 - **`<button>` 的默认描边不再由 JS 下发**：改成宿主的默认值
   （`widgets/button.dart` 的 `fjsButtonDefaultBorder` / web 的
   `.fjs-button--default`），这样 `type="primary"` 这类填充按钮才可能没有描边。

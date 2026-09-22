@@ -411,8 +411,13 @@ radio.disabled { opacity: 0.5; cursor: default; }
 }
 
 /* radio-group / checkbox-group / form: no chrome, they only scope their
-   controls. label carries the defaults the HTML compat table used to give
-   <label> (vue/renderer.ts), so an existing page looks the same. */
+   controls. The label element keeps only its container behavior: the old
+   margin: 4px / font-size: 14px / color: #666666 sat on the element
+   itself, so it beat inheritance — vant's .van-field__label { color: … }
+   styled the wrapper while the text kept the default grey, and the margin
+   pushed the label 4px off the input's line (specs/100). A browser UA
+   declares none of them; an fjs page that wants them writes them. Same
+   deletion in the HTML compat table (vue/renderer.ts). */
 radio-group,
 checkbox-group,
 form {
@@ -422,9 +427,6 @@ form {
 label {
   display: flex;
   flex-direction: column;
-  margin: 4px;
-  font-size: 14px;
-  color: #666666;
   cursor: pointer;
 }
 
