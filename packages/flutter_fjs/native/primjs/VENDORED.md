@@ -45,7 +45,7 @@ One cosmetic patch rides along with the module split:
 
 | File | Patch |
 |------|-------|
-| `src/inspector/debugger_struct.h` | the literal-pool fallback for the DevTools console's JavaScript-context dropdown reads `V(debugger_context, "fjs console")` instead of upstream's `"debugger context"` (the name `Runtime.executionContextCreated` reports when the host never calls `SetJSDebuggerName`) |
+| `src/inspector/debugger_struct.h` | the literal-pool fallback for the DevTools console's JavaScript-context dropdown reads `V(debugger_context, "fjs engine")` instead of upstream's `"debugger context"` (the name `Runtime.executionContextCreated` reports when the host never calls `SetJSDebuggerName`) |
 
 ## Build choices (deviations from upstream defaults)
 

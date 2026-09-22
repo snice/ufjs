@@ -245,7 +245,7 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
   /** A context id the engine will never mint (its own are small counters), so
    * the synthesized log lines have a context to live in — DevTools shows them
    * under "fjs host" in the console context dropdown, next to the engine's
-   * own "fjs console". */
+   * own "fjs engine". */
   const FJS_HOST_CONTEXT_ID = 424242;
   /** The one synthetic stylesheet every matched rule cites; announced via
    * CSS.styleSheetAdded on DevTools connect (see the connect handler). */

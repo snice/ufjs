@@ -685,6 +685,8 @@ PrimJS 4.1.1（`specs/088-devtools-debugger/`）：
   `--debug-connect host:port`（桌面复用同一调试链路）。
 - 明确不做：release 字节码调试、Worker VM、小程序端、DAP/VS Code 前端
   （CDP 标准协议，后续可接）。Vue SFC source map 已由 spec 094 补上。
+  控制台上下文下拉里引擎那一项后来从 `fjs console` 改成 `fjs engine`
+  （`specs/099-fjs-engine-context/`），与合成的 `fjs host` 区分开。
 
 ## 双引擎缓存与切换入口（已完成 2026-09）
 

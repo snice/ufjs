@@ -319,7 +319,7 @@ HTTP 侧服务 `/json/version`、`/json/list`、`/json`——这是 `chrome://in
   `Runtime.executionContextCreated`（"fjs host"，id 固定 424242），`fjs debug`
   把 dev server 广播的 `{fjs:'log'}` 行交给 `consoleLine()` 合成
   `Runtime.consoleAPICalled`——Dart 侧进度日志（`[dev]`/`[nav]`）由此进
-  DevTools Console，与引擎自己合成的 JS console（上下文 "fjs console"）
+  DevTools Console，与引擎自己合成的 JS console（上下文 "fjs engine"）
   并存不重叠：调试器附加期间引擎导流 console，log 通道收不到 JS 行。
 - **Page 域的补桩**（spec 092）：`getNavigationHistory` 回一条 fjs://app
   记录（空 `{}` 会让 screencast 面板的 requestNavigationHistory 抛

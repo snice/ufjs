@@ -78,7 +78,7 @@ extern const char kConsoleObjectIdPrefix[];
   V(capital_uncaught, "Uncaught")                               \
   V(capital_javascript, "JavaScript")                           \
   V(minus_one, "-1")                                            \
-  V(debugger_context, "fjs console")                            \
+  V(debugger_context, "fjs engine")                            \
   V(anonymous, "<anonymous>")                                   \
   V(uncaught, "uncaught")                                       \
   V(unknown, "unknown")                                         \
