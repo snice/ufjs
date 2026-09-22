@@ -299,14 +299,182 @@ describe('fjs debug relay synthesis (spec 092)', () => {
     await s.close();
   });
 
-  it('never pushes DOM.documentUpdated on its own initiative (only world resets)', async () => {
-    // the first spec-092 design polled a tree version and pushed the event
-    // on change; against the real frontend that keeps the Styles sidebar
-    // spinning forever on a busy app, so the relay must stay silent here
+  // spec 093 — the three lazy-tree methods the real frontend uses to expand
+  // nodes past depth 1 (Bug 1: the Elements panel collapsed at the root shell
+  // because these all fell into the relay's blanket `reply(ws, id, {})`).
+  it('serves DOM.requestChildNodes / getFlattenedInnerHTML / querySelector (spec 093)', async () => {
+    const childNode = { id: 7, tag: 'view', attrs: { class: 'row' }, children: [] };
+    const s = await attach((method) => {
+      if (method === 'DOM.requestChildNodes') return JSON.stringify({ id: 5, children: [childNode] });
+      if (method === 'DOM.getFlattenedInnerHTML') {
+        return JSON.stringify({ html: '<view class="row"><text>hi</text></view>' });
+      }
+      if (method === 'DOM.querySelector') return JSON.stringify({ id: 7 });
+      return JSON.stringify({ roots: [] });
+    });
+    const send = (id: number, method: string, params: Record<string, unknown>) =>
+      new Promise<any>((done) => {
+        const timer = setInterval(() => {
+          const hit = s.seen.find((m) => m.id === id && (m.result || m.error));
+          if (hit) {
+            clearInterval(timer);
+            done(hit);
+          }
+        }, 10);
+        s.ws.send(JSON.stringify({ id, method, params }));
+      });
+
+    // elementId 5 → nodeId 5*2+1000 = 1010. CDP contract (browser_protocol):
+    // requestChildNodes returns VOID — the children arrive as a following
+    // DOM.setChildNodes event keyed by parentId (spec 093, verified against
+    // the real protocol after the first implementation replied with a
+    // payload the frontend never reads).
+    const childrenReply = await send(31, 'DOM.requestChildNodes', { nodeId: 1010 });
+    expect(childrenReply.error).toBeUndefined();
+    expect(childrenReply.result).toEqual({});
+    await s.waitFor((m) => m.method === 'DOM.setChildNodes');
+    const setNodes = s.seen.find((m) => m.method === 'DOM.setChildNodes')!;
+    expect(setNodes.params.parentId).toBe(1010);
+    expect(setNodes.params.nodes).toHaveLength(1);
+    expect(setNodes.params.nodes[0].nodeId).toBe(7 * 2 + 1000);
+    expect(setNodes.params.nodes[0].nodeName).toBe('view');
+
+    const htmlReply = await send(32, 'DOM.getFlattenedInnerHTML', { nodeId: 1010 });
+    // {result, type} is the shape the real frontend's sdk reads (spec 093)
+    expect(htmlReply.result.result).toContain('<text>hi</text>');
+    expect(htmlReply.result.type).toBe('string');
+
+    const hitReply = await send(33, 'DOM.querySelector', { nodeId: 1, selector: '.row' });
+    expect(hitReply.result.nodeId).toBe(7 * 2 + 1000);
+    await s.close();
+  });
+
+  it('querySelector answers nodeId 0 on a miss (spec 093)', async () => {
     const s = await attach((method) =>
-      method === 'Dom.version' ? JSON.stringify({ version: 1 }) : JSON.stringify({ roots: [] }),
+      method === 'DOM.querySelector' ? JSON.stringify({ id: 0 }) : JSON.stringify({ roots: [] }),
     );
-    await sleep(1200);
+    const reply = await new Promise<any>((done) => {
+      const timer = setInterval(() => {
+        const hit = s.seen.find((m) => m.id === 34 && (m.result || m.error));
+        if (hit) {
+          clearInterval(timer);
+          done(hit);
+        }
+      }, 10);
+      s.ws.send(JSON.stringify({ id: 34, method: 'DOM.querySelector', params: { nodeId: 1, selector: '.nope' } }));
+    });
+    // CDP convention for "not found": nodeId 0, never an error
+    expect(reply.result.nodeId).toBe(0);
+    await s.close();
+  });
+
+  // spec 093 — the structural poll: a route push (page-root add) must make
+  // the panel re-pull WITHOUT a manual refresh (Bug 2). Pure attribute
+  // changes must NOT trigger, or the Styles sidebar spins forever (092 R14).
+  it('pushes DOM.documentUpdated once when the structural version crosses a poll, then cools down', async () => {
+    let structural = 100;
+    const s = await attach((method) => {
+      if (method === 'Dom.structuralVersion') return JSON.stringify({ version: structural });
+      if (method === 'DOM.getDocument') {
+        return JSON.stringify({ roots: [], structuralVersion: structural });
+      }
+      return JSON.stringify({ roots: [] });
+    });
+    // arm the poll: DOM.getDocument reply is what startStructuralPoll hangs off
+    await new Promise<void>((done) => {
+      const timer = setInterval(() => {
+        if (s.seen.some((m) => m.id === 41 && m.result)) {
+          clearInterval(timer);
+          done();
+        }
+      }, 10);
+      s.ws.send(JSON.stringify({ id: 41, method: 'DOM.getDocument', params: {} }));
+    });
+    // baseline came from the snapshot; a static counter must not push
+    await sleep(1700);
+    expect(s.seen.filter((m) => m.method === 'DOM.documentUpdated').length).toBe(0);
+
+    // a structural change (route push → flutterRoot bumps the counter)
+    structural = 101;
+    await s.waitFor((m) => m.method === 'DOM.documentUpdated');
+    expect(s.seen.filter((m) => m.method === 'DOM.documentUpdated').length).toBe(1);
+
+    // a second structural change inside the 1s cooldown must NOT re-push
+    structural = 102;
+    await sleep(700);
+    expect(s.seen.filter((m) => m.method === 'DOM.documentUpdated').length).toBe(1);
+    await s.close();
+  });
+
+  // The panel's snapshot and the poll baseline used to be 1.5s apart. A
+  // route push in that window was stored as the baseline and never pushed,
+  // so DevTools kept showing only navKey=0 after the second page mounted.
+  it('pushes DOM.documentUpdated when the version moves before the first poll tick', async () => {
+    let structural = 100;
+    const s = await attach((method) => {
+      if (method === 'Dom.structuralVersion') return JSON.stringify({ version: structural });
+      if (method === 'DOM.getDocument') {
+        return JSON.stringify({ roots: [], structuralVersion: structural });
+      }
+      return JSON.stringify({ roots: [] });
+    });
+    await new Promise<void>((done) => {
+      const timer = setInterval(() => {
+        if (s.seen.some((m) => m.id === 51 && m.result)) {
+          clearInterval(timer);
+          done();
+        }
+      }, 10);
+      s.ws.send(JSON.stringify({ id: 51, method: 'DOM.getDocument', params: {} }));
+    });
+    structural = 101;
+    await s.waitFor((m) => m.method === 'DOM.documentUpdated', 4000);
+    expect(s.seen.filter((m) => m.method === 'DOM.documentUpdated').length).toBe(1);
+    await s.close();
+  });
+
+  it('never pushes DOM.documentUpdated for a STATIC structural version (pure attributes/text)', async () => {
+    // mirrors the 092 regression test: without any structural move, the poll
+    // must stay completely silent even across several ticks
+    const s = await attach((method) => {
+      if (method === 'Dom.structuralVersion') return JSON.stringify({ version: 7 });
+      return JSON.stringify({ roots: [] });
+    });
+    await sleep(3400); // two full poll periods
+    expect(s.seen.filter((m) => m.method === 'DOM.documentUpdated').length).toBe(0);
+    await s.close();
+  });
+
+  it('pushes characterDataModified and attributeModified without documentUpdated', async () => {
+    let pending: Array<Record<string, unknown>> = [];
+    const s = await attach((method) => {
+      if (method === 'Dom.structuralVersion') return JSON.stringify({ version: 3 });
+      if (method === 'DOM.getDocument') return JSON.stringify({ roots: [], structuralVersion: 3 });
+      if (method === 'Dom.drainContent') {
+        const out = { mutations: pending, overflow: false };
+        pending = [];
+        return JSON.stringify(out);
+      }
+      return JSON.stringify({ roots: [] });
+    });
+    await new Promise<void>((done) => {
+      const timer = setInterval(() => {
+        if (s.seen.some((m) => m.id === 61 && m.result)) {
+          clearInterval(timer);
+          done();
+        }
+      }, 10);
+      s.ws.send(JSON.stringify({ id: 61, method: 'DOM.getDocument', params: {} }));
+    });
+    pending = [
+      { kind: 'text', id: 7, text: 'count: 1' },
+      { kind: 'attr', id: 7, name: 'title', value: 'next' },
+    ];
+    await s.waitFor((m) => m.method === 'DOM.characterDataModified', 4000);
+    const text = s.seen.find((m) => m.method === 'DOM.characterDataModified')!;
+    expect(text.params).toEqual({ nodeId: 7 * 2 + 1001, characterData: 'count: 1' });
+    const attr = s.seen.find((m) => m.method === 'DOM.attributeModified')!;
+    expect(attr.params).toEqual({ nodeId: 7 * 2 + 1000, name: 'title', value: 'next' });
     expect(s.seen.filter((m) => m.method === 'DOM.documentUpdated').length).toBe(0);
     await s.close();
   });

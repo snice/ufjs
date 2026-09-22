@@ -753,6 +753,32 @@ spec 088 删掉 quickjs-ng 时留下了对比与退路缺口，补上
   需要 Dart 侧 RepaintBoundary 截屏管线 + 给 Dart 开一条到中继的旁路通道，
   用户已确认"难度高先过"，记为后续 spec 方向）。
 
+## DevTools 树按需展开 + 结构变化自动刷新（已完成 2026-09）
+
+092 上线后用户复测的两条反馈清账（`specs/093-devtools-tree-lazy-and-live/`）：
+
+- ✅ **Elements 树按需展开**：真实前端首拍 `DOM.getDocument` 带 `depth:1`，
+  之后靠 `DOM.requestChildNodes` / `DOM.getFlattenedInnerHTML` /
+  `DOM.querySelector` 拉深层——这三个方法此前在中继兜底分支一律空应答，
+  面板拿到根 + `childNodeCount` 后要子树的请求全部空手而归，**永远停在第一
+  层**（表现为「只显示根壳、展开为空」）。现在三者在中继真实现：按 `nodeId`
+  找到节点、从当前文档重新序列化（children / 转义 HTML / 最小选择器匹配），
+  未命中回明确的空形状（`{nodes:[]}` / `{result:''}` / `{nodeId:0}`）而非
+  `{}`。选择器匹配在运行时侧，`:pseudo` 剥掉不求值（静态快照没有 hover/
+  active 态，与 `matchedRulesOf` 同口径）。
+- ✅ **结构变化自动刷新**：新增 `devtoolsStructuralVersion` 计数器，**只在**
+  element `insert`/`remove` 与页根 `flutterRoot`/`releaseRoot`（路由增删）处
+  递增——纯属性/文本/样式变化不参与。中继在 `DOM.getDocument` 应答后起 1.5s
+  低频轮询 `Dom.structuralVersion`，跨阈值推一次 `DOM.documentUpdated`，
+  首轮只记基线不推（DevTools 附加前的变化已在刚拉的文档里）。三条触发路径
+  （世界重置 / 死节点自愈 / 结构变化）共用 1s 冷却，批量插入折叠成一次推送。
+  **不恢复按帧轮询**：092 R14 已证明那会把 Styles 面板打成永转。
+- 实现落点：`fjs-runtime/src/devtools.ts`（三个 cmd 分支 + 结构版本读取）、
+  `fjs-runtime/src/ui/element.ts` 与 `vue/renderer.ts`（四个递增点）、
+  `fjs/src/debug/cdp-server.ts`（三方法真实现 + 冷却 + 结构轮询）；
+  测试覆盖三方法形状、选择器命中/未命中/伪态剥离、结构版本跨阈值推一次且
+  冷却内不重推、纯属性不触发（`debug-cdp.test.ts` / `devtools.test.ts`）。
+
 ## 近期计划
 
 - **App 侧真机对拍挂账**：078/079 的示例页（过渡演示新增面板、百分比间距与

@@ -99,3 +99,11 @@ export const devtoolsSlots: DevtoolsSlots = {
  * per op — exposed as `__fjsDevtools.cmd('Dom.version')` for tooling that
  * wants to know whether the tree is moving (spec 092). */
 export const devtoolsTreeVersion = { value: 0 };
+
+/** STRUCTURE only: bumped on element insert/remove and page-root add/remove
+ * (spec 093 方案 A). The relay polls this at a low frequency and pushes
+ * DOM.documentUpdated only when it changes — pure attribute / text / style
+ * mutations must NOT move it, or a busy app would re-pull the whole document
+ * on every frame (spec 092 R14 regression, measured with the real DevTools
+ * frontend: the Styles sidebar spun forever). */
+export const devtoolsStructuralVersion = { value: 0 };

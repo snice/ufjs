@@ -256,21 +256,40 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
     });
   };
 
-  // ---- Elements freshness (spec 092) --------------------------------------
+  // ---- Elements freshness (spec 092/093) ---------------------------------
   //
-  // DOM.documentUpdated is pushed only on WORLD RESETS, never on ordinary
-  // tree changes: the real frontend restarts every pending style request on
-  // that event, so an actively mutating app (timers, animations) driven by a
-  // change poll would keep the Styles sidebar spinning forever — measured
-  // with the real DevTools frontend, the first design did exactly that.
-  // A stale Elements tree heals at click time instead (the CSS handlers
-  // push the event when the selected id turns out dead), plus one push when
-  // the app signals its VM was rebuilt.
+  // DOM.documentUpdated tells the real frontend to re-pull the whole document
+  // — and, as 092 measured with the real frontend, every push restarts all
+  // pending style requests, so an actively mutating app driven by a naive
+  // per-frame poll spins the Styles sidebar forever. Spec 093 therefore only
+  // pushes on STRUCTURAL changes (element insert/remove, page-root add/remove
+  // — the runtime's `devtoolsStructuralVersion` counter), polled at a low
+  // 1.5s cadence, with a 1s cooldown so a v-for batch insert collapses into
+  // ONE event instead of a storm. Pure attribute/text mutations do not move
+  // that counter. The same poll drains them and pushes one
+  // `DOM.characterDataModified` / `DOM.attributeModified` per edit, which the
+  // frontend applies in place and does not restart style requests. The 092
+  // triggers (debug-reload world reset, stale-click self-heal) remain and
+  // share the same cooldown window.
+
+  /** Minimum gap between two DOM.documentUpdated pushes (spec 093). Without
+   * it, a route push that inserts a page root AND its subtree fires one push
+   * per inserted node from the poll's perspective across ticks. */
+  const INVALIDATE_COOLDOWN_MS = 1000;
+  let lastInvalidateAt = 0;
 
   /** The tree changed underneath a (stale) DevTools snapshot: make the panel
-   * re-pull the whole document. Rare by design — see the block comment. */
-  const domInvalidated = (): void => {
+   * re-pull the whole document. Debounced by the cooldown above — see the
+   * block comment for why every caller funnels through here. */
+  /** @returns false when the cooldown swallowed the push. Callers that
+   * track a version must NOT advance their baseline on false — a route
+   * push dropped here would otherwise be marked seen and never retried. */
+  const domInvalidated = (): boolean => {
+    const now = Date.now();
+    if (now - lastInvalidateAt < INVALIDATE_COOLDOWN_MS) return false;
+    lastInvalidateAt = now;
     pushToDevtools('DOM.documentUpdated', {});
+    return true;
   };
 
   // ---- Elements: DOM/CSS over __fjsDevtools.cmd --------------------------
@@ -370,6 +389,7 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
     if (method === 'DOM.getDocument') {
       const doc = (await bridgeCmd('DOM.getDocument', {})) as unknown as {
         roots: RuntimeNode[];
+        structuralVersion?: number;
       };
       const children = doc.roots.map(mapNode);
       reply(ws, id, {
@@ -382,6 +402,76 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
           children,
         },
       });
+      // Baseline is the version OF THIS SNAPSHOT, not whatever the counter
+      // says on the first poll tick. The panel the user is looking at was
+      // built from `doc` just now; a route push in the following 1.5s used
+      // to be recorded as the baseline and never pushed, so the second page
+      // root (navKey=1) never appeared (spec 093).
+      if (typeof doc.structuralVersion === 'number') {
+        lastSeenStructuralVersion = doc.structuralVersion;
+      } else if (lastSeenStructuralVersion === null) {
+        try {
+          const ver = (await bridgeCmd('Dom.structuralVersion')) as { version?: number };
+          if (typeof ver.version === 'number') lastSeenStructuralVersion = ver.version;
+        } catch {
+          // first poll tick baselines if this runtime has no counter yet
+        }
+      }
+      // the Elements panel is demonstrably live now — start watching the
+      // runtime's structural counter so route pushes / subtree inserts
+      // invalidate the snapshot without a manual refresh (spec 093 T024)
+      startStructuralPoll(ws);
+      return;
+    }
+    // spec 093: the lazy-tree method the real frontend uses to expand nodes
+    // past the first depth. Before this it fell into the blanket
+    // `reply(ws, id, {})` below — but note the CDP contract (browser_protocol
+    // JSON, verified against the real protocol): requestChildNodes returns
+    // VOID; the children arrive afterwards as a `DOM.setChildNodes` event
+    // keyed by parentId. Replying with a payload the frontend never reads
+    // leaves it waiting for an event that never comes — expansion stays
+    // empty. So: void reply, then push the event.
+    if (method === 'DOM.requestChildNodes') {
+      const eid = toElem(Number(params.nodeId));
+      const out =
+        eid === null
+          ? { id: 0, children: [] }
+          : ((await bridgeCmd('DOM.requestChildNodes', { id: eid })) as {
+              id: number;
+              children: RuntimeNode[];
+            });
+      // response first (Promise<void> resolves), then the subtree event —
+      // either order is safe (the DOM dispatcher is registered before enable
+      // returns), this matches "returned in the form of setChildNodes
+      // events" semantics with a definite reply boundary.
+      reply(ws, id, {});
+      pushToDevtools('DOM.setChildNodes', {
+        parentId: Number(params.nodeId),
+        nodes: out.children.map(mapNode),
+      });
+      return;
+    }
+    if (method === 'DOM.getFlattenedInnerHTML') {
+      const eid = toElem(Number(params.nodeId));
+      const out =
+        eid === null
+          ? { html: '' }
+          : ((await bridgeCmd('DOM.getFlattenedInnerHTML', { id: eid })) as { html: string });
+      // `{result, type}` is the CDP shape (verified against the real
+      // frontend's sdk in spec 093); `{outerHTML}` alone reads as undefined
+      // to this frontend version.
+      reply(ws, id, { result: out.html, type: 'string' });
+      return;
+    }
+    if (method === 'DOM.querySelector') {
+      const rawNodeId = Number(params.nodeId ?? 1);
+      const eid = rawNodeId === 1 ? null : toElem(rawNodeId);
+      const out = (await bridgeCmd('DOM.querySelector', {
+        ...(eid === null ? {} : { id: eid }),
+        selector: String(params.selector ?? ''),
+      })) as { id: number };
+      // CDP: a miss is `{nodeId: 0}`, never an error or an absent field.
+      reply(ws, id, { nodeId: out.id === 0 ? 0 : out.id * 2 + 1000 });
       return;
     }
     if (method === 'CSS.getComputedStyleForNode') {
@@ -525,11 +615,111 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
       reply(ws, id, {});
       return;
     }
-    // DOM.enable/requestChildNodes, Page.enable, Overlay.*,
-    // Emulation.*, Console.*, Log.*, Performance.* …: acknowledged, with
-    // whatever the panel asked for left empty — the panels degrade
-    // gracefully, and the docs list exactly what is served.
+    // DOM.enable, Page.enable, Overlay.*, Emulation.*, Console.*, Log.*,
+    // Performance.* …: acknowledged, with whatever the panel asked for left
+    // empty — the panels degrade gracefully, and the docs list exactly what
+    // is served. (requestChildNodes / getFlattenedInnerHTML / querySelector
+    // are handled above, NOT here — see spec 093.)
     reply(ws, id, {});
+  };
+
+  // ---- structural-change poll (spec 093 T024) -----------------------------
+  //
+  // The runtime bumps `devtoolsStructuralVersion` ONLY on element
+  // insert/remove and page-root add/remove. Polling it at 1.5s (rather than
+  // the per-frame `Dom.version` that 092 proved would spin the Styles panel)
+  // gives route pushes / subtree inserts an automatic re-pull within ~2s.
+  // The same tick drains text/attr edits into incremental CDP events so a
+  // counter click shows up in the tree without a document reload.
+
+  const STRUCTURAL_POLL_MS = 1500;
+  let structuralPollTimer: NodeJS.Timeout | null = null;
+  let lastSeenStructuralVersion: number | null = null;
+  /** A content drain hit the cap and the follow-up documentUpdated was
+   * swallowed by the cooldown. Retry on the next tick. */
+  let contentResyncPending = false;
+
+  type ContentMutation =
+    | { kind: 'text'; id: number; text: string }
+    | { kind: 'attr'; id: number; name: string; value: string };
+
+  const stopStructuralPoll = (): void => {
+    if (structuralPollTimer) {
+      clearInterval(structuralPollTimer);
+      structuralPollTimer = null;
+    }
+    lastSeenStructuralVersion = null;
+    contentResyncPending = false;
+  };
+
+  /** Text/attr edits since the last drain. `discard` drops them: a
+   * documentUpdated is already on the wire and the re-pull has the new
+   * values, so replaying the events would race that pull. */
+  const pushContentEdits = async (discard: boolean): Promise<void> => {
+    let drained: { mutations?: ContentMutation[]; overflow?: boolean };
+    try {
+      drained = (await bridgeCmd('Dom.drainContent')) as {
+        mutations?: ContentMutation[];
+        overflow?: boolean;
+      };
+    } catch {
+      // runtime predates content drain — structural poll must keep working
+      return;
+    }
+    const mutations = Array.isArray(drained?.mutations) ? drained.mutations : [];
+    if (discard) {
+      contentResyncPending = false;
+      return;
+    }
+    if (drained?.overflow) contentResyncPending = true;
+    if (contentResyncPending) {
+      if (domInvalidated()) contentResyncPending = false;
+      return;
+    }
+    for (const m of mutations) {
+      if (m.kind === 'text') {
+        pushToDevtools('DOM.characterDataModified', {
+          nodeId: m.id * 2 + 1001,
+          characterData: m.text,
+        });
+      } else if (m.kind === 'attr') {
+        pushToDevtools('DOM.attributeModified', {
+          nodeId: m.id * 2 + 1000,
+          name: m.name,
+          value: m.value,
+        });
+      }
+    }
+  };
+
+  const startStructuralPoll = (ws: WebSocket): void => {
+    if (structuralPollTimer) return;
+    structuralPollTimer = setInterval(() => {
+      void (async () => {
+        if (!vm || ws.readyState !== WebSocket.OPEN) return;
+        const out = (await bridgeCmd('Dom.structuralVersion')) as unknown as { version: number };
+        if (lastSeenStructuralVersion === null) {
+          // getDocument didn't report a version (runtime predates spec 093).
+          // This tick can only baseline — there is no earlier snapshot to
+          // compare against.
+          lastSeenStructuralVersion = out.version;
+          return;
+        }
+        let reloading = false;
+        if (out.version !== lastSeenStructuralVersion) {
+          // Cooldown false → leave the baseline where it is. Advancing it
+          // anyway marks the route push as handled and the panel never
+          // re-pulls that page root.
+          if (domInvalidated()) {
+            lastSeenStructuralVersion = out.version;
+            reloading = true;
+          }
+        }
+        await pushContentEdits(reloading);
+      })().catch(() => {
+        // a failed poll (app detached mid-round) just skips this round
+      });
+    }, STRUCTURAL_POLL_MS);
   };
 
   // ---- Network polling -----------------------------------------------------
@@ -638,6 +828,8 @@ const resetSessionCaches = (): void => {
   bodyCache.clear();
   networkEnabled = false;
   stopNetPoll();
+  stopStructuralPoll();
+  lastInvalidateAt = 0;
 
   // requests buffered while nothing was attached would flush into the
   // next VM as stale protocol traffic from a dead session
@@ -751,6 +943,7 @@ const resetSessionCaches = (): void => {
       if (devtools !== ws) return;
       devtools = null;
       devBuf = '';
+      stopStructuralPoll();
 
       resetSessionCaches();
       // Tell the engine the session ended: a reconnecting DevTools must get
@@ -792,6 +985,7 @@ const resetSessionCaches = (): void => {
             new Promise<void>((done) => {
               vm?.destroy();
               stopNetPoll();
+              stopStructuralPoll();
 
               wss.close();
               httpServer.close(() => {

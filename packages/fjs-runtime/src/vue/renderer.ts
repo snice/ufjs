@@ -17,7 +17,7 @@ import { lastPointer } from '../ui/geometry';
 import { hasNativeHost, invokeHost, registerPreFlush } from '../host';
 import { usesDeclaredFont } from '../css/font-face';
 import { INHERITABLE_KEYS, StyleEngine, type PseudoStyles } from '../css/style';
-import { devtoolsSlots } from '../devtools-hooks';
+import { devtoolsSlots, devtoolsStructuralVersion } from '../devtools-hooks';
 
 type HostNode = Element;
 
@@ -1142,6 +1142,10 @@ export function flutterRoot(tag = 'view'): HostNode {
   childrenOf.set(root.id, []);
   parentOf.set(root.id, null);
   pageRoots.set(root.id, root);
+  // page-root registration bypasses element insert()/remove() (createRoot
+  // talks to the host directly), so the structural counter is bumped here
+  // too — a route push must invalidate DevTools' snapshot (spec 093)
+  devtoolsStructuralVersion.value++;
   return root;
 }
 
@@ -1161,6 +1165,7 @@ export function releaseRoot(root: HostNode): void {
   parentOf.delete(root.id);
   childrenOf.delete(root.id);
   pageRoots.delete(root.id);
+  devtoolsStructuralVersion.value++;
 }
 
 /** Registers a SFC <style> block with the style engine (called by the code

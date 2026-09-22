@@ -145,7 +145,10 @@ dev server 重启就重连并重新注册——否则中继还活着、Chrome �
   };
 ```
 
-支持的 method：`DOM.getDocument`、`Dom.version`、
+支持的 method：`DOM.getDocument`、`Dom.version`、`Dom.structuralVersion`、
+`Dom.drainContent`（排空自上次拉取以来的文本/属性编辑）、
+`DOM.requestChildNodes`、`DOM.getFlattenedInnerHTML`、`DOM.querySelector`
+（后三个是按需展开树的懒访问，见 §5 中继层的行为清单，spec 093）、
 `CSS.getComputedStyleForNode`、`CSS.getMatchedStylesForNode`（同一个
 cmd 同时答 inline 与命中规则，中继拆成两种 CDP 形状）、
 `CSS.getInlineStylesForNode`、`Network.drain`、`Network.getResponseBody`。
@@ -263,14 +266,41 @@ HTTP 侧服务 `/json/version`、`/json/list`、`/json`——这是 `chrome://in
 几个只在中继里存在的行为：
 
 - **Elements 的 nodeId 是算术映射**：element `id*2+1000`、text `id*2+1001`、
-  document 固定 1。不需要失效表。整树失效只在**世界重置**时推
-  （spec 092）：app 的 `debug-reload` 标记（VM 重建），以及点了已不存在
-  的旧节点（styleCmd 的 `exists:false`）——`DOM.documentUpdated` 会让
-  DevTools 重拉整棵树。普通树变更不推：真实前端收到该事件会重启一切
-  未决的样式请求，频繁推送等于样式面板永远转圈（第一版设计实测踩坑）。
+  document 固定 1。不需要失效表。`DOM.documentUpdated` 的触发面（spec 093）：
+  ① 世界重置——app 的 `debug-reload` 标记（VM 重建）；② 死节点自愈——点了
+  已不存在的旧节点（styleCmd 的 `exists:false`）；  ③ **结构变化**——中继在
+  `DOM.getDocument` 应答后起 1.5s 低频轮询 `Dom.structuralVersion`（运行时侧
+  只在 element insert/remove 与页根 flutterRoot/releaseRoot 递增的计数器），
+  跨阈值推一次。基线是**这次快照里的版本号**（`structuralVersion` 随
+  getDocument 一起返回），不是第一次轮询读到的值——后者会把打开面板后、
+  首拍轮询前的路由 push 当成“已经在树上”，第二页根（`__navKey="1"`）
+  再也不出现。冷却吞掉的那次推送不推进基线，下一拍会补推。**纯属性/文本变化不递增该计数器、也不推 `documentUpdated`**——真实
+  前端收到 `documentUpdated` 会重启一切未决的样式请求，频繁推送等于样式
+  面板永远转圈（092 第一版按帧轮询实测踩坑）。同一条 1.5s 轮询改为排空
+  `Dom.drainContent`：文本推 `DOM.characterDataModified`（nodeId =
+  `id*2+1001`），属性推 `DOM.attributeModified`（nodeId = `id*2+1000`），
+  前端就地改一个节点。结构重拉已经发出时丢掉这批编辑，避免和整树重拉赛跑；
+  单次超过 200 条则退回一次 `documentUpdated`。首次 `getDocument` 之前的
+  写入已经在快照里，不入队。三条 `documentUpdated` 触发路径共用 **1s 冷却**
+  （`INVALIDATE_COOLDOWN_MS`），v-for 批量插入在冷却窗口内折叠成一次推送。
   另有两处按真实前端源码对齐的应答形状：`inlineStyle` 是 CSS.Style
   本体（包一层 `{style:…}` 前端解析即抛异常，转圈）；`computedStyle`
   是扁平 `[{name,value}]` 数组（这版前端 SDK 直接 for..of 迭代它）。
+- **按需展开树的懒方法**（spec 093，修「面板只显示根壳、展开为空」）：
+  真实前端首拍 `DOM.getDocument` 带 `depth:1`，之后靠按需方法拉深层，
+  它们**不落兜底空应答**，而是从当前文档重新序列化。协议形状按
+  `browser_protocol.json` 实测核对（第一版把子树塞进 `requestChildNodes`
+  的应答体是错的——该命令按协议返回 **void**，前端只等随后的事件）：
+  - `DOM.requestChildNodes {nodeId}` → 应答 `{}`，随后推送
+    **`DOM.setChildNodes {parentId, nodes}` 事件**（`nodes` 为该节点子树
+    的 `mapNode` 序列化；找不到回空 `nodes`）；
+  - `DOM.querySelector {nodeId?, selector}` → 命中回 `nodeId`、未命中回
+    `nodeId:0`（CDP 约定），选择器在运行时侧用最小匹配器解析（支持
+    tag/#id/.class/[attr] 与后代组合器，`:pseudo` 剥掉不求值——静态快照没有
+    hover//active 态，与 `matchedRulesOf` 同口径）；
+  - `DOM.getFlattenedInnerHTML` 在当前协议里**不存在**（全 domain 无
+    `*InnerHTML*` 命令，前端不会发）；中继保留一个无害的探针分支
+    （回 `{result, type:'string'}`），不承担展开职责。
 - **命中规则与合成样式表**（spec 092 第三轮）：`CSS.getMatchedStylesForNode`
   的 `matchedCSSRules` 由运行时 `matchedRulesOf(id)` 按需产出——点击节奏
   对单个元素走 match cache 同源的候选桶，不缓存、不碰 compute 热路径；

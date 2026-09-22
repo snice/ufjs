@@ -17,6 +17,7 @@
 import { base64Decode, base64Encode } from './net/base64';
 import {
   devtoolsSlots,
+  devtoolsStructuralVersion,
   devtoolsTreeVersion,
   type DevtoolsNetRow,
   type DevtoolsNode,
@@ -34,14 +35,53 @@ const textOf = new Map<number, string>();
 /** Mirrors the props a node has received, merged over prior updates (the
  * renderer may setProps one prop at a time). Event-marker props are included
  * so the Elements panel shows handlers as attributes, like DevTools does. */
+/** Content edits since the last drain. The relay turns these into
+ * `DOM.characterDataModified` / `DOM.attributeModified` — incremental
+ * events the Elements tree applies in place. A full `documentUpdated`
+ * for the same edit restarts every pending style request (092 R14). */
+const CONTENT_CAP = 200;
+const contentMutations: Array<
+  | { kind: 'text'; id: number; text: string }
+  | { kind: 'attr'; id: number; name: string; value: string }
+> = [];
+let contentOverflow = false;
+/** Queuing starts after the first document pull. Writes before that are
+ * already in the snapshot the panel just received. */
+let contentLive = false;
+
+function noteContent(
+  mutation:
+    | { kind: 'text'; id: number; text: string }
+    | { kind: 'attr'; id: number; name: string; value: string },
+): void {
+  if (!contentLive) return;
+  if (contentMutations.length >= CONTENT_CAP) {
+    contentOverflow = true;
+    return;
+  }
+  contentMutations.push(mutation);
+}
+
+function attrValue(value: unknown): string {
+  return typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value);
+}
+
 function recordProps(id: number, clean: Record<string, unknown>): void {
   const prev = propsOf.get(id);
   propsOf.set(id, prev ? { ...prev, ...clean } : { ...clean });
+  if (!prev) return;
+  for (const [name, value] of Object.entries(clean)) {
+    const next = attrValue(value);
+    if (prev[name] !== undefined && attrValue(prev[name]) === next) continue;
+    noteContent({ kind: 'attr', id, name, value: next });
+  }
 }
 
 /** Last text of a text-bearing node ({{ }} / setValue paths). */
 function recordText(id: number, text: string): void {
+  const prev = textOf.get(id);
   textOf.set(id, text);
+  if (prev !== undefined && prev !== text) noteContent({ kind: 'text', id, text });
 }
 
 /* ---- tree provider (registered by the Vue renderer via the slots) ------ */
@@ -192,6 +232,16 @@ function cmd(method: string, paramsJson: string): unknown {
     return styleCmd(Number(params.id));
   }
   if (method === 'Dom.version') return versionCmd();
+  if (method === 'Dom.structuralVersion') return structuralVersionCmd();
+  if (method === 'Dom.drainContent') return drainContentCmd();
+  if (method === 'DOM.requestChildNodes') return requestChildNodesCmd(Number(params.id));
+  if (method === 'DOM.getFlattenedInnerHTML') return flattenedHtmlCmd(Number(params.id));
+  if (method === 'DOM.querySelector') {
+    return querySelectorCmd(
+      params.id === undefined || params.id === null ? null : Number(params.id),
+      String(params.selector ?? ''),
+    );
+  }
   if (method === 'Network.drain') return drainCmd();
   if (method === 'Network.getResponseBody') return bodyCmd(Number(params.id));
   throw new Error(`__fjsDevtools: unknown cmd ${method}`);
@@ -206,7 +256,17 @@ function docCmd(): unknown {
     .map((id) => buildNode(id, visited))
     .filter((n): n is DevtoolsNode => n !== null);
   sweep(visited);
-  return { roots, live: true };
+  // The panel now holds this snapshot. Drop anything queued before it and
+  // start recording edits so a later text/attr change can be pushed without
+  // a full document reload.
+  contentMutations.length = 0;
+  contentOverflow = false;
+  contentLive = true;
+  // The relay baselines its structural poll on THIS number, taken in the
+  // same turn as the tree. Sampling the counter on the first poll tick
+  // (up to 1.5s later) treated a route push in that window as "already in
+  // the snapshot" and the Elements panel stayed on the previous page root.
+  return { roots, live: true, structuralVersion: devtoolsStructuralVersion.value };
 }
 
 function styleCmd(id: number): unknown {
@@ -232,6 +292,149 @@ function styleCmd(id: number): unknown {
  * and answers "is the tree moving" without a doc pull. */
 function versionCmd(): unknown {
   return { version: devtoolsTreeVersion.value };
+}
+
+/** The STRUCTURE-only counter (spec 093). The relay polls this at a low
+ * frequency and pushes DOM.documentUpdated only when it moves — see
+ * devtools-hooks.ts for why this must never track plain attribute/text
+ * mutations. */
+function structuralVersionCmd(): unknown {
+  return { version: devtoolsStructuralVersion.value };
+}
+
+/** Text/attr edits since the previous drain. The relay emits one CDP event
+ * per entry. `overflow` means the cap was hit and the panel should re-pull
+ * instead of trusting a partial list. */
+function drainContentCmd(): unknown {
+  const mutations = contentMutations.splice(0);
+  const overflow = contentOverflow;
+  contentOverflow = false;
+  return { mutations, overflow };
+}
+
+/* ---- lazy tree access (spec 093) ----------------------------------------- */
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function serializeHtml(node: DevtoolsNode): string {
+  const attrs = Object.entries(node.attrs)
+    .map(([k, v]) => ` ${k}="${escapeHtml(v)}"`)
+    .join('');
+  const open = `<${node.tag}${attrs}>`;
+  const close = `</${node.tag}>`;
+  const inner =
+    (node.text === undefined ? '' : escapeHtml(node.text)) +
+    node.children.map(serializeHtml).join('');
+  return inner ? open + inner + close : open;
+}
+
+/** Direct children of `id` for DOM.requestChildNodes. A missing node yields
+ * an empty list — the relay translates that to `{nodes: []}` (spec 093). */
+function requestChildNodesCmd(id: number): unknown {
+  const provider = devtoolsSlots.provider;
+  if (!provider || !provider.exists(id)) return { id, children: [] };
+  const visited = new Set<number>();
+  const children = provider
+    .childIds(id)
+    .map((cid) => buildNode(cid, visited))
+    .filter((n): n is DevtoolsNode => n !== null);
+  return { id, children };
+}
+
+/** Subtree as an HTML string for DOM.getFlattenedInnerHTML. A missing node
+ * yields an empty string (spec 093). */
+function flattenedHtmlCmd(id: number): unknown {
+  const provider = devtoolsSlots.provider;
+  if (!provider || !provider.exists(id)) return { html: '' };
+  const node = buildNode(id, new Set<number>());
+  return { html: node ? serializeHtml(node) : '' };
+}
+
+/** Minimal selector matcher for DOM.querySelector: supports compound
+ * selectors made of a type / `#id` / `.class` / `[attr=value]` pieces,
+ * space-separated descendant combinators, and strips `:pseudo` classes
+ * (matching the same "skip state pseudo" rule as matchedRulesOf — a static
+ * tree has no hover/active state). Unknown selector shapes answer 0 rather
+ * than throwing, so a DevTools probe never breaks the panel (spec 093). */
+function querySelectorCmd(scopedId: number | null, selector: string): unknown {
+  const provider = devtoolsSlots.provider;
+  if (!provider) return { id: 0 };
+
+  type Step = { tag?: string; id?: string; classes: string[]; attrs: Array<[string, string]> };
+  const parseStep = (raw: string): Step | null => {
+    const step: Step = { classes: [], attrs: [] };
+    const re = /([a-zA-Z][\w-]*|#([\w-]+)|\.([\w-]+)|\[([\w-]+)(?:=([^\]]+))?\])|:([\w-]+)(\([^)]*\))?/g;
+    let matchedAny = false;
+    let consumed = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(raw)) !== null) {
+      if (m.index !== consumed) return null; // unsupported fragment (combinator, `*`, …)
+      consumed = m.index + m[0].length;
+      if (m[1]) {
+        matchedAny = true;
+        if (m[1][0] === '#') step.id = m[2];
+        else if (m[1][0] === '.') step.classes.push(m[3]);
+        else if (m[1][0] === '[') step.attrs.push([m[4], m[5] ?? '']);
+        else step.tag = m[1];
+      }
+      // :pseudo (m[6]) is consumed but not evaluated — a static snapshot has
+      // no hover/active state, same rule as matchedRulesOf (spec 093).
+    }
+    if (consumed !== raw.length) return null;
+    return matchedAny ? step : null;
+  };
+
+  const matchesStep = (id: number, step: Step): boolean => {
+    if (step.tag && provider.tag(id) !== step.tag) return false;
+    if (step.id && (propsOf.get(id)?.['id'] as string | undefined) !== step.id) return false;
+    if (step.classes.length) {
+      const classes = provider.classesOf(id);
+      for (const cls of step.classes) if (!classes.includes(cls)) return false;
+    }
+    for (const [name, value] of step.attrs) {
+      const props = propsOf.get(id);
+      const actual = provider.inlineStyle(id)?.[name] ?? props?.[name];
+      if (actual === undefined) return false;
+      if (value !== '' && String(actual) !== value) return false;
+    }
+    return true;
+  };
+
+  const parts = selector.trim().split(/\s+/).map(parseStep);
+  if (!parts.length || parts.some((p) => p === null)) return { id: 0 };
+  const steps = parts as Step[];
+  const last = steps.length - 1;
+
+  // Pre-order walk carrying how many leading steps have matched along the
+  // current root→node path (descendant combinators = "some ancestor matched").
+  // Single-step selectors — the overwhelmingly common DevTools probe — reduce
+  // to a plain pre-order find on the first node that matches `steps[0]`.
+  const walk = (id: number, depth: number): number => {
+    if (!provider.exists(id)) return 0;
+    const nowMatched = matchesStep(id, steps[depth]) ? depth + 1 : depth;
+    if (nowMatched > last) return id; // every step matched on this path
+    for (const cid of provider.childIds(id)) {
+      // carry BOTH outcomes: the path may continue matching from `nowMatched`,
+      // or (if this node didn't extend the chain) from the inherited `depth`
+      const hit = walk(cid, nowMatched) || (nowMatched > depth ? walk(cid, depth) : 0);
+      if (hit) return hit;
+    }
+    return 0;
+  };
+
+  const roots = scopedId === null ? provider.roots() : [scopedId];
+  for (const root of roots) {
+    const hit = walk(root, 0);
+    if (hit) return { id: hit };
+  }
+  return { id: 0 };
 }
 
 function drainCmd(): unknown {
@@ -272,7 +475,7 @@ export function devtoolsBoot(): void {
   devtoolsSlots.netBodyMaterialized = netBodyMaterialized;
   const g = globalThis as Record<string, unknown>;
   g.__fjsDevtools = {
-    version: '092-1',
+    version: '093-1',
     cmd: (method: string, paramsJson: string): string =>
       JSON.stringify(cmd(method, paramsJson)),
   };

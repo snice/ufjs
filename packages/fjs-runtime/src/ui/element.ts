@@ -11,7 +11,7 @@ import type { FjsCanvasRenderingContext2D } from '../canvas/context-2d';
  * name. */
 const INNER_CANVAS_TAG = 'inner-canvas';
 import { decodeTouchEvent, isTouchEvent, type FjsTouchEvent } from './touch';
-import { devtoolsSlots } from '../devtools-hooks';
+import { devtoolsSlots, devtoolsStructuralVersion } from '../devtools-hooks';
 import { boundingRectOf, type FjsRect } from './geometry';
 
 /** Event names accepted in props; handlers never cross the JSI boundary —
@@ -695,6 +695,11 @@ export function setText(el: Element, text: string): void {
 
 export function insert(parent: Element, child: Element, index?: number): void {
   getWriter().insert(parent.id, child.id, index ?? 0x7fffffff);
+  // STRUCTURE change (spec 093): the relay's low-frequency poll watches this
+  // counter and pushes DOM.documentUpdated when it moves. Pure prop/text
+  // writes must NOT bump it (092 R14: a per-frame poll spins the Styles
+  // sidebar on a busy app).
+  devtoolsStructuralVersion.value++;
   scheduleFlush();
 }
 
@@ -702,6 +707,7 @@ export function remove(el: Element): void {
   getWriter().remove(el.id);
   forgetHandlers(el.id);
   if (el.tag === INNER_CANVAS_TAG) detachCanvas(el as { __canvas?: unknown });
+  devtoolsStructuralVersion.value++;
   scheduleFlush();
 }
 
