@@ -1184,6 +1184,7 @@ devtoolsSlots.provider = {
   classesOf: (id) => styleEngine.classesOf(id),
   inlineStyle: (id) => styleEngine.inlineRecord(id),
   computedStyle: (id) => styleEngine.computedOf(id),
+  matchedRules: (id) => styleEngine.matchedRulesOf(id),
 };
 
 /** Manual render escape hatch (mostly for tests). */

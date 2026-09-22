@@ -79,6 +79,9 @@ describe('__fjsDevtools', () => {
     expect(style.computed).toBeTruthy();
     // Vue's style binding lands in the inline layer
     expect(JSON.stringify(style.inline)).toContain('background');
+    // matched rules ride along (spec 092); this synthetic tree registers no
+    // stylesheet, so the list is empty but present
+    expect(style.matched).toEqual([]);
   });
 
   it('net rows: drain arms recording; body captured on materialize', async () => {
@@ -118,5 +121,25 @@ describe('__fjsDevtools', () => {
 
   it('answers unknown cmds with a thrown error (relay turns it into a CDP error)', () => {
     expect(() => cmd('DOM.setInnerWidth')).toThrow();
+  });
+
+  it('bumps the tree version on flush and reports exists on styleCmd (spec 092)', async () => {
+    setOpSink(() => {});
+    const before = cmd('Dom.version').version;
+    const App: any = defineComponent(() => () => h('view', { class: 'v092' }) as VNode);
+    createApp(App).mount(flutterRoot());
+    await flush();
+    const after = cmd('Dom.version').version;
+    expect(after).toBeGreaterThan(before);
+
+    // a live id answers exists:true; an id that left the tree answers
+    // exists:false with empty styles — the relay's stale-selection signal
+    const doc = cmd('DOM.getDocument');
+    const root = doc.roots[doc.roots.length - 1];
+    const live = cmd('CSS.getComputedStyleForNode', { id: root.id });
+    expect(live.exists).toBe(true);
+    const dead = cmd('CSS.getComputedStyleForNode', { id: 987654 });
+    expect(dead.exists).toBe(false);
+    expect(dead.computed).toEqual({});
   });
 });

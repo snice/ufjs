@@ -72,7 +72,7 @@ class FjsEngine extends ChangeNotifier {
     _setupViewportModule();
     // @font-face fonts (specs/071); log reads onLog at call time, a host
     // may attach it after construction
-    FjsFontLoader.register(host, log: (level, m) => onLog?.call(level, m));
+    FjsFontLoader.register(host, log: (level, m) => _log(level, m));
     _setupNavModules();
     _setupAnimationFrameModule();
     _setupControlModule();
@@ -118,7 +118,7 @@ class FjsEngine extends ChangeNotifier {
     final message =
         '[fjs] FJS_JS_ENGINE=$requested but this app embeds "$actual".\n'
         'Materialize the requested flavor before building:\n$hint';
-    onLog?.call(2, message);
+    _log(2, message);
     debugPrint(message);
   }
 
@@ -219,7 +219,7 @@ class FjsEngine extends ChangeNotifier {
             dispatchEvent(id, FjsEvent.workerMessage, text: msg);
           },
           onError: (err) {
-            onLog?.call(3, '[worker] $err');
+            _log(3, '[worker] $err');
           },
         );
         _workers[id] = worker;
@@ -243,7 +243,7 @@ class FjsEngine extends ChangeNotifier {
   /// Op-stream diagnostics route to the same log channel as engine errors,
   /// so the device-side log sheet shows what actually arrived (specs/070).
   late final MirrorTree tree = MirrorTree(
-    debugLog: (message) => onLog?.call(3, message),
+    debugLog: (message) => _log(3, message),
   );
   final HostRegistry host = HostRegistry();
 
@@ -571,7 +571,7 @@ class FjsEngine extends ChangeNotifier {
       await _ensureChunk(chunk);
     } catch (e) {
       loaded = false;
-      onLog?.call(3, '[nav] loading chunk "$chunk" failed: $e');
+      _log(3, '[nav] loading chunk "$chunk" failed: $e');
     }
     if (_disposed || _vm == null) return;
     // A chunk that never evaluated has no page to mount. Dispatching
@@ -591,7 +591,7 @@ class FjsEngine extends ChangeNotifier {
     // for an un-laid-out node.
     runWithoutGeometryReflow(() => dispatchEvent(key, FjsEvent.navMount));
     final ms = DateTime.now().difference(started).inMilliseconds;
-    onLog?.call(
+    _log(
       1,
       '[nav] mounted key=$key chunk=${chunk.isEmpty ? '(inline)' : chunk} in ${ms}ms',
     );
@@ -624,7 +624,7 @@ class FjsEngine extends ChangeNotifier {
     _eval(bytes, filename: 'pages/$chunk.js');
     _loadedChunks.add(chunk);
     final evaluatedAt = DateTime.now();
-    onLog?.call(
+    _log(
       1,
       '[nav] chunk $chunk ${bytes.length} bytes: fetch ${fetchedAt.difference(started).inMilliseconds}ms, eval ${evaluatedAt.difference(fetchedAt).inMilliseconds}ms',
     );
@@ -719,7 +719,7 @@ class FjsEngine extends ChangeNotifier {
     scheduleMicrotask(() {
       if (_disposed || _vm == null) return;
       dispatchEvent(key, FjsEvent.navPop);
-      onLog?.call(1, '[nav] unmounted key=$key');
+      _log(1, '[nav] unmounted key=$key');
       notifyListeners();
     });
   }
@@ -870,7 +870,7 @@ class FjsEngine extends ChangeNotifier {
       host,
       port,
       fetchUrl: _http.fetch,
-      onLog: (m) => onLog?.call(1, '[dev] $m'),
+      onLog: (m) => _log(1, '[dev] $m'),
     );
     _dev = dev;
     unawaited(_raiseIosNetworkPrompt());
@@ -913,7 +913,7 @@ class FjsEngine extends ChangeNotifier {
         await _loadFromDev(dev, split, effectiveUnits);
         if (split) unawaited(_preloadDevChunks(manifest));
       } catch (e) {
-        onLog?.call(3, '[dev] reload failed: $e');
+        _log(3, '[dev] reload failed: $e');
       }
     };
     dev.onPerf = () => perfOverlay.value = !perfOverlay.value;
@@ -921,12 +921,12 @@ class FjsEngine extends ChangeNotifier {
       // spec 088. An engine binary older than the debugger reports once
       // and keeps running — the app itself is unaffected (constitution V).
       if (bind.debuggerAttach == null) {
-        onLog?.call(2,
+        _log(2,
             '[fjs/debug] this engine build has no debugger — the native lib '
             'predates spec 088; rebuild flutter_fjs');
         return;
       }
-      onLog?.call(1, '[fjs/debug] relay on port $port — reloading so every '
+      _log(1, '[fjs/debug] relay on port $port — reloading so every '
           'script registers with the debugger');
       _debugPort = port;
       unawaited(
@@ -935,7 +935,7 @@ class FjsEngine extends ChangeNotifier {
             final effectiveUnits = await _renegotiateUnits(dev);
             await _loadFromDev(dev, split, effectiveUnits);
           } catch (e) {
-            onLog?.call(3, '[fjs/debug] post-attach reload failed: $e');
+            _log(3, '[fjs/debug] post-attach reload failed: $e');
           }
         }(),
       );
@@ -948,7 +948,7 @@ class FjsEngine extends ChangeNotifier {
       _debugRetryAttempt = 0;
       final vm = _vm;
       if (vm != null) bind.debuggerDetachVm(vm);
-      onLog?.call(1, '[fjs/debug] detached');
+      _log(1, '[fjs/debug] detached');
     };
     dev.onEval = (id, source) {
       try {
@@ -980,7 +980,7 @@ class FjsEngine extends ChangeNotifier {
             .toList();
     if (chunks.isEmpty) return;
     await Future<void>.delayed(const Duration(milliseconds: 250));
-    onLog?.call(1, '[dev] preloading ${chunks.length} page chunks');
+    _log(1, '[dev] preloading ${chunks.length} page chunks');
     var loaded = 0;
     for (final chunk in chunks) {
       if (_disposed || _vm == null || _dev == null) return;
@@ -989,11 +989,11 @@ class FjsEngine extends ChangeNotifier {
         await _ensureChunk(chunk);
         loaded++;
       } catch (e) {
-        onLog?.call(2, '[dev] preload $chunk failed: $e');
+        _log(2, '[dev] preload $chunk failed: $e');
       }
       await Future<void>.delayed(const Duration(milliseconds: 16));
     }
-    onLog?.call(1, '[dev] preloaded $loaded page chunks');
+    _log(1, '[dev] preloaded $loaded page chunks');
   }
 
   /// Applies an edit that only touched page chunks, without restarting the
@@ -1019,13 +1019,13 @@ class FjsEngine extends ChangeNotifier {
         swapped.add(chunk);
       }
     } catch (e) {
-      onLog?.call(2, '[dev] page swap failed ($e) — reloading everything');
+      _log(2, '[dev] page swap failed ($e) — reloading everything');
       return false;
     }
     for (final chunk in swapped) {
       dispatchEvent(0, FjsEvent.devPageReload, text: chunk);
     }
-    onLog?.call(
+    _log(
       1,
       swapped.isEmpty
           ? '[dev] ${chunks.join(', ')} changed, not loaded here — nothing to reload'
@@ -1072,14 +1072,14 @@ class FjsEngine extends ChangeNotifier {
         _eval(bytes, filename: 'pages/$chunk.js');
       }
     } catch (e) {
-      onLog?.call(2, '[dev] unit swap failed ($e) — reloading everything');
+      _log(2, '[dev] unit swap failed ($e) — reloading everything');
       return false;
     }
     final remounted = reload.pages.where(_loadedChunks.contains).toList();
     for (final chunk in remounted) {
       dispatchEvent(0, FjsEvent.devPageReload, text: chunk);
     }
-    onLog?.call(
+    _log(
       1,
       '[dev] hot-swapped ${reload.units.join(', ')}'
       '${remounted.isEmpty ? '' : ' — remounted ${remounted.join(', ')}'}',
@@ -1163,14 +1163,14 @@ class FjsEngine extends ChangeNotifier {
       if (bind.debuggerAttachHost(vm, host, port) == 0) return true;
       failures.add('$host — ${_lastError()}');
     }
-    onLog?.call(2, '[fjs/debug] attach failed: ${failures.join(' · ')}');
+    _log(2, '[fjs/debug] attach failed: ${failures.join(' · ')}');
     return false;
   }
 
   void _scheduleDebugRetry(DevClient dev, int port) {
     if (_debugRetryAttempt >= _debugRetryMax) {
       _debugRetryAttempt = 0;
-      onLog?.call(
+      _log(
         2,
         '[fjs/debug] attach keeps failing — toggle fjs debug off/on to retry',
       );
@@ -1181,7 +1181,7 @@ class FjsEngine extends ChangeNotifier {
     final generation = _vmGeneration;
     final wait = 800 << _debugRetryAttempt;
     _debugRetryAttempt++;
-    onLog?.call(
+    _log(
       1,
       '[fjs/debug] retrying attach in ${wait}ms '
       '(attempt $_debugRetryAttempt/$_debugRetryMax)',
@@ -1198,7 +1198,7 @@ class FjsEngine extends ChangeNotifier {
         return;
       }
       _debugRetryAttempt = 0;
-      onLog?.call(
+      _log(
         1,
         '[fjs/debug] debug channel attached — reloading so every script '
         'registers with the debugger',
@@ -1207,7 +1207,7 @@ class FjsEngine extends ChangeNotifier {
         final effectiveUnits = await _renegotiateUnits(dev);
         await _loadFromDev(dev, _devSplit, effectiveUnits);
       } catch (e) {
-        onLog?.call(3, '[fjs/debug] post-attach reload failed: $e');
+        _log(3, '[fjs/debug] post-attach reload failed: $e');
       }
     });
   }
@@ -1244,7 +1244,7 @@ class FjsEngine extends ChangeNotifier {
       _eval(unitBundle);
     }
     _runProgram(bundle);
-    onLog?.call(1, '[dev] bundle loaded (${bundle.length} bytes)');
+    _log(1, '[dev] bundle loaded (${bundle.length} bytes)');
   }
 
   /// Knocks once on a PUBLIC host so iOS raises its "use wireless data"
@@ -1381,7 +1381,9 @@ class FjsEngine extends ChangeNotifier {
 
   /// Every console line the VM produces goes here: to the host app through
   /// [onLog], and — while `fjs dev` is connected — up the dev socket, which
-  /// is what `fjs log` and `fjs eval` read.
+  /// is what `fjs log` and `fjs eval` read. The engine's own progress lines
+  /// (nav / dev / worker, spec 092) route through it too, so a DevTools
+  /// Console attached via `fjs debug` sees the same stream the terminal does.
   void _log(int level, String message) {
     onLog?.call(level, message);
     _dev?.sendLog(level, message);

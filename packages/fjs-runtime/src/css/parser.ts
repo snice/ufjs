@@ -70,6 +70,9 @@ export interface Selector {
    * The rule styles the synthesized decoration box, not the element. */
   pseudo?: 'before' | 'after';
   specificity: number; // classes*10 + tags (+10 per pseudo-class)
+  /** The source text, kept for the DevTools matched-rules view (spec 092).
+   * The engine itself matches on the compounds and never reads it. */
+  text?: string;
 }
 
 export interface CssRule {
@@ -313,6 +316,7 @@ export function parseStylesheet(
       }
       const sel = parseSelector(trimmed);
       if (!sel) continue;
+      sel.text = trimmed;
       // a pseudo-element rule styles the decoration box; it must never ride
       // along with plain selectors or it would style the element itself
       if (sel.pseudo) pseudoSelectors.push(sel);
@@ -360,8 +364,11 @@ function parseMediaBlock(
     if (Object.keys(decls).length === 0) continue;
     const selectors: Selector[] = [];
     for (const part of selectorText.split(',')) {
-      const sel = parseSelector(part.trim());
-      if (sel) selectors.push(sel);
+      const trimmed = part.trim();
+      const sel = parseSelector(trimmed);
+      if (!sel) continue;
+      sel.text = trimmed;
+      selectors.push(sel);
     }
     if (selectors.length === 0) continue;
     rules.push({ selectors, decls, order: nextOrder(), scope, media });

@@ -15,7 +15,13 @@
 // devtoolsSlots (devtools-hooks.ts); the call sites in element.ts /
 // renderer.ts / net/fetch.ts keep working either way.
 import { base64Decode, base64Encode } from './net/base64';
-import { devtoolsSlots, type DevtoolsNetRow, type DevtoolsNode, type DevtoolsTreeProvider } from './devtools-hooks';
+import {
+  devtoolsSlots,
+  devtoolsTreeVersion,
+  type DevtoolsNetRow,
+  type DevtoolsNode,
+  type DevtoolsTreeProvider,
+} from './devtools-hooks';
 
 // Build-time define injected by the fjs bundler (spec 090).
 declare const __FJS_DEVTOOLS__: boolean;
@@ -185,6 +191,7 @@ function cmd(method: string, paramsJson: string): unknown {
   if (method === 'CSS.getComputedStyleForNode' || method === 'CSS.getMatchedStylesForNode') {
     return styleCmd(Number(params.id));
   }
+  if (method === 'Dom.version') return versionCmd();
   if (method === 'Network.drain') return drainCmd();
   if (method === 'Network.getResponseBody') return bodyCmd(Number(params.id));
   throw new Error(`__fjsDevtools: unknown cmd ${method}`);
@@ -208,7 +215,23 @@ function styleCmd(id: number): unknown {
     computed: provider?.computedStyle(id) ?? {},
     inline: provider?.inlineStyle(id) ?? {},
     classes: provider ? provider.classesOf(id) : [],
+    // spec 092: false means the id is gone from the live tree (DevTools is
+    // reading a stale snapshot) — the relay answers empty AND pushes
+    // DOM.documentUpdated so the panel re-pulls instead of staying dead
+    exists: !!provider && provider.exists(id),
+    // the Styles panel's matched-rules list (selector texts, matched
+    // indices, per-rule declarations), in cascade order
+    matched: provider?.matchedRules?.(id) ?? [],
   };
+}
+
+/** Introspection for tooling: how many UI frames have gone out. The relay's
+ * DOM invalidation ended up push-based (world resets + stale-click healing,
+ * spec 092) — a change poll here made the real DevTools re-pull the document
+ * on every frame of a busy app, so it was dropped. Kept because it is free
+ * and answers "is the tree moving" without a doc pull. */
+function versionCmd(): unknown {
+  return { version: devtoolsTreeVersion.value };
 }
 
 function drainCmd(): unknown {
@@ -249,7 +272,7 @@ export function devtoolsBoot(): void {
   devtoolsSlots.netBodyMaterialized = netBodyMaterialized;
   const g = globalThis as Record<string, unknown>;
   g.__fjsDevtools = {
-    version: '090-1',
+    version: '092-1',
     cmd: (method: string, paramsJson: string): string =>
       JSON.stringify(cmd(method, paramsJson)),
   };

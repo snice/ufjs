@@ -284,6 +284,14 @@ interface ElementState {
   pseudoApplied?: PseudoStyles | null; // last pseudo styles pushed to the renderer
 }
 
+/** One rule's DevTools matched-rules report (spec 092): selector source
+ * texts, the indices that matched, and the rule's own declarations. */
+export interface MatchedRuleReport {
+  selectors: string[];
+  matched: number[];
+  decls: Record<string, unknown>;
+}
+
 /** Computed `::before` / `::after` styles for one element, each already
  * var()-resolved and em-folded, with the element's inheritable properties as
  * the base (a pseudo-element inherits from its originating element). */
@@ -747,6 +755,54 @@ export class StyleEngine {
   classesOf(id: number): string[] {
     const s = this.states.get(id);
     return s ? [...s.classes].filter((c) => c !== DISABLED_CLASS) : [];
+  }
+
+  /** DevTools (spec 092): the registered rules that match this element right
+   * now — selector source text, which selectors matched (indices into
+   * `selectors`), and the rule's declarations — in cascade order (weakest
+   * first, so the panel's last row is the winner). Runs the same candidate
+   * walk the match cache populates, on demand for ONE element at human click
+   * cadence: nothing is cached and the compute hot path is untouched.
+   * `:active` / `:hover` selectors match structurally but never "apply"
+   * while the state is off, so they are reported as not-matching (a rule
+   * that only has state selectors is left out entirely). */
+  matchedRulesOf(id: number): MatchedRuleReport[] {
+    const s = this.states.get(id);
+    if (!s) return [];
+    const stamp = ++this.bucketEpoch;
+    const hits: Array<{ rule: CssRule; matched: number[]; spec: number }> = [];
+    const walk = (bucket: CssRule[] | undefined): void => {
+      if (bucket === undefined) return;
+      for (const rule of bucket) {
+        if ((rule as IndexedRule).bucketStamp === stamp) continue;
+        (rule as IndexedRule).bucketStamp = stamp;
+        if (rule.media !== undefined && !mediaMatches(rule.media, this.viewport.width, this.viewport.height)) {
+          continue;
+        }
+        const matched: number[] = [];
+        let spec = -1;
+        rule.selectors.forEach((sel, i) => {
+          if (sel.pseudo || sel.active || sel.hover) return;
+          if (rule.scope != null) {
+            const has = sel.deep ? this.hasScopeUp(id, rule.scope) : s.scopes.has(rule.scope);
+            if (!has) return;
+          }
+          if (!this.matchSelector(sel, id)) return;
+          matched.push(i);
+          spec = Math.max(spec, sel.specificity);
+        });
+        if (matched.length !== 0) hits.push({ rule, matched, spec });
+      }
+    };
+    for (const cls of s.classes) walk(this.plainBuckets.byClass.get(cls));
+    walk(this.plainBuckets.byTag.get(s.tag));
+    walk(this.plainBuckets.catchAll);
+    hits.sort((a, b) => a.spec - b.spec || a.rule.order - b.rule.order);
+    return hits.map(({ rule, matched }) => ({
+      selectors: rule.selectors.map((sel) => sel.text ?? ''),
+      matched,
+      decls: rule.decls,
+    }));
   }
 
   /** The element's computed style, or undefined before the first compute.

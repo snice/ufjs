@@ -31,6 +31,10 @@ export interface DevtoolsTreeProvider {
   classesOf(id: number): string[];
   inlineStyle(id: number): Record<string, unknown> | undefined;
   computedStyle(id: number): Record<string, unknown> | undefined;
+  /** Rules that currently match the element, for the Styles panel's matched
+   * list (spec 092). Optional so a provider built before this landed keeps
+   * working; the panel then just shows no matched rules. */
+  matchedRules?(id: number): Array<{ selectors: string[]; matched: number[]; decls: Record<string, unknown> }>;
 }
 
 export interface DevtoolsNetBody {
@@ -90,3 +94,8 @@ export const devtoolsSlots: DevtoolsSlots = {
   netResponse: () => {},
   netBodyMaterialized: () => {},
 };
+
+/** Bumped once per UI frame that actually goes out (host.ts flushNow), not
+ * per op — exposed as `__fjsDevtools.cmd('Dom.version')` for tooling that
+ * wants to know whether the tree is moving (spec 092). */
+export const devtoolsTreeVersion = { value: 0 };

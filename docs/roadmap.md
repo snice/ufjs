@@ -721,6 +721,38 @@ spec 088 删掉 quickjs-ng 时留下了对比与退路缺口，补上
 - 明确不做：同进程双引擎热切换（每个 App 永久背两份引擎体积）；
   npm 预编译 quickjs 版 fjsc（仓库自建 + `FJSC_PATH` 覆盖）。
 
+## DevTools 实时化：Console 日志流 + Elements 活树（已完成 2026-09）
+
+`fjs debug` 在真实项目（vant 业务 app）首轮使用的反馈清账
+（`specs/092-devtools-live/`）：
+
+- ✅ **Console 收全两端日志**：终端里 `[dev]` / `[nav]` 这些 Dart 侧进度日志
+  从只进 flutter 终端改为同时走 dev socket，`fjs debug` 的 tool 链接收下后
+  合成 `Runtime.consoleAPICalled`（"fjs host" 上下文）送进 DevTools Console。
+  quickjs flavor 的 JS console 也经这条路径第一次进了 DevTools。
+- ✅ **Elements 树活树化**：整包 reload（VM 重建）即推 `DOM.documentUpdated`
+  让 DevTools 重拉；点了已换血的旧节点（id 已不存在）也自愈刷新——此前树
+  是死快照，reload 后 id 全部换血，点旧节点样式面板静默全空（首轮反馈的
+  主症状）。普通树变更不推送：真实前端收到该事件会重启一切未决样式请求，
+  持续变更的 app 会被打成样式栏永转（第二轮用真实 Chrome 前端对拍后撤掉
+  了第一版的变更轮询）。
+- ✅ **应答形状按真实前端对拍**：`inlineStyle` 剥掉 `{style:…}` 包装（前端
+  解析抛异常即永久转圈）、补 `getInlineStylesForNode`（element.style 段的
+  数据源）、`emulateNetworkConditionsByRule` 带 `ruleIds`、
+  `startScreencast` 明确拒绝（不留空白预览区）。其中两处是 089 埋下的。
+- ✅ **命中规则（matchedCSSRules）进入范围**（第三轮，用户复测 element.style
+  有、匹配规则仍空）：原 non-goal「热路径记规则身份」的前提不成立——
+  `matchedRulesOf(id)` 按需对单个元素走与 match cache 同源的候选桶，
+  点击节奏调用、不缓存，热路径零改动；selector 记了源文本，中继拼
+  `matchedCSSRules` 挂在合成样式表 `fjs-main` 上。连带修掉一个竞态：
+  合成样式表的 `CSS.styleSheetAdded` 从 WS 连接时改到 `CSS.enable`
+  应答后推（前端 CSSModel 构造函数里先注册 dispatcher 再 enable，
+  连接时推送会输给模型创建时机 → 时而注册时而丢）。真实前端 SDK
+  断言连续两跑通过（spec 092 第三轮）。
+- 明确不做 / 待做：**DevTools 左侧实时 UI 预览**（`Page.startScreencast`
+  需要 Dart 侧 RepaintBoundary 截屏管线 + 给 Dart 开一条到中继的旁路通道，
+  用户已确认"难度高先过"，记为后续 spec 方向）。
+
 ## 近期计划
 
 - **App 侧真机对拍挂账**：078/079 的示例页（过渡演示新增面板、百分比间距与

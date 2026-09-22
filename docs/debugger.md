@@ -137,16 +137,18 @@ dev server 重启就重连并重新注册——否则中继还活着、Chrome �
 运行时挂一个全局，签名是"字符串进、JSON 字符串出"，方便中继用
 `Runtime.evaluate` 直接拿结果：
 
-```251:255:packages/fjs-runtime/src/devtools.ts
+```274:278:packages/fjs-runtime/src/devtools.ts
   g.__fjsDevtools = {
-    version: '090-1',
+    version: '092-1',
     cmd: (method: string, paramsJson: string): string =>
       JSON.stringify(cmd(method, paramsJson)),
   };
 ```
 
-支持的 method：`DOM.getDocument`、`CSS.getComputedStyleForNode`、
-`CSS.getMatchedStylesForNode`、`Network.drain`、`Network.getResponseBody`。
+支持的 method：`DOM.getDocument`、`Dom.version`、
+`CSS.getComputedStyleForNode`、`CSS.getMatchedStylesForNode`（同一个
+cmd 同时答 inline 与命中规则，中继拆成两种 CDP 形状）、
+`CSS.getInlineStylesForNode`、`Network.drain`、`Network.getResponseBody`。
 **加面板能力就是往这张表里加一条，再在中继侧加对应的 CDP 方法路由。**
 
 ## 4. 原生层：引擎与模块
@@ -261,9 +263,38 @@ HTTP 侧服务 `/json/version`、`/json/list`、`/json`——这是 `chrome://in
 几个只在中继里存在的行为：
 
 - **Elements 的 nodeId 是算术映射**：element `id*2+1000`、text `id*2+1001`、
-  document 固定 1。不需要失效表，代价是树是快照式的，不推送增量。
+  document 固定 1。不需要失效表。整树失效只在**世界重置**时推
+  （spec 092）：app 的 `debug-reload` 标记（VM 重建），以及点了已不存在
+  的旧节点（styleCmd 的 `exists:false`）——`DOM.documentUpdated` 会让
+  DevTools 重拉整棵树。普通树变更不推：真实前端收到该事件会重启一切
+  未决的样式请求，频繁推送等于样式面板永远转圈（第一版设计实测踩坑）。
+  另有两处按真实前端源码对齐的应答形状：`inlineStyle` 是 CSS.Style
+  本体（包一层 `{style:…}` 前端解析即抛异常，转圈）；`computedStyle`
+  是扁平 `[{name,value}]` 数组（这版前端 SDK 直接 for..of 迭代它）。
+- **命中规则与合成样式表**（spec 092 第三轮）：`CSS.getMatchedStylesForNode`
+  的 `matchedCSSRules` 由运行时 `matchedRulesOf(id)` 按需产出——点击节奏
+  对单个元素走 match cache 同源的候选桶，不缓存、不碰 compute 热路径；
+  selector 带源文本（`Selector.text`），声明是 kebab 化的
+  `[{name,value}]`，`origin: 'regular'`。规则挂在合成样式表
+  `styleSheetId: 'fjs-main'` 上，这张表的 `CSS.styleSheetAdded`
+  **必须在应答 `CSS.enable` 之后推，不能在 WS 连接时推**：前端 CSSModel
+  在构造函数里先注册 dispatcher 再发 `enable()`，连接时推送会输给模型
+  创建时机，表现为同一份代码有时规则在、有时整栏空（`CSS.disable`
+  重置重发）。
+- **Console 合成事件**（spec 092）：中继在 DevTools 连上时先发一条自己的
+  `Runtime.executionContextCreated`（"fjs host"，id 固定 424242），`fjs debug`
+  把 dev server 广播的 `{fjs:'log'}` 行交给 `consoleLine()` 合成
+  `Runtime.consoleAPICalled`——Dart 侧进度日志（`[dev]`/`[nav]`）由此进
+  DevTools Console，与引擎自己合成的 JS console（上下文 "fjs console"）
+  并存不重叠：调试器附加期间引擎导流 console，log 通道收不到 JS 行。
+- **Page 域的补桩**（spec 092）：`getNavigationHistory` 回一条 fjs://app
+  记录（空 `{}` 会让 screencast 面板的 requestNavigationHistory 抛
+  undefined.length）；`startScreencast` 明确报错拒绝（Flutter 侧截屏管线
+  未做，roadmap）——假应答会让前端留一块永远空白的预览区。
 - **Network 是 500ms 轮询** `Network.drain`，把结果合成
-  `requestWillBeSent` / `responseReceived` / `loadingFinished` 三个事件。
+  `requestWillBeSent` / `responseReceived` / `loadingFinished` 三个事件；
+  `emulateNetworkConditionsByRule` 的应答必须带 `ruleIds: []`（前端启动
+  时读它的 length）。
 - **响应体由中继缓存**：`Network.getResponseBody` 答的是 relay 侧
   `bodyCache`，不回设备。没缓存时明确报错（太大 / 早于本次会话），
   不是静默空体。

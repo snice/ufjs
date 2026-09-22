@@ -17,6 +17,7 @@ import { spawnSync } from 'node:child_process';
 import {
   keepDevServerLinked,
   parseDevToolArgs,
+  parseJsonMessage,
   type DevToolOptions,
 } from '../dev/tool-conn.js';
 import { adbDevices, resolveAdb } from '../dev/adb.js';
@@ -125,6 +126,15 @@ export async function debugCommand(argv: string[]): Promise<void> {
             'push as soon as it connects',
         );
       }
+      // The server broadcasts the app log stream to every tool (the same
+      // lines `fjs log` shows). Most of it is Dart-side progress the engine
+      // never sees — synthesize console events so DevTools' Console panel
+      // shows what the terminal shows (spec 092).
+      socket.on('message', (raw) => {
+        const msg = parseJsonMessage(String(raw));
+        if (msg?.fjs !== 'log') return;
+        relay.consoleLine(Number(msg.level ?? 1), String(msg.text ?? ''));
+      });
     },
     onDrop: () => {
       console.log(

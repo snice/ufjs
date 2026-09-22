@@ -595,13 +595,22 @@ Chrome DevTools 直连正在跑的 app：断点（含条件断点）、单步、
 在工作**（spec 089）：
 
 - **Elements**：每页的元素树（tag / class / style / 业务 props / 文本），
-  选中节点后 Computed 侧栏是样式引擎算出的最终生效样式。树是快照式——
-  运行中的变更不会自动推送，重开 DevTools（或点刷新）重拉；断点暂停期间
+  选中节点后 Styles 侧栏有 `element.style`（inline）、**命中规则**（选择器
+  原文 + 声明，按特异性排序，spec 092 第三轮），Computed 侧栏是样式
+  引擎算出的最终生效样式。树的更新是**推送 + 自愈**（spec 092）：整包
+  reload（VM 重建）即推 `DOM.documentUpdated` 让 DevTools 重拉；点了已
+  换血的旧节点（id 已不存在）也会触发同样的刷新——普通树变更不推送
+  （频繁变更的 app 会被整树重拉打断样式查询，实测一轮），断点暂停期间
   树照样可查（走的是调试通道，不依赖被冻结的 Dart 事件循环）。
 - **Network**：app 里 `fetch()` 的请求行（方法 / URL / 状态 / 响应头）与
   Response 体预览（≤512KB，超出只记长度）。行有 ≤500ms 轮询延迟；响应体
   在**应用读取它时**才被记录（`text()/json()/arrayBuffer()`）——app 没读过
   的响应在面板里看不到体。
+- **Console 收全两端日志**（spec 092）：JS 的 `console.*` 走引擎；终端里
+  `[dev]` / `[nav]` / `[fjs/debug]` 这些 **Dart 侧进度日志**走 dev socket，
+  由 `fjs debug` 合成 `Runtime.consoleAPICalled`（上下文名 "fjs host"）送进
+  同一个 Console——终端看到的流，DevTools 里也有。`fjs eval` 的应答行
+  不算 console 输出，已过滤。
 
 ```bash
 fjs debug                        # 另开一个终端；fjs dev 跑着的时候

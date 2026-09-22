@@ -3,6 +3,7 @@
 // goes through this module.
 import './microtask';
 import { OpWriter } from './ui/ops';
+import { devtoolsTreeVersion } from './devtools-hooks';
 
 export const hasNativeHost = typeof globalThis !== 'undefined' && '__fjs' in globalThis;
 
@@ -156,6 +157,9 @@ export function flushNow(): void {
   const frame = writer.toUint8Array();
   writer.reset();
   sink(frame);
+  // spec 092: the DevTools relay polls this to notice "the tree changed" —
+  // per frame batch, not per op, so it stays free
+  devtoolsTreeVersion.value++;
 }
 
 export function scheduleFlush(): void {

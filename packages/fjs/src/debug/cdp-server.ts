@@ -50,6 +50,11 @@ export interface CdpRelayOptions {
 export interface CdpRelay {
   /** What to print so a human can connect Chrome. */
   banner(vmCount: number): string;
+  /** One line of the app's own log stream (the same `fjs log` sees), handed
+   * over by `fjs debug`'s tool link and synthesized into
+   * Runtime.consoleAPICalled for the attached DevTools (spec 092). Dropped
+   * while no DevTools session is attached. */
+  consoleLine(level: number, text: string): void;
   close(): Promise<void>;
 }
 
@@ -101,6 +106,10 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
         netSent.clear();
         netDone.clear();
         bodyCache.clear();
+        // the VM was rebuilt: every nodeId DevTools holds belongs to the old
+        // element universe — this is a world reset, the one shape of tree
+        // change that is always worth a full re-pull
+        domInvalidated();
         continue; // internal traffic — never reaches DevTools
       }
       if (msg && typeof msg.id === 'number' && msg.id >= 1e9) {
@@ -179,6 +188,91 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
       ws.send(JSON.stringify({ id, error: { message } }));
   };
 
+  // ---- events we push at DevTools ourselves (spec 092) --------------------
+  //
+  // Two event sources the engine knows nothing about: the app's own log
+  // stream (Console panel) and element-tree invalidation (Elements panel).
+
+  /** A context id the engine will never mint (its own are small counters), so
+   * the synthesized log lines have a context to live in — DevTools shows them
+   * under "fjs host" in the console context dropdown, next to the engine's
+   * own "fjs console". */
+  const FJS_HOST_CONTEXT_ID = 424242;
+  /** The one synthetic stylesheet every matched rule cites; announced via
+   * CSS.styleSheetAdded on DevTools connect (see the connect handler). */
+  const FJS_STYLESHEET_ID = 'fjs-main';
+  /** Whether this DevTools session has been handed the stylesheet header
+   * above. CSSModel.enable() runs once per model life, so this doubles as
+   * "the dispatcher exists to receive it" — reset on CSS.disable. */
+  let styleSheetAnnounced = false;
+
+  /** Announce the one synthetic stylesheet every matched rule cites. Chrome
+   * backends fire styleSheetAdded for existing sheets on CSS.enable; the
+   * frontend keeps rules whose styleSheetId resolves to a header, so without
+   * this the Styles panel shows inline styles only (spec 092). */
+  const announceStyleSheet = (): void => {
+    if (styleSheetAnnounced) return;
+    styleSheetAnnounced = true;
+    pushToDevtools('CSS.styleSheetAdded', {
+      header: {
+        styleSheetId: FJS_STYLESHEET_ID,
+        frameId: 'fjs',
+        sourceURL: 'fjs://app/styles.css',
+        origin: 'regular',
+        title: 'fjs',
+        disabled: false,
+        isInline: false,
+        isMutable: false,
+        startLine: 0,
+        startColumn: 0,
+        length: 0,
+        endLine: 0,
+        endColumn: 0,
+      },
+    });
+  };
+
+  const pushToDevtools = (method: string, params: Record<string, unknown>): void => {
+    if (devtools?.readyState === WebSocket.OPEN)
+      devtools.send(JSON.stringify({ method, params }));
+  };
+
+  const CONSOLE_TYPE_OF_LEVEL: Record<number, string> = {
+    0: 'debug',
+    1: 'info',
+    2: 'warning',
+    3: 'error',
+  };
+
+  const consoleLine = (level: number, text: string): void => {
+    // eval answers travel the same log stream and are nobody's console
+    // output — same rule the dev server applies to its own echo
+    if (text.startsWith('\u0000fjs-eval:')) return;
+    pushToDevtools('Runtime.consoleAPICalled', {
+      type: CONSOLE_TYPE_OF_LEVEL[level] ?? 'info',
+      timestamp: Date.now(),
+      executionContextId: FJS_HOST_CONTEXT_ID,
+      args: [{ type: 'string', value: text }],
+    });
+  };
+
+  // ---- Elements freshness (spec 092) --------------------------------------
+  //
+  // DOM.documentUpdated is pushed only on WORLD RESETS, never on ordinary
+  // tree changes: the real frontend restarts every pending style request on
+  // that event, so an actively mutating app (timers, animations) driven by a
+  // change poll would keep the Styles sidebar spinning forever — measured
+  // with the real DevTools frontend, the first design did exactly that.
+  // A stale Elements tree heals at click time instead (the CSS handlers
+  // push the event when the selected id turns out dead), plus one push when
+  // the app signals its VM was rebuilt.
+
+  /** The tree changed underneath a (stale) DevTools snapshot: make the panel
+   * re-pull the whole document. Rare by design — see the block comment. */
+  const domInvalidated = (): void => {
+    pushToDevtools('DOM.documentUpdated', {});
+  };
+
   // ---- Elements: DOM/CSS over __fjsDevtools.cmd --------------------------
   //
   // nodeId layout: document = 1, element = elementId*2 + 1000, its text node
@@ -195,6 +289,13 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
     attrs: Record<string, string>;
     text?: string;
     children: RuntimeNode[];
+  }
+
+  /** One matched rule as the runtime's styleCmd reports it (spec 092). */
+  interface MatchedRule {
+    selectors: string[];
+    matched: number[];
+    decls: Record<string, unknown>;
   }
 
   const attrArray = (attrs: Record<string, string>): string[] => {
@@ -228,11 +329,37 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
 
   const styleObject = (css: Record<string, unknown>): Record<string, unknown> => ({
     cssProperties: Object.entries(css).map(([name, value]) => ({
-      name,
-      value: String(value),
+      name: cssDisplayName(name),
+      value: cssDisplayValue(name, value),
     })),
     shorthandEntries: [],
   });
+
+  /** The engine stores property names camelCase; CSS text spells them
+   * kebab-case. Custom properties (`--*`) pass through untouched. */
+  const cssDisplayName = (name: string): string =>
+    name.startsWith('--') ? name : name.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+
+  /** The engine normalizes px/rem lengths to numbers, so the number itself
+   * no longer carries a unit. `px` is the engine's unit for those; the small
+   * set of genuinely unitless numeric properties is spelled out. Anything
+   * else kept its string form at parse time. */
+  const UNITLESS_NUMERIC = new Set([
+    'opacity',
+    'zIndex',
+    'fontWeight',
+    'flexGrow',
+    'flexShrink',
+    'order',
+    'columnCount',
+    'zoom',
+    'fillOpacity',
+    'strokeOpacity',
+  ]);
+  const cssDisplayValue = (name: string, value: unknown): string => {
+    if (typeof value === 'number' && !UNITLESS_NUMERIC.has(name)) return `${value}px`;
+    return String(value);
+  };
 
   const routeBridged = async (
     ws: WebSocket,
@@ -265,7 +392,15 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
       }
       const style = (await bridgeCmd('CSS.getComputedStyleForNode', { id: eid })) as {
         computed?: Record<string, unknown>;
+        exists?: boolean;
       };
+      // the node DevTools clicked is gone from the live tree (stale snapshot):
+      // answer empty AND make the panel re-pull, or every click keeps dying
+      if (style.exists === false) domInvalidated();
+      // computedStyle is a FLAT [{name,value}] list for this frontend: its
+      // SDK iterates the reply (r.length / for..of), so a single CSSStyle
+      // object reads as "no properties" — verified against the real
+      // frontend's sdk.js, not the protocol doc (spec 092)
       reply(ws, id, {
         computedStyle: Object.entries(style.computed ?? {}).map(([name, value]) => ({
           name,
@@ -274,20 +409,48 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
       });
       return;
     }
-    if (method === 'CSS.getMatchedStylesForNode') {
+    if (method === 'CSS.getMatchedStylesForNode' || method === 'CSS.getInlineStylesForNode') {
       const eid = toElem(Number(params.nodeId));
       const style =
         eid === null
-          ? { inline: {} as Record<string, unknown> }
+          ? { inline: {} as Record<string, unknown>, matched: [] as MatchedRule[] }
           : ((await bridgeCmd('CSS.getMatchedStylesForNode', { id: eid })) as {
               inline?: Record<string, unknown>;
+              exists?: boolean;
+              matched?: MatchedRule[];
             });
+      if (style.exists === false) domInvalidated();
       const inline = style.inline ?? {};
+      // always hand back an (empty is fine) inline style: the Styles panel
+      // then at least renders the `element.style` section instead of a blank
+      // column. inlineStyle IS the CSS.Style per the CDP spec — an extra
+      // `{style: ...}` wrapper makes the DevTools frontend throw while
+      // parsing the response and the sidebar spins forever. The Styles
+      // panel's element.style section reads getInlineStylesForNode, which
+      // the frontend resolves to null unless inlineStyle is present.
+      // matchedCSSRules feed the "where does this style come from" list —
+      // selector texts and declarations come straight from the style engine
+      // (spec 092); source ranges stay out, so no stylesheet link is shown.
       reply(ws, id, {
-        inlineStyle: Object.keys(inline).length
-          ? { style: styleObject(inline) }
-          : undefined,
-        matchedCSSRules: [],
+        inlineStyle: styleObject(inline),
+        matchedCSSRules: (style.matched ?? []).map((m) => ({
+          rule: {
+            styleSheetId: FJS_STYLESHEET_ID,
+            selectorList: {
+              selectors: m.selectors.map((text) => ({ text })),
+              text: m.selectors.join(', '),
+            },
+            origin: 'regular',
+            style: {
+              cssProperties: Object.entries(m.decls).map(([name, value]) => ({
+                name: cssDisplayName(name),
+                value: cssDisplayValue(name, value),
+              })),
+              shorthandEntries: [],
+            },
+          },
+          matchingSelectors: m.matched,
+        })),
       });
       return;
     }
@@ -325,7 +488,44 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
       });
       return;
     }
-    // DOM.enable/requestChildNodes, CSS.enable, Page.enable, Overlay.*,
+    if (method === 'Page.getNavigationHistory') {
+      // the screencast panel asks for this on attach; an empty {} makes its
+      // requestNavigationHistory throw reading `entries.length` (caught live
+      // with the real frontend, spec 092)
+      reply(ws, id, {
+        currentIndex: 0,
+        entries: [{ id: 1, url: 'fjs://app', title: 'fjs app' }],
+      });
+      return;
+    }
+    if (method === 'Page.startScreencast') {
+      // no Flutter-side capture pipeline yet (roadmap). Refuse rather than
+      // ack: an acked-but-silent screencast leaves the frontend's preview
+      // pane blank, which reads as a broken target instead of "unsupported"
+      replyError(ws, id, 'Page.startScreencast is not supported by the fjs relay');
+      return;
+    }
+    if (method === 'Network.emulateNetworkConditionsByRule') {
+      // the frontend's boot reads ruleIds.length off this reply — an empty
+      // {} threw "Cannot read properties of undefined (reading 'length')"
+      // inside sdk.js (measured with the real frontend, spec 092)
+      reply(ws, id, { ruleIds: [] });
+      return;
+    }
+    if (method === 'CSS.enable') {
+      reply(ws, id, {});
+      // after the reply, never at socket-open: CSSModel registers its CSS
+      // dispatcher just before calling enable(), so this is the first moment
+      // the event is guaranteed a listener (spec 092)
+      announceStyleSheet();
+      return;
+    }
+    if (method === 'CSS.disable') {
+      styleSheetAnnounced = false;
+      reply(ws, id, {});
+      return;
+    }
+    // DOM.enable/requestChildNodes, Page.enable, Overlay.*,
     // Emulation.*, Console.*, Log.*, Performance.* …: acknowledged, with
     // whatever the panel asked for left empty — the panels degrade
     // gracefully, and the docs list exactly what is served.
@@ -432,16 +632,17 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
     }
   };
 
-  const resetSessionCaches = (): void => {
-    netSent.clear();
-    netDone.clear();
-    bodyCache.clear();
-    networkEnabled = false;
-    stopNetPoll();
-    // requests buffered while nothing was attached would flush into the
-    // next VM as stale protocol traffic from a dead session
-    devBuf = '';
-  };
+const resetSessionCaches = (): void => {
+  netSent.clear();
+  netDone.clear();
+  bodyCache.clear();
+  networkEnabled = false;
+  stopNetPoll();
+
+  // requests buffered while nothing was attached would flush into the
+  // next VM as stale protocol traffic from a dead session
+  devBuf = '';
+};
 
   // ---- sockets ---------------------------------------------------------------
 
@@ -512,6 +713,18 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
     }
     devtools = ws;
     log('Chrome DevTools connected');
+    // the synthesized log lines need a context to live in; announced before
+    // anything else can reference it (see FJS_HOST_CONTEXT_ID)
+    pushToDevtools('Runtime.executionContextCreated', {
+      context: { id: FJS_HOST_CONTEXT_ID, origin: 'fjs://app', name: 'fjs host' },
+    });
+    // the synthetic stylesheet is announced on CSS.enable instead of here:
+    // the frontend's CSSModel registers its event dispatcher in the same
+    // constructor that calls enable(), so anything pushed at socket-open
+    // races model creation and is silently dropped when it loses (spec 092,
+    // measured: same build registered or not depending on boot timing).
+    styleSheetAnnounced = false;
+
     ws.on('message', (data) => {
       let req: { id?: unknown; method?: unknown; params?: Record<string, unknown> };
       try {
@@ -538,6 +751,7 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
       if (devtools !== ws) return;
       devtools = null;
       devBuf = '';
+
       resetSessionCaches();
       // Tell the engine the session ended: a reconnecting DevTools must get
       // the scriptParsed replay (the engine only replays when the session
@@ -570,6 +784,7 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
       httpServer.listen(opts.cdpPort, '127.0.0.1', () => {
         if (first) return;
         resolve({
+          consoleLine,
           banner: (sessions) =>
             `debug relay: CDP http://127.0.0.1:${opts.cdpPort}/json/list, ` +
             `VM channel :${opts.vmPort} (${sessions} attached)`,
@@ -577,6 +792,7 @@ export function startCdpRelay(opts: CdpRelayOptions): Promise<CdpRelay> {
             new Promise<void>((done) => {
               vm?.destroy();
               stopNetPoll();
+
               wss.close();
               httpServer.close(() => {
                 vmListener.close(() => done());
