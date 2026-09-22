@@ -435,13 +435,14 @@ class _TouchActionRecognizer extends OneSequenceGestureRecognizer {
     _slop[event.pointer] = event.kind == PointerDeviceKind.touch
         ? _kClaimSlop
         : _kClaimSlopPrecise;
-    // `touch-action: none` is a declaration made before the gesture starts:
-    // the parent scrollable should not get a chance to claim a fast first
-    // move in the same arena round.
-    if (action == TouchAction.none) {
-      _selfResolved.add(event.pointer);
-      resolvePointer(event.pointer, GestureDisposition.accepted);
-    }
+    // No eager accept for `touch-action: none` at down. Winning the arena
+    // before the finger lifts rejects EVERY other member — including the
+    // node's own tap detector — so `@tap` + `touch-action: none` (a gesture
+    // canvas, per canvas-compat §9) never fired a tap on this side while the
+    // web did. The scroll race this used to guard is already covered:
+    // registration follows hit-testing, so this deeper recognizer sees the
+    // first move before the enclosing scrollable, and `none` claims at 8px —
+    // well before the scrollable's 18. Same path pan-x/pan-y always took.
   }
 
   @override
