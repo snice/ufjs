@@ -512,22 +512,11 @@ function sharedBareRe(shared: string[]): RegExp {
  * lets a page chunk share the app shell, stores and components with every
  * other page instead of embedding its own copy.
  *
- * [units] turns the app-module stubs into the dev hot-reload form (spec
- * 037): `globalThis.__fjsRequireUnit(id)` against the dev unit registry,
- * so a swapped unit is visible to chunks that already captured the old
- * exports. Every materialization is reported through `record` — the dev
- * server builds the unit import graph out of these calls.
- *
  * Must be used WITHOUT runtimeAliases()/vuePinPlugin(), which would win
  * resolution and pull the runtime into the app bundle again. */
-export interface UnitStubOptions {
-  record?: (importer: string, id: string) => void;
-}
-
 export function sharedStubPlugin(
   appModules?: Map<string, string>,
   shared: string[] = SHARED_BARE_BUILTIN,
-  units?: UnitStubOptions,
 ): Plugin {
   // key -> absolute path, inverted for lookups during resolution
   const byPath = new Map<string, string>();
@@ -563,19 +552,11 @@ export function sharedStubPlugin(
           if (resolved.errors.length) return resolved;
           const key = byPath.get(resolved.path);
           if (!key) return resolved;
-          units?.record?.(args.importer, key.slice('./'.length));
           return { path: key, namespace: 'fjs-shared-stub' };
         });
       }
       build.onLoad({ filter: /.*/, namespace: 'fjs-shared-stub' }, (args) => ({
-        // app-module keys are './'-prefixed (see byPath); in units mode they
-        // go through the dev registry instead of the shared snapshot
-        contents:
-          units && args.path.startsWith('./')
-            ? `module.exports = globalThis.__fjsRequireUnit(${JSON.stringify(
-                args.path.slice('./'.length),
-              )});`
-            : `module.exports = globalThis.__FJS_SHARED[${JSON.stringify(args.path)}];`,
+        contents: `module.exports = globalThis.__FJS_SHARED[${JSON.stringify(args.path)}];`,
         loader: 'js',
       }));
     },
@@ -949,17 +930,14 @@ export function rebaseVueSources(
 /** Publish project files as paths relative to the eval script.
  *
  * The map travels as a data URL, so DevTools resolves `sources` against the
- * script URL, not the map file. `src/stores/counter.ts` on a script named
- * `units/src/stores/counter.ts.js` becomes
- * `units/src/stores/src/stores/counter.ts` and disappears under that folder.
- * A path relative to the script (`../../../src/stores/counter.ts` from
- * `pages/about.js`'s sibling `../src/pages/about.vue`) resolves back to
- * `src/...` for every script, which is where a breakpoint on an imported
- * module has to land.
+ * script URL, not the map file. A path relative to the script
+ * (`../src/pages/about.vue` from `pages/about.js`) resolves back to
+ * `src/...`, which is where a breakpoint on an imported module has to land.
  *
- * `fjs-shared-stub` entries are the `module.exports = __fjsRequireUnit(...)`
+ * `fjs-shared-stub` entries are `module.exports = __FJS_SHARED[...]`
  * stand-ins. They are not the module; leaving them in makes the import look
- * mapped when the real file is a different script. */
+ * mapped when the real file is in `shared.js`. `node_modules` stays out:
+ * vue / pinia / vant are not something a breakpoint in app code should open. */
 export function retargetDebuggerSources(
   map: { sources?: string[]; sourcesContent?: Array<string | null>; mappings?: string },
   mapDir: string,
@@ -995,6 +973,7 @@ function projectSource(source: string, mapDir: string, root: string): string | n
   const rel = path.relative(root, abs);
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
   const normalized = rel.split(path.sep).join('/');
+  if (normalized === 'node_modules' || normalized.startsWith('node_modules/')) return null;
   const file = path.join(root, normalized);
   if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return null;
   return normalized;

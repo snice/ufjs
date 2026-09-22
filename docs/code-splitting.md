@@ -111,24 +111,17 @@ dev server 提供源码形式的 split bundle：
 `FJS_DEV` 注入 `flutter run`。`connectDev()` 看到 split manifest 后会自动加载
 shared 和页面 chunk。
 
-### dev units（模块级热替换）
+### 热更新
 
-engine 支持 spec 037 时会请求 `/manifest.json?units=1` 协商 units 模式，dev
-构建随之多出几样东西：
+dev 只有两档（spec 095，units 已去掉）：
 
-- `dist/units/<id>.js` —— 每个「entry 直达或被 ≥2 页引用」的 app 模块一个
-  文件（id 是根相对路径，如 `src/components/Panel.vue`）。内容是
-  `__fjsDefineUnit("<id>", factory)`，**只注册不执行**——工厂在第一次
-  `__fjsRequireUnit` 时才跑，所以循环依赖和 fresh bootstrap 一样安全
-- `dist/units.js` —— 全部 unit 的合集，bootstrap 时在 shared 之后 eval
-- `/pages/<chunk>.deps.json` —— 该页 chunk 依赖的 unit 闭包，Dart 在 eval
-  chunk 前补齐未加载的 unit
+- 只改某一个页面，以及只被这一页 import 的模块：`reload pages:<chunk>`，
+  重 eval 该页并重挂，VM 和其它页面不动。
+- 其它改动（shell、入口、被多页或入口引用的组件和 ts、插件、路由、配置）：
+  整包 `reload`，VM 重建，回到首屏。
 
-page chunk / bundle 里对共享 app 模块的 import 被改写成
-`__fjsRequireUnit("<id>")`，从注册表取 exports（单实例语义由此保证）。热替换
-时设备端 define 全部受影响 unit 再逐个触发 require（依赖先跑、循环安全），
-受影响的 page chunk 重新 eval——chunk 在 eval 时就把 exports 捕获进了闭包，
-只换 unit 不换 chunk 会留旧组件。`release` 与字节码产物不含任何 unit 机制。
+共享 app 模块打进 `shared.js`，页面 chunk 用 `__FJS_SHARED` 取同一份实例。
+`release` 与字节码产物没有热更新。
 
 ## 排查清单
 

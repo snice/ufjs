@@ -665,7 +665,7 @@ failed:" 后面不再是空串。引擎（PrimJS，spec 088）原生实现 CDP�
 - **断点期间 UI 冻结**。暂停的是 JS 所在的 UI isolate，这是"暂停"的本义；
   resume 后恢复，期间到达的热更新推送会在 resume 后处理。
 - **Sources 面板能打开 Vue SFC 原文**（spec 094）。编译产物的脚本名是
-  `bundle.js`、`pages/<chunk>.js`、`units/<id>.js`（不是源路径）。dev
+  `bundle.js`、`pages/<chunk>.js`、`shared.js`（不是源路径）。dev
   构建另写 `.js.map`，中继把它内联进 `scriptParsed`，所以断点可以下在
   `<script setup>` 上，Call Stack 显示原文行号。`fjs build` 不带 map。
 - **Console 输出走调试通道**。调试器附加期间，`console.log` 由引擎合成为
@@ -1174,31 +1174,22 @@ fjs dev --pages
 
 dev server 默认端口 `38900`，会提供：
 
-- `/manifest.json`（新 engine 请求 `/manifest.json?units=1` 协商 units 模式）
+- `/manifest.json`
 - `/shared.js`
 - `/bundle.js`
 - `/pages/<chunk>.js`
 - `/ws` 热重载通道
 
-units 模式（engine 支持 spec 037 时自动协商开启）额外提供：
+### 热更新分两档
 
-- `/units.js` —— 全部共享 app 模块的 unit 文件合集（bootstrap 时一次加载）
-- `/units/<id>.js` —— 单个 unit，模块级热替换时按个拉取
-- `/pages/<chunk>.deps.json` —— 该页 chunk 依赖的 unit 闭包
-
-### 热更新分三级
-
-`fjs dev --pages` 的文件监听按下表决定推什么，粒度越小扰动越小：
+`fjs dev --pages` 的文件监听按下表决定推什么：
 
 | 改动 | 推送 | 设备行为 |
 | --- | --- | --- |
 | 页面独占的代码（页面 .vue 及其私有子模块） | `reload pages:<chunk>` | 重 eval 该页 chunk，整页重挂；其余一切不动 |
-| 被多页共享的 app 模块（共享组件、工具、store） | `reload units:<ids> pages:<chunks>` | 同一 VM 内重 eval 受影响 unit 及其引用方，重 eval 受影响页 chunk 并重挂；**VM 不重建**，页面栈、其它页面、全局状态保留 |
-| shell / entry / 路由表 / `app.config.ts` / 混合改动 | `reload` | 整个 VM 重建，回到首屏 |
+| shell、入口、被多页或入口引用的组件和 ts、插件、路由表、`app.config.ts`、混合改动 | `reload` | 整个 VM 重建，回到首屏 |
 
-unit 模式下 dev 构建把「被 entry 直达或 ≥2 页引用」的 app 模块各自编成
-独立文件（注册表 + 惰性工厂），页面状态随重挂丢失是热替换的既定边界。
-页面重挂由 JS 路由完成，与 `reload pages:` 共用同一条路径。web（`--web`）
+共享模块打进 `shared.js`。页面重挂由 JS 路由完成。web（`--web`）
 收到任何变更都是整页刷新，浏览器下这与热替换等价（见
 [web.md](web.md) 已知差异）。
 

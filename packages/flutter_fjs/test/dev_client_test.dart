@@ -130,10 +130,10 @@ void main() {
     server.push('reload pages:about,comp-swiper');
     await waitFor(() => reloads > 0);
     expect(lastReload!.pages, ['about', 'comp-swiper']);
-    expect(lastReload!.units, isEmpty);
+    expect(lastReload!.isFull, isFalse);
   });
 
-  test('a unit hot-swap push names units and affected pages', () async {
+  test('a retired unit hot-swap push is a full reload', () async {
     await client.listen();
     await waitFor(() => server.sockets.isNotEmpty);
     server.push(
@@ -141,12 +141,8 @@ void main() {
       ' pages:about,index',
     );
     await waitFor(() => reloads > 0);
-    expect(lastReload!.units, [
-      'src/utils/format.ts',
-      'src/components/panel.vue',
-    ]);
-    expect(lastReload!.pages, ['about', 'index']);
-    expect(lastReload!.isFull, isFalse);
+    expect(lastReload!.isFull, isTrue);
+    expect(lastReload!.pages, isEmpty);
   });
 
   test('an unrecognized reload variant parses as a full reload', () async {
@@ -171,13 +167,11 @@ void main() {
     expect(DevClient.parseReload('reload pages:').isFull, isTrue);
     expect(DevClient.parseReload('reload pages:index').pages, ['index']);
     expect(DevClient.parseReload('reload pages:a,b,c').pages, ['a', 'b', 'c']);
-    final swap = DevClient.parseReload(
-      'reload units:src/a.ts,src/b.vue pages:index',
+    expect(
+      DevClient.parseReload('reload units:src/a.ts,src/b.vue pages:index').isFull,
+      isTrue,
     );
-    expect(swap.units, ['src/a.ts', 'src/b.vue']);
-    expect(swap.pages, ['index']);
-    // pages are optional when nothing mounted is affected
-    expect(DevClient.parseReload('reload units:src/a.ts').pages, isEmpty);
+    expect(DevClient.parseReload('reload units:src/a.ts').isFull, isTrue);
   });
 
   test('an eval push splits into id and source', () async {
@@ -201,12 +195,14 @@ void main() {
     await client.listen();
     await waitFor(() => server.sockets.isNotEmpty);
     client.sendLog(3, 'boom');
-    await waitFor(() => server.received.isNotEmpty);
-    expect(jsonDecode(server.received.single), {
-      'fjs': 'log',
-      'level': 3,
-      'text': 'boom',
-    });
+    await waitFor(
+      () => server.received.any((raw) => raw.contains('"fjs":"log"')),
+    );
+    // listen() also sends the app hello; the log is the payload this checks
+    final log = server.received
+        .map((raw) => jsonDecode(raw) as Map<String, Object?>)
+        .singleWhere((msg) => msg['fjs'] == 'log');
+    expect(log, {'fjs': 'log', 'level': 3, 'text': 'boom'});
   });
 
   test('sendLog on a closed client is a no-op, not a crash', () {

@@ -6,15 +6,15 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-/// One parsed `reload` push. Empty [units] and [pages] means "reload the
-/// whole program"; that is also what an unrecognized message parses to.
+/// One parsed `reload` push. Empty [pages] means "reload the whole program";
+/// that is also what an unrecognized message parses to, including the retired
+/// `reload units:` form (spec 095).
 class DevReload {
-  const DevReload({this.units = const [], this.pages = const []});
+  const DevReload({this.pages = const []});
 
-  final List<String> units;
   final List<String> pages;
 
-  bool get isFull => units.isEmpty && pages.isEmpty;
+  bool get isFull => pages.isEmpty;
 }
 
 class DevClient {
@@ -31,10 +31,8 @@ class DevClient {
 
   WebSocket? _ws;
 
-  /// Called on every change push. [DevReload.units] names the dev units to
-  /// hot-swap (module-level reload, spec 037) and [DevReload.pages] the
-  /// page chunks that have to remount afterwards; both empty means the
-  /// whole program has to be reloaded.
+  /// Called on every change push. [DevReload.pages] names the page chunks to
+  /// re-evaluate; empty means the whole program has to be reloaded.
   Future<void> Function(DevReload reload)? onReload;
 
   /// Called for `eval <id> <source>` pushes, which is how `fjs eval` runs
@@ -71,8 +69,7 @@ class DevClient {
   /// [query] rides SEPARATELY from [path] on purpose: `Uri.replace(path:)`
   /// percent-encodes a literal `?` (%3F), and the dev server would answer
   /// the mangled path with its plain-text fallback — a 200 that parses as
-  /// nothing (seen live: the units handshake came out as
-  /// `/manifest.json%3Funits=1`).
+  /// nothing.
   ///
   /// Why only the bootstrap. Failing to fetch the manifest, the prelude or
   /// the bundle means the app has nothing to run at all — there is no page
@@ -147,7 +144,7 @@ class DevClient {
   /// server, or a transient failure — neither is worth failing a connect).
   Future<Map<String, Object?>?> fetchManifest() async {
     try {
-      final bytes = await fetchForBootstrap('/manifest.json', query: 'units=1');
+      final bytes = await fetchForBootstrap('/manifest.json');
       final value = jsonDecode(utf8.decode(bytes));
       return value is Map<String, Object?> ? value : null;
     } catch (e) {
@@ -214,8 +211,7 @@ class DevClient {
           onLog?.call(
             reload.isFull
                 ? 'change detected — reloading'
-                : 'change detected — hot-swapping '
-                      '${[...reload.units, ...reload.pages].join(', ')}',
+                : 'change detected — hot-swapping ${reload.pages.join(', ')}',
           );
           onReload?.call(reload);
         }
@@ -288,29 +284,25 @@ class DevClient {
   /// Parses one `reload` push into what to do with it.
   ///
   /// Wire forms (server: `dev/server.ts` `changeMessage` — keep in sync):
-  ///   `reload`                        — everything
-  ///   `reload pages:a,b`              — page chunks only (legacy form)
-  ///   `reload units:a,b pages:x,y`    — module hot swap; pages optional
+  ///   `reload`             — everything
+  ///   `reload pages:a,b`   — page chunks only
   ///
-  /// Anything else that starts with `reload` (a newer server talking to an
-  /// older app) parses as a FULL reload: reload-everything is the one
-  /// answer that is always correct, and silently ignoring a push would
-  /// leave the VM stale (constitution V).
+  /// `reload units:…` used to mean a module hot swap (spec 037). That tier
+  /// is gone (spec 095); a push that still names units is a full reload,
+  /// which is always a correct answer. Anything else that starts with
+  /// `reload` parses the same way: silently ignoring a push would leave
+  /// the VM stale (constitution V).
   static DevReload parseReload(String message) {
     if (message == 'reload') return const DevReload();
     if (!message.startsWith('reload ')) return const DevReload();
-    var units = const <String>[];
+    if (message.contains('units:')) return const DevReload();
     var pages = const <String>[];
     for (final token in message.substring('reload '.length).split(' ')) {
-      final values = _csvAfter(token, 'units:') ?? _csvAfter(token, 'pages:');
+      final values = _csvAfter(token, 'pages:');
       if (values == null) return const DevReload();
-      if (token.startsWith('units:')) {
-        units = values;
-      } else {
-        pages = values;
-      }
+      pages = values;
     }
-    return DevReload(units: units, pages: pages);
+    return DevReload(pages: pages);
   }
 
   static List<String>? _csvAfter(String token, String marker) {

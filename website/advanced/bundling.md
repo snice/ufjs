@@ -81,28 +81,16 @@ dev server（`fjs dev --pages`，默认端口 38900）提供：
 |---|---|
 | `/manifest.json` | 分包清单 |
 | `/shared.js` `/bundle.js` `/pages/<chunk>.js` | 源码形式的 bundle |
-| `/units.js` `/units/<id>.js` | 模块级热替换用的 unit |
 | `/ws` | WebSocket，推送 reload 指令 |
 
-文件变化后，dev server 判断改动范围，推送最小粒度的 reload：
+文件变化后，dev server 判断改动范围，推送两档里较小的那一档：
 
 | 改动 | 推送 | 设备行为 |
 |---|---|---|
 | 页面独占的代码 | `reload pages:<chunk>` | 只重新执行该页 chunk 并重挂 |
-| 多页共享的 app 模块 | `reload units:<ids> pages:<chunks>` | 同一 VM 内重新定义受影响的 unit 和引用它们的页面；**VM 不重建**，页面栈、全局状态保留 |
-| Shell、入口、路由表、配置 | `reload` | 销毁并重建整个 VM |
+| Shell、共享组件、共享 ts、入口、路由表、配置 | `reload` | 销毁并重建整个 VM |
 
-### unit：模块级热替换
-
-dev 构建时，每个「入口直达或被两页以上引用」的 app 模块被单独编成一个 unit：
-
-```js
-__fjsDefineUnit("src/components/Panel.vue", factory)   // 只注册，不执行
-```
-
-页面 chunk 里对它的 import 被改写成 `__fjsRequireUnit("src/components/Panel.vue")`。工厂在第一次 require 时才执行，所以循环依赖是安全的。热替换时，设备端重新 define 受影响的 unit，按依赖顺序重新 require，再重新执行引用它们的页面 chunk（chunk 在执行时就把 exports 捕获进了闭包，只换 unit 不换 chunk 会留下旧组件）。
-
-release 构建里没有任何 unit 机制。
+共享模块打进 `shared.js`，页面通过 `__FJS_SHARED` 取同一份实例。release 构建没有热更新。
 
 ### 完整重建为什么安全
 

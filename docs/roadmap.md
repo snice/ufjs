@@ -387,26 +387,17 @@ WebGL 扩展（`getExtension`）、`readPixels`、GL 指令去重、
   `renderer.dart` 的 `isHidden` 会把「无文本、无子节点」的 `text` 当 Vue 空锚点藏掉，
   `richSpans` 段落恰好长这样，要排除
 
-## dev 模块级 HMR（已完成 2026-09）
+## dev 热更新
 
-`specs/037-dev-module-hmr/`，热更新从「page chunk 一级」扩成三级，改共享代码
-不再重启 app：
+页面级热更新还在：只改某一个页面（及其私有模块）推 `reload pages:`，该页
+重挂，VM 不动。shell、共享组件、共享 ts、插件、路由改动整包 `reload`。
 
-- ✅ dev split 构建保留模块边界：被 entry 直达或 ≥2 页引用的 app 模块各自编成
-  unit 文件（`__fjsDefineUnit` 注册表 + 惰性工厂），shared 不再打快照；
-  单实例语义由「factory 只跑一次」保证，循环依赖走 CommonJS 式半成品 exports
-- ✅ dev server 按模块指纹推送：改共享模块推
-  `reload units:<ids> pages:<chunks>`（拓扑序），设备在同一 VM 里 define 全部
-  受影响 unit 再触发 require，受影响 page chunk 重 eval 后重挂——**VM 不重建**，
-  页面栈、其它页面、全局状态保留；entry 可达 / 路由表 / 混合改动仍全量兜底
-- ✅ units 模式经 `/manifest.json?units=1` 协商，旧 app 连新 server 拿 classic
-  产物；release 与字节码链路零改动
-- ✅ web（`fjs dev --web`）协议同源、执行整页刷新，登记进
-  [web.md](web.md)；三级行为与产物见 [toolchain.md](toolchain.md)、
-  [code-splitting.md](code-splitting.md)
+spec 037 的模块级 units 在 spec 095 去掉了。它只在「两页共用、入口碰不到的
+展示组件」上换得上新代码；改 Pinia store 时热替换发生了，新工厂却不会跑。
+为这一档维护注册表和调试脚本名不值得。
 
-页面重挂丢页面状态是既定边界（与 `reload pages:` 一致）；组件级状态保留
-（vite 式 HMR）顺延到中期之后。
+web（`fjs dev --web`）收到任何变更仍是整页刷新。行为见
+[toolchain.md](toolchain.md)、[code-splitting.md](code-splitting.md)。
 
 ## 二进制句柄跨越 JSI（已完成 2026-09）
 
@@ -782,14 +773,14 @@ spec 088 删掉 quickjs-ng 时留下了对比与退路缺口，补上
 
 `fjs debug` 此前只能在编译后的 bundle 上下断点（`specs/094-devtools-vue-sourcemap/`）：
 
-- ✅ **dev 构建出 map**：`fjs dev` 让 esbuild 写 external `.js.map`（`shared.js`
-  除外）。Vue 插件把 script 与 template 的 map 拼回 `.vue`，`sourcesContent`
-  是 SFC 原文。单元文件在 `__fjsDefineUnit` 包装后再把生成行下移一行。
+- ✅ **dev 构建出 map**：`fjs dev` 让 esbuild 写 external `.js.map`。Vue 插件把
+  script 与 template 的 map 拼回 `.vue`，`sourcesContent` 是 SFC 原文。
+  共享模块回到 `shared.js` 之后，这份 prelude 也出 map，但只保留项目文件。
 - ✅ **中继内联**：脚本注释是 `fjs-map:<路径>`，PrimJS 原样放进
   `sourceMapURL`。中继读 `.js.map` 改成 data URL 再给 Chrome——DevTools
   不会自己去拉，`Network.*` 又被桥接走了。不是 `.js.map` 的路径不读。
-- ✅ **脚本 url 与源路径错开**：单元 eval 文件名是 `units/<id>.js`，
-  `shared.js` / `units.js` 不再共用 `prelude.js`。
+- ✅ **脚本 url 与源路径错开**：eval 文件名是 `bundle.js`、`pages/<chunk>.js`、
+  `shared.js`，不跟 `src/...` 撞名。
 - 明确不做：release / 字节码、小程序、web（Vite 自有 map）、`<style>` 断点。
   template 行有映射就停，不作为一一对应的承诺。
 

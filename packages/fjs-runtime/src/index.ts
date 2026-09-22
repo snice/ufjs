@@ -47,10 +47,6 @@ export type {
 export { invokeHost, nowMs, gc, engineInfo, setTimeout, setInterval, clearTimeout, clearInterval, toast, setToastHandler, hasNativeHost, setOpSink } from './host';
 // Promise-shaped host module calls (spec 039); rejects without a native host
 export { invokeHostAsync } from './host-async';
-// dev-only module registry behind `fjs dev` hot reload (spec 037); dead
-// code on web and release, where no unit code is ever generated
-export { defineUnit, requireUnit, isUnitEvaluated } from './dev-units';
-export type { FjsUnitFactory, FjsUnitRequire } from './dev-units';
 export { Worker } from './worker';
 export { fetch, FjsHeaders as Headers, FjsResponse as Response, FjsAbortController as AbortController } from './net/fetch';
 export type { FjsRequestInit as RequestInit, FjsHeadersInit as HeadersInit, FjsAbortSignal as AbortSignal } from './net/fetch';

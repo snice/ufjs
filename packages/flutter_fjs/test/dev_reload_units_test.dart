@@ -1,9 +1,6 @@
-// The dev menu's manual reload used to skip the units handshake (spec 074):
-// `reloadDev()` passed `units: false` while the WebSocket push path
-// re-negotiated, so a units-mode split build came back up with an empty
-// `__FJS_MODULES` and the entry's first shared import died with
-// `dev unit … is not loaded`. These drive the REAL VM against a fake
-// `fjs dev` and pin the manual path to the same negotiation.
+// Manual reload (dev menu) and the WebSocket full reload share one load
+// path: shared prelude, then the entry. There is no unit bundle (spec 095).
+// These drive the real VM against a fake `fjs dev`.
 import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:io';
@@ -11,50 +8,24 @@ import 'dart:io';
 import 'package:flutter_fjs/flutter_fjs.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// What `fjs dev`'s split prelude ships: the spec 037 registry, shrunk to
-/// the shape this test depends on (define factories, require throws loud).
 const _sharedJs = '''
-globalThis.__FJS_MODULES = {};
-globalThis.__fjsDefineUnit = function (id, factory) {
-  globalThis.__FJS_MODULES[id] = { factory: factory };
-};
-globalThis.__fjsRequireUnit = function (id) {
-  const u = globalThis.__FJS_MODULES[id];
-  if (!u) throw new Error('[fjs] dev unit "' + id + '" is not loaded');
-  if (u.factory) {
-    const f = u.factory;
-    u.factory = null;
-    const m = { exports: {} };
-    f(globalThis.__fjsRequireUnit, m, m.exports);
-    u.exports = m.exports;
-  }
-  return u.exports;
-};
-''';
-
-const _unitsJs = '''
-__fjsDefineUnit('src/Shell.vue', function () {
-  globalThis.__unitRuns = (globalThis.__unitRuns || 0) + 1;
-});
+globalThis.__sharedRuns = (globalThis.__sharedRuns || 0) + 1;
+globalThis.__FJS_SHARED = { './src/Shell.vue': { ok: true } };
 ''';
 
 const _bundleJs = '''
 globalThis.__entryRuns = (globalThis.__entryRuns || 0) + 1;
-__fjsRequireUnit('src/Shell.vue');
-console.log('ENTRY ' + globalThis.__entryRuns + ' UNIT ' + globalThis.__unitRuns);
+if (!globalThis.__FJS_SHARED['./src/Shell.vue']) {
+  throw new Error('shared shell missing');
+}
+console.log('ENTRY ' + globalThis.__entryRuns + ' SHARED ' + globalThis.__sharedRuns);
 ''';
 
-/// Split + units stand-in for `fjs dev`: the four GETs the engine's load
-/// path makes, plus the change socket.
 class _FakeFjsDev {
   _FakeFjsDev._(this._server);
 
   final HttpServer _server;
-
-  /// How often the engine asked for the manifest — the units handshake is
-  /// one GET per full load, so this is what pins "the manual reload
-  /// re-negotiated".
-  int manifestHits = 0;
+  final List<String> paths = [];
 
   static Future<_FakeFjsDev> start() async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -65,19 +36,13 @@ class _FakeFjsDev {
         ws.listen((_) {}, onDone: ws.close, onError: (_) {});
         return;
       }
+      fake.paths.add(req.uri.path);
       String? body;
       switch (req.uri.path) {
         case '/manifest.json':
-          fake.manifestHits++;
-          body = jsonEncode({
-            'split': true,
-            'units': true,
-            'displayName': 'units-fixture',
-          });
+          body = jsonEncode({'split': true, 'displayName': 'split-fixture'});
         case '/shared.js':
           body = _sharedJs;
-        case '/units.js':
-          body = _unitsJs;
         case '/bundle.js':
           body = _bundleJs;
       }
@@ -114,7 +79,6 @@ String? _libPath() {
 void main() {
   final lib = _libPath();
   if (lib == null || !Platform.isMacOS) {
-    // no dev dylib (or not macOS): nothing to load the VM from
     return;
   }
   ffi.DynamicLibrary.open(lib);
@@ -124,8 +88,7 @@ void main() {
   final logs = <String>[];
 
   setUp(() async {
-    HttpOverrides.global =
-        null; // flutter_test's fake HttpClient breaks sockets
+    HttpOverrides.global = null;
     server = await _FakeFjsDev.start();
     logs.clear();
     engine = FjsEngine()..onLog = (level, message) => logs.add(message);
@@ -137,29 +100,13 @@ void main() {
     await server.stop();
   });
 
-  test('a manual reload re-negotiates units and reloads cleanly', () async {
+  test('a manual reload reloads the split build without a unit bundle', () async {
     await engine.connectDev('127.0.0.1', server.port);
-    expect(
-      logs.where((l) => l == 'ENTRY 1 UNIT 1'),
-      hasLength(1),
-      reason: 'the connect handshake loaded prelude, units and entry',
-    );
-    expect(server.manifestHits, 1);
+    expect(logs.where((l) => l == 'ENTRY 1 SHARED 1'), hasLength(1));
 
-    // the regression itself: pre-074 this threw
-    // `dev unit "src/Shell.vue" is not loaded` — the entry was evaluated
-    // into a fresh VM whose `/units.js` never came down
     await engine.reloadDev();
 
-    expect(
-      server.manifestHits,
-      2,
-      reason: 'a manual reload re-asks the manifest, like the WS push does',
-    );
-    expect(
-      logs.where((l) => l == 'ENTRY 1 UNIT 1'),
-      hasLength(2),
-      reason: 'the fresh VM re-ran entry and unit factory from scratch',
-    );
+    expect(logs.where((l) => l == 'ENTRY 1 SHARED 1'), hasLength(2));
+    expect(server.paths, isNot(contains('/units.js')));
   });
 }

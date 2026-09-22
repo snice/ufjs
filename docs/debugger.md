@@ -230,16 +230,18 @@ Android/ohos 用 `DynamicLibrary.open('libfjs_debugger.so')`，Apple 用
 ### 4.4 为什么 attach 要重载一遍
 
 脚本只有在 debugger 已启用时 eval 才会进 inspector 的脚本表。所以
-`onDebugAttach`（`lib/src/engine.dart` L895-916）存下端口后整包重载，
-`_reattachDebugger`（L1085-1093）在**任何 eval 之前**完成 attach。之后
-DevTools 无论什么时候连上来，`Debugger.enable` 都会补发全部 `scriptParsed`，
-连接先后无所谓。
+`onDebugAttach` 存下端口后整包重载，`_reattachDebugger` 在 **shared.js 和
+bundle 的 eval 之前**完成 attach。`addPrelude` 会立刻执行：把它排在 attach
+前面的话，store / shell / 插件不进脚本表，Sources 里就看不到被 import 的
+`.ts` / `.vue`（page chunk 和 `main.ts` 仍在，因为它们在 attach 之后才跑）。
+之后 DevTools 无论什么时候连上来，`Debugger.enable` 都会补发全部
+`scriptParsed`，连接先后无所谓。
 
 断点按 **url + 行号**匹配，url 就是 eval 时传的文件名，所以文件名必须是
-真名而不是 `<eval>`：`bundle.js`、`pages/<chunk>.js`、`units/<id>.js`、
-`shared.js`、`units.js`、`fjs-eval.js`。单元不用源路径当 url——source map
-的 `sources` 已经是 `src/components/Foo.vue`，两边同名时 DevTools 会把
-产物和原文当成同一个脚本（spec 094）。
+真名而不是 `<eval>`：`bundle.js`、`pages/<chunk>.js`、`shared.js`、
+`fjs-eval.js`。这些名字不用源路径——source map 的 `sources` 已经是
+`src/components/Foo.vue`，两边同名时 DevTools 会把产物和原文当成同一个
+脚本（spec 094）。
 
 ## 5. 中继层（`fjs debug`）
 
@@ -376,7 +378,7 @@ release 包：
 |---|---|---|
 | 原生 loopback 全链路 | `native/test/main.cpp` L286-372（`FJS_DEBUGGER` 下） | dlopen 模块 → 本机 listener → attach → `setBreakpointByUrl` → 命中 → 另一线程发 `resume` → 断言脚本跑完 |
 | 中继单测 | `packages/fjs/test/debug-cdp.test.ts` | 发现端点、双向分帧转发、`DOM.getDocument` 经 evaluate 桥、第二个 DevTools 被拒、`fjs-map:` 内联 |
-| Vue source map | `packages/fjs/test/vue-sourcemap.test.ts`、`dev-units.test.ts` | script / template 行映回 `.vue`；dev 才写 map；单元包装后行号下移 |
+| Vue source map | `packages/fjs/test/vue-sourcemap.test.ts`、`dev-reload.test.ts` | script / template 行映回 `.vue`；dev 才写 map；page chunk 与 `shared.js` 都盖章 |
 | 数据平面单测 | `packages/fjs-runtime/test/devtools.test.ts` | 元素树序列化、computed/inline 样式、drain arming、body 在 materialize 时落库、512 KB 路径 |
 | 桌面彩排 | `fjsrun --debug-connect` + `fjs debug` | 不用设备跑通断点/面板 |
 | 设备端到端（手动） | `specs/088-devtools-debugger/spike/cdp-client-device.mjs`、`specs/089-devtools-panels/panels-client.mjs` | 真机/模拟器断点与面板 |
@@ -388,18 +390,17 @@ release 包：
   独立 runtime）、小程序端都不在范围内；web 端用浏览器自带 DevTools
   （[web.md 已知差异](web.md#已知差异)登记了这一行）。
 - **dev 有 Vue SFC source map**（spec 094）。`fjs dev` 给 bundle、page
-  chunk、单元写 `.js.map`，脚本末尾是 `//# sourceMappingURL=fjs-map:<路径>`。
+  chunk、`shared.js` 写 `.js.map`，脚本末尾是 `//# sourceMappingURL=fjs-map:<路径>`。
   PrimJS 只把这个字符串放进 `scriptParsed.sourceMapURL`，不解释 map。
   中继在转发给 Chrome 之前把 `fjs-map:` 读成 data URL——DevTools 跑在
   `devtools://`，不会自己去拉 dev server，而 `Network.*` 又被中继桥接走了。
-  Sources 里因此能打开 `.vue` 和它 import 的项目 `.ts` / `.js`（`src/stores/counter.ts`
-  这类，路径按脚本 URL 折回 `src/...`，不会堆在 `units/` 下面）。断点下在
-  `<script setup>` 和这些模块的可执行行上。`pinia` / `vue` / `vant` 在 `shared.js`
-  里，没有 map。
+  Sources 里因此能打开 `.vue` 和项目 `.ts` / `.js`（页面在 page chunk 里，
+  shell / store / 插件在 `shared.js` 里，路径按脚本 URL 折回 `src/...`）。
+  断点下在 `<script setup>` 和这些模块的可执行行上。`node_modules` 里的
+  `pinia` / `vue` / `vant` 不进 map。
   `<style>` 不在 map 里。template 行有映射就停，没有独立语句的行不停。
-  `shared.js` 不出 map（依赖为主，组件在各自的单元里）。`fjs build` /
-  字节码不写 map。路径里的空格会被编码，因为引擎的 magic-comment 扫描
-  拒绝空格。
+  `fjs build` / 字节码不写 map。路径里的空格会被编码，因为引擎的
+  magic-comment 扫描拒绝空格。
 - **`chrome://inspect` 不可靠**：填 `localhost:38902` 必然失败（macOS 先解析
   到 `::1`，中继只监听 IPv4 回环），填对了也未必出现且不报错。用直连命令。
 - **调试器附加期间 `console.log` 走 CDP**，被合成 `Runtime.consoleAPICalled`
