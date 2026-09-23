@@ -26,7 +26,9 @@ export type ImageMode = (typeof IMAGE_MODES)[number];
 
 export interface ResolvedImageMode {
   mode: ImageMode;
-  objectFit: 'fill' | 'contain' | 'cover';
+  /** `none` is load-bearing: the ten positional modes are a 1:1 crop window
+   * in WeChat, not a cover crop (specs/102). */
+  objectFit: 'fill' | 'contain' | 'cover' | 'none';
   objectPosition: string;
   fix: 'width' | 'height' | null;
 }
@@ -114,9 +116,23 @@ export function resolveImageMode(
       fix: 'height',
     };
   }
+  if (selected === 'aspectFill') {
+    return {
+      mode: selected,
+      objectFit: 'cover',
+      objectPosition: positions[selected],
+      fix: null,
+    };
+  }
+  // The ten positional modes: WeChat never scales them — it crops a
+  // natural-size window at the given position ("不缩放，仅显示顶部区域"
+  // in its docs). Fitting them as cover+position looked plausible and was
+  // wrong: an on-device A/B against dist/mp put cover at MAD 53–76 versus
+  // 12–24 for the 1:1 window (specs/102). `none` is that 1:1 window, and
+  // objectPosition still picks which corner of the image lands in the box.
   return {
     mode: selected,
-    objectFit: 'cover',
+    objectFit: 'none',
     objectPosition: positions[selected],
     fix: null,
   };

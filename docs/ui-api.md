@@ -75,13 +75,15 @@ WeUI 的 10% 黑遮罩 —— 取舍写在 `specs/007-form-components/plan.md` �
 | `aspectFit` | 保持比例完整显示，盒子留白 | `BoxFit.contain` | `contain` |
 | `aspectFill` | 保持比例填满，超出裁掉 | `BoxFit.cover` | `cover` |
 | `widthFix` | 宽度按样式走，高度按原图比例算 | `SizedBox(w, w / ratio)` | `height: auto` |
-| `heightFix` | 高度按样式走，宽度按原图比例算 | `SizedBox(h * ratio, h)` | `width: auto` + `align-self: flex-start` |
-| `top` / `bottom` / `center` / `left` / `right` | 保持比例裁剪，贴对应边 | `cover` + `Alignment` | `cover` + `object-position` |
-| `top left` / `top right` / `bottom left` / `bottom right` | 同上，贴对应角 | 同上 | 同上 |
+| `heightFix` | **样式里声明了 `width` 就以宽为准**（此时与 `widthFix` 同解），没声明 `width` 才以高为准、宽度按比例算——与微信小程序实拍一致 | 声明了宽 `SizedBox(w, w / ratio)`，否则 `SizedBox(h * ratio, h)` | 不覆盖 width（`align-self: flex-start` 先离开列向拉伸），量到用宽后把 `height` 钉成 `w / ratio`；页面 CSS 本来就给出这个高时不干预 |
+| `top` / `bottom` / `center` / `left` / `right` | **不缩放**：按对齐开一个 1:1 原图窗口，超出盒子的部分裁掉（微信「不缩放，仅显示顶部区域」这类语义） | `BoxFit.none` + `Alignment` | `object-fit: none` + `object-position` |
+| `top left` / `top right` / `bottom left` / `bottom right` | 同上，窗口贴对应角 | 同上 | 同上 |
 
 `widthFix` / `heightFix` 要拿到原图 intrinsic 尺寸才能定另一边：图还没到时先按样式
-给的那一边撑出一个有限的占位盒，metadata 一到再换成真实比例，父布局不会抖。样式里
-没给那一边的尺寸（`widthFix` 却没写 `width`）就退化成普通内容盒，并 `warnOnce` 说明。
+给的那一边撑出一个有限的占位盒（`width` 和 `height` 都声明时就是页面自己的盒子），
+metadata 一到再换成真实比例，父布局不会抖。样式里没给那一边的尺寸（`widthFix`
+却没写 `width`）就退化成普通内容盒，并 `warnOnce` 说明。九个位置类 mode 与
+`heightFix` 的宽优先规则都是照微信小程序实拍对齐的（`specs/102-image-mode-wechat-parity`）。
 
 | 事件 | 载荷 | 次数 |
 |---|---|---|

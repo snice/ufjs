@@ -94,62 +94,66 @@ FjsImageMode resolveFjsImageMode(
         alignment: Alignment.center,
         fix: Axis.vertical,
       );
-    // uni-app's crop modes; this spec's table defines them as
-    // aspect-preserving crop, so they are cover + an alignment. `center` is
-    // the alignment-neutral one and is easy to leave out of a switch like
-    // this — leaving it out silently downgraded it to scaleToFill.
+    // WeChat's positional modes never scale: they crop a 1:1 window of the
+    // image at the named position (its docs say "不缩放，仅显示顶部区域").
+    // Spec 010 shipped these as cover + an alignment, which left this end
+    // MAD 47-71 away from the WeChat renderer on the same page — close
+    // enough to look right, never close enough to match (specs/102).
+    // `center` is the alignment-neutral one and is easy to leave out of a
+    // switch like this — leaving it out silently downgraded it to
+    // scaleToFill.
     case 'center':
       return const FjsImageMode(
         name: 'center',
-        fit: BoxFit.cover,
+        fit: BoxFit.none,
         alignment: Alignment.center,
       );
     case 'top':
       return const FjsImageMode(
         name: 'top',
-        fit: BoxFit.cover,
+        fit: BoxFit.none,
         alignment: Alignment.topCenter,
       );
     case 'bottom':
       return const FjsImageMode(
         name: 'bottom',
-        fit: BoxFit.cover,
+        fit: BoxFit.none,
         alignment: Alignment.bottomCenter,
       );
     case 'left':
       return const FjsImageMode(
         name: 'left',
-        fit: BoxFit.cover,
+        fit: BoxFit.none,
         alignment: Alignment.centerLeft,
       );
     case 'right':
       return const FjsImageMode(
         name: 'right',
-        fit: BoxFit.cover,
+        fit: BoxFit.none,
         alignment: Alignment.centerRight,
       );
     case 'top left':
       return const FjsImageMode(
         name: 'top left',
-        fit: BoxFit.cover,
+        fit: BoxFit.none,
         alignment: Alignment.topLeft,
       );
     case 'top right':
       return const FjsImageMode(
         name: 'top right',
-        fit: BoxFit.cover,
+        fit: BoxFit.none,
         alignment: Alignment.topRight,
       );
     case 'bottom left':
       return const FjsImageMode(
         name: 'bottom left',
-        fit: BoxFit.cover,
+        fit: BoxFit.none,
         alignment: Alignment.bottomLeft,
       );
     case 'bottom right':
       return const FjsImageMode(
         name: 'bottom right',
-        fit: BoxFit.cover,
+        fit: BoxFit.none,
         alignment: Alignment.bottomRight,
       );
     default:

@@ -152,6 +152,11 @@ uni-app 那张表：
   逐字符相同，同一轮加载互斥且只派一次，换 `src` 丢弃旧结果
 - ✅ Flutter 网络图改用 `cached_network_image`（内存 + 磁盘缓存），asset 仍走
   `AssetImage`，空 `src` 不发请求
+- ✅ 与微信小程序对齐（`specs/102-image-mode-wechat-parity`，2026-09）：
+  九个位置类 mode 改成**不缩放**的 1:1 开窗（`object-fit: none` /
+  `BoxFit.none`，原来按 `cover` + 对齐实现，与 `dist/mp` 实拍 MAD 47–71）；
+  `heightFix` 改成宽优先——声明了 `width` 就按宽算高（微信此时等同
+  `widthFix`），只声明 `height` 的写法不变
 
 实机对拍时抓到三个只有跑起来才看得见的问题：Dart 的 mode 分支漏了 `center`
 （静静降级成 `scaleToFill`）；web 的 `heightFix` 因为 column flex 的 stretch 被

@@ -124,9 +124,16 @@ switch 按 `.fjs-switch.disabled` 走 50% 透明度。
 `render/image_mode.dart` 逐条镜像），web 落成 `object-fit` + `object-position`，
 Flutter 落成 `BoxFit` + `Alignment`。两处 web 特有的写法值得知道：
 
-- `widthFix` / `heightFix` 落成 `height: auto` / `width: auto`。`width: auto` 在
-  column flex 里仍然会被拉伸到父容器宽，所以 `heightFix` 还要一条
-  `align-self: flex-start`，才和 Flutter 的 `高 × 比例` 得到同一个盒子；
+- `widthFix` 落成 `height: auto`。`heightFix` **不能**想当然写 `width: auto`：
+  微信的 heightFix 会把声明过的 `width` 留在原位、反过来按它推高（宽高都写死时
+  就等同 `widthFix`，实测 280×186.7），而页面的 width 常写在 class 里、render
+  这一层看不见——所以 web 只挂 `align-self: flex-start`（离开 column flex 的
+  拉伸，浏览器才能按 `height × ratio` 推宽），等 intrinsic 尺寸到了量一次**用宽**，
+  把 `height` 钉成 `w / ratio`；页面 CSS 本来就给出这个高时就不钉，class 继续
+  做主（`specs/102`）；
+- 九个位置类 mode（`top` / `bottom` / 四角…）两端都是**不缩放**的 1:1 开窗
+  （web `object-fit: none`、Flutter `BoxFit.none`），对齐微信，不是
+  `cover` + 对齐（`specs/102` 实测两者 MAD 47–71）；
 - 未知 `mode` 两端都 `warnOnce` 后降级到 `scaleToFill`，不静静回落。
 
 缓存和延迟加载的**实现**不同，但可观察的时机相同：

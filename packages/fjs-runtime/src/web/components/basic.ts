@@ -290,6 +290,41 @@ export const FjsImage = defineComponent({
         warnScrollOnce(`image-mode:${message}`, message),
       );
 
+    // heightFix, measured (specs/102): WeChat keeps a *declared* width and
+    // derives the height from it — with both width and height in the page's
+    // CSS it renders exactly like widthFix (281x188 on dist/mp against our
+    // old 257x170) — and only honours the declared height when width is not
+    // declared (`height: 64px` alone stayed 32x64 on both ends).
+    // The declared width usually lives in the page's class CSS, which this
+    // render pass cannot see, so don't guess it: measure the width the
+    // browser actually laid out and pin `height = w * nh / nw` *only* when
+    // the page's own CSS does not already produce that height — reading the
+    // un-pinned height first keeps the class authoritative everywhere
+    // except the one case WeChat overrides too. The measure is idempotent:
+    // a declared width does not move when the height changes, and an auto
+    // width is derived from the height we are about to compute.
+    const fixHeight = ref<string | null>(null);
+    const syncFixHeight = async () => {
+      const before = image.value;
+      if (mode().fix !== 'height') {
+        fixHeight.value = null;
+        return;
+      }
+      if (!before || !before.naturalWidth || !before.naturalHeight) return;
+      // Drop any pin from the previous src/mode first, or the comparison
+      // would only ever confirm itself.
+      fixHeight.value = null;
+      await nextTick();
+      const el = image.value;
+      if (!el || el !== before || !el.naturalWidth) return;
+      const box = el.getBoundingClientRect();
+      if (!box.width) return;
+      const derived = (box.width * el.naturalHeight) / el.naturalWidth;
+      if (Math.abs(box.height - derived) > 0.5) {
+        fixHeight.value = `${derived}px`;
+      }
+    };
+
     const stopObserver = () => {
       observer?.disconnect();
       observer = null;
@@ -334,9 +369,19 @@ export const FjsImage = defineComponent({
     };
 
     watch(() => [props.src, props.lazyLoad], restart);
+    // A pin from the previous mode/src must not survive into the new layout:
+    // the page's CSS decides again until syncFixHeight has re-measured.
+    watch(
+      () => [props.mode, props.src],
+      () => {
+        fixHeight.value = null;
+        nextTick(syncFixHeight);
+      },
+    );
     onMounted(() => {
       if (!props.lazyLoad) start();
       else nextTick(watchVisibility);
+      nextTick(syncFixHeight);
     });
     onBeforeUnmount(stopObserver);
 
@@ -352,13 +397,18 @@ export const FjsImage = defineComponent({
       style.objectPosition = resolved.objectPosition;
       if (resolved.fix === 'width') style.height = 'auto';
       if (resolved.fix === 'height') {
-        style.width = 'auto';
-        // In a column flex — which every <view> is — `width: auto` still
-        // stretches to the container instead of following the image, so the
-        // cross-axis stretch has to be turned off too. Without this, a
-        // heightFix image is as wide as its parent on the web while Flutter
-        // computes height * ratio (widgets/image.dart).
+        // WeChat derives heightFix's height from a declared width instead of
+        // the other way round (specs/102), so the page's width must stay
+        // untouched: the old `width: auto` threw a declared 280px away and
+        // shrank the box to height * ratio. syncFixHeight pins the height
+        // that the measured width implies, and only when the page's own CSS
+        // does not already give it.
+        // In a column flex — which every <view> is — the width still has to
+        // leave the cross-axis stretch, or the measured width would be the
+        // container's rather than the image's (and the browser could not
+        // derive width from the declared height either).
         if (style.alignSelf === undefined) style.alignSelf = 'flex-start';
+        if (fixHeight.value !== null) style.height = fixHeight.value;
       }
       return { ...base, style };
     };
@@ -384,6 +434,8 @@ export const FjsImage = defineComponent({
                 encodeImageLoad(target.naturalWidth, target.naturalHeight),
               );
             }
+            // heightFix only becomes measurable once the ratio is known.
+            void syncFixHeight();
           },
           onError: () => {
             if (renderGeneration !== generation) return;

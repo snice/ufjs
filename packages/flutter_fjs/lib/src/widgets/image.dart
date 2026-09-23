@@ -344,10 +344,18 @@ class _FjsImageState extends State<FjsImage> {
     if (mode.fix == Axis.horizontal && widget.style.width != null) {
       fixedWidth = widget.style.width;
       fixedHeight = widget.style.width;
+    } else if (mode.fix == Axis.vertical && widget.style.width != null) {
+      // WeChat's heightFix yields to a *declared* width: with both width and
+      // height in the page's CSS it renders exactly like widthFix (281x188 on
+      // dist/mp against this branch's old height * ratio, specs/102). Before
+      // the provider reports intrinsic dimensions the placeholder is the
+      // page's own box, which is also what the web and WeChat show.
+      fixedWidth = widget.style.width;
+      fixedHeight = widget.style.height ?? widget.style.width;
     } else if (mode.fix == Axis.vertical && widget.style.height != null) {
-      // Before the provider reports intrinsic dimensions, a finite placeholder
-      // keeps heightFix safe inside a horizontal Flex. It is replaced with the
-      // real aspect ratio below after the image metadata arrives.
+      // No declared width: a finite placeholder keeps heightFix safe inside
+      // a horizontal Flex. It is replaced with the real aspect ratio below
+      // after the image metadata arrives.
       fixedWidth = widget.style.height;
       fixedHeight = widget.style.height;
     }
@@ -357,6 +365,9 @@ class _FjsImageState extends State<FjsImage> {
         _intrinsicHeight! > 0) {
       final ratio = _intrinsicWidth! / _intrinsicHeight!;
       if (mode.fix == Axis.horizontal && widget.style.width != null) {
+        fixedWidth = widget.style.width;
+        fixedHeight = widget.style.width! / ratio;
+      } else if (mode.fix == Axis.vertical && widget.style.width != null) {
         fixedWidth = widget.style.width;
         fixedHeight = widget.style.width! / ratio;
       } else if (mode.fix == Axis.vertical && widget.style.height != null) {

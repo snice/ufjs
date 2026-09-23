@@ -190,6 +190,87 @@ void main() {
     expect(resolved.alignment, Alignment.center);
   });
 
+  test('positional modes are 1:1 crop windows, not cover crops', () {
+    // WeChat never scales them: it opens a natural-size window at the named
+    // position ("不缩放，仅显示顶部区域"). Cover + alignment was the old
+    // mapping and left this end MAD 47-71 away from dist/mp (specs/102).
+    const positional = <String>[
+      'top',
+      'bottom',
+      'center',
+      'left',
+      'right',
+      'top left',
+      'top right',
+      'bottom left',
+      'bottom right',
+    ];
+    for (final mode in positional) {
+      final node = _node(mode: mode);
+      expect(
+        resolveFjsImageMode(node, FjsStyle(node.props)).fit,
+        BoxFit.none,
+        reason: mode,
+      );
+    }
+    final fill = _node(mode: 'aspectFill');
+    expect(resolveFjsImageMode(fill, FjsStyle(fill.props)).fit, BoxFit.cover);
+  });
+
+  testWidgets('heightFix yields to a declared width', (tester) async {
+    // `.mode-image { width: 280px; height: 170px }` with heightFix renders
+    // 280 x 186.67 on WeChat — widthFix semantics — not 257 x 170
+    // (specs/102).
+    final provider = _CompletingImageProvider();
+    final node = _node(
+      mode: 'heightFix',
+      style: const {'width': 280, 'height': 170},
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: FjsImage(
+            node: node,
+            style: FjsStyle(node.props),
+            providerOverride: provider,
+            dispatch: (id, type, {String? text}) {},
+          ),
+        ),
+      ),
+    );
+    provider.complete(await _testImage(600, 400));
+    await tester.pump();
+    await tester.pump();
+    final size = tester.getSize(find.byType(Image));
+    expect(size.width, 280);
+    expect(size.height, closeTo(280 * 400 / 600, 0.01));
+  });
+
+  testWidgets('heightFix keeps a height-only declaration', (tester) async {
+    // `height: 64px` alone on a 120x240 image is 32x64 on both ends
+    // (specs/102) — the width rule above must not swallow it.
+    final provider = _CompletingImageProvider();
+    final node = _node(mode: 'heightFix', style: const {'height': 64});
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: FjsImage(
+            node: node,
+            style: FjsStyle(node.props),
+            providerOverride: provider,
+            dispatch: (id, type, {String? text}) {},
+          ),
+        ),
+      ),
+    );
+    provider.complete(await _testImage(120, 240));
+    await tester.pump();
+    await tester.pump();
+    final size = tester.getSize(find.byType(Image));
+    expect(size.width, closeTo(32, 0.01));
+    expect(size.height, 64);
+  });
+
   testWidgets('dispatches one load event with intrinsic dimensions', (
     tester,
   ) async {
