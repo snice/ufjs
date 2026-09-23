@@ -164,9 +164,20 @@ Widget buildFlex(
       // content box, the same reference CSS uses. Flex hands its children an
       // unbounded main axis, so a child cannot read it from its own
       // constraints — see [_flexChild].
+      // A positive min on the main axis means an outer box imposed a size
+      // this content is bounded by (a Positioned-tight fixed box whose
+      // decoration uncapped the height while its height transition is
+      // declared — specs/101: the shared-element fly box), even when the
+      // max came through as infinity. CSS resolves `height: 100%` against
+      // that box, so use it as the percentage reference; a scroller's
+      // content (min 0) keeps the unbounded reference it has today.
       final mainAxisMax = horizontal
-          ? constraints.maxWidth
-          : constraints.maxHeight;
+          ? (constraints.maxWidth.isFinite || constraints.minWidth <= 0
+              ? constraints.maxWidth
+              : constraints.minWidth)
+          : (constraints.maxHeight.isFinite || constraints.minHeight <= 0
+              ? constraints.maxHeight
+              : constraints.minHeight);
       // The main-axis gap with its % resolved — column-gap against the
       // width on a row, row-gap against the height on a column, both of
       // them mainAxisMax here; unbounded falls to zero, as CSS treats it.
