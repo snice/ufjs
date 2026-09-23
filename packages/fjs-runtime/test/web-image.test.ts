@@ -13,6 +13,42 @@ function mount(props: Record<string, unknown>) {
   return el;
 }
 
+function stubIntrinsic(
+  image: HTMLImageElement,
+  width: number,
+  height: number,
+  box: { width: number; height: number },
+) {
+  Object.defineProperty(image, 'naturalWidth', {
+    value: width,
+    configurable: true,
+  });
+  Object.defineProperty(image, 'naturalHeight', {
+    value: height,
+    configurable: true,
+  });
+  // happy-dom lays nothing out: hand the component the box the browser
+  // would have produced for this CSS (specs/102 measures it).
+  image.getBoundingClientRect = () =>
+    ({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: box.width,
+      bottom: box.height,
+      width: box.width,
+      height: box.height,
+      toJSON: () => ({}),
+    }) as DOMRect;
+}
+
+async function flush() {
+  // syncFixHeight clears its pin, awaits a render, measures, then possibly
+  // pins again — give the scheduler enough rounds to settle.
+  for (let i = 0; i < 6; i++) await nextTick();
+}
+
 afterEach(() => {
   document.body.innerHTML = '';
   vi.restoreAllMocks();
@@ -71,18 +107,21 @@ describe('web image', () => {
     });
     await nextTick();
     const image = host.querySelector('img') as HTMLImageElement;
-    expect(image.style.objectFit).toBe('cover');
+    // `top left` wins over fit=contain: a 1:1 window, not contain and not
+    // the cover it used to resolve to (specs/102).
+    expect(image.style.objectFit).toBe('none');
     expect(image.style.objectPosition).toBe('left top');
   });
 
   it('lets a heightFix image size itself instead of stretching', async () => {
-    // Caught in the browser: `width: auto` inside a column flex still
-    // stretches to the parent, so a heightFix image was as wide as its
-    // container while Flutter used height * ratio.
+    // heightFix must leave the page's width alone (WeChat derives the
+    // height from a declared width, specs/102) while still leaving the
+    // column-flex cross-axis stretch, or the measured width would be the
+    // container's.
     const host = mount({ src: 'asset://photo.png', mode: 'heightFix' });
     await nextTick();
     const image = host.querySelector('img') as HTMLImageElement;
-    expect(image.style.width).toBe('auto');
+    expect(image.style.width).toBe('');
     expect(image.style.alignSelf).toBe('flex-start');
 
     const fixWidth = mount({ src: 'asset://photo.png', mode: 'widthFix' });
@@ -90,6 +129,35 @@ describe('web image', () => {
     const other = fixWidth.querySelector('img') as HTMLImageElement;
     expect(other.style.height).toBe('auto');
     expect(other.style.alignSelf).toBe('');
+  });
+
+  it('pins heightFix height from the used width when CSS disagrees', async () => {
+    // `.mode-image { width: 280px; height: 170px }` on WeChat renders
+    // 280 x 186.67 (widthFix semantics), not 257 x 170 (specs/102).
+    const host = mount({ src: 'asset://photo.png', mode: 'heightFix' });
+    await nextTick();
+    const image = host.querySelector('img') as HTMLImageElement;
+    stubIntrinsic(image, 600, 400, { width: 280, height: 170 });
+    image.dispatchEvent(new Event('load'));
+    await flush();
+    // the CSSOM serializes sub-pixel heights to 6 decimals
+    expect(parseFloat(image.style.height)).toBeCloseTo((280 * 400) / 600, 5);
+    expect(image.style.width).toBe('');
+  });
+
+  it('keeps the page CSS when it already matches the ratio', async () => {
+    // `height: 64px` alone on a 120x240 image is 32x64 on both ends, so
+    // there is nothing to pin — leaving the class in charge keeps any
+    // later CSS height change live. happy-dom has no layout, so the stubbed
+    // box stands in for what the class CSS would have produced.
+    const host = mount({ src: 'asset://photo.png', mode: 'heightFix' });
+    await nextTick();
+    const image = host.querySelector('img') as HTMLImageElement;
+    stubIntrinsic(image, 120, 240, { width: 32, height: 64 });
+    image.dispatchEvent(new Event('load'));
+    await flush();
+    expect(image.style.height).toBe('');
+    expect(image.style.width).toBe('');
   });
 
   it('waits for intersection when lazy-load is set', async () => {

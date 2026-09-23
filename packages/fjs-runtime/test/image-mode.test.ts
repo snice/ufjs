@@ -51,4 +51,30 @@ describe('image mode', () => {
     expect(resolveImageMode('widthFix', undefined).fix).toBe('width');
     expect(resolveImageMode('heightFix', undefined).fix).toBe('height');
   });
+
+  it('treats the nine positional modes as 1:1 crop windows (specs/102)', () => {
+    // WeChat never scales these — it opens a natural-size window at the
+    // named position. Cover+position was the old mapping and it measured
+    // MAD 47-71 away from dist/mp on the same page.
+    const positional = [
+      'top',
+      'bottom',
+      'center',
+      'left',
+      'right',
+      'top left',
+      'top right',
+      'bottom left',
+      'bottom right',
+    ];
+    for (const mode of positional) {
+      expect(resolveImageMode(mode, undefined).objectFit, mode).toBe('none');
+    }
+    // the five scaling modes keep their fits
+    expect(resolveImageMode('scaleToFill', undefined).objectFit).toBe('fill');
+    expect(resolveImageMode('aspectFit', undefined).objectFit).toBe('contain');
+    expect(resolveImageMode('aspectFill', undefined).objectFit).toBe('cover');
+    // the legacy fit prop is unchanged and has no `none` spelling
+    expect(resolveImageMode(undefined, 'cover').objectFit).toBe('cover');
+  });
 });
