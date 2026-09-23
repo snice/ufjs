@@ -18,6 +18,7 @@ import { hasNativeHost, invokeHost, registerPreFlush } from '../host';
 import { usesDeclaredFont } from '../css/font-face';
 import { INHERITABLE_KEYS, StyleEngine, type PseudoStyles } from '../css/style';
 import { devtoolsSlots, devtoolsStructuralVersion } from '../devtools-hooks';
+import { FJS_TAGS, FJS_COMPONENT_TAGS } from '../tags';
 
 type HostNode = Element;
 
@@ -61,6 +62,20 @@ const htmlDefaults = new Map<number, Record<string, unknown>>();
 // ---- style engine (<style> blocks: cascade + inheritance) ----
 
 const elementsById = new Map<number, Element>();
+
+// ---- event first-argument shape (specs/103) --------------------------------
+//
+// Which FIRST ARGUMENT a handler gets is the same tag decision web compiles
+// with (`webIsNativeTag`): an fjs tag is a Vue component over there and
+// emits the raw payload (`emit('input', target.value)`, `emit('error',
+// json)`), while anything else is a native element and hands handlers a
+// real DOM event. Flattening every event into a DOM-shaped object here —
+// what this renderer did since specs/070 — made `JSON.parse(payload)` throw
+// on every payload event and blanked the panels that render one (the
+// image page's mode panel, 2026-09-19 regression). So the TAG decides, not
+// the event name: `@input` on an fjs `input` is a string on both ends, and
+// vant's `div` keeps the event object its handlers read `clientX` from.
+const payloadEventTags = new WeakSet<HostNode>();
 
 // ---- position: fixed hoisting (CSS `fixed` without a DOM viewport) ----
 //
@@ -755,6 +770,11 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     // the textarea ELEMENT (see the H table): an unknown tag on the Dart
     // side rendered nothing at all
     const el = create(mapped ? mapped.tag : rawTag === 'textarea' ? 'input' : rawTag);
+    // The web-side tag lists are the contract source (specs/103): fjs tags
+    // compile to components that emit payloads; a vant `div` stays native.
+    if (FJS_TAGS.includes(rawTag) || FJS_COMPONENT_TAGS.includes(rawTag)) {
+      payloadEventTags.add(el);
+    }
     if (rawTag === 'textarea') {
       // vant's Field textarea: auto-height inside a vant cell is still
       // broken — the field grows natively but the fjs flex's line-extent
@@ -1129,12 +1149,18 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
       onceFired.delete(`${el.id}:${native}`);
       setProps(el, { [native]: null });
     } else {
-      // Vue-authored handlers speak DOM: vant's onClick calls
-      // event.stopPropagation() before anything else, so handing them the
-      // raw payload string (the element-API convention) crashes on the
-      // first tap. Wrap once here: the handler gets a DOM-shaped event
-      // whose `detail` carries the original payload. The raw element API
-      // (ui/element.ts dispatch) keeps passing the payload unchanged.
+      // Two shapes, decided by the tag (specs/103, the details at
+      // `payloadEventTags`):
+      //   fjs tag      → the raw payload, exactly what web's component
+      //                   emit hands the same handler. Object payloads
+      //                   (touch) pass through untouched.
+      //   anything else → a DOM-shaped event: vant's onClick calls
+      //                   event.stopPropagation() before anything else,
+      //                   and its Slider reads clientX — on web those tags
+      //                   are native elements, so a real DOM event is what
+      //                   the same handler gets there.
+      // The raw element API (ui/element.ts dispatch) keeps passing the
+      // payload unchanged either way.
       //
       // A component that binds its own onClick and also lets the parent's
       // `@click` fall through gets both merged into an array (mergeProps):
@@ -1147,11 +1173,22 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
       // inline handler is a new function every render, and Vue re-patches
       // the prop each time — a closure flag would re-arm on every render
       const onceKey = `${el.id}:${native}`;
+      const rawPayload = payloadEventTags.has(el);
       setProps(el, {
         [native]: (payload?: EventPayload) => {
           if (once) {
             if (onceFired.has(onceKey)) return;
             onceFired.add(onceKey);
+          }
+          if (rawPayload) {
+            // asDomEvent also keeps the DOM-shaped `el.value` read in step
+            // with the text the native side just showed — the raw path has
+            // to do the same line or `element.value` goes stale (specs/103).
+            if (typeof payload === 'string' && textValues.has(el.id)) {
+              textValues.set(el.id, payload);
+            }
+            for (const h of handlers) h(payload);
+            return;
           }
           const event = asDomEvent(el, payload);
           for (const h of handlers) h(event);

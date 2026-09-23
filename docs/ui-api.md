@@ -83,6 +83,11 @@ WeUI 的 10% 黑遮罩 —— 取舍写在 `specs/007-form-components/plan.md` �
 给的那一边撑出一个有限的占位盒，metadata 一到再换成真实比例，父布局不会抖。样式里
 没给那一边的尺寸（`widthFix` 却没写 `width`）就退化成普通内容盒，并 `warnOnce` 说明。
 
+> **首参形状（specs/103）**：fjs 标签的事件首参就是**裸载荷**（字符串 /
+> 数字 / 无参），与 web 端组件 `emit` 的交付一致——`JSON.parse(payload)`
+> 直接可用；绑在**非 fjs 标签**（如 vant 的 `div`）上的事件首参是**事件
+> 对象**（`detail` / `target` / `clientX`），对应 web 那边的原生 DOM 事件。
+
 | 事件 | 载荷 | 次数 |
 |---|---|---|
 | `@load` | `{"width":600,"height":400}`，字段顺序固定，是**原图像素**尺寸，不带单位 | 当前 `src` 成功后一次 |

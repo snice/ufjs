@@ -32,6 +32,7 @@ const RATE = /\/vant\/es\/rate\/Rate\.mjs$/;
 const FIELD = /\/vant\/es\/field\/Field\.mjs$/;
 const DOM_UTILS = /\/vant\/es\/utils\/dom\.mjs$/;
 const TABS = /\/vant\/es\/tabs\/Tabs\.mjs$/;
+const STEPPER = /\/vant\/es\/stepper\/Stepper\.mjs$/;
 
 export const PATCHES: Patch[] = [
   {
@@ -155,6 +156,47 @@ export const PATCHES: Patch[] = [
       '        }\n' +
       '        setLine.retries = 0;\n',
     feature: 'Tabs underline position on first render',
+  },
+  {
+    // fjs's `input`/`textarea` are components on BOTH ends (webIsNativeTag
+    // keeps them out of the native path), so Field's input handler receives
+    // the emitted VALUE, not a DOM event — `event.target` is undefined and
+    // every keystroke throws (specs/103, the first-argument contract). The
+    // object path stays for a future where these tags go native again.
+    file: FIELD,
+    find: '    const onInput = (event) => {\n      if (!event.target.composing) {\n        updateValue(event.target.value);\n      }\n    };',
+    replace:
+      '    const onInput = (event) => {\n' +
+      '      if (typeof event !== "object" || event === null) {\n' +
+      '        updateValue(event);\n' +
+      '        return;\n' +
+      '      }\n' +
+      '      if (!event.target.composing) {\n' +
+      '        updateValue(event.target.value);\n' +
+      '      }\n' +
+      '    };',
+    feature: 'Field 输入（v-model）',
+  },
+  {
+    // Same value-not-event shape on Stepper's input (specs/103). The shim
+    // keeps the body's format-and-write-back working on `input.value`; a
+    // write to the shim only drops the in-place reformat — the value still
+    // reaches setValue.
+    file: STEPPER,
+    find: '    const onInput = (event) => {\n      const input = event.target;',
+    replace:
+      '    const onInput = (event) => {\n' +
+      '      const input = typeof event === "object" && event !== null ? event.target : { value: String(event) };',
+    feature: 'Stepper 输入（v-model）',
+  },
+  {
+    file: STEPPER,
+    find: '    const onBlur = (event) => {\n      const input = event.target;\n      const value = format(input.value, props.autoFixed);',
+    replace:
+      '    const onBlur = (event) => {\n' +
+      '      const input = typeof event === "object" && event !== null ? event.target : { value: String(event) };\n' +
+      '      const value = format(input.value, props.autoFixed);',
+    feature: 'Stepper 失焦格式化',
   },
 ];
 

@@ -518,11 +518,14 @@ describe('payload-less events', () => {
   beforeEach(() => setOpSink((bytes) => sink(bytes)));
   afterEach(() => setOpSink(null));
 
-  it('hand the handler a DOM-shaped event object', async () => {
+  // specs/103 split the shapes by tag: a NON-fjs tag (`div`, where vant's
+  // stepper/checker bind their handlers) keeps the DOM-shaped event, the
+  // same shape web's native element hands the same handler.
+  it('hand a non-fjs tag handler a DOM-shaped event object', async () => {
     f = freshFrames();
     let got: unknown = 'not called';
     const { app } = mount(
-      () => h('view', { onClick: (e: unknown) => (got = e) }, [h('text', 'tap me')]),
+      () => h('div', { onClick: (e: unknown) => (got = e) }, [h('text', 'tap me')]),
       '',
     );
     await settle();
@@ -539,9 +542,11 @@ describe('text-control events', () => {
   beforeEach(() => setOpSink((bytes) => sink(bytes)));
   afterEach(() => setOpSink(null));
 
-  // vant Field: `if (!event.target.composing) updateValue(event.target.value)`,
-  // and model -> view goes through `inputRef.value.value = text`
-  it('expose the element as target with a live value', async () => {
+  // specs/103: fjs's input compiles to a component on web and emits the
+  // value, so the first argument IS that value on both ends — vant's Field
+  // reads it directly through demo/vite/vant.ts's payload patch. Model ->
+  // view still goes through `inputRef.value.value = text`.
+  it('hand the handler the value and keep el.value live', async () => {
     f = freshFrames();
     let typed: unknown;
     let input: { value: string; setSelectionRange(): void } | undefined;
@@ -549,8 +554,8 @@ describe('text-control events', () => {
       () =>
         h('input', {
           ref: (el: unknown) => (input = el as typeof input),
-          onInput: (e: { target: { value: string; composing?: boolean } }) => {
-            if (!e.target.composing) typed = e.target.value;
+          onInput: (e: unknown) => {
+            typed = e;
           },
         }),
       '',

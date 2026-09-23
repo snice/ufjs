@@ -73,7 +73,8 @@ describe('element.contains', () => {
     app.unmount();
   });
 
-  // vant checkbox/Checker.mjs onClick, reduced
+  // vant checkbox/Checker.mjs onClick, reduced — real Checker binds it on
+  // its `div` root, which specs/103 keeps on the DOM-shaped event side
   it('lets a vant Checker-style click handler toggle', async () => {
     const checked = ref(false);
     const iconRef = ref<Node | null>(null);
@@ -86,7 +87,7 @@ describe('element.contains', () => {
     };
     const app = mount(() =>
       h(
-        'view',
+        'div',
         { ref: (el: unknown) => (rootNode = el as Node), onClick },
         [h('view', { ref: iconRef }), h('text', 'label')],
       ),

@@ -152,6 +152,11 @@ uni-app 那张表：
   逐字符相同，同一轮加载互斥且只派一次，换 `src` 丢弃旧结果
 - ✅ Flutter 网络图改用 `cached_network_image`（内存 + 磁盘缓存），asset 仍走
   `AssetImage`，空 `src` 不发请求
+- ✅ 事件首参契约修复（`specs/103-event-payload-contract`，2026-09）：
+  specs/070 给所有 `on*` 包的 DOM 事件对象让 Flutter 端每个载荷 handler
+  （`JSON.parse(payload)`）静默抛错，图片页 mode / load-error 两个面板整块
+  空白；现在 fjs 标签首参=裸载荷（与 web 组件 emit 同源）、非 fjs 标签
+  仍=事件对象，demo vant 的 Field/Stepper 由项目内补丁兜底
 
 实机对拍时抓到三个只有跑起来才看得见的问题：Dart 的 mode 分支漏了 `center`
 （静静降级成 `scaleToFill`）；web 的 `heightFix` 因为 column flex 的 stretch 被
