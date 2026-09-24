@@ -1,7 +1,7 @@
 # Spec: 把 path_provider_foundation 限制在 FFI 版之前，修复 iOS 网络图崩溃
 
 - **ID**: 117-pin-path-provider-foundation
-- **状态**: draft
+- **状态**: ready
 - **日期**: 2026-09-24
 
 ## 1. 要解决什么
@@ -26,8 +26,10 @@ Failed to load dynamic library 'objective_c.framework/objective_c' ... (no such 
         → objective_c（FFI，native assets 产出 objective_c.framework）
 ```
 
-`path_provider_foundation` 从 **2.5.0** 起从 Pigeon/MethodChannel 改成 FFI 实现，
-依赖 `objective_c` 包的 native assets。Flutter 的构建缓存有时会漏掉
+`path_provider_foundation` 的 FFI 实现依赖 `objective_c` 包的 native assets。
+版本线是这样的：**2.5.0** 首次改成 FFI，因为"production build issues"被撤回；**2.5.1**
+回到插件（Pigeon/MethodChannel）实现，changelog 写的是 "while FFI issues are
+investigated"；**2.6.0** 又重新发布了 FFI 实现，也是我们现在解析到的版本。Flutter 的构建缓存有时会漏掉
 `objective_c.framework` 的嵌入，于是 Runner.app 里找不到这个 framework。上游报告里
 这个问题时有时无（模拟器和真机、debug 和 release 都出现过），`flutter clean` 后重建
 只能暂时解决：
@@ -58,11 +60,11 @@ Failed to load dynamic library 'objective_c.framework/objective_c' ... (no such 
 
 改完后，依赖 `flutter_fjs` 的宿主（`fjs run/build` 托管的宿主、fjs-go、
 `packages/flutter_fjs/example`）在 `flutter pub get` 时，`path_provider_foundation`
-会解析到 `<2.5.0`（MethodChannel 实现），依赖图里不再有 `objective_c`（前提是没有别的
+会解析到 `2.5.1`（MethodChannel 实现，上游专门回滚出来的版本），依赖图里不再有 `objective_c`（前提是没有别的
 依赖单独把它拉进来）。在 iOS 上加载网络图不再出现 `DOBJC_initializeApi` 异常，
 磁盘缓存照常工作。
 
-副作用：如果用户宿主里另有依赖要求 `path_provider_foundation >=2.5.0`，
+副作用：如果用户宿主里另有依赖要求 `path_provider_foundation >=2.6.0`，
 `pub get` 会报版本冲突，而不是等到运行时崩溃。这时报错信息要能让用户看懂为什么
 （见 §7）。
 
@@ -85,12 +87,12 @@ Failed to load dynamic library 'objective_c.framework/objective_c' ... (no such 
 
 ## 6. 验收标准
 
-1. `packages/flutter_fjs/pubspec.yaml` 里有 `path_provider_foundation` 的上界约束（`<2.5.0`），
+1. `packages/flutter_fjs/pubspec.yaml` 里有 `path_provider_foundation: ">=2.3.2 <2.6.0"`，
    旁边的注释写明原因、上游 issue 链接和放开条件（宪法 VI）。
 2. `cd packages/flutter_fjs && flutter pub get` 成功；`flutter pub deps` 里
-   `path_provider_foundation` 版本 `<2.5.0`，并且没有 `objective_c`。
+   `path_provider_foundation` 是 `2.5.1`，并且没有 `objective_c`。
 3. `examples/fjs-go` 和 `packages/flutter_fjs/example` 执行 `flutter pub get` 后，
-   `pubspec.lock` 里 `path_provider_foundation` `<2.5.0`、没有 `objective_c`，更新后的锁文件一起提交。
+   `pubspec.lock` 里 `path_provider_foundation` 为 `2.5.1`、没有 `objective_c`，更新后的锁文件一起提交。
 4. `cd packages/flutter_fjs && flutter test` 通过（没编 native 时 `No tests ran` 要单独注明，宪法 V）。
 5. 手动：macOS 上 `flutter clean` 后 `fjs run ios` 跑 hello-fjs，打开 fetch 页，
    「GET binary」用例通过、狗图显示出来、控制台没有 `DOBJC_initializeApi`；
@@ -101,9 +103,7 @@ Failed to load dynamic library 'objective_c.framework/objective_c' ... (no such 
 
 ## 7. 待澄清
 
-- [ ] **约束放在哪一层**：推荐作为 `flutter_fjs` 的直接依赖约束写进 `pubspec.yaml`，
-      这样所有下游宿主自动生效，因为下游宿主不会继承依赖包里的 `dependency_overrides`。
-      另一个做法是只在 CLI 生成托管宿主时写 `dependency_overrides`，但覆盖不到 fjs-go 和自建宿主。
-      请确认用直接依赖约束。
-- [ ] **下限取多少**：暂定 `>=2.3.0 <2.5.0`，需要在 plan 阶段对照 `path_provider 2.1.x` 的
-      约束和本仓库的 Dart 3.10 下限核实，确认能解析到 2.4.x。
+- [x] **约束放在哪一层**：用户确认写成 `flutter_fjs` 的直接依赖约束，所有下游宿主都会生效。
+- [x] **版本范围**：定为 `>=2.3.2 <2.6.0`。下限跟 `path_provider 2.1.6` 自己的 `^2.3.2`
+      对齐；上界查 pub.dev 核实过：2.5.0 已撤回（retracted，pub 不会选），2.5.1 是插件实现，
+      Dart `^3.9.0` 满足本仓库 3.10 的下限。所以上界是 2.6.0，不是最初设想的 2.5.0。
