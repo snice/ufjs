@@ -1,7 +1,7 @@
 # Spec: 构建期样式预热（冷态 CSS）
 
 - **ID**: 119-build-time-style-prewarm
-- **状态**: ready
+- **状态**: done
 - **日期**: 2026-09-24
 
 ## 1. 要解决什么

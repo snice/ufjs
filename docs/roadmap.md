@@ -52,6 +52,10 @@
   属性不过桥）、子树标脏去重；新内置标签 `<defer>` 把首屏以下的内容推到转场结束
   后挂。vant-form 首开同步段 204 → 38 ms、卸载 29 → 7 ms（离线基准，容器口径），
   见 [vant-mount-perf.md](vant-mount-perf.md)。离线基准 `pnpm --filter demo run bench:mount`
+- ✅ **构建期样式预热**（specs/119）：`fjs build` / `fjs run --release|--profile` 在 Node
+  里逐页挂载、导出 CSS 引擎的匹配 / 计算缓存，写进页面 chunk，路由挂载前导入。vant-form
+  首开同步段 CSS 22 → 8 ms、match miss 270 → 1；校验不过整份放弃。`fjs.styleSnapshot:
+  false` 关闭，dev 不做
 
 ## 工具链分发（已完成 2026-08）
 

@@ -1155,6 +1155,35 @@ shared.js  402.3 KB  gz 90.9 KB  bytecode 1.1 MB
 `.vue` 子组件递归估算。遇到预警时，优先考虑把大列表改成 `list-view`/窗口化、降低默认
 行数，或把非首屏内容延后渲染。
 
+## 构建期样式预热（`fjs.styleSnapshot`）
+
+`fjs build`（含 `--pages` / `--bytecode` / `--release`）和 `fjs run --release` /
+`--profile` 会多一步（specs/119）：
+
+```
+  style prewarm: 11 pages captured in 333ms (334 KB)
+```
+
+在 Node 里把 Flutter 目标的 bundle 跑一遍，逐个静态路由按真机路由同样的方式挂载
+（同样的 Shell、同样等 `<defer>` 补挂），把 CSS 引擎的匹配 / 计算缓存导出成每页一份
+JSON 快照，写在该页 chunk（单包则是 bundle）的**第一行**。路由挂载页面之前导入它，
+第一次打开就和再次打开一样热。原理与实测见 [vant-mount-perf.md](vant-mount-perf.md)。
+
+- **结果不变**：快照只是提前填好的缓存。样式表集合、`@media` 结果或引擎开关与构建时
+  不一致时整份放弃（日志里一行 `style snapshot skipped: …`），照常现算。
+- **不覆盖**：`fjs dev` / `fjs run`（debug）——每次保存都重建，抓取要挂一遍所有页面；
+  带参数的路由（`/user/:id`）——构建期不知道参数。它们照常现算。要在模拟器上看预热
+  效果，用 `fjs run ios --profile` 或 `fjs build`。
+- **代价**：构建多约 0.5 s（demo 11 页）；包体积按页增加，vant 页每页 50–75 KB JSON
+  （字节码里差不多），release 打开 `--gz` 后压缩率很高。
+- 某页挂载时抛错（比如在 setup 里就要宿主能力）只跳过该页并告警，不让构建失败。
+
+关闭：
+
+```json
+{ "fjs": { "styleSnapshot": false } }
+```
+
 ## Release 构建
 
 推荐发布命令：
