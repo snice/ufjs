@@ -27,6 +27,11 @@ export function connectDevServer(opts: DevToolOptions): Promise<WebSocket> {
   });
 }
 
+/** The dev server refused this connection as a tool (spec 107: tools must
+ * run on the dev machine unless it was started with --remote-tools).
+ * Retrying cannot change that, so a reconnect loop stops on it. */
+export class DevToolDeniedError extends Error {}
+
 export interface DevServerLink {
   /** Stop reconnecting and drop the current socket, if any. */
   stop(): void;
@@ -49,6 +54,9 @@ export function keepDevServerLinked(
   handlers: {
     onLink: (socket: WebSocket, hello: { apps: number }) => void;
     onDrop?: () => void;
+    /** The server refused us as a tool; reconnecting stops. Default: print
+     * the reason. */
+    onDenied?: (error: DevToolDeniedError) => void;
   },
   retryMs = 1000,
 ): DevServerLink {
@@ -88,7 +96,13 @@ export function keepDevServerLinked(
       current = socket;
       dropReported = false;
       handlers.onLink(socket, hello);
-    } catch {
+    } catch (e) {
+      if (e instanceof DevToolDeniedError) {
+        stopped = true;
+        if (handlers.onDenied) handlers.onDenied(e);
+        else console.error(`fjs: ${e.message}`);
+        return;
+      }
       drop();
       return;
     }
@@ -127,6 +141,16 @@ export function handshakeTool(socket: WebSocket): Promise<{ apps: number }> {
     }, 3000);
     socket.on('message', function hello(raw) {
       const msg = parseJsonMessage(raw.toString());
+      if (msg?.fjs === 'denied') {
+        clearTimeout(timer);
+        socket.off('message', hello);
+        reject(
+          new DevToolDeniedError(
+            `the dev server refused this tool: ${String(msg.reason ?? 'not allowed')}`,
+          ),
+        );
+        return;
+      }
       if (msg?.fjs !== 'hello') return;
       clearTimeout(timer);
       socket.off('message', hello);

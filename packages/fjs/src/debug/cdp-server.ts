@@ -35,10 +35,13 @@
 // `Debugger.enable` arrives. On disconnect the relay sends
 // `Debugger.disable` so a reconnecting session gets the replay again and an
 // app frozen at a breakpoint unfreezes.
+import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { createServer as createTcpServer, type Socket } from 'node:net';
 import { WebSocketServer, WebSocket } from 'ws';
+
+import { isLoopbackAddress } from '../dev/net-trust.js';
 
 export interface CdpRelayOptions {
   /** Chrome DevTools side: HTTP discovery + WebSocket. Loopback only. */
@@ -48,6 +51,15 @@ export interface CdpRelayOptions {
   /** Listen address for the VM listener. Default 0.0.0.0 (a phone reaches
    * the dev machine over the LAN; 127.0.0.1 only works for `fjsrun`). */
   vmHost?: string;
+  /** spec 107: the session token apps were handed through the dev server
+   * (`debug on <port> <token>`). When set, a VM dialing from off this
+   * machine must present it before it gets the session; see the challenge
+   * below. Unset (fjsrun-only use, older callers): no challenge. */
+  token?: string;
+  /** Test seam: loopback peers skip the challenge unless this is false. */
+  trustLoopback?: boolean;
+  /** Test seam: how long a dialing VM has to answer the challenge. */
+  challengeMs?: number;
   log?: (line: string) => void;
 }
 
@@ -887,11 +899,38 @@ const resetSessionCaches = (): void => {
 
   // ---- sockets ---------------------------------------------------------------
 
-  const vmListener = createTcpServer((socket) => {
-    // remoteAddress matters when a dial mysteriously never completes: the
-    // Android emulator's network proxy fronts every guest connection, so a
-    // relay-side trace of who knocked and when is the only ground truth
-    log(`vm channel dial from ${socket.remoteAddress ?? '?'}`);
+  // ---- the VM channel's door (spec 107) -------------------------------------
+  //
+  // The listener binds the LAN (a phone dials in), and whoever holds the one
+  // session receives every command typed into DevTools and can feed it any
+  // event. So a VM dialing from off this machine has to prove it is the app
+  // `fjs debug` told about: the relay asks it for the token the dev server
+  // pushed (`globalThis.__fjsDebugToken`, set by flutter_fjs before it
+  // dials) with a plain Runtime.evaluate — the engine answers CDP natively,
+  // so this needs no native change and no new wire message. Until it
+  // answers right the socket holds no session: an impostor cannot squat
+  // the slot a real app needs, and hears nothing DevTools says.
+  //
+  // Loopback peers skip it: local processes, adb-reversed Android devices
+  // and fjsrun (which has no dev server to learn a token from). A local
+  // process can already drive the loopback-only DevTools endpoint with no
+  // credential, so trusting it here widens nothing.
+  const token = opts.token ?? null;
+  const trustLoopback = opts.trustLoopback ?? true;
+  const pendingAuth = new Set<Socket>();
+  const MAX_PENDING = 4;
+  const CHALLENGE_MS = opts.challengeMs ?? 5000;
+  // a reserved id range of its own, apart from the bridge's (≥1e9)
+  let challengeSeq = 2_000_000_000;
+
+  const sameToken = (value: unknown): boolean => {
+    if (token === null || typeof value !== 'string') return false;
+    const a = Buffer.from(value);
+    const b = Buffer.from(token);
+    return a.length === b.length && timingSafeEqual(a, b);
+  };
+
+  const attachVm = (socket: Socket, leftover: string) => {
     if (vm) {
       log('a second app tried to attach the debugger — rejected (one session at a time)');
       socket.destroy();
@@ -917,6 +956,92 @@ const resetSessionCaches = (): void => {
     };
     socket.on('close', gone);
     socket.on('error', gone);
+    // whatever the VM sent right behind its challenge answer
+    if (leftover) feedDevtools(leftover);
+  };
+
+  const challenge = (socket: Socket) => {
+    if (pendingAuth.size >= MAX_PENDING) {
+      log(`vm channel: too many unauthenticated dials — dropped ${socket.remoteAddress ?? '?'}`);
+      socket.destroy();
+      return;
+    }
+    pendingAuth.add(socket);
+    const id = challengeSeq++;
+    let buf = '';
+    const settle = () => {
+      clearTimeout(timer);
+      pendingAuth.delete(socket);
+      socket.off('data', onData);
+      socket.off('close', onGone);
+      socket.off('error', onGone);
+    };
+    const refuse = (why: string) => {
+      settle();
+      log(`vm channel: refused ${socket.remoteAddress ?? '?'} — ${why}`);
+      socket.destroy();
+    };
+    const onGone = () => settle();
+    const onData = (chunk: Buffer | string) => {
+      buf += String(chunk);
+      let pos;
+      while ((pos = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, pos);
+        buf = buf.slice(pos + 1);
+        let msg: { id?: number; result?: { result?: { value?: unknown } } } | undefined;
+        try {
+          msg = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        // nothing a VM says before it has answered reaches DevTools
+        if (msg?.id !== id) continue;
+        if (!sameToken(msg.result?.result?.value)) {
+          refuse(
+            'it did not present this session\'s debug token (a flutter_fjs older than ' +
+              'this CLI? run `fjs upgrade`)',
+          );
+          return;
+        }
+        settle();
+        attachVm(socket, buf);
+        return;
+      }
+    };
+    const timer = setTimeout(
+      () => refuse(`no answer to the token challenge within ${CHALLENGE_MS}ms`),
+      CHALLENGE_MS,
+    );
+    socket.on('data', onData);
+    socket.on('close', onGone);
+    socket.on('error', onGone);
+    socket.write(
+      JSON.stringify({
+        id,
+        method: 'Runtime.evaluate',
+        params: {
+          expression: "typeof __fjsDebugToken === 'string' ? __fjsDebugToken : ''",
+          returnByValue: true,
+        },
+      }) + '\n',
+    );
+  };
+
+  const vmListener = createTcpServer((socket) => {
+    // remoteAddress matters when a dial mysteriously never completes: the
+    // Android emulator's network proxy fronts every guest connection, so a
+    // relay-side trace of who knocked and when is the only ground truth
+    log(`vm channel dial from ${socket.remoteAddress ?? '?'}`);
+    if (vm) {
+      log('a second app tried to attach the debugger — rejected (one session at a time)');
+      socket.destroy();
+      return;
+    }
+    if (token === null || (trustLoopback && isLoopbackAddress(socket.remoteAddress))) {
+      attachVm(socket, '');
+      return;
+    }
+    challenge(socket);
   });
 
   const httpServer: Server = createServer((req, res) => {
@@ -1033,6 +1158,7 @@ const resetSessionCaches = (): void => {
           close: () =>
             new Promise<void>((done) => {
               vm?.destroy();
+              for (const pending of pendingAuth) pending.destroy();
               stopNetPoll();
               stopStructuralPoll();
 

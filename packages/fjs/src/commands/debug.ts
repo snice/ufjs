@@ -14,6 +14,7 @@
 //
 // Ctrl-C detaches and exits.
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import {
   keepDevServerLinked,
   parseDevToolArgs,
@@ -60,9 +61,14 @@ export async function debugCommand(argv: string[]): Promise<void> {
   // The relay is self-sufficient: the app side dials IT. The dev server is
   // only the hint channel that tells a connected app which port to dial —
   // nice to have, not required (`fjsrun --debug-connect` skips it).
+  // spec 107: one token per session. Apps learn it from the dev server
+  // along with the port, and a VM dialing from off this machine must
+  // present it before the relay gives it the session.
+  const token = randomBytes(16).toString('hex');
   const relay = await startCdpRelay({
     cdpPort: opts.cdpPort,
     vmPort: opts.vmPort,
+    token,
     log: (line) => console.log(`[fjs debug] ${line}`),
   });
 
@@ -118,7 +124,7 @@ export async function debugCommand(argv: string[]): Promise<void> {
       // The server remembers this and greets apps as they connect, so one
       // announce per link covers apps that are not up yet.
       socket.send(
-        JSON.stringify({ fjs: 'debug-relay', on: true, port: opts.vmPort }),
+        JSON.stringify({ fjs: 'debug-relay', on: true, port: opts.vmPort, token }),
       );
       if (hello.apps === 0) {
         console.log(

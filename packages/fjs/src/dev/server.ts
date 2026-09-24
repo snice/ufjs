@@ -38,6 +38,7 @@ import {
   writeModuleTypes,
 } from '../project/modules.js';
 import { DebugRelayRegistry } from './debug-relay.js';
+import { DEBUG_TOKEN_RE, isLoopbackAddress } from './net-trust.js';
 import { qrLines, colorSupported } from './qrcode.js';
 import { startBeacon } from './discovery.js';
 import { logLevelLabel } from '../commands/inspect.js';
@@ -330,6 +331,10 @@ export async function devCommand(argv: string[]): Promise<void> {
     rest.splice(hi, value ? 2 : 1);
   }
   const qr = !takeFlag(rest, '--no-qr');
+  // spec 107: tools (`fjs log/eval/debug`) steer the connected apps —
+  // `eval` runs arbitrary JS in them — so by default only this machine may
+  // be one. Driving a dev server from another machine is opt-in.
+  const remoteTools = takeFlag(rest, '--remote-tools');
   const discovery = !takeFlag(rest, '--no-discovery');
   const opts = parseBuildArgs(rest);
   // spec 090: the dev server's bundles always carry the DevTools data
@@ -424,7 +429,17 @@ export async function devCommand(argv: string[]): Promise<void> {
     }
   };
 
-  wss.on('connection', (socket) => {
+  if (remoteTools) {
+    console.warn(
+      'fjs dev: --remote-tools — any machine that can reach this port may connect as a ' +
+        'tool and run code in the connected apps (fjs eval / fjs debug)',
+    );
+  }
+
+  wss.on('connection', (socket, req) => {
+    // spec 107: where the connection comes from decides whether it may
+    // become a tool (see net-trust.ts)
+    const peer = req.socket.remoteAddress;
     socket.on('close', () => {
       tools.delete(socket);
       nativeApps.delete(socket);
@@ -444,6 +459,7 @@ export async function devCommand(argv: string[]): Promise<void> {
         source?: string;
         on?: boolean;
         port?: number;
+        token?: string;
       };
       try {
         msg = JSON.parse(raw.toString()) as typeof msg;
@@ -453,6 +469,21 @@ export async function devCommand(argv: string[]): Promise<void> {
       if (!msg || typeof msg !== 'object') return;
       switch (msg.fjs) {
         case 'tool':
+          if (!remoteTools && !isLoopbackAddress(peer)) {
+            // not silent (constitution V): both ends learn why
+            console.warn(
+              `fjs dev: refused a tool connection from ${peer ?? 'an unknown address'} — ` +
+                'tools must run on this machine (restart with --remote-tools to allow it)',
+            );
+            socket.send(
+              JSON.stringify({
+                fjs: 'denied',
+                reason: 'tools must connect from the dev machine; start fjs dev with --remote-tools',
+              }),
+            );
+            socket.close();
+            break;
+          }
           tools.add(socket);
           socket.send(JSON.stringify({ fjs: 'hello', apps: apps().length }));
           break;
@@ -478,6 +509,8 @@ export async function devCommand(argv: string[]): Promise<void> {
           break;
         }
         case 'eval': {
+          // spec 107: only a registered tool may push code at the apps
+          if (!tools.has(socket)) break;
           // `eval <id> <source>`: the id travels outside the source so the
           // app can answer even when the source does not parse
           const targets = apps();
@@ -487,6 +520,7 @@ export async function devCommand(argv: string[]): Promise<void> {
           break;
         }
         case 'perf': {
+          if (!tools.has(socket)) break;
           // the same thing the `p` key does. Reachable from a tool as well
           // because the key needs a TTY, and a dev server started by
           // `fjs run` (or by CI) does not have one.
@@ -496,6 +530,9 @@ export async function devCommand(argv: string[]): Promise<void> {
           break;
         }
         case 'debug-relay': {
+          // spec 107: an app (or anything that never announced itself as a
+          // tool) must not be able to point every app at another port
+          if (!tools.has(socket)) break;
           // fjs debug (spec 088): tell every app where the CDP relay's TCP
           // listener is. The app dials the relay itself — the push only
           // carries the port. Wire form parsed in flutter_fjs's
@@ -506,8 +543,13 @@ export async function devCommand(argv: string[]): Promise<void> {
             if (!Number.isInteger(port) || port <= 0) break;
             // Remembered, not just broadcast: apps that connect later are
             // greeted with it (the `app` case above).
-            debugRelay.open(socket, port);
-            for (const app of nativeApps) app.send(`debug on ${port}`);
+            // spec 107: the session token apps present when they dial from
+            // off this machine; an older fjs debug sends none
+            const token =
+              typeof msg.token === 'string' && DEBUG_TOKEN_RE.test(msg.token) ? msg.token : null;
+            debugRelay.open(socket, port, token);
+            const push = debugRelay.greeting();
+            for (const app of nativeApps) if (push) app.send(push);
             const silent = apps().length - nativeApps.size;
             if (silent > 0) {
               // never guess: a browser page would take `debug on` for a

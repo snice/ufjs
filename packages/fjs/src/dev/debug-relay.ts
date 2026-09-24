@@ -9,13 +9,18 @@
 // the `fjs debug` that opened it is alive, so the registration dies with
 // that tool connection. Otherwise a new app would dial a port nobody is
 // listening on and report an attach failure for a session long gone.
+//
+// spec 107: the relay also carries the session token apps must present when
+// they dial from off this machine (see debug/cdp-server.ts). It travels in
+// the same push as the port — an older `fjs debug` sends none, and apps then
+// dial exactly as before.
 export class DebugRelayRegistry<Owner> {
-  private live: { port: number; owner: Owner } | null = null;
+  private live: { port: number; token: string | null; owner: Owner } | null = null;
 
   /** `fjs debug` announced its VM listener. One relay at a time: a second
    * `fjs debug` takes over, which is what the user just asked for. */
-  open(owner: Owner, port: number): void {
-    this.live = { port, owner };
+  open(owner: Owner, port: number, token: string | null = null): void {
+    this.live = { port, token, owner };
   }
 
   /** Explicit detach (`fjs debug` exiting), whoever asked. */
@@ -36,8 +41,12 @@ export class DebugRelayRegistry<Owner> {
   }
 
   /** What to send an app that just connected, or null when no relay is up.
-   * Wire form parsed by flutter_fjs's dev_client.dart. */
+   * Wire form parsed by flutter_fjs's dev_client.dart:
+   * `debug on <port>` or `debug on <port> <token>`. */
   greeting(): string | null {
-    return this.live === null ? null : `debug on ${this.live.port}`;
+    if (this.live === null) return null;
+    return this.live.token === null
+      ? `debug on ${this.live.port}`
+      : `debug on ${this.live.port} ${this.live.token}`;
   }
 }

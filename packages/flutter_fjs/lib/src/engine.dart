@@ -867,7 +867,8 @@ class FjsEngine extends ChangeNotifier {
       }
     };
     dev.onPerf = () => perfOverlay.value = !perfOverlay.value;
-    dev.onDebugAttach = (port) {
+    dev.onDebugAttach = (attach) {
+      final port = attach.port;
       // spec 088. An engine binary older than the debugger reports once
       // and keeps running — the app itself is unaffected (constitution V).
       if (bind.debuggerAttach == null) {
@@ -879,6 +880,7 @@ class FjsEngine extends ChangeNotifier {
       _log(1, '[fjs/debug] relay on port $port — reloading so every '
           'script registers with the debugger');
       _debugPort = port;
+      _debugToken = attach.token;
       unawaited(
         () async {
           try {
@@ -892,6 +894,7 @@ class FjsEngine extends ChangeNotifier {
     dev.onDebugDetach = () {
       if (_debugPort == null) return;
       _debugPort = null;
+      _debugToken = null;
       _debugRetryTimer?.cancel();
       _debugRetryTimer = null;
       _debugRetryAttempt = 0;
@@ -990,6 +993,11 @@ class FjsEngine extends ChangeNotifier {
   /// re-attach cost — the debug channel has to survive every reload.
   int? _debugPort;
 
+  /// spec 107: the session token `fjs debug` minted (null from an older
+  /// CLI). Published in each VM before it dials, because the relay asks a VM
+  /// dialing from off the dev machine for it before giving it the session.
+  String? _debugToken;
+
   /// Whether the connected dev server serves a split build. connectDev
   /// negotiates it; the debug retry needs it to re-run [_loadFromDev] after
   /// a late attach succeeds.
@@ -1042,6 +1050,19 @@ class FjsEngine extends ChangeNotifier {
       '127.0.0.1',
       if (dev.host != '127.0.0.1') dev.host,
     ];
+    // spec 107: the relay's challenge reads this global over CDP. The token
+    // is 32 hex digits (DevClient.parseDebugAttach checks), so splicing it
+    // into the literal is safe. Evaluated before the attach, so it never
+    // shows up among the debugged scripts.
+    final token = _debugToken;
+    if (token != null) {
+      try {
+        runSource("globalThis.__fjsDebugToken = '$token';",
+            filename: 'fjs-debug-token.js');
+      } catch (e) {
+        _log(2, '[fjs/debug] could not publish the session token: $e');
+      }
+    }
     final failures = <String>[];
     for (final host in candidates) {
       // every failure path in the module closes its socket, so trying the

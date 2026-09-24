@@ -568,6 +568,13 @@ engine.onLog = (level, message) =>
 服务端按身份区分两类客户端：应用和工具。工具永远收不到 `reload`（否则 `fjs log`
 会被当成一个"客户端"计数），应用也永远收不到别的工具的流量。
 
+**工具只能来自本机**（spec 107）。dev server 绑 `0.0.0.0`（手机要连），而工具能
+让所有已连接的应用执行任意 JS（`fjs eval`）、能把它们指向任意调试端口
+（`fjs debug`），所以默认只接受回环地址的工具连接，`eval` / `perf` /
+`debug-relay` 也只认已登记的工具——局域网里别人连上 dev server 最多和一个应用
+拿到的一样多。确实要从另一台机器用 `fjs log --host <IP>` 时，启动
+`fjs dev --remote-tools`（会打印一行风险提示）；被拒的工具会收到原因并停止重连。
+
 ### eval 的返回值怎么回来的
 
 `fjs eval` 把表达式包一层再下发，包装里用 `console.log` 把结果按 JSON 打印出来，
@@ -652,11 +659,30 @@ failed:" 后面不再是空串。引擎（PrimJS，spec 088）原生实现 CDP�
 
 `--cdp-port` / `--vm-port` 可覆盖（`--port` / `--host` 是 dev server 的地址）。
 
+**鉴权**（spec 107）。38903 对局域网开放，而持有调试会话的一方能收到你在
+DevTools 里执行的一切、也能伪造任何调试事件，所以：
+
+- `fjs debug` 每次启动生成一个 128 位随机 token，随端口一起经 dev server
+  下发（`debug on <端口> <token>`）；app 拨号前把它写进 VM 的
+  `globalThis.__fjsDebugToken`。
+- 中继对**非回环**地址拨进来的 VM 先发一次 `Runtime.evaluate` 取这个 token，
+  常数时间比对通过才交出会话。没通过的连接不占用唯一的会话槽位（冒充者没法
+  抢先占坑把真 app 挤掉），也听不到 DevTools 的任何消息；答错或 5 秒不答即断开，
+  中继日志写明原因。
+- **回环连接不质询**：本机进程、经 `adb reverse` 的 Android 设备、
+  `fjsrun --debug-connect 127.0.0.1:…`。本机进程本来就能直连只绑回环的
+  38902，豁免它们不扩大暴露面。
+- 比 spec 107 旧的 flutter_fjs 不认 token：走局域网拨号会被拒（日志提示
+  `fjs upgrade`），Android 模拟器 / USB 照常。
+
+token 经 dev server 下发，所以它保护到的边界就是「能连上 dev server 的人」——
+dev server 本来就在向局域网提供源码与 bundle。
+
 行为与限制：
 
 - **启动顺序无所谓**。`fjs debug` 把中继注册在 dev server 上，dev server
   记着它，app 每次连上（首次、热重启、`fjs run ios` 编译完才起来）都会收到
-  `debug on <端口>`；dev server 自己重启了，`fjs debug` 也会重连并重新注册。
+  `debug on <端口> <token>`；dev server 自己重启了，`fjs debug` 也会重连并重新注册。
 - **attach 即重载**。app 挂上调试通道后整包重载一遍，让所有脚本
   进入调试器的脚本表；之后 DevTools 任何时候连上来，`Debugger.enable` 都会
   补发全部 `scriptParsed`，连接先后顺序无所谓。DevTools 断开时中继会向 app

@@ -162,6 +162,28 @@ void main() {
     expect(logs.single, contains('GET /nope.js failed'));
   });
 
+  // spec 107: `fjs debug` appends a session token the app publishes in the
+  // VM before dialing; an older CLI sends the port alone.
+  test('parseDebugAttach reads the port and the optional token', () {
+    final plain = DevClient.parseDebugAttach('debug on 38903')!;
+    expect(plain.port, 38903);
+    expect(plain.token, isNull);
+    final withToken = DevClient.parseDebugAttach(
+      'debug on 38903 0123456789abcdef0123456789abcdef',
+    )!;
+    expect(withToken.port, 38903);
+    expect(withToken.token, '0123456789abcdef0123456789abcdef');
+    // the token is spliced into a JS literal: anything but 32 hex is refused
+    expect(
+      DevClient.parseDebugAttach("debug on 38903 abc';alert(1);//"),
+      isNull,
+    );
+    expect(DevClient.parseDebugAttach('debug on 0'), isNull);
+    expect(DevClient.parseDebugAttach('debug on x'), isNull);
+    expect(DevClient.parseDebugAttach('debug off'), isNull);
+    expect(DevClient.parseDebugAttach('debug on 1 2 3'), isNull);
+  });
+
   test('parseReload parses the wire forms', () {
     expect(DevClient.parseReload('reload').isFull, isTrue);
     expect(DevClient.parseReload('reload pages:').isFull, isTrue);

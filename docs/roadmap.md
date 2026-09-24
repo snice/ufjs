@@ -175,6 +175,10 @@ uni-app 那张表：
   101 从「max 无穷、min > 0」推断参照，把 CSS `min-height` / `min-width` 盒子里的
   `height/width: 100%` 也解析了（web 为 auto）；现在只有装饰层解封高度时打的
   `FjsUncappedHeightScope` 才让 min 生效。**待本机验证**：`flutter test` 与飞行盒真机
+- ✅ 调试通道鉴权（`specs/107-debug-channel-auth`，2026-09）：`fjs debug` 的 VM 端口对
+  非回环连接做 token 质询（经 CDP `Runtime.evaluate`，不改 native），未认证连接不占会话
+  槽位；dev server 只接受本机工具，`eval` / `perf` / `debug-relay` 要求已登记工具，
+  跨机器需 `fjs dev --remote-tools`。**待本机验证**：`flutter test` 与局域网真机附加
 
 实机对拍时抓到三个只有跑起来才看得见的问题：Dart 的 mode 分支漏了 `center`
 （静静降级成 `scaleToFill`）；web 的 `heightFix` 因为 column flex 的 stretch 被

@@ -83,6 +83,9 @@ commands:
   fjs dev    [entry]        dev server: HTTP bundle + WebSocket reload
       --port <n>            port (default: 38900, or 5173 with --web)
       --host <addr>          bind address (default: 0.0.0.0)
+      --remote-tools         accept tool connections (fjs log / eval / debug)
+                             from other machines; by default only this
+                             machine may drive the connected apps
       --mp                  mini-program dev: watch src/, re-emit dist/mp
                             (WeChat DevTools applies changes itself)
       --web                 serve the browser build as a static site
