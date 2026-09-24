@@ -272,4 +272,16 @@ void main() {
     });
     expect(field.textInputAction, TextInputAction.send);
   });
+
+  // specs/126: vant's control inherits `line-height: 24px` from the cell.
+  testWidgets('a px line-height sizes the text and the placeholder', (
+    tester,
+  ) async {
+    final field = await fieldFor(tester, {
+      'placeholder': 'p',
+      'style': {'fontSize': 14, 'lineHeight': '24px'},
+    });
+    expect(field.style!.height, closeTo(24 / 14, 1e-9));
+    expect(field.decoration!.hintStyle!.height, closeTo(24 / 14, 1e-9));
+  });
 }
