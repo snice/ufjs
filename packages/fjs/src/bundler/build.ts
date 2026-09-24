@@ -178,11 +178,13 @@ export function flutterModeArgs(mode: FlutterMode, flutterArgs: string[]): strin
   return flutterArgs.some((arg) => explicit.includes(arg)) ? [] : [`--${mode}`];
 }
 
-/** spec 091: the engine flavor travels to flutter as a dart-define, so the
- * plugin's build hooks (gradle's fjsMaterializeEngine, the podspecs' script
- * phase) can swap the abi-cached engine for ANY host — including plain
- * `flutter run` ones like fjs-go. Placed before flutterArgs so a
- * user-passed duplicate keeps the usual last-one-wins. */
+/** spec 091/105: the engine flavor travels to flutter as a dart-define.
+ * flutter_fjs's android/build.gradle reads it from the dart-defines gradle
+ * property and the podspecs from the host's Generated xcconfig, so a plain
+ * `flutter run --dart-define=FJS_JS_ENGINE=…` host (fjs-go) selects the
+ * flavor the same way; the app also compares it with the engine it linked
+ * and warns on a mismatch. Placed before flutterArgs so a user-passed
+ * duplicate keeps the usual last-one-wins. */
 export function engineDefineArgs(engine?: JsEngine): string[] {
   return [`--dart-define=FJS_JS_ENGINE=${engine ?? resolveJsEngine()}`];
 }
@@ -236,8 +238,9 @@ export interface BuildOptions {
   devtools?: boolean;
   /** spec 091: engine flavor for bytecode (`--js-engine`) — the .fjsbundle
    * engine id must match the engine embedded in the app, and the fjsc
-   * binary is per flavor. Also materialized into the plugin before any
-   * `flutter build` a release build kicks off. */
+   * binary is per flavor. Also selected for the Flutter build (spec 105:
+   * environment + dart-define, the plugin directory is not modified) before
+   * any `flutter build` a release build kicks off. */
   jsEngine?: JsEngine;
   /** spec 094: write a sibling `.js.map` and a `//# sourceMappingURL=fjs-map:`
    * comment so `fjs debug` can show Vue SFC / TS sources. Dev server only.
@@ -1119,12 +1122,10 @@ export function releaseBuild(opts: BuildOptions, res: BuildResult): void {
   // (specs/017-local-image-assets).
   syncPublicAssets(root, path.resolve(opts.outDir), assets);
   ensureFlutterHost(flutterDir, appName, !isEjected(root));
-  // spec 091: the flavor bytecode above was compiled for must be the flavor
-  // the app links — materialize before any `flutter build` runs (and before
-  // the caller's `flutter run`, for fjs run's release path). A release or
-  // profile build never dlopens the debugger module, so it ships without it
-  // (spec 091 round 4); `fjs build` has no debug mode, but the check keeps
-  // this honest about why.
+  // spec 091/105: the flavor bytecode above was compiled for must be the
+  // flavor the app links — select it before any `flutter build` runs (and
+  // before the caller's `flutter run`, for fjs run's release path). Release
+  // and profile builds leave the debugger out at the build layer.
   materializeJsEngine(opts.jsEngine ?? resolveJsEngine(), {
     flutterDir,
     debugger: opts.mode !== 'debug',

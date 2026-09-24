@@ -568,6 +568,13 @@ engine.onLog = (level, message) =>
 服务端按身份区分两类客户端：应用和工具。工具永远收不到 `reload`（否则 `fjs log`
 会被当成一个"客户端"计数），应用也永远收不到别的工具的流量。
 
+**工具只能来自本机**（spec 107）。dev server 绑 `0.0.0.0`（手机要连），而工具能
+让所有已连接的应用执行任意 JS（`fjs eval`）、能把它们指向任意调试端口
+（`fjs debug`），所以默认只接受回环地址的工具连接，`eval` / `perf` /
+`debug-relay` 也只认已登记的工具——局域网里别人连上 dev server 最多和一个应用
+拿到的一样多。确实要从另一台机器用 `fjs log --host <IP>` 时，启动
+`fjs dev --remote-tools`（会打印一行风险提示）；被拒的工具会收到原因并停止重连。
+
 ### eval 的返回值怎么回来的
 
 `fjs eval` 把表达式包一层再下发，包装里用 `console.log` 把结果按 JSON 打印出来，
@@ -652,11 +659,30 @@ failed:" 后面不再是空串。引擎（PrimJS，spec 088）原生实现 CDP�
 
 `--cdp-port` / `--vm-port` 可覆盖（`--port` / `--host` 是 dev server 的地址）。
 
+**鉴权**（spec 107）。38903 对局域网开放，而持有调试会话的一方能收到你在
+DevTools 里执行的一切、也能伪造任何调试事件，所以：
+
+- `fjs debug` 每次启动生成一个 128 位随机 token，随端口一起经 dev server
+  下发（`debug on <端口> <token>`）；app 拨号前把它写进 VM 的
+  `globalThis.__fjsDebugToken`。
+- 中继对**非回环**地址拨进来的 VM 先发一次 `Runtime.evaluate` 取这个 token，
+  常数时间比对通过才交出会话。没通过的连接不占用唯一的会话槽位（冒充者没法
+  抢先占坑把真 app 挤掉），也听不到 DevTools 的任何消息；答错或 5 秒不答即断开，
+  中继日志写明原因。
+- **回环连接不质询**：本机进程、经 `adb reverse` 的 Android 设备、
+  `fjsrun --debug-connect 127.0.0.1:…`。本机进程本来就能直连只绑回环的
+  38902，豁免它们不扩大暴露面。
+- 比 spec 107 旧的 flutter_fjs 不认 token：走局域网拨号会被拒（日志提示
+  `fjs upgrade`），Android 模拟器 / USB 照常。
+
+token 经 dev server 下发，所以它保护到的边界就是「能连上 dev server 的人」——
+dev server 本来就在向局域网提供源码与 bundle。
+
 行为与限制：
 
 - **启动顺序无所谓**。`fjs debug` 把中继注册在 dev server 上，dev server
   记着它，app 每次连上（首次、热重启、`fjs run ios` 编译完才起来）都会收到
-  `debug on <端口>`；dev server 自己重启了，`fjs debug` 也会重连并重新注册。
+  `debug on <端口> <token>`；dev server 自己重启了，`fjs debug` 也会重连并重新注册。
 - **attach 即重载**。app 挂上调试通道后整包重载一遍，让所有脚本
   进入调试器的脚本表；之后 DevTools 任何时候连上来，`Debugger.enable` 都会
   补发全部 `scriptParsed`，连接先后顺序无所谓。DevTools 断开时中继会向 app
@@ -676,18 +702,15 @@ failed:" 后面不再是空串。引擎（PrimJS，spec 088）原生实现 CDP�
 - **产物分层**（spec 090）：**调试器不在引擎里**。引擎只保留一张空的
   inspector 钩子表，CDP 语义层（断点、作用域、heap/cpu profiler）和 socket
   传输一起待在独立模块里，release 不带这个模块 = 物理上没有调试器。
-  spec 091 四轮起这是**一等机制**而非兜底：引擎 runner 物化时区分
-  debug / 非 debug——`fjs build`（release/profile）和 `fjs run
-  --release/--profile` 物化引擎时连 primjs 的调试模块一起物理删除
-  （Dart 侧 `kDebugMode` 门控本来就不可能 dlopen 它），下次 debug 运行
-  再从 abi 缓存恢复。下表的构建期剔除服务于不经 CLI 的路径（纯 Flutter
-  宿主直接 `flutter build`）。
+  剔除由**构建层**完成（spec 105）：不管经不经 CLI，release/profile 构建
+  都不含调试模块，也不需要任何人去删文件（spec 091 四轮让 runner 删插件
+  目录里的文件，那会改写共享的 pub-cache，已撤掉）。
 
   | 平台 | 引擎 | 调试模块 | 非 debug 怎么剔除 |
   |------|------|----------|-------------------|
-  | Android | `libfjs.so`（arm64 1.85 MB） | `libfjs_debugger.so`（482 KB） | runner 物化即删；`android/build.gradle` 检测 release/profile 任务名兜底排除；`-PfjsKeepDebugger=true` 可保留 |
-  | iOS / macOS | `fjs.xcframework` | `fjs_debugger.xcframework` | runner 物化即删（连 pod vendored 列表一起消失）；纯宿主路径靠静态归档按需拉取——只有 `FlutterFjsPlugin.m` 的 `#if DEBUG` 引用它，Release/Profile 一个字节都不链 |
-  | ohos | `libfjs.so`（arm64 1.81 MB） | `libfjs_debugger.so`（422 KB） | runner 物化即删；`ohos/build-profile.json5` 的 `buildModeBinder` 把 release/profile 绑到带 `nativeLib.filter.excludes` 的构建配置兜底，插件 HAR 里就没有这个文件 |
+  | Android | `libfjs.so`（arm64 1.85 MB） | `libfjs_debugger.so`（482 KB） | `android/build.gradle` 检测 release/profile 任务名，`jniLibs.excludes` 排除；`-PfjsKeepDebugger=true` 可保留 |
+  | iOS / macOS | `fjs.xcframework` | `fjs_debugger.xcframework` | 静态归档按需拉取——只有 `FlutterFjsPlugin.m` 的 `#if DEBUG` 引用它，Release/Profile 一个字节都不链 |
+  | ohos | `libfjs.so`（arm64 1.81 MB） | `libfjs_debugger.so`（422 KB） | `ohos/build-profile.json5` 的 `buildModeBinder` 把 release/profile 绑到带 `nativeLib.filter.excludes` 的构建配置，插件 HAR 里就没有这个文件 |
   | 桌面 | `libfjs.dylib`（1.08 MB） | `libfjs_debugger.dylib`（474 KB） | `fjsrun` dlopen，文件不在就报"本构建无调试器" |
 
   对比拆分前：Android arm64 的 release `libfjs.so` 从 2.21 MB 降到 1.85 MB，
@@ -1250,41 +1273,43 @@ fjs build --js-engine quickjs --release --apk
 FJS_JS_ENGINE=quickjs fjs run android  # 环境变量等价
 fjs run ios                          # 默认即 primjs
 
-# 纯 Flutter 宿主（不经过 fjs CLI，比如 fjs-go）：flutter run 之前手动跑
-# 一次物化，然后正常构建
-cd <宿主项目根>
-dart run flutter_fjs:engine quickjs
-flutter run
-
-# 纯宿主要出无调试器的 release 包（CLI 路径会自动做这一步）：
-dart run flutter_fjs:engine primjs --no-debugger
-flutter build ios --release
+# 纯 Flutter 宿主（不经过 fjs CLI，比如 fjs-go）
+flutter run --dart-define=FJS_JS_ENGINE=quickjs   # Android 直接生效
+dart run flutter_fjs:engine quickjs               # iOS/macOS 切换后、鸿蒙切换时需要
 ```
 
-切换只有**一条物化路径**：`bin/engine.dart`（`dart run
-flutter_fjs:engine <flavor>`，`fjs run/build --js-engine` 内部就是调它）。
-它在 flutter 构建开始之前，把选中 flavor 从 abi 缓存 copy 到各平台真正
-消费的位置——`android/src/main/jniLibs/<abi>/`、
-`ios|macos/fjs.xcframework`、`ohos/libs/arm64-v8a/`——并写
-`abi/.materialized` 戳记（两行：引擎 flavor + 是否带调试模块）；
-重复运行是 no-op，切回默认同样只是一次 copy。
-quickjs 物化、以及任何带 `--no-debugger` 的物化（`fjs build` 与
-`fjs run --release/--profile` 自动传，见上文"产物分层"），都会删掉
-`libfjs_debugger.so` / `fjs_debugger.xcframework`；物化同时会改写
-`ios|macos/Classes/fjs_engine_flavor.h`——插件 shim 按它决定是否声明
-debugger ABI，quickjs 下连 DEBUG 构建都不会引用
-`fjs_vm_debugger_*`。物化同时会清掉宿主 build 目录里 Xcode 的
-xcframework 抽取缓存（Xcode 不感知源归档内容变化，不清会静默链上一个
-flavor）并 touch 宿主 `ios/Podfile` 强制下一次 pod install 按
-`File.exist?` 重新评估 vendored 列表。下次 debug 运行不带 flag 物化，
-调试模块从 abi 缓存原样恢复。
+**插件目录只读**（spec 105）：flavor 是构建输入，由各平台的构建文件
+按配置直接引用对应那份预编译产物，不再把文件复制进 flutter_fjs 自己的
+目录——对 `fjs create` 出来的项目，那个目录就是全机共享的
+`~/.pub-cache`，spec 091 的复制式物化会让两个项目互相覆盖、并发构建
+读到半新半旧的文件、发布内容取决于最后一次物化。
 
-**平台产物不入库**：git 里只有 `abi/` 是产物源，jniLibs /
-xcframework / ohos libs 都是本地物化结果（已 gitignore）。全新 clone 的
-第一次构建前必须先物化——`fjs run` 会自动做，纯 Flutter 宿主手动跑一次
-runner，或直接执行上面的 build 脚本。App 运行时（debug 构建）会对比
-`--dart-define=FJS_JS_ENGINE` 与二进制里真实的 engine id，不一致会打
-一次告警——这是防止"忘了物化就跑"的可见兜底。
+| 平台 | 产物位置 | flavor 从哪来（先到先得） |
+| --- | --- | --- |
+| Android | `abi/<flavor>/android/<abi>/`，`android/build.gradle` 的 `jniLibs.srcDirs` 直接指过去 | gradle 属性 `fjs.jsEngine` → 环境变量 `FJS_JS_ENGINE` → Flutter 传给 gradle 的 `dart-defines` → `primjs` |
+| iOS / macOS | `ios/abi/<flavor>/`、`macos/abi/<flavor>/`（必须在 pod 根内：CocoaPods 的文件模式不越出 pod 根），podspec 按 flavor 选 `vendored_frameworks`，quickjs 时注入 `FJS_ENGINE_QUICKJS` 宏 | 环境变量 → 宿主 `Generated.xcconfig` 的 `DART_DEFINES` → `primjs`，在 **pod install** 时求值 |
+| 鸿蒙 | 默认 primjs 在 `ohos/libs/`（HAR 只打包模块的 `libs/`，随包发布）；另一份在 `abi/<flavor>/ohos/` | runner 参数 |
+
+CLI（`fjs run/build/dev`）会把 flavor 写进自身环境变量（之后启动的
+`flutter` 子进程继承，podspec 读得到）、传 `--dart-define`，并调用
+`bin/engine.dart`（`dart run flutter_fjs:engine <flavor>`）。runner 只做
+构建文件做不到的两件事：
+
+- **宿主的 pod install**：在宿主 `.dart_tool/flutter_fjs/engine_flavor`
+  记录上次的 flavor，变了就 touch 宿主 `ios|macos/Podfile`、清宿主
+  build 下的 Xcode xcframework 缓存，让下一次构建重新 pod install 并重链。
+  只写宿主文件。
+- **鸿蒙 libs**：按内容比对 `ohos/libs` 与目标 flavor，一致就什么都不做；
+  需要换时，只有 flutter_fjs 是 **path 依赖**才复制，在 pub-cache 里会
+  报错退出——鸿蒙要用非默认引擎，请用 path 依赖。宿主没有 `ohos/`
+  目录时整段跳过。
+
+runner 找不到（没装 Dart）或失败时 CLI 不再静默：显式请求的 flavor 直接
+报错；默认 primjs 打一行告警继续（Android/iOS/macOS 不依赖 runner）。
+`--no-debugger` 仍被接受但不再有动作，见上文"产物分层"。App 运行时
+（debug 构建）会对比 `--dart-define=FJS_JS_ENGINE` 与二进制里真实的
+engine id，不一致打一次告警——典型场景是纯 Flutter 宿主改了
+dart-define 却没重新 pod install。
 
 三件事要配对：
 
@@ -1311,7 +1336,14 @@ runner，或直接执行上面的 build 脚本。App 运行时（debug 构建）
   全局只有一个 flavor 有：优先在 runtime 兼容层补，不要改 vendored 引擎
   源码或 native 注册——那会让每个 flavor × 平台的引擎产物重编重发，
   而缺的这个全局几乎总能用已验证存在的机制（promise 微任务、定时器）
-  包出来。
+  包出来。包的时候要把**报错行为**一并对齐（specs/108）：原生 `queueMicrotask` 的
+  回调就是任务本身，抛错会被 `vm.cpp` 以 `[fjs] unhandled rejection in a
+  microtask job: …` 打出来；兜底版本的任务是 `.then` 回调，抛错只会让派生的
+  Promise 变成 rejected，而原生侧没有注册 rejection tracker——早期兜底因此在默认
+  引擎上把回调里的异常全部吞掉。现在兜底用 try/catch 包住回调，按同样的前缀和
+  「消息 + 栈」格式经 `console.error` 上报，非函数参数同步抛 `TypeError`。
+  （普通 Promise 的未处理拒绝两个引擎目前都不会打日志，需要 native 注册
+  tracker，另行处理。）
 
 同进程内不混用两个引擎：它们各占一套 VM 与符号，双引擎热切换意味着
 每个 App 永久背两份引擎体积，对比实验用不上；要对比就按上面整 App

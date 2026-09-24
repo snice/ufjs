@@ -23,6 +23,10 @@ midscene_run
 
 # an fjs module's Flutter package: build state, not source
 packages/*/flutter/pubspec.lock
+# flutter_fjs is a published library: its consumers resolve their own
+# versions, so a lockfile here is build state too (spec 110). Its example/
+# is an app and keeps its lockfile, like examples/fjs-go.
+packages/flutter_fjs/pubspec.lock
 packages/*/flutter/.flutter-plugins
 packages/*/flutter/.flutter-plugins-dependencies
 .zcode/

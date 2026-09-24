@@ -77,12 +77,15 @@ commands:
                             (default: .fjs/flutter, or package.json
                             fjs.flutterDir once ejected)
       --js-engine <name>     with bytecode/release: compile for primjs
-                            (default) or quickjs and materialize that flavor
-                            into the plugin
+                            (default) or quickjs, and build the app with
+                            that flavor
       builds warn when a page exceeds fjs.performance.nodeBudget
   fjs dev    [entry]        dev server: HTTP bundle + WebSocket reload
       --port <n>            port (default: 38900, or 5173 with --web)
       --host <addr>          bind address (default: 0.0.0.0)
+      --remote-tools         accept tool connections (fjs log / eval / debug)
+                             from other machines; by default only this
+                             machine may drive the connected apps
       --mp                  mini-program dev: watch src/, re-emit dist/mp
                             (WeChat DevTools applies changes itself)
       --web                 serve the browser build as a static site
@@ -204,9 +207,10 @@ commands:
       --flutter-dir <dir>    host project dir (default: .fjs/flutter)
       --js-engine <name>     engine flavor to run: primjs (default, has the
                              CDP debugger) or quickjs (quickjs-ng, no
-                             debugger) — copies the prebuilt flavor from
-                             packages/flutter_fjs/abi/ into the plugin;
-                             FJS_JS_ENGINE sets the same thing
+                             debugger) — the build picks the prebuilt
+                             flavor from flutter_fjs's abi/ (the plugin
+                             directory is not modified); FJS_JS_ENGINE sets
+                             the same thing
 
 env:
   FJSC_PATH                 path to the fjsc bytecode compiler binary

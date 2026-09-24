@@ -1,13 +1,23 @@
-// Two prebuilt .so files ship here (spec 090):
-//   android/src/main/jniLibs/<abi>/libfjs.so            the engine, always
-//   android/src/main/jniLibs/<abi>/libfjs_debugger.so   CDP inspector +
-//                                                       transport, debug only
-// built from ../native by tool/build-android.sh. Nothing native is compiled
-// here, so consumers need no NDK or CMake — Dart always opens libfjs.so and,
-// in debug builds only, loads the debugger module on top (lib/src/ffi.dart).
-// Non-debug builds drop libfjs_debugger.so: the fjs engine runner deletes it
-// before the build (spec 091 round 4), and the detection below is the
-// fallback for pure Flutter hosts that never ran the runner — set
+// The engine ships prebuilt (spec 090), built from ../native by
+// tool/build-android.sh into the package's abi/ cache, one set per engine
+// flavor (spec 091):
+//   ../abi/<flavor>/android/<abi>/libfjs.so            the engine, always
+//   ../abi/<flavor>/android/<abi>/libfjs_debugger.so   CDP inspector +
+//                                                      transport, primjs only
+// Nothing native is compiled here, so consumers need no NDK or CMake — Dart
+// always opens libfjs.so and, in debug builds only, loads the debugger
+// module on top (lib/src/ffi.dart).
+//
+// Engine flavor (spec 105): chosen HERE by pointing jniLibs at
+// abi/<flavor>/android — never by copying files over this package, which
+// lives in the shared pub cache for every host that depends on it. First
+// match wins:
+//   1. gradle property fjs.jsEngine   (-Pfjs.jsEngine=quickjs)
+//   2. FJS_JS_ENGINE in the environment (@ufjs/cli sets it)
+//   3. FJS_JS_ENGINE in Flutter's dart-defines (--dart-define), which
+//      Flutter hands every gradle project as -Pdart-defines=<base64,...>
+//   4. primjs
+// Non-debug builds drop libfjs_debugger.so via the exclude below; set
 // fjsKeepDebugger=true in gradle properties to keep it.
 def flutterRoot = null
 if (project.hasProperty('flutter.sdk')) {
@@ -24,6 +34,37 @@ def fjsIsNonDebugBuild = gradle.startParameter.taskNames.any {
     n.contains('release') || n.contains('profile')
 }
 def fjsKeepDebugger = project.findProperty('fjsKeepDebugger') == 'true'
+
+def fjsJsEngine = {
+    def explicit = project.findProperty('fjs.jsEngine')
+    if (explicit) return explicit.toString()
+    def fromEnv = System.getenv('FJS_JS_ENGINE')
+    if (fromEnv) return fromEnv
+    def defines = project.findProperty('dart-defines')
+    if (defines) {
+        for (encoded in defines.toString().split(',')) {
+            def decoded
+            try {
+                decoded = new String(encoded.decodeBase64(), 'UTF-8')
+            } catch (IllegalArgumentException ignored) {
+                continue
+            }
+            if (decoded.startsWith('FJS_JS_ENGINE=')) {
+                return decoded.substring('FJS_JS_ENGINE='.length())
+            }
+        }
+    }
+    return 'primjs'
+}()
+if (!(fjsJsEngine in ['primjs', 'quickjs'])) {
+    throw new GradleException(
+        "flutter_fjs: unknown FJS_JS_ENGINE '${fjsJsEngine}' - expected primjs or quickjs")
+}
+def fjsEngineLibs = file("${projectDir}/../abi/${fjsJsEngine}/android")
+if (!fjsEngineLibs.isDirectory()) {
+    throw new GradleException(
+        "flutter_fjs: engine flavor '${fjsJsEngine}' has no prebuilt libraries at ${fjsEngineLibs}")
+}
 
 buildscript {
     repositories {
@@ -55,7 +96,7 @@ android {
 
     sourceSets {
         main {
-            jniLibs.srcDirs = ['src/main/jniLibs']
+            jniLibs.srcDirs = [fjsEngineLibs]
             if (fjsIsNonDebugBuild && !fjsKeepDebugger) {
                 // non-debug ships the engine only; dropping this file is
                 // what removes the debugger, since the engine holds no

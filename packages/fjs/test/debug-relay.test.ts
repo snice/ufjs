@@ -16,6 +16,12 @@ describe('DebugRelayRegistry', () => {
     expect(registry.greeting()).toBe('debug on 38903');
   });
 
+  it('carries the session token when fjs debug sent one (spec 107)', () => {
+    const registry = new DebugRelayRegistry<string>();
+    registry.open('debug-1', 38903, '0123456789abcdef0123456789abcdef');
+    expect(registry.greeting()).toBe('debug on 38903 0123456789abcdef0123456789abcdef');
+  });
+
   it('forgets the relay when its owner disconnects', () => {
     const registry = new DebugRelayRegistry<string>();
     registry.open('debug-1', 38903);

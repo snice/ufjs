@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds the ohos libs for both engine flavors (spec 091) from native/ with
 # the DevEco Studio toolchain, then strips the output. Run once per native/
-# change; abi/ is committed, ohos/libs/ is a local materialization
-# (gitignored).
+# change; abi/ is committed, ohos/libs/ is not (it is published, see
+# ohos/.pubignore and tool/check-publish.mjs).
 #
 # spec 090: TWO files land in libs/, an engine and a module on top of it —
 #   libfjs.so            the engine; contains no inspector, every build
@@ -10,10 +10,10 @@
 #                        builds; release/profile HAPs drop the file
 #                        (see ohos/build-profile.json5)
 #
-# spec 091: the flavors land in the abi cache and the primjs set is ALSO
-# copied to ohos/libs/ (what the HAR packager reads, DevEco convention):
-# `fjs run/build --js-engine <flavor>` copies a flavor from the cache over
-# libs at run time (see engine.ts in @ufjs/cli).
+# spec 091/105: the flavors land in the abi cache and the primjs set is ALSO
+# copied to ohos/libs/ — a HAR only packages its module's libs/, so unlike
+# android/ios/macos the flavor has to be copied there. The engine runner
+# (bin/engine.dart) swaps in another flavor, only for a path dependency.
 #   abi/primjs/ohos/arm64-v8a/    libfjs.so + libfjs_debugger.so (default)
 #   abi/quickjs/ohos/arm64-v8a/   libfjs.so only — the CDP inspector exists
 #                                 for PrimJS only
@@ -84,7 +84,7 @@ flavor() {
 flavor primjs  ON
 flavor quickjs OFF
 
-# default materialization: primjs into the committed ohos/libs
+# default flavor: primjs into ohos/libs (what the HAR packs and what ships)
 mkdir -p "$LIBS/arm64-v8a"
 cp "$ABI_CACHE"/primjs/ohos/arm64-v8a/*.so "$LIBS/arm64-v8a/"
 

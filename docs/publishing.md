@@ -263,18 +263,28 @@ Flutter 宿主的依赖和注册调用，都会自动生效。清单字段和 au
 
 | 平台 | 产物 | 大小 |
 |---|---|---|
-| Android | `android/src/main/jniLibs/{armeabi-v7a,arm64-v8a,x86_64}/libfjs.so` | 3.7M |
-| iOS / macOS | `ios/fjs.xcframework`、`macos/fjs.xcframework` | 各 5.9M |
+| Android | `abi/{primjs,quickjs}/android/{armeabi-v7a,arm64-v8a,x86_64}/libfjs*.so` | — |
+| iOS / macOS | `ios/abi/{primjs,quickjs}/*.xcframework`、`macos/abi/{primjs,quickjs}/*.xcframework` | — |
+| 鸿蒙 | `ohos/libs/arm64-v8a/`（默认 primjs）+ `abi/{primjs,quickjs}/ohos/` | — |
+
+两个引擎 flavor 都随包发布，接入方的构建按配置选用其中一份（spec 105，
+见 [toolchain.md](toolchain.md) 的 JS 引擎切换一节），插件目录不会被改写。
 
 反过来，`native/`（引擎 + fjs C++ 源码）和 `tool/` **不发布**——
 接入方的构建里没有任何东西会编译它们，脚本离开仓库也跑不了。这由
 `packages/flutter_fjs/.pubignore` 控制。
 
-spec 091 起这些产物在 git 里也**不再跟踪**（唯一入库的产物源是
-`native/../abi/`，平台目录由 `dart run flutter_fjs:engine` / build 脚本
-物化，见 [toolchain.md](toolchain.md) 的 JS 引擎切换一节）。`dart pub
-publish` 从磁盘收集文件，所以**发布前必须先跑 `tool/build-*.sh` 或执行
-一次物化**，并用 `--dry-run` 确认 jniLibs / xcframework 在上传清单里。
+`ohos/libs/` 在 git 里**不跟踪**（源头是 `abi/primjs/ohos/`），但必须
+发布：`ohos/.pubignore` 替代了同目录 `.gitignore` 里的 `/libs` 规则。
+`dart pub publish` 从磁盘收集文件，所以**发布前必须跑校验**：
+
+```bash
+cd packages/flutter_fjs
+node tool/check-publish.mjs --fix   # 两个 flavor 各平台产物齐全、ohos/libs 与
+                                    # abi/primjs/ohos 逐字节一致（含调试器）、
+                                    # 没有被忽略规则排除、没有 spec 091 的物化残留
+dart pub publish --dry-run          # 再确认上传清单里确实有这些文件
+```
 
 `.pubignore` 只影响 `pub publish` 上传的内容，**不影响 `path:` 依赖**：在仓库里
 用 workspace 调试时 `native/` 照常在。

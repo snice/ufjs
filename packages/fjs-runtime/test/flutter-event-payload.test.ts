@@ -10,7 +10,7 @@
 // whose SyntaxError left `errorPayload` an object and blanked the two panels
 // that render it (Android, 2026-09-19 → 2026-09-23).
 import { beforeEach, describe, expect, it } from 'vitest';
-import { defineComponent, h, nextTick } from 'vue';
+import { defineComponent, h, nextTick, withModifiers } from 'vue';
 import {
   childElementIds,
   createApp,
@@ -120,5 +120,58 @@ describe('event first argument (specs/103)', () => {
     expect(JSON.parse(seen[0] as string)).toEqual({
       errMsg: 'image load failed',
     });
+  });
+});
+
+// specs/104: the shape follows the EVENT, not just the tag. On web an fjs
+// tag's `@click` is a fallthrough onto the root DOM element (only `tap`,
+// `load`… are emitted), so the handler gets a DOM event there — and Vue's
+// `.stop` / `.prevent` call methods on it. Under specs/103's tag-only rule
+// `<view @click.stop>` threw on Flutter and never ran.
+describe('event first argument by web emits (specs/104)', () => {
+  function mountOne(tag: string, props: Record<string, unknown>): number {
+    const App = defineComponent(() => () => h(tag, props, tag === 'image' ? undefined : 'x'));
+    const root = flutterRoot();
+    createApp(App).mount(root);
+    const [id] = idsByTag(root.id, tag);
+    expect(id).toBeTypeOf('number');
+    return id;
+  }
+
+  it.each(['view', 'button', 'image'])('runs a @click.stop handler on %s', async (tag) => {
+    let calls = 0;
+    const id = mountOne(tag, { onClick: withModifiers(() => calls++, ['stop']) });
+    await nextTick();
+    expect(() => dispatch()(id, TAP, null)).not.toThrow();
+    expect(calls).toBe(1);
+  });
+
+  it('hands @click on an fjs tag a DOM-shaped event', async () => {
+    const seen: Record<string, unknown>[] = [];
+    const id = mountOne('view', { onClick: (e: Record<string, unknown>) => seen.push(e) });
+    await nextTick();
+    dispatch()(id, TAP, null);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toHaveProperty('target');
+    expect(typeof seen[0].stopPropagation).toBe('function');
+    expect('clientX' in seen[0]).toBe(true);
+  });
+
+  it('keeps @tap on an fjs tag payload-less, as web emit("tap") is', async () => {
+    const seen: unknown[] = [];
+    const id = mountOne('view', { onTap: (p: unknown) => seen.push(p) });
+    await nextTick();
+    dispatch()(id, TAP, null);
+    expect(seen).toEqual([undefined]);
+  });
+
+  it('matches emitted names case-insensitively (onLongPress, onScrollToUpper)', async () => {
+    const seen: unknown[] = [];
+    const view = mountOne('view', { onLongPress: (p: unknown) => seen.push(p) });
+    const scroller = mountOne('scroll-view', { onScrollToUpper: (p: unknown) => seen.push(p) });
+    await nextTick();
+    dispatch()(view, 2, null);
+    dispatch()(scroller, 24, '{"direction":"top"}');
+    expect(seen).toEqual([undefined, '{"direction":"top"}']);
   });
 });

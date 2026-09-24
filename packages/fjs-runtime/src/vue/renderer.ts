@@ -18,7 +18,7 @@ import { hasNativeHost, invokeHost, registerPreFlush } from '../host';
 import { usesDeclaredFont } from '../css/font-face';
 import { INHERITABLE_KEYS, StyleEngine, type PseudoStyles } from '../css/style';
 import { devtoolsSlots, devtoolsStructuralVersion } from '../devtools-hooks';
-import { FJS_TAGS, FJS_COMPONENT_TAGS } from '../tags';
+import { emitsFor } from '../event-emits';
 
 type HostNode = Element;
 
@@ -63,19 +63,22 @@ const htmlDefaults = new Map<number, Record<string, unknown>>();
 
 const elementsById = new Map<number, Element>();
 
-// ---- event first-argument shape (specs/103) --------------------------------
+// ---- event first-argument shape (specs/103, specs/104) ---------------------
 //
-// Which FIRST ARGUMENT a handler gets is the same tag decision web compiles
-// with (`webIsNativeTag`): an fjs tag is a Vue component over there and
-// emits the raw payload (`emit('input', target.value)`, `emit('error',
-// json)`), while anything else is a native element and hands handlers a
-// real DOM event. Flattening every event into a DOM-shaped object here —
-// what this renderer did since specs/070 — made `JSON.parse(payload)` throw
-// on every payload event and blanked the panels that render one (the
-// image page's mode panel, 2026-09-19 regression). So the TAG decides, not
-// the event name: `@input` on an fjs `input` is a string on both ends, and
-// vant's `div` keeps the event object its handlers read `clientX` from.
-const payloadEventTags = new WeakSet<HostNode>();
+// Which FIRST ARGUMENT a handler gets follows what web hands the same
+// handler. There an fjs tag is a Vue component: the events it `emits` reach
+// handlers as the raw payload (`emit('input', target.value)`,
+// `emit('error', json)`), and everything else — `@click` above all — falls
+// through to the root DOM element as a real DOM event. Non-fjs tags (vant's
+// `div`) are native elements there, so always a DOM event.
+//
+// specs/070 wrapped EVERY event into a DOM-shaped object, which made
+// `JSON.parse(payload)` throw on every payload event (specs/103). specs/103
+// then decided by tag alone, which handed `<view @click.stop>` a bare null
+// and made Vue's withModifiers throw (specs/104). So the decision is per
+// (tag, event name the author wrote), from event-emits.ts: an element only
+// gets an entry here when its tag emits anything on web.
+const payloadEvents = new WeakMap<HostNode, ReadonlySet<string>>();
 
 // ---- position: fixed hoisting (CSS `fixed` without a DOM viewport) ----
 //
@@ -770,11 +773,10 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     // the textarea ELEMENT (see the H table): an unknown tag on the Dart
     // side rendered nothing at all
     const el = create(mapped ? mapped.tag : rawTag === 'textarea' ? 'input' : rawTag);
-    // The web-side tag lists are the contract source (specs/103): fjs tags
-    // compile to components that emit payloads; a vant `div` stays native.
-    if (FJS_TAGS.includes(rawTag) || FJS_COMPONENT_TAGS.includes(rawTag)) {
-      payloadEventTags.add(el);
-    }
+    // What this tag emits on web (specs/104). Only fjs tags have entries in
+    // that table, so a vant `div` never gets one and stays DOM-shaped.
+    const emits = emitsFor(rawTag);
+    if (emits.size > 0) payloadEvents.set(el, emits);
     if (rawTag === 'textarea') {
       // vant's Field textarea: auto-height inside a vant cell is still
       // broken — the field grows natively but the fjs flex's line-extent
@@ -1149,16 +1151,17 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
       onceFired.delete(`${el.id}:${native}`);
       setProps(el, { [native]: null });
     } else {
-      // Two shapes, decided by the tag (specs/103, the details at
-      // `payloadEventTags`):
-      //   fjs tag      → the raw payload, exactly what web's component
-      //                   emit hands the same handler. Object payloads
-      //                   (touch) pass through untouched.
-      //   anything else → a DOM-shaped event: vant's onClick calls
-      //                   event.stopPropagation() before anything else,
-      //                   and its Slider reads clientX — on web those tags
-      //                   are native elements, so a real DOM event is what
-      //                   the same handler gets there.
+      // Two shapes (specs/103 + 104, the details at `payloadEvents`):
+      //   an event the tag emits on web → the raw payload, exactly what
+      //                   web's component emit hands the same handler.
+      //                   Object payloads (touch) pass through untouched.
+      //   anything else → a DOM-shaped event: `@click.stop` calls
+      //                   event.stopPropagation(), vant's Slider reads
+      //                   clientX — on web those handlers sit on a real DOM
+      //                   element and get a real DOM event.
+      // Decided on the name as WRITTEN (`name`), not the alias: `onClick`
+      // and `onTap` both become native event 1 and only the spelling tells
+      // a fallthrough click from an emitted tap.
       // The raw element API (ui/element.ts dispatch) keeps passing the
       // payload unchanged either way.
       //
@@ -1173,7 +1176,7 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
       // inline handler is a new function every render, and Vue re-patches
       // the prop each time — a closure flag would re-arm on every render
       const onceKey = `${el.id}:${native}`;
-      const rawPayload = payloadEventTags.has(el);
+      const rawPayload = payloadEvents.get(el)?.has(name.slice(2).toLowerCase()) === true;
       setProps(el, {
         [native]: (payload?: EventPayload) => {
           if (once) {

@@ -17,6 +17,18 @@ class DevReload {
   bool get isFull => pages.isEmpty;
 }
 
+/// One parsed `debug on …` push (spec 088, token since spec 107).
+class DevDebugAttach {
+  const DevDebugAttach(this.port, this.token);
+
+  final int port;
+
+  /// The session token `fjs debug` minted, or null from an older CLI. The
+  /// relay asks a VM dialing from off the dev machine for it before giving
+  /// it the session, so the engine publishes it in the VM before dialing.
+  final String? token;
+}
+
 class DevClient {
   DevClient(this.host, this.port, {required this.fetchUrl, this.onLog});
 
@@ -45,12 +57,12 @@ class DevClient {
   /// have to survive on a release device where this socket does not exist.
   void Function()? onPerf;
 
-  /// `debug on <port>` / `debug off` (spec 088): `fjs debug` starting and
-  /// stopping its relay. The engine attaches its CDP channel to
-  /// host:port — the same host this WebSocket is already talking to — and
-  /// a successful attach is followed by a full reload so every script
-  /// lands in the debugger's script table.
-  void Function(int port)? onDebugAttach;
+  /// `debug on <port> [<token>]` / `debug off` (spec 088, 107): `fjs
+  /// debug` starting and stopping its relay. The engine attaches its CDP
+  /// channel to host:port — the same host this WebSocket is already talking
+  /// to — and a successful attach is followed by a full reload so every
+  /// script lands in the debugger's script table.
+  void Function(DevDebugAttach attach)? onDebugAttach;
   void Function()? onDebugDetach;
   bool _closed = false;
   Timer? _retryTimer;
@@ -193,16 +205,16 @@ class DevClient {
           return;
         }
         if (msg.startsWith('debug ')) {
-          // Wire form (server: dev/server.ts, the `fjs:debug` case — keep
-          // in sync): `debug on <port>` / `debug off`. An unknown `debug`
-          // push from a newer server is ignored rather than guessed at:
-          // guessing could attach to a port that means something else.
-          final rest = msg.substring('debug '.length);
-          if (rest == 'off') {
+          // Wire form (server: dev/server.ts + dev/debug-relay.ts, the
+          // `debug-relay` case — keep in sync): `debug on <port> [<token>]`
+          // / `debug off`. An unknown `debug` push from a newer server is
+          // ignored rather than guessed at: guessing could attach to a port
+          // that means something else.
+          if (msg == 'debug off') {
             onDebugDetach?.call();
-          } else if (rest.startsWith('on ')) {
-            final port = int.tryParse(rest.substring(3).trim());
-            if (port != null && port > 0) onDebugAttach?.call(port);
+          } else {
+            final attach = parseDebugAttach(msg);
+            if (attach != null) onDebugAttach?.call(attach);
           }
           return;
         }
@@ -292,6 +304,20 @@ class DevClient {
   /// which is always a correct answer. Anything else that starts with
   /// `reload` parses the same way: silently ignoring a push would leave
   /// the VM stale (constitution V).
+  /// Parses `debug on <port>` or `debug on <port> <token>`; null for
+  /// anything else, including a token that is not 32 lower-case hex digits
+  /// (it is spliced into a JS string literal, so nothing else gets in).
+  static DevDebugAttach? parseDebugAttach(String message) {
+    if (!message.startsWith('debug on ')) return null;
+    final parts = message.substring('debug on '.length).trim().split(' ');
+    if (parts.isEmpty || parts.length > 2) return null;
+    final port = int.tryParse(parts[0]);
+    if (port == null || port <= 0) return null;
+    if (parts.length == 1) return DevDebugAttach(port, null);
+    if (!RegExp(r'^[0-9a-f]{32}$').hasMatch(parts[1])) return null;
+    return DevDebugAttach(port, parts[1]);
+  }
+
   static DevReload parseReload(String message) {
     if (message == 'reload') return const DevReload();
     if (!message.startsWith('reload ')) return const DevReload();

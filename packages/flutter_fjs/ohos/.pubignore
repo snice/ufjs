@@ -1,0 +1,16 @@
+# ohos/.gitignore without `/libs`: pub applies a directory's .pubignore
+# INSTEAD of its .gitignore, and ohos/libs/ holds the default (primjs)
+# libraries every ohos host packs — a HAR only packages its module's libs/,
+# so they have to ship in the published package even though git does not
+# track them (their source is abi/primjs/ohos; tool/check-publish.mjs checks
+# the two match before a publish).
+/node_modules
+/oh_modules
+/local.properties
+/.preview
+/.idea
+/build
+/.cxx
+/.test
+/BuildProfile.ets
+/oh-package-lock.json5

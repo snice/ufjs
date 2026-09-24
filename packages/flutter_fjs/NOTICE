@@ -12,12 +12,14 @@ QuickJS — MIT License
   LICENSE-quickjs-ng.
 
 The prebuilt binaries shipped with this package are compiled from the PrimJS
-sources plus this project's own C++ layer, so they contain PrimJS code under
-the Apache License 2.0 above, including QuickJS-derived portions under MIT:
+(primjs flavor) or quickjs-ng (quickjs flavor) sources plus this project's
+own C++ layer, so they contain PrimJS code under the Apache License 2.0
+above and QuickJS-derived portions under MIT (LICENSE-quickjs-ng):
 
-  android/src/main/jniLibs/<abi>/libfjs.so
-  ios/fjs.xcframework
-  macos/fjs.xcframework
+  abi/<flavor>/android/<abi>/libfjs*.so
+  abi/<flavor>/ohos/arm64-v8a/libfjs*.so and ohos/libs/arm64-v8a/libfjs*.so
+  ios/abi/<flavor>/*.xcframework
+  macos/abi/<flavor>/*.xcframework
 
 The corresponding sources live in native/ in the project repository
 (https://github.com/snice/ufjs); they are not shipped in the published

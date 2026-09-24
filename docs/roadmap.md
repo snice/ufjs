@@ -162,6 +162,34 @@ uni-app 那张表：
   （`JSON.parse(payload)`）静默抛错，图片页 mode / load-error 两个面板整块
   空白；现在 fjs 标签首参=裸载荷（与 web 组件 emit 同源）、非 fjs 标签
   仍=事件对象，demo vant 的 Field/Stepper 由项目内补丁兜底
+- ✅ 事件首参按 web emits 判定（`specs/104-event-first-arg-by-emits`，2026-09）：
+  103 只看标签，`<view @click.stop>` 在 Flutter 端抛错；现在按「该事件是否在
+  web 组件 emits 中」决定裸载荷还是事件对象，`event-emits.ts` 由漂移单测锁住
+- ✅ 引擎 flavor 不再改写插件目录（`specs/105-engine-flavor-no-plugin-writes`，2026-09）：
+  091 把选中引擎复制进 flutter_fjs 自身目录（多数宿主下是共享 pub-cache）；
+  现在 Android 的 gradle 与 iOS/macOS 的 podspec 按 `FJS_JS_ENGINE` 直接引用
+  对应产物，鸿蒙仅 path 依赖可切；CLI 不再静默跳过 runner 失败；
+  `tool/check-publish.mjs` 发布前校验。**待本机验证**：各平台真机构建与
+  `dart pub publish --dry-run`
+- ✅ flex 主轴百分比参照改为显式标记（`specs/106-flex-percent-basis-explicit`，2026-09）：
+  101 从「max 无穷、min > 0」推断参照，把 CSS `min-height` / `min-width` 盒子里的
+  `height/width: 100%` 也解析了（web 为 auto）；现在只有装饰层解封高度时打的
+  `FjsUncappedHeightScope` 才让 min 生效。**待本机验证**：`flutter test` 与飞行盒真机
+- ✅ 调试通道鉴权（`specs/107-debug-channel-auth`，2026-09）：`fjs debug` 的 VM 端口对
+  非回环连接做 token 质询（经 CDP `Runtime.evaluate`，不改 native），未认证连接不占会话
+  槽位；dev server 只接受本机工具，`eval` / `perf` / `debug-relay` 要求已登记工具，
+  跨机器需 `fjs dev --remote-tools`。**待本机验证**：`flutter test` 与局域网真机附加
+- ✅ PrimJS 的 `queueMicrotask` 兜底不再吞异常（`specs/108-queue-microtask-errors`，2026-09）：
+  回调异常按 quickjs-ng 原生同款前缀与格式上报，非函数参数同步抛 `TypeError`
+- [ ] 两个引擎都没有注册 Promise rejection tracker，普通未处理拒绝不打日志（需 native，待开 spec）
+- ✅ 清理入库的构建产物与死代码（`specs/109-no-committed-build-artifacts`，2026-09）：spec 093 e2e 的
+  `bundle.js` / `relay.cjs` 改由 `e2e/build.mjs` 生成、不再入库（Linux 上重跑 11/11）；删除从未编译的
+  `primjs/src/wasm/`；`fjsrun` 补 `<ctime>`，Linux 可编
+- [ ] fjs-go 内置的 `assets/shared.fjsbundle.gz` 是 quickjs-ng 字节码，默认引擎已是 PrimJS——
+  按 PrimJS 重新部署 showcase 后执行 `examples/fjs-go/tool/refresh-seed.sh`
+- ✅ 提交规范护栏（`specs/110-commit-hygiene`，2026-09）：`.githooks/commit-msg` 校验 conventional
+  commits 与空洞摘要（`git config core.hooksPath .githooks` 启用）；`flutter_fjs` 库包锁文件不再入库；
+  fjs-go 鸿蒙签名配置移出仓库（本机签名见其 README）
 
 实机对拍时抓到三个只有跑起来才看得见的问题：Dart 的 mode 分支漏了 `center`
 （静静降级成 `scaleToFill`）；web 的 `heightFix` 因为 column flex 的 stretch 被

@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
 # Builds the Android .so for BOTH engine flavors (spec 091) from native/,
-# then strips them. Run once per native/ change; abi/ is committed, the
-# conventional materialized dirs are NOT (gitignored) — fresh checkouts
-# materialize before building via the engine runner or these scripts.
+# then strips them. Run once per native/ change; abi/ is committed and is
+# what android/build.gradle packs directly (spec 105).
 #
 # The flavors land in the abi cache — one directory per engine, no renaming
 # of files (Dart always opens libfjs.so):
 #   abi/primjs/android/<abi>/    libfjs.so + libfjs_debugger.so (default)
 #   abi/quickjs/android/<abi>/   libfjs.so only — the CDP inspector exists
 #                                for PrimJS only
-# The primjs set is ALSO copied to android/src/main/jniLibs/<abi>/ (what
-# gradle packs) so the local tree builds out of the box; that directory is
-# gitignored — only abi/ is committed.
+# android/build.gradle points jniLibs at abi/<flavor>/android for the flavor
+# the build asked for — nothing is copied anywhere else.
 #
 # spec 090: libfjs.so is the engine and goes into every build;
 # libfjs_debugger.so is the CDP inspector + transport, loaded only by debug
@@ -26,7 +24,6 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 OUT="$ROOT/build/android"
 ABI_CACHE="$ROOT/abi"
-JNILIBS="$ROOT/android/src/main/jniLibs"
 API=21
 ABIS=(armeabi-v7a arm64-v8a x86_64)
 
@@ -52,7 +49,7 @@ HOST_TAG=$(uname -s | tr '[:upper:]' '[:lower:]')-x86_64
 [ "$(uname -s)" = "Darwin" ] && HOST_TAG=darwin-x86_64
 STRIP="$NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin/llvm-strip"
 
-rm -rf "$OUT" "$ABI_CACHE"/primjs/android "$ABI_CACHE"/quickjs/android "$JNILIBS"
+rm -rf "$OUT" "$ABI_CACHE"/primjs/android "$ABI_CACHE"/quickjs/android
 
 # flavor <engine> <build-debugger? ON|OFF>
 flavor() {
@@ -94,12 +91,6 @@ flavor() {
 
 flavor primjs  ON
 flavor quickjs OFF
-
-# default materialization: primjs into the committed jniLibs
-for abi in "${ABIS[@]}"; do
-    mkdir -p "$JNILIBS/$abi"
-    cp "$ABI_CACHE"/primjs/android/"$abi"/*.so "$JNILIBS/$abi/"
-done
 
 echo "built:"
 ls -lh "$ABI_CACHE"/{primjs,quickjs}/android/*/libfjs*.so | awk '{print "  " $NF " " $5}'

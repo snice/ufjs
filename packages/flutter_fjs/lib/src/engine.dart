@@ -99,9 +99,11 @@ class FjsEngine extends ChangeNotifier {
 
   VoidCallback? _unwatchPointer;
 
-  /// spec 091: a flavor requested through --dart-define but not actually
-  /// materialized before the build is the one silent failure this feature
-  /// could produce — make it loud once per VM in debug builds.
+  /// spec 091/105: a flavor requested through --dart-define that the app
+  /// was not built with is the one silent failure this feature can produce
+  /// — iOS/macOS pick the flavor at pod install, so a changed dart-define
+  /// without a fresh pod install keeps the old engine. Loud once per VM in
+  /// debug builds.
   void _warnEngineFlavorMismatch() {
     if (!kDebugMode) return;
     const requested = String.fromEnvironment('FJS_JS_ENGINE', defaultValue: 'primjs');
@@ -113,11 +115,12 @@ class FjsEngine extends ChangeNotifier {
             : '';
     if (actualFlavor.isEmpty || actualFlavor == requested) return;
     const hint =
-        'dart run flutter_fjs:engine $requested   # then rebuild the app\n'
-        '(or drop the --dart-define to stay on the engine this app embeds)';
+        'dart run flutter_fjs:engine $requested   # from the host root: re-runs\n'
+        '                                          # pod install / switches ohos libs\n'
+        'then rebuild (or drop the --dart-define to stay on the engine this app embeds)';
     final message =
         '[fjs] FJS_JS_ENGINE=$requested but this app embeds "$actual".\n'
-        'Materialize the requested flavor before building:\n$hint';
+        'The build did not pick up the requested flavor:\n$hint';
     _log(2, message);
     debugPrint(message);
   }
@@ -864,7 +867,8 @@ class FjsEngine extends ChangeNotifier {
       }
     };
     dev.onPerf = () => perfOverlay.value = !perfOverlay.value;
-    dev.onDebugAttach = (port) {
+    dev.onDebugAttach = (attach) {
+      final port = attach.port;
       // spec 088. An engine binary older than the debugger reports once
       // and keeps running — the app itself is unaffected (constitution V).
       if (bind.debuggerAttach == null) {
@@ -876,6 +880,7 @@ class FjsEngine extends ChangeNotifier {
       _log(1, '[fjs/debug] relay on port $port — reloading so every '
           'script registers with the debugger');
       _debugPort = port;
+      _debugToken = attach.token;
       unawaited(
         () async {
           try {
@@ -889,6 +894,7 @@ class FjsEngine extends ChangeNotifier {
     dev.onDebugDetach = () {
       if (_debugPort == null) return;
       _debugPort = null;
+      _debugToken = null;
       _debugRetryTimer?.cancel();
       _debugRetryTimer = null;
       _debugRetryAttempt = 0;
@@ -987,6 +993,11 @@ class FjsEngine extends ChangeNotifier {
   /// re-attach cost — the debug channel has to survive every reload.
   int? _debugPort;
 
+  /// spec 107: the session token `fjs debug` minted (null from an older
+  /// CLI). Published in each VM before it dials, because the relay asks a VM
+  /// dialing from off the dev machine for it before giving it the session.
+  String? _debugToken;
+
   /// Whether the connected dev server serves a split build. connectDev
   /// negotiates it; the debug retry needs it to re-run [_loadFromDev] after
   /// a late attach succeeds.
@@ -1039,6 +1050,19 @@ class FjsEngine extends ChangeNotifier {
       '127.0.0.1',
       if (dev.host != '127.0.0.1') dev.host,
     ];
+    // spec 107: the relay's challenge reads this global over CDP. The token
+    // is 32 hex digits (DevClient.parseDebugAttach checks), so splicing it
+    // into the literal is safe. Evaluated before the attach, so it never
+    // shows up among the debugged scripts.
+    final token = _debugToken;
+    if (token != null) {
+      try {
+        runSource("globalThis.__fjsDebugToken = '$token';",
+            filename: 'fjs-debug-token.js');
+      } catch (e) {
+        _log(2, '[fjs/debug] could not publish the session token: $e');
+      }
+    }
     final failures = <String>[];
     for (final host in candidates) {
       // every failure path in the module closes its socket, so trying the

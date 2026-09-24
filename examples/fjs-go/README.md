@@ -18,6 +18,20 @@ cd examples/fjs-go
 flutter run          # iOS / Android / macOS 均可
 ```
 
+鸿蒙（HarmonyOS）真机需要先签名。签名信息与个人证书绑定，仓库里的
+`ohos/build-profile.json5` 刻意留空（spec 110）：
+
+1. DevEco Studio 打开 `examples/fjs-go/ohos`，File → Project Structure →
+   Signing Configs，勾选 Automatically generate signature；
+2. 这会把**你本机**的证书路径和加密后的密码写进 `ohos/build-profile.json5`——
+   别提交它，让 git 忽略你本地的这份改动：
+
+   ```bash
+   git update-index --skip-worktree examples/fjs-go/ohos/build-profile.json5
+   # 以后要改这个文件里的其它配置时先撤销：
+   git update-index --no-skip-worktree examples/fjs-go/ohos/build-profile.json5
+   ```
+
 连接页有三条路，真机优先用前两条：
 
 - **扫一扫**（Android / iOS）：直接扫 `fjs dev` 在终端里画出来的二维码
