@@ -162,8 +162,8 @@ importers:
   packages/fjs:
     dependencies:
       '@ufjs/runtime':
-        specifier: ^0.1.4
-        version: 0.1.4(typescript@5.9.3)
+        specifier: ^0.1.6
+        version: 0.1.6(typescript@5.9.3)
       '@vue/compiler-core':
         specifier: ^3.4.0
         version: 3.5.42
@@ -200,20 +200,20 @@ importers:
         version: 4.1.11(@types/node@26.4.0)(happy-dom@20.12.0)(vite@8.2.2(@types/node@26.4.0)(jiti@2.7.0))
     optionalDependencies:
       '@ufjs/fjsc-darwin-arm64':
-        specifier: 0.1.4
-        version: 0.1.4
+        specifier: 0.1.6
+        version: 0.1.6
       '@ufjs/fjsc-darwin-x64':
-        specifier: 0.1.4
-        version: 0.1.4
+        specifier: 0.1.6
+        version: 0.1.6
       '@ufjs/fjsc-linux-arm64':
-        specifier: 0.1.4
-        version: 0.1.4
+        specifier: 0.1.6
+        version: 0.1.6
       '@ufjs/fjsc-linux-x64':
-        specifier: 0.1.4
-        version: 0.1.4
+        specifier: 0.1.6
+        version: 0.1.6
       '@ufjs/fjsc-win32-x64':
-        specifier: 0.1.4
-        version: 0.1.4
+        specifier: 0.1.6
+        version: 0.1.6
 
   packages/fjs-iconmind:
     dependencies:
@@ -1603,36 +1603,36 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@ufjs/fjsc-darwin-arm64@0.1.4':
-    resolution: {integrity: sha512-RtER/XsJp9N0LXn/NzA1KACuidOrrCChskBdLzI0PRaBhUM2hY2gvg+G+vWpdkKEPAB3Zfv7DNdVw81QVtM94w==}
+  '@ufjs/fjsc-darwin-arm64@0.1.6':
+    resolution: {integrity: sha512-Ag/r/qnRkg7eJEMupMTEGnEqUQ0VREJI/ji5UhZ5tu6+UCcwAl8Ut45kdWdTnaUxqgsggtz8K/nEHUlNLhHwcw==}
     cpu: [arm64]
     os: [darwin]
 
-  '@ufjs/fjsc-darwin-x64@0.1.4':
-    resolution: {integrity: sha512-jyPD0FkXWH/i2JgtDNbxpjUCTWDRwN0m/9eGIG7R7o/ZUwI6D/qBPpaHgxOevY8vIMa8zaVPL5qkIBFvl8slPA==}
+  '@ufjs/fjsc-darwin-x64@0.1.6':
+    resolution: {integrity: sha512-eZt6fuJMSoe2Cue59rD630ajg0Kx05C6hUbfkT23oJV4TfT/mTjGr0NVTnRx4T8TX9roPnINRV8kyMejRBTnKg==}
     cpu: [x64]
     os: [darwin]
 
-  '@ufjs/fjsc-linux-arm64@0.1.4':
-    resolution: {integrity: sha512-OdnkPMqrVNEhfu9O/SwQE0KaFKARXrDAbvVjchP6Zr0XmptRhrou06FX60wBMjwTnx3NFHbzZYxwfBZkyjrf/A==}
+  '@ufjs/fjsc-linux-arm64@0.1.6':
+    resolution: {integrity: sha512-t9tfv9R/fB+EIK6PQ2gVX9ARRV2zEqR9wsiv1m88XHXNRdABC8sBXOMzotOJ+QADAtoeW4npLpppW3Hfvvk/lw==}
     cpu: [arm64]
     os: [linux]
 
-  '@ufjs/fjsc-linux-x64@0.1.4':
-    resolution: {integrity: sha512-jRHwn23tvU9/SWzOw2l6pLN1jGvap2KK0ASjU/yYcwfsd2uJy1fYwUt++eaNbMnq2FSGUISeK7XRTxNtJNeFOg==}
+  '@ufjs/fjsc-linux-x64@0.1.6':
+    resolution: {integrity: sha512-CSWJX+4GJs+5ment1MfWPz0jC2+og2v4R8bv6DG07cPYwdJp0E4J9F3UHAjkspnLY/9U0MNNUnfD0Kksl0NUQA==}
     cpu: [x64]
     os: [linux]
 
-  '@ufjs/fjsc-win32-x64@0.1.4':
-    resolution: {integrity: sha512-+jt/IPQ4M7RxVuDxiBtcVHoxbRWyZX90Tb6DteZB8po8p9Mc4MyWxmYdpLi/wJR4jdGZoscafiGS8pnSnUYuaw==}
+  '@ufjs/fjsc-win32-x64@0.1.6':
+    resolution: {integrity: sha512-cAzXkqbfwhwwZ7aWouA7+RPJ+I4JQkXlEXJVnXzeJ3n+mH3IpprBjeispJpThkHWUH8wdS4AF0yJxejvLrQvzw==}
     cpu: [x64]
     os: [win32]
 
   '@ufjs/runtime@0.1.3':
     resolution: {integrity: sha512-ZtELOsCqQJaeVdb0puzNmJ0zv314IFVWbZK+i7Pi2H6aCSKG7b/Xx1PWTEx4d6gY9QAUsWElFGKzwzcmJMbeLw==}
 
-  '@ufjs/runtime@0.1.4':
-    resolution: {integrity: sha512-EIOYxOpwCVJkMdZA56mW91uyJzIZE09+scjGiEekhIQVTdxDLx437W7J5GPa2DLCErCK6nARjyZnyoCbGX1gtQ==}
+  '@ufjs/runtime@0.1.6':
+    resolution: {integrity: sha512-RJQ++xUJ+L+r0qAA+U7ZPt1VGbXHam/Tahbc3JKq+tB7wejPTk2HX/bOAa7u1vFXohnw+g/W885m9E5oSADhlA==}
 
   '@ungap/structured-clone@1.4.0':
     resolution: {integrity: sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ==}
@@ -4004,19 +4004,19 @@ snapshots:
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
 
-  '@ufjs/fjsc-darwin-arm64@0.1.4':
+  '@ufjs/fjsc-darwin-arm64@0.1.6':
     optional: true
 
-  '@ufjs/fjsc-darwin-x64@0.1.4':
+  '@ufjs/fjsc-darwin-x64@0.1.6':
     optional: true
 
-  '@ufjs/fjsc-linux-arm64@0.1.4':
+  '@ufjs/fjsc-linux-arm64@0.1.6':
     optional: true
 
-  '@ufjs/fjsc-linux-x64@0.1.4':
+  '@ufjs/fjsc-linux-x64@0.1.6':
     optional: true
 
-  '@ufjs/fjsc-win32-x64@0.1.4':
+  '@ufjs/fjsc-win32-x64@0.1.6':
     optional: true
 
   '@ufjs/runtime@0.1.3(typescript@5.9.3)':
@@ -4039,7 +4039,7 @@ snapshots:
     transitivePeerDependencies:
       - typescript
 
-  '@ufjs/runtime@0.1.4(typescript@5.9.3)':
+  '@ufjs/runtime@0.1.6(typescript@5.9.3)':
     dependencies:
       '@vue/reactivity': 3.5.42
       '@vue/runtime-core': 3.5.42
