@@ -184,6 +184,9 @@ cd packages/flutter_fjs && flutter test        # 需要先编好 native，否则
 
 - 只在用户明确要求时 commit / push。
 - 在 `main` 上要先建分支。
-- commit message 用 conventional commits，末尾带
+- commit message 用 conventional commits（`type(scope): 摘要`，type 取
+  feat / fix / docs / chore / build / refactor / test / perf / style / ci / revert），
+  摘要要说清改了什么——`feat(pref): update` 这种会被钩子拒绝。启用一次仓库内的钩子：
+  `git config core.hooksPath .githooks`（spec 110）。末尾带
   `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`。
 - 一个 spec 一个分支，分支名用 spec 目录名（`NNN-slug`）。

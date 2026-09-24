@@ -8,7 +8,8 @@
   "scripts": {
     "build": "pnpm --filter @ufjs/cli run build",
     "typecheck": "pnpm -r --if-present run typecheck",
-    "test": "pnpm -r --if-present run test",
+    "test": "pnpm -r --if-present run test && pnpm run test:hooks",
+    "test:hooks": "node --test .githooks/check-commit-msg.test.mjs",
     "build:examples": "pnpm --filter \"./examples/**\" --if-present run build",
     "docs:dev": "pnpm --filter ufjs-website run dev",
     "docs:build": "pnpm --filter ufjs-website run build"

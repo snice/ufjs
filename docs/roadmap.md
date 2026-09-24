@@ -187,6 +187,9 @@ uni-app 那张表：
   `primjs/src/wasm/`；`fjsrun` 补 `<ctime>`，Linux 可编
 - [ ] fjs-go 内置的 `assets/shared.fjsbundle.gz` 是 quickjs-ng 字节码，默认引擎已是 PrimJS——
   按 PrimJS 重新部署 showcase 后执行 `examples/fjs-go/tool/refresh-seed.sh`
+- ✅ 提交规范护栏（`specs/110-commit-hygiene`，2026-09）：`.githooks/commit-msg` 校验 conventional
+  commits 与空洞摘要（`git config core.hooksPath .githooks` 启用）；`flutter_fjs` 库包锁文件不再入库；
+  fjs-go 鸿蒙签名配置移出仓库（本机签名见其 README）
 
 实机对拍时抓到三个只有跑起来才看得见的问题：Dart 的 mode 分支漏了 `center`
 （静静降级成 `scaleToFill`）；web 的 `heightFix` 因为 column flex 的 stretch 被
