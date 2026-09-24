@@ -285,6 +285,12 @@ iOS 上会带系统触感反馈；web 没有触感，这是 picker 系列目前�
 
 ## 已知差异
 
+- **点按钮时输入框的焦点**（specs/124）：浏览器里点任何非聚焦区域都会让
+  输入框失焦；App 上只有点**没有事件处理的区域**才失焦，点带 `@tap` /
+  `@touch*` 的节点或 button / switch 等控件保持焦点、键盘不收。这是有意的：
+  App 里点按钮不收键盘更接近原生习惯，也让 vant 清除图标这类
+  `touchstart` + `preventDefault()` 保焦的写法在 App 上成立。页面要收键盘就
+  自己调 `blur()`，两端都生效。
 - **`fjs debug` 仅 App 端**（spec 088）：断点调试器是开发者工具而非页面能力，
   不适用两端同源——web 构建在浏览器里跑，用浏览器自带 DevTools（Vite 的
   source map）。App 的 dev 模式由 spec 094 把 Vue SFC map 接到同一套

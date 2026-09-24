@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'engine.dart';
 import 'mirror_tree.dart';
 import 'render/renderer.dart';
+import 'widgets/blank_tap_blur.dart';
 import 'widgets/toast_host.dart';
 
 /// Renders the JS UI of [engine]. Place it under a [MaterialApp] body.
@@ -158,7 +159,10 @@ class _FjsViewState extends State<FjsView> with WidgetsBindingObserver {
             // inputs and switches don't inherit state from the previous load
             child: KeyedSubtree(
               key: ValueKey('fjs-tree-${tree.generation}'),
-              child: FjsToastHost(engine: engine, child: content),
+              child: FjsToastHost(
+                engine: engine,
+                child: FjsBlankTapBlur(child: content),
+              ),
             ),
           ),
         );

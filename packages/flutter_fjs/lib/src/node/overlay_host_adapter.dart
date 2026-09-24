@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import '../mirror_tree.dart';
 import '../render/flex.dart' show positionedChild;
 import '../render/overflow_hit.dart';
+import '../widgets/blank_tap_blur.dart';
 import 'node_adapter.dart';
 
 typedef OverlayChildBuilder = Widget Function(MirrorNode node);
@@ -57,13 +58,16 @@ class _FjsOverlayHostState extends State<_FjsOverlayHost> {
         // and bottom sheet resolve against it (positionedChild resolves
         // percentages against the Stack's laid-out size).
         return FjsOverflowHitScope(
-          child: SizedBox.expand(
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                for (final n in widget.childNodes)
-                  positionedChild(n, widget.buildNode(n)),
-              ],
+          child: FjsBlankTapBlur(
+            opaque: false,
+            child: SizedBox.expand(
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  for (final n in widget.childNodes)
+                    positionedChild(n, widget.buildNode(n)),
+                ],
+              ),
             ),
           ),
         );
