@@ -4,7 +4,7 @@
 // element tree). The Vue renderer feeds element state (tag/class/scopes/
 // inline style) and applies computed styles back through setProps, so the
 // native bridge keeps receiving exactly one merged `style` map per element.
-import { DISABLED_CLASS, camelize, normalizeValue, parseInlineCss, parseStylesheet, warnOnce, type ClassAttrTest, type CssRule, type Selector, mediaMatches } from './parser';
+import { DISABLED_CLASS, camelize, normalizeValue, parseInlineCss, parseStylesheet, warnOnce, type AttrTest, type ClassAttrTest, type CssRule, type Selector, mediaMatches } from './parser';
 import { registerFontFace, type FontFaceDecl } from './font-face';
 import type { KeyframesDecl } from './animation';
 
@@ -100,6 +100,29 @@ function matchClassAttr(t: ClassAttrTest, all: Set<string>): boolean {
   }
 }
 
+/** One `[name]` / `[name<op>value]` test against the reported attributes.
+ * `[class]` alone asks whether the element has any class. */
+function matchAttr(t: AttrTest, s: ElementState): boolean {
+  const attr = t.name === 'class' ? (s.classes.size > 0 ? '' : undefined) : s.attrs?.get(t.name);
+  if (attr === undefined) return false;
+  if (t.op === undefined) return true;
+  const v = t.value ?? '';
+  switch (t.op) {
+    case '=':
+      return attr === v;
+    case '~=':
+      return v !== '' && attr.split(/\s+/).includes(v);
+    case '|=':
+      return attr === v || attr.startsWith(`${v}-`);
+    case '^=':
+      return v !== '' && attr.startsWith(v);
+    case '$=':
+      return v !== '' && attr.endsWith(v);
+    default: // '*='
+      return v !== '' && attr.includes(v);
+  }
+}
+
 /**
  * The CSS-wide `inherit` keyword: the property takes the parent's computed
  * value, for ANY property — not just the inheritable ones. The peer has no
@@ -126,6 +149,21 @@ function resolveInheritKeyword(
     const p = parent?.[k];
     if (p === undefined) delete target[k];
     else target[k] = p;
+  }
+}
+
+/** `currentColor` in any other property — a border, a background, a
+ * shadow — is the element's own resolved text color; the peer has no
+ * currentColor, so it is substituted here. `color` itself went through
+ * resolveInheritKeyword; `fill` / `stroke` stay verbatim on purpose (the
+ * svg painter resolves them against the node's color, see above). */
+function resolveCurrentColor(style: Record<string, unknown>): void {
+  const color = style.color;
+  if (typeof color !== 'string') return;
+  for (const k in style) {
+    if (k === 'color' || k === 'fill' || k === 'stroke') continue;
+    const v = style[k];
+    if (typeof v === 'string' && /currentcolor/i.test(v)) style[k] = v.replace(/currentcolor/gi, color);
   }
 }
 
@@ -160,8 +198,24 @@ function foldAbsoluteCalc(value: string): string {
   return value;
 }
 
+/** `6px * -1`, `-1 * 6px`, `12px / 2` → one signed term. CSS only lets a
+ * length be scaled by a plain number, so every product is length × number
+ * (vant: `calc(var(--van-popover-arrow-size) * -1)`, specs/129). */
+function foldProducts(expr: string): string {
+  const N = '(-?\\d*\\.?\\d+)';
+  const signed = (n: number, unit: string) => `${Math.round(n * 1000) / 1000}${unit}`;
+  return expr
+    .replace(new RegExp(`${N}(px|%)\\s*([*/])\\s*${N}(?![\\w%.])`, 'g'), (_, a: string, u: string, op: string, b: string) =>
+      signed(op === '*' ? parseFloat(a) * parseFloat(b) : parseFloat(a) / parseFloat(b), u),
+    )
+    .replace(new RegExp(`(^|[^\\w.])${N}\\s*\\*\\s*${N}(px|%)`, 'g'), (_, pre: string, a: string, b: string, u: string) =>
+      `${pre}${signed(parseFloat(a) * parseFloat(b), u)}`,
+    );
+}
+
 function foldAbsoluteCalcOnce(value: string): string {
-  return value.replace(/calc\(([^()]*)\)/g, (whole: string, expr: string) => {
+  return value.replace(/calc\(([^()]*)\)/g, (whole: string, rawExpr: string) => {
+    const expr = rawExpr.includes('*') || rawExpr.includes('/') ? foldProducts(rawExpr).trim() : rawExpr;
     const re = /([+-]?)\s*(\d*\.?\d+)\s*(px|%)/g;
     let px = 0;
     let percent = 0;
@@ -174,8 +228,10 @@ function foldAbsoluteCalcOnce(value: string): string {
       // silently turns into an addition (van-switch's knob flew off)
       const op = (expr.slice(consumed, m.index) + m[1]).replace(/\s+/g, '');
       consumed = m.index + m[0].length;
-      const sign = op === '' || op === '+' ? 1 : op === '-' ? -1 : NaN;
-      if (Number.isNaN(sign)) return whole;
+      // a folded product brings its own sign (`50% - -6px`): the run of
+      // +/- signs multiplies out; anything else is not a sum we fold
+      if (!/^[+-]*$/.test(op)) return whole;
+      const sign = (op.split('-').length - 1) % 2 === 1 ? -1 : 1;
       const n = parseFloat(m[2]) * sign;
       if (m[3] === '%') percent += n;
       else px += n;
@@ -184,7 +240,7 @@ function foldAbsoluteCalcOnce(value: string): string {
     if (percent !== 0) {
       // a percent term stays in the expression for the peer's resolver, but
       // the px terms can still collapse into one
-      return `calc(${percent * 100}% ${px < 0 ? '-' : '+'} ${Math.abs(px)}px)`;
+      return `calc(${Math.round(percent * 1000) / 1000}% ${px < 0 ? '-' : '+'} ${Math.round(Math.abs(px) * 100) / 100}px)`;
     }
     return `${Math.round(px * 100) / 100}px`;
   });
@@ -275,6 +331,9 @@ interface ElementState {
   defaultsId?: number; // identity token of `defaults`
   computedId?: number; // identity token of `computed`
   customId?: number; // identity token of `custom`
+  /** Attributes the renderer reported (data-* / aria-* / role / tabindex).
+   * Only names some selector tests reach the chain key (attrNames). */
+  attrs?: Map<string, string>;
   selfSig?: string; // cached `tag|classes|scopes` part of the chain key
   structBits?: number; // last seen first/last bits (selfSig embeds them)
   /** Last seen signature of the previous participating sibling — only
@@ -547,6 +606,11 @@ export class StyleEngine {
    * reflect. Off until the first such rule shows up, so pages without one
    * pay nothing. */
   private hasSiblingRules = false;
+  /** Attribute names some registered selector tests (`[data-x=…]`), besides
+   * `class`. Only these join the chain key and restyle on change: vant
+   * writes aria-/data- attributes on nearly every element, and matching
+   * never needs the rest. */
+  private attrNames = new Set<string>();
   /** Custom properties declared on `:root` / `:host`, in source order. They
    * seed the inheritance chain wherever a parent has nothing to pass down
    * (the top of each page tree), which is how a browser sees them: every
@@ -692,6 +756,24 @@ export class StyleEngine {
         if (r.selectors.some((s) => s.compounds.some((c) => c.first || c.last || c.notFirst || c.notLast))) {
           this.hasStructural = true;
           break;
+        }
+      }
+    }
+    for (const r of parsed) {
+      for (const sel of r.selectors) {
+        for (const c of sel.compounds) {
+          if (!c.attrs) continue;
+          for (const t of c.attrs) {
+            if (this.attrNames.has(t.name)) continue;
+            this.attrNames.add(t.name);
+            // elements that already carry it were keyed without it
+            for (const [eid, st] of this.states) {
+              if (st.attrs?.has(t.name)) {
+                st.selfSig = undefined;
+                this.markDirty(eid, true);
+              }
+            }
+          }
         }
       }
     }
@@ -1162,6 +1244,29 @@ export class StyleEngine {
     s.selfSig = undefined;
     this.markDirty(id, true);
     // `.a + .b` reads this element's classes: the next sibling must re-match
+    this.markNextSibling(id);
+  }
+
+  /** An attribute the renderer wrote (null removes it). Kept for every
+   * name — a stylesheet registered later may test it — but only a name some
+   * selector tests restyles the element (and its subtree: the attribute can
+   * sit on an ancestor compound, `.van-popover[data-popper-placement^=top]
+   * .van-popover__arrow`) (specs/129). */
+  setAttribute(id: number, name: string, value: string | null): void {
+    const s = this.states.get(id);
+    if (!s) return;
+    const key = name.toLowerCase();
+    const prev = s.attrs?.get(key);
+    if (value == null) {
+      if (prev === undefined) return;
+      s.attrs!.delete(key);
+    } else {
+      if (prev === value) return;
+      (s.attrs ??= new Map()).set(key, value);
+    }
+    if (!this.attrNames.has(key)) return;
+    s.selfSig = undefined;
+    this.markDirty(id, true);
     this.markNextSibling(id);
   }
 
@@ -1709,6 +1814,15 @@ export class StyleEngine {
     const parentFontPx = fontSizePx(parentComputed?.fontSize, INITIAL_FONT_PX);
     const style = resolveVars(merged, custom);
     resolveEm(style, parentFontPx);
+    // vant's Popover arrow is a CSS triangle: `border-top-color:
+    // currentColor` on the element itself (specs/129)
+    resolveCurrentColor(style);
+    // var() substitution leaves calc()s the em pass never saw
+    // (`calc(6px * -1)` from vant's arrow margin): fold the absolute ones
+    for (const k in style) {
+      const v = style[k];
+      if (typeof v === 'string' && v.includes('calc(')) style[k] = foldAbsoluteCalc(v);
+    }
     this.attachKeyframes(style, custom);
     // the pressed variant is the same pipeline over the pressed cascade, so
     // inline styles and inherited values keep winning where they should.
@@ -1741,18 +1855,8 @@ export class StyleEngine {
         // a pseudo-element's parent is its originating element (vant's
         // divider lines: `border-style: inherit` picks up --dashed)
         resolveInheritKeyword(merged0, style);
-        // currentColor on a decoration box means the inherited text color
-        // (vant paints the stepper +/- lines with it); the peer has no
-        // currentColor, so substitute the resolved value here
-        const color = merged0.color;
-        if (typeof color === 'string') {
-          for (const k in merged0) {
-            const v = merged0[k];
-            if (typeof v === 'string' && v.includes('currentColor')) {
-              merged0[k] = v.replace(/currentcolor/gi, color);
-            }
-          }
-        }
+        // vant paints the stepper +/- lines with it
+        resolveCurrentColor(merged0);
         return merged0;
       };
       pseudo = {};
@@ -1815,6 +1919,14 @@ export class StyleEngine {
       // Without the gate, every list row would pay the sibling scan and the
       // key would churn on every reorder for nothing.
       if (this.hasStructural) sig += `\u0004${this.structuralBits(id, s)}`;
+      if (s.attrs && this.attrNames.size > 0) {
+        const parts: string[] = [];
+        for (const n of this.attrNames) {
+          const v = s.attrs.get(n);
+          if (v !== undefined) parts.push(`${n}=${v}`);
+        }
+        if (parts.length) sig += `\u0006${parts.sort().join('\u0002')}`;
+      }
       s.selfSig = sig;
     }
     // The previous sibling joins per build (never cached on selfSig): a
@@ -2275,6 +2387,7 @@ export class StyleEngine {
       if (!s.classes.has(cls)) return false;
     }
     if (c.classAttr && !c.classAttr.every((t) => matchClassAttr(t, s.classes))) return false;
+    if (c.attrs && !c.attrs.every((t) => matchAttr(t, s))) return false;
     if (c.first || c.last || c.notFirst || c.notLast) {
       const bits = this.structuralBits(id, s);
       if (c.first && !(bits & 2)) return false;

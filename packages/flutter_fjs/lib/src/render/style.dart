@@ -466,11 +466,15 @@ class FjsStyle {
       } else if (sShortRaw != null) {
         // `border-bottom: none` / `hidden` parse to null — declared, and off
         width = sShort?.width ?? 0;
+      } else if (gWidth != null) {
+        // a side's lone color/style keeps the box's border-width, as in
+        // CSS: vant's Popover arrow is `border-width: 6px` plus one side's
+        // `border-bottom-color` — taken as a 1px hairline it drew a 12x1
+        // sliver instead of the triangle (specs/129)
+        width = gWidth > 0 ? gWidth : 0;
       } else if (sColor != null || sKindRaw != null) {
         width =
             1; // a lone color or style means the default hairline, as in CSS
-      } else if (gWidth != null) {
-        width = gWidth > 0 ? gWidth : 0;
       } else if (_v('border') != null) {
         width = gShort?.width ?? 0;
       } else if (gColor != null || gKindRaw != null) {

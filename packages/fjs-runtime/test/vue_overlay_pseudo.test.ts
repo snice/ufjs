@@ -226,6 +226,43 @@ describe('position: fixed hoists into the overlay host', () => {
     app.unmount();
   });
 
+  // specs/129: vant's Sticky toggles its inner box between fixed and static
+  // as the page scrolls; it used to stay in the overlay host for good
+  it('moves an element back to its place when it stops being fixed', async () => {
+    f = freshFrames();
+    const fixed = ref(false);
+    const { app } = mount(
+      () =>
+        h('view', { class: 'page' }, [
+          h('view', { class: 'root' }, [h('view', { class: fixed.value ? 'box on' : 'box' }, '吸顶')]),
+          h('view', null, '之后'),
+        ]),
+      `.on { position: fixed; top: 0 }`,
+    );
+    await settle();
+    await settle();
+    const box = textIdOf('吸顶');
+    const root = f.parentOf.get(box)!;
+
+    fixed.value = true;
+    await settle();
+    await settle();
+    expect(f.tag.get(f.parentOf.get(box)!)).toBe('fjs-overlay-host');
+
+    fixed.value = false;
+    await settle();
+    await settle();
+    expect(f.parentOf.get(box)).toBe(root);
+    expect(f.childrenOf.get(root)).toEqual([box]);
+
+    // and it hoists again on the next toggle
+    fixed.value = true;
+    await settle();
+    await settle();
+    expect(f.tag.get(f.parentOf.get(box)!)).toBe('fjs-overlay-host');
+    app.unmount();
+  });
+
   it('removes a hoisted element together with its v-if ancestor', async () => {
     // Vue names only the removed subtree's root; the hoisted popup lives in
     // the overlay host, outside that subtree, and used to stay on screen

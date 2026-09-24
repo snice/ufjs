@@ -24,6 +24,7 @@ const router = useRouter();
     <button class="btn" @tap="router.push('/vant-form')">vant-form</button>
     <button class="btn" @tap="router.push('/vant-more')">vant-more</button>
     <button class="btn" @tap="router.push('/vant-nav')">vant-nav</button>
+    <button class="btn" @tap="router.push('/vant-float')">vant-float</button>
   </scroll-view>
 </template>
 

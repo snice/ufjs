@@ -349,14 +349,20 @@ vnode 会得到指名报错。
 - 命令式 Toast / Dialog（`showToast()` / `showDialog()`）App 端不可用，见
   `createApp` 一条；组件式（`<van-popup>` / `<van-dialog v-model:show>`）
   两端一致
-- 没有深层 target / 事件委托：`target` 就是挂监听的节点。vant Checker 设
-  `label-disabled` 时，App 端点图标也不切换（specs/072）
+- 没有深层 target / 事件委托：`target` 是被点中的**有监听的**最内层节点，
+  不会是它里面没挂监听的子节点。vant Checker 设 `label-disabled` 时，App 端
+  点图标也不切换（specs/072）。tap / click 会冒泡到有监听的祖先，
+  `.stop` 生效（specs/129）
 - `position: fixed` 走置顶 overlay 宿主——Teleport 的视觉与交互等效，不是
-  DOM 语义；层级只看插入顺序，详见
+  DOM 语义；fixed 元素之间按 z-index 叠放，详见
   [css-compat.md](css-compat.md#定位) 的 `position: fixed` 条
+- `<Teleport to="body">`（vant Popover 默认如此）在 App 上落到同一个 overlay
+  宿主；其它选择器没有 DOM 可查，目标为空（specs/129）
 - `window.getComputedStyle` 是 dom-env 里读 fjs 样式引擎的最小 shim，不是
-  完整计算样式：vant 用它做滚动父级查找（`overflow`）与隐藏判断
-  （`display`），更深的用法（伪元素样式、百分比还原）没有
+  完整计算样式：vant 用它做滚动父级查找（`overflow`；`scroll-view` 两个轴都
+  答 `scroll`）与隐藏判断（`display`），更深的用法（伪元素样式、百分比还原）没有
+- dom-env 另给 popperjs（Popover）补了全局 `Element` / `HTMLElement`
+  （对 fjs 元素 `instanceof` 为真）和 document 盒子的最小形状
 
 ## 不可用 / 注意
 

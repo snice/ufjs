@@ -11,7 +11,7 @@
 import 'package:flutter/material.dart';
 
 import '../mirror_tree.dart';
-import '../render/flex.dart' show positionedChild;
+import '../render/flex.dart' show positionedChild, zIndexOf;
 import '../render/overflow_hit.dart';
 import '../widgets/blank_tap_blur.dart';
 import 'node_adapter.dart';
@@ -64,7 +64,7 @@ class _FjsOverlayHostState extends State<_FjsOverlayHost> {
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  for (final n in widget.childNodes)
+                  for (final n in _paintOrder(widget.childNodes))
                     positionedChild(n, widget.buildNode(n)),
                 ],
               ),
@@ -74,6 +74,18 @@ class _FjsOverlayHostState extends State<_FjsOverlayHost> {
       },
     );
   }
+}
+
+/// The hoisted elements share one containing block — the screen — so
+/// `z-index` orders them the way it orders absolute siblings in a box
+/// (render/flex.dart): ascending, tree order breaking ties. Insertion order
+/// alone put a sticky header (z-index 99, hoisted on scroll) over a vant
+/// Popover opened before it (z-index 2000+) (specs/129).
+List<MirrorNode> _paintOrder(List<MirrorNode> nodes) {
+  final indexed = [
+    for (var i = 0; i < nodes.length; i++) (i, zIndexOf(nodes[i]), nodes[i]),
+  ]..sort((a, b) => a.$2 != b.$2 ? a.$2.compareTo(b.$2) : a.$1.compareTo(b.$1));
+  return [for (final e in indexed) e.$3];
 }
 
 /// Mounts the `fjs-overlay-host` reserved tag (specs/069, contract.md).

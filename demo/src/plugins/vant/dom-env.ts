@@ -137,6 +137,13 @@ function getComputedStyle(el: unknown): Record<string, string> & {
       return String(v);
     }
     if (key === 'fontSize' && style.fontSize === undefined) return '14px';
+    // the page scroller is a scroll-view, not an overflow style: answer the
+    // way a browser does for its scrolling box, or Sticky's useScrollParent
+    // walks past it to window and never hears a scroll (specs/129). Both
+    // axes — the element does not carry its scroll-x / scroll-y props here.
+    if ((key === 'overflowY' || key === 'overflowX') && (el as { tag?: unknown } | null)?.tag === 'scroll-view') {
+      return 'scroll';
+    }
     let v = style[key];
     if (v === undefined && (key === 'overflowX' || key === 'overflowY')) v = style.overflow;
     if (v === undefined) return INITIAL[key] ?? (key === 'overflowX' || key === 'overflowY' ? 'visible' : '');
@@ -283,11 +290,23 @@ function remeasureWhenLaidOut(el: unknown): void {
 /** Pages scroll inside fjs scroll views, never the document: the root
  * element only answers the reads (scrollTop 0) and absorbs the writes
  * (Popup's lock-scroll class, Toast's unclickable class). */
-const rootElement = () => ({
+const rootElement = (nodeName: 'HTML' | 'BODY') => ({
+  nodeName,
+  tagName: nodeName,
+  // set once the document exists; popperjs walks element → ownerDocument.body
+  ownerDocument: null as unknown,
+  parentNode: null,
   style: {} as Record<string, string>,
   classList: classList(),
   scrollTop: 0,
   scrollLeft: 0,
+  clientTop: 0,
+  clientLeft: 0,
+  // popperjs measures the document box as the origin of window coordinates
+  getBoundingClientRect: () => ({ x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }),
+  // it also listens for scroll here; the document never scrolls
+  addEventListener: noop,
+  removeEventListener: noop,
   // TextEllipsis mounts its measuring div here for the length of one
   // measurement; a MeasureBox needs no parent to be measured
   appendChild: <T>(child: T): T => child,
@@ -372,15 +391,31 @@ function removeDocumentListener(type: string, listener: DocListener): void {
   if (byType && byType.size === 0) docSubscriptions.delete(listener);
 }
 
+/** `instanceof Element` / `HTMLElement` for fjs elements. popperjs (vant's
+ * Popover) tests both before it measures or writes a style — `x instanceof
+ * undefined` threw outright, and a false HTMLElement makes it skip the
+ * popper, leaving it unpositioned (specs/129). */
+const isFjsElement = (v: unknown): boolean =>
+  typeof v === 'object' && v !== null && typeof (v as { id?: unknown }).id === 'number' &&
+  typeof (v as { getBoundingClientRect?: unknown }).getBoundingClientRect === 'function';
+class ElementShim {
+  static [Symbol.hasInstance](v: unknown): boolean {
+    return isFjsElement(v);
+  }
+}
+class HTMLElementShim extends ElementShim {}
+
 if (typeof window === 'undefined') {
   const g = globalThis as Record<string, unknown>;
+  if (typeof g.Element === 'undefined') g.Element = ElementShim;
+  if (typeof g.HTMLElement === 'undefined') g.HTMLElement = HTMLElementShim;
   // useVisibilityChange checks window.IntersectionObserver, then news the
   // bare global. No IntersectionObserverEntry: vant's lazyload keeps its
   // scroll-listener fallback rather than trusting this partial observer.
   if (typeof g.IntersectionObserver === 'undefined') g.IntersectionObserver = FirstSightObserver;
   const doc = {
-    body: rootElement(),
-    documentElement: rootElement(),
+    body: rootElement('BODY'),
+    documentElement: rootElement('HTML'),
     hidden: false,
     visibilityState: 'visible',
     addEventListener: addDocumentListener,
@@ -388,6 +423,8 @@ if (typeof window === 'undefined') {
     // only what a library builds to measure; anything else has no DOM here
     createElement: () => new MeasureBox(),
   };
+  doc.body.ownerDocument = doc;
+  doc.documentElement.ownerDocument = doc;
   const nav = { userAgent: 'fjs' }; // not iOS/Android: no WebView scroll workarounds
   g.window = {
     requestAnimationFrame: (cb: FrameRequestCallback) => requestAnimationFrame(cb),
@@ -410,6 +447,8 @@ if (typeof window === 'undefined') {
     pageYOffset: 0,
     devicePixelRatio: 1,
     IntersectionObserver: g.IntersectionObserver,
+    Element: g.Element,
+    HTMLElement: g.HTMLElement,
     document: doc,
     navigator: nav,
   };

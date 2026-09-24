@@ -11,7 +11,7 @@ import {
   createRenderer,
   type RendererOptions,
 } from '@vue/runtime-core';
-import { create, forgetHandlers, forgetElementStyle, insert, remove, setHoverStyle, setText, setProps, setConstProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setConnectedResolver, setOffsetParentResolver, type Element, type EventPayload } from '../ui/element';
+import { create, forgetHandlers, forgetElementStyle, insert, remove, setHoverStyle, setText, setProps, setConstProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setConnectedResolver, setOffsetParentResolver, setParentResolver, setAttributeSink, currentTapDispatch, type Element, type EventPayload } from '../ui/element';
 import { transitionClassesOf } from './transition-classes';
 import { lastPointer } from '../ui/geometry';
 import { hasNativeHost, invokeHost, registerPreFlush } from '../host';
@@ -105,6 +105,10 @@ const payloadEvents = new WeakMap<HostNode, ReadonlySet<string>>();
  * DOM Teleport's content leaves with its owner), and nothing else would
  * ever tell us — Vue names only the root of a removed subtree. */
 const hoistedFrom = new Map<number, number | null>();
+/** Hoisted element id → the logical sibling it sat before when it was
+ * hoisted (null: it was last). Where it goes back when it stops being
+ * fixed. */
+const hoistedBefore = new Map<number, number | null>();
 /** Live page roots by id (flutterRoot → releaseRoot), in mount order. Pages
  * share this module: a page further down the stack stays alive while
  * another is pushed on top, so every root keeps its own overlay host. */
@@ -154,12 +158,46 @@ function hoistIfNeeded(el: Element, style: Record<string, unknown>): void {
   const logical = parentOf.get(el.id) ?? null;
   hoistedFrom.set(el.id, logical === host.id ? null : logical);
   if (logical === host.id) return;
+  if (logical != null) {
+    const siblings = childrenOf.get(logical) ?? [];
+    const i = siblings.indexOf(el.id);
+    hoistedBefore.set(el.id, i >= 0 && i + 1 < siblings.length ? siblings[i + 1] : null);
+  }
   trackDetach(el);
   const at = childrenOf.get(host.id)?.length ?? 0;
   insert(host, el, at);
   trackInsert(host, el, at);
   // the element changed parents: its inheritance chain is now the host (a
   // clean root), which is what web achieves by teleporting to <body>
+  styleEngine.recomputeSubtree(el.id);
+}
+
+/** The way back: an element that stops being `position: fixed` returns to
+ * its logical parent, where its sibling was. vant's Sticky toggles its
+ * inner box between fixed and static as the page scrolls; kept in the
+ * overlay host it stayed pinned at the top after scrolling back and its
+ * placeholder read a collapsed rect (specs/129). An element that was born
+ * in the host (teleported content) stays there. */
+function unhoistIfNeeded(el: Element): void {
+  if (!hoistedFrom.has(el.id)) return;
+  const logical = hoistedFrom.get(el.id) ?? null;
+  const before = hoistedBefore.get(el.id) ?? null;
+  hoistedFrom.delete(el.id);
+  hoistedBefore.delete(el.id);
+  if (logical == null) return;
+  const parent = elementsById.get(logical) ?? pageRoots.get(logical);
+  if (!parent) return;
+  trackDetach(el);
+  const siblings = childrenOf.get(logical) ?? [];
+  let index = siblings.length;
+  if (before != null) {
+    const bi = siblings.indexOf(before);
+    if (bi >= 0) index = bi;
+  }
+  // ::before boxes lead the native list but not the shadow one
+  const beforeBoxes = pseudoBoxes.get(logical)?.before ? 1 : 0;
+  insert(parent, el, index + beforeBoxes);
+  trackInsert(parent, el, index);
   styleEngine.recomputeSubtree(el.id);
 }
 
@@ -178,6 +216,19 @@ function hoistIfNeeded(el: Element, style: Record<string, unknown>): void {
 // in structural pseudo-class counting either, so the exclusion is exact.
 
 const pseudoBoxes = new Map<number, { before?: Element; after?: Element }>();
+/** Pseudo box (and its text) id → the element that generated it. A browser
+ * never makes a pseudo-element an event target — a press on vant's button
+ * `::before` overlay is a press on the button. The document-level pointer
+ * stream reports the deepest mirror node, so it maps through this: without
+ * it, the Popover's click-away saw a node outside its trigger and closed
+ * the popover the same press then reopened (specs/129). */
+const pseudoOwner = new Map<number, number>();
+
+function forgetPseudoBox(box: Element): void {
+  pseudoOwner.delete(box.id);
+  const text = pseudoTexts.get(box.id);
+  if (text) pseudoOwner.delete(text.id);
+}
 
 /** CSS escape sequences (`\e728`, `\e 728`) decode to their code points —
  * the same transformation a browser applies to `content` before rendering. */
@@ -256,6 +307,7 @@ function syncPseudoText(box: Element, content: string, style: Record<string, unk
     if (existing) {
       remove(existing);
       elementsById.delete(existing.id);
+      pseudoOwner.delete(existing.id);
       pseudoTexts.delete(box.id);
     }
     return;
@@ -271,9 +323,12 @@ function syncPseudoText(box: Element, content: string, style: Record<string, unk
   elementsById.set(text.id, text);
   insert(box, text);
   pseudoTexts.set(box.id, text);
+  const owner = pseudoOwner.get(box.id);
+  if (owner !== undefined) pseudoOwner.set(text.id, owner);
 }
 
 function dropPseudoBox(box: Element): void {
+  forgetPseudoBox(box);
   pseudoTexts.delete(box.id);
   remove(box);
 }
@@ -312,6 +367,7 @@ function syncPseudoBoxes(el: Element, styles: PseudoStyles | null): void {
     if (!existing) {
       const box = create('view');
       elementsById.set(box.id, box);
+      pseudoOwner.set(box.id, el.id);
       setStyle(box, style);
       syncPseudoText(box, content ?? '', style);
       // ::before leads the Dart child list (real children shift by one —
@@ -411,6 +467,7 @@ export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, act
     syncPlaceholderStyle(el, pseudo === null ? undefined : pseudo.placeholder, style);
   }
   if (style.position === 'fixed') hoistIfNeeded(el, style);
+  else if (hoistedFrom.has(el.id)) unhoistIfNeeded(el);
 });
 
 // Styles go out with the ops that create their elements: the host flush
@@ -519,7 +576,8 @@ registerSystemHandler(EVENT_GLOBAL_POINTER_DOWN, (id, payload) => {
   } catch {
     // a malformed payload still reports the target
   }
-  const target = elementsById.get(id) ?? pageRoots.get(id) ?? null;
+  const tid = pseudoOwner.get(id) ?? id;
+  const target = elementsById.get(tid) ?? pageRoots.get(tid) ?? null;
   for (const listener of [...globalPointerListeners]) listener({ target, clientX: x, clientY: y });
 });
 
@@ -535,6 +593,13 @@ setConnectedResolver((id) => {
   }
   return false;
 });
+
+setParentResolver((id) => {
+  const parent = parentOf.get(id);
+  return parent == null ? null : (elementsById.get(parent) ?? pageRoots.get(parent) ?? null);
+});
+
+setAttributeSink((el, name, value) => patchProp(el as HostNode, name, undefined, value));
 
 setOffsetParentResolver((id) => {
   let cur = parentOf.get(id);
@@ -751,13 +816,20 @@ function dropElement(child: HostNode): void {
     const current = stack.pop()!;
     const boxes = pseudoBoxes.get(current);
     if (boxes) {
-      if (boxes.before) remove(boxes.before);
-      if (boxes.after) remove(boxes.after);
+      if (boxes.before) {
+        forgetPseudoBox(boxes.before);
+        remove(boxes.before);
+      }
+      if (boxes.after) {
+        forgetPseudoBox(boxes.after);
+        remove(boxes.after);
+      }
       pseudoBoxes.delete(current);
     }
     for (const kid of childrenOf.get(current) ?? []) stack.push(kid);
   }
   hoistedFrom.delete(child.id);
+  hoistedBefore.delete(child.id);
   forgetSubtree(child.id);
   trackRemove(child);
   remove(child);
@@ -948,7 +1020,18 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     return elementsById.get(list[idx + 1]) ?? makeHandle(list[idx + 1]);
   },
 
-  querySelector: () => null, // not supported (no DOM)
+  // Only the document's own boxes: `<Teleport to="body">` — vant's Popover,
+  // and any Popup given `teleport="body"` — lands in the page's overlay
+  // host, where `position: fixed` elements already go: above the page, in
+  // window coordinates, gone with the page. Other selectors have no DOM to
+  // search (specs/129). Vue resolves the target while the teleport mounts,
+  // so the most recently mounted page root is the one being built.
+  querySelector: (selector) => {
+    if (selector !== 'body' && selector !== 'html') return null;
+    let last: HostNode | undefined;
+    for (const root of pageRoots.values()) last = root;
+    return last ? ensureOverlayHost(last) : null;
+  },
 
   // scoped CSS: Vue calls this for every element inside a component whose
   // SFC defines <style scoped> (id comes from __sfc__.__scopeId)
@@ -997,9 +1080,9 @@ const camelized = new Map<string, string>();
 
 /** HTML attributes nothing on the Flutter side reads: accessibility and
  * data attributes that vant (and any DOM-authored library) writes on nearly
- * every element. The Dart widgets never look at them and the CSS engine does
- * not support attribute selectors (it warns and skips those rules), so
- * sending them only cost a JSON serialization and a bridge write each —
+ * every element. The Dart widgets never look at them — the CSS engine's
+ * attribute selectors are matched on the JS side — so sending them only
+ * cost a JSON serialization and a bridge write each —
  * ~180 of vant-form's ~300 plain prop writes (specs/118). They still reach
  * DevTools, so the Elements panel shows the same attributes as before.
  * `id` is NOT here: a touch event reports it as `event.target.id`. */
@@ -1047,12 +1130,18 @@ function asDomEvent(el: HostNode, payload: EventPayload): unknown {
   if (payload !== undefined && typeof payload === 'object') return payload;
   // the native side already shows this text: record it, do not echo it back
   if (typeof payload === 'string' && textValues.has(el.id)) textValues.set(el.id, payload);
+  // a tap bubbles (ui/element.ts): `target` is where it landed, and
+  // stopping it keeps it from the listeners further up
+  const tap = currentTapDispatch();
+  const stop = () => {
+    if (tap) tap.stopped = true;
+  };
   const event = {
     detail: payload,
-    target: el,
+    target: tap ? (elementsById.get(tap.targetId) ?? pageRoots.get(tap.targetId) ?? el) : el,
     currentTarget: el,
-    stopPropagation() {},
-    stopImmediatePropagation() {},
+    stopPropagation: stop,
+    stopImmediatePropagation: stop,
     preventDefault() {},
   };
   // A click's position, read lazily (a sync host call) because almost no
@@ -1179,6 +1268,9 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
   }
   if (isInertAttribute(key)) {
     devtoolsSlots.recordProps(el.id, { [key]: nextValue });
+    // still no bridge write: the style engine only keeps it for attribute
+    // selectors (`.van-popover[data-popper-placement^=top]`, specs/129)
+    styleEngine.setAttribute(el.id, key, nextValue == null || nextValue === false ? null : String(nextValue));
     return;
   }
   if (prop === 'id') {
@@ -1322,7 +1414,10 @@ export function flutterRoot(tag = 'view'): HostNode {
 export function releaseRoot(root: HostNode): void {
   const host = overlayHosts.get(root.id);
   if (host) {
-    for (const id of childrenOf.get(host.id) ?? []) hoistedFrom.delete(id);
+    for (const id of childrenOf.get(host.id) ?? []) {
+      hoistedFrom.delete(id);
+      hoistedBefore.delete(id);
+    }
     forgetSubtree(host.id);
     overlayHosts.delete(root.id);
   }
