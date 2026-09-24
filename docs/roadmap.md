@@ -194,6 +194,10 @@ uni-app 那张表：
   `bin/fjsc-quickjs`；CLI 按二进制自报的引擎 id 挑 fjsc（`FJSC_PATH` 不符即报错），编完再核对，`fjs doctor`
   分引擎列出。修掉 0.1.4 把 quickjs-ng 当默认 `bin/fjsc` 发布、primjs 构建到运行时才失败的问题。
   **待发布**：新版 `@ufjs/fjsc-*` 与 `@ufjs/cli`，发布后执行 0.1.4 的 deprecate（`docs/publishing.md`）
+- ✅ release / profile 不带调试器模块（`specs/115-android-release-drop-debugger`，2026-09）：Android 调试器
+  挪到 `abi/primjs/android-debugger/` 只挂 `debug` 源集（`jniLibs.excludes` 被 AGP 忽略）；鸿蒙由宿主
+  `entry/build-profile.json5` 过滤，CLI 托管宿主自动补丁；`tool/test/android_debugger_strip_check.mjs`
+  实跑三变体断言。iOS Release 核实无需改动。**待发布**：随 0.1.7
 - ✅ 清理入库的构建产物与死代码（`specs/109-no-committed-build-artifacts`，2026-09）：spec 093 e2e 的
   `bundle.js` / `relay.cjs` 改由 `e2e/build.mjs` 生成、不再入库（Linux 上重跑 11/11）；删除从未编译的
   `primjs/src/wasm/`；`fjsrun` 补 `<ctime>`，Linux 可编

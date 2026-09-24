@@ -52,7 +52,11 @@ for (const flavor of FLAVORS) {
   const debug = flavor === 'primjs';
   for (const abi of ANDROID_ABIS) {
     need(`abi/${flavor}/android/${abi}/libfjs.so`);
-    const dbg = `abi/${flavor}/android/${abi}/libfjs_debugger.so`;
+    // spec 115: the debugger has its own directory, which android/build.gradle
+    // attaches to the debug source set only; next to libfjs.so it would ship
+    // in release APKs again
+    forbid(`abi/${flavor}/android/${abi}/libfjs_debugger.so`, 'it belongs in android-debugger/ (spec 115)');
+    const dbg = `abi/${flavor}/android-debugger/${abi}/libfjs_debugger.so`;
     debug ? need(dbg) : forbid(dbg, 'the debugger exists for primjs only');
   }
   for (const platform of ['ios', 'macos']) {

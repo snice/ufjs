@@ -5,8 +5,13 @@
   // dlopens the module under kDebugMode, so dropping it from every non-debug
   // HAR is exactly the set of builds that could never have used it.
   //
-  // The ohos flutter fork assembles each plugin HAR with `-p buildMode=<mode>`
-  // taken from the app build, which is what makes buildModeBinder work here.
+  // This binder only applies when the plugin is assembled as a HAR with
+  // `-p buildMode=<mode>`. The ohos flutter fork usually hands plugins to ohpm
+  // as `file:` SOURCE dependencies instead, and then this file's binder is
+  // never consulted — a 0.1.6 release HAP shipped the module (spec 115). The
+  // filter that actually decides is the host's entry/build-profile.json5,
+  // which @ufjs/cli patches in managed hosts (patchOhosEntryDebuggerFilter);
+  // other hosts add the same fjs_no_debugger option there by hand.
   "apiType": "stageMode",
   "buildOption": {
   },

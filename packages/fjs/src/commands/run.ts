@@ -249,6 +249,7 @@ export function ensureFlutterHost(
     syncHostMain(path.join(libDir, 'main.dart'), name, forceMain);
     patchAndroidAbiFilters(dir);
     patchAndroidToolchain(dir);
+    patchOhosEntryDebuggerFilter(dir);
     syncNativeHostConfig(dir, appConfig);
     removeDefaultWidgetTest(dir);
   } else {
@@ -439,6 +440,61 @@ function isOlder(version: string, floor: string): boolean {
   return false;
 }
 
+// spec 115: libfjs_debugger.so (the pluggable CDP inspector) must not reach a
+// release or profile HAP. The ohos flutter fork hands plugins to ohpm as
+// `file:` SOURCE dependencies, not as HARs assembled with `-p buildMode`, so
+// the buildModeBinder in flutter_fjs's own ohos/build-profile.json5 is never
+// consulted — a release HAP of 0.1.6 carried the 433 KB module. What packages
+// the HAP is the host's entry module, whose nativeLib filter applies to every
+// .so merged in, so the filter lives here. Only a file without its own
+// buildOptionSet / buildModeBinder is rewritten; merging into a user's
+// binder is guesswork, so that case gets the snippet as a warning instead.
+const OHOS_DEBUGGER_OPTION = 'fjs_no_debugger';
+
+export function patchOhosEntryDebuggerFilter(
+  dir: string,
+  warn: (message: string) => void = (m) => console.warn(m),
+): void {
+  const file = path.join(dir, 'ohos', 'entry', 'build-profile.json5');
+  if (!fs.existsSync(file)) return;
+  const text = fs.readFileSync(file, 'utf8');
+  if (text.includes(OHOS_DEBUGGER_OPTION)) return;
+  // profile only when the project defines that build mode: a binder naming
+  // an unknown mode fails the hvigor build
+  const root = path.join(dir, 'ohos', 'build-profile.json5');
+  const modes = ['release'];
+  if (fs.existsSync(root) && /"name"\s*:\s*"profile"/.test(fs.readFileSync(root, 'utf8'))) modes.push('profile');
+  const anchor = text.search(/"targets"\s*:/);
+  if (/"buildOptionSet"|"buildModeBinder"/.test(text) || anchor < 0) {
+    warn(
+      `fjs: ohos/entry/build-profile.json5 has its own build options, so release/profile HAPs may ` +
+        `still ship libfjs_debugger.so. Add this to it (spec 115):\n${ohosDebuggerFilterSnippet(modes, '  ')}`,
+    );
+    return;
+  }
+  const lineStart = text.lastIndexOf('\n', anchor) + 1;
+  const indent = text.slice(lineStart, anchor);
+  fs.writeFileSync(file, text.slice(0, lineStart) + ohosDebuggerFilterSnippet(modes, indent) + text.slice(lineStart));
+}
+
+function ohosDebuggerFilterSnippet(modes: string[], indent: string): string {
+  const i = indent;
+  const binders = modes
+    .map(
+      (mode) =>
+        `${i}  {\n${i}    "buildModeName": "${mode}",\n` +
+        `${i}    "mappings": [{ "targetName": "default", "buildOptionName": "${OHOS_DEBUGGER_OPTION}" }]\n${i}  }`,
+    )
+    .join(',\n');
+  return (
+    `${i}// fjs (spec 115): release/profile HAPs leave the debugger module out\n` +
+    `${i}"buildOptionSet": [\n` +
+    `${i}  {\n${i}    "name": "${OHOS_DEBUGGER_OPTION}",\n` +
+    `${i}    "nativeLib": { "filter": { "excludes": ["**/libfjs_debugger.so"] } }\n${i}  }\n` +
+    `${i}],\n` +
+    `${i}"buildModeBinder": [\n${binders}\n${i}],\n`
+  );
+}
 
 // `flutter build apk --target-platform android-arm64` only selects which Flutter
 // engine/app libraries are packaged; jniLibs coming from plugin AARs (libfjs.so,

@@ -1,9 +1,10 @@
 // The engine ships prebuilt (spec 090), built from ../native by
 // tool/build-android.sh into the package's abi/ cache, one set per engine
 // flavor (spec 091):
-//   ../abi/<flavor>/android/<abi>/libfjs.so            the engine, always
-//   ../abi/<flavor>/android/<abi>/libfjs_debugger.so   CDP inspector +
-//                                                      transport, primjs only
+//   ../abi/<flavor>/android/<abi>/libfjs.so                   the engine
+//   ../abi/<flavor>/android-debugger/<abi>/libfjs_debugger.so CDP inspector +
+//                                                             transport,
+//                                                             primjs only
 // Nothing native is compiled here, so consumers need no NDK or CMake — Dart
 // always opens libfjs.so and, in debug builds only, loads the debugger
 // module on top (lib/src/ffi.dart).
@@ -17,22 +18,24 @@
 //   3. FJS_JS_ENGINE in Flutter's dart-defines (--dart-define), which
 //      Flutter hands every gradle project as -Pdart-defines=<base64,...>
 //   4. primjs
-// Non-debug builds drop libfjs_debugger.so via the exclude below; set
-// fjsKeepDebugger=true in gradle properties to keep it.
+// The debugger module ships in the DEBUG build type only (spec 115): its
+// directory is a jniLibs source dir of the `debug` source set, so release,
+// profile and any custom build type never merge it. Set fjsKeepDebugger=true
+// in gradle properties to put it in `main` instead (every build type).
+//
+// Why a source set and not a filter: AGP ignores filters on jniLibs source
+// dirs — `jniLibs.excludes += '**/libfjs_debugger.so'` on `main` was a no-op
+// (verified on AGP 8.11), which spec 105 exposed once the CLI stopped
+// deleting the file. Why not the requested task names: one gradle call can
+// build several variants, and Flutter adds the app's build types (profile
+// included) to plugin projects, so the build type is the reliable signal.
+// Why a separate directory: two source sets on the same <abi>/ dir would
+// merge libfjs.so twice.
 def flutterRoot = null
 if (project.hasProperty('flutter.sdk')) {
     flutterRoot = project.property('flutter.sdk')
 }
 
-// Flutter fills gradle.startParameter.taskNames with the app's tasks, so a
-// non-debug build ("flutter build apk/appbundle", "flutter run
-// --release/--profile") shows a *release/profile* task here while `fjs run`
-// / `flutter run` shows a debug one. Cheap, configuration-time detection —
-// no task-graph surgery.
-def fjsIsNonDebugBuild = gradle.startParameter.taskNames.any {
-    def n = it.toLowerCase()
-    n.contains('release') || n.contains('profile')
-}
 def fjsKeepDebugger = project.findProperty('fjsKeepDebugger') == 'true'
 
 def fjsJsEngine = {
@@ -65,6 +68,9 @@ if (!fjsEngineLibs.isDirectory()) {
     throw new GradleException(
         "flutter_fjs: engine flavor '${fjsJsEngine}' has no prebuilt libraries at ${fjsEngineLibs}")
 }
+// quickjs has no debugger module, so its directory may be absent
+def fjsDebuggerLibs = file("${projectDir}/../abi/${fjsJsEngine}/android-debugger")
+def fjsDebuggerDirs = fjsDebuggerLibs.isDirectory() ? [fjsDebuggerLibs] : []
 
 buildscript {
     repositories {
@@ -96,12 +102,13 @@ android {
 
     sourceSets {
         main {
-            jniLibs.srcDirs = [fjsEngineLibs]
-            if (fjsIsNonDebugBuild && !fjsKeepDebugger) {
-                // non-debug ships the engine only; dropping this file is
-                // what removes the debugger, since the engine holds no
-                // inspector
-                jniLibs.excludes += ['**/libfjs_debugger.so']
+            jniLibs.srcDirs = [fjsEngineLibs] + (fjsKeepDebugger ? fjsDebuggerDirs : [])
+        }
+        debug {
+            // not also in `debug` when kept in `main`: the debug variant
+            // would then merge two copies of the same file
+            if (!fjsKeepDebugger) {
+                jniLibs.srcDirs += fjsDebuggerDirs
             }
         }
     }

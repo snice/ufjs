@@ -301,7 +301,7 @@ Flutter 宿主的依赖和注册调用，都会自动生效。清单字段和 au
 
 | 平台 | 产物 | 大小 |
 |---|---|---|
-| Android | `abi/{primjs,quickjs}/android/{armeabi-v7a,arm64-v8a,x86_64}/libfjs*.so` | — |
+| Android | `abi/{primjs,quickjs}/android/{armeabi-v7a,arm64-v8a,x86_64}/libfjs.so`；调试器单独在 `abi/primjs/android-debugger/<abi>/libfjs_debugger.so`（只进 debug 构建，spec 115） | — |
 | iOS / macOS | `ios/abi/{primjs,quickjs}/*.xcframework`、`macos/abi/{primjs,quickjs}/*.xcframework` | — |
 | 鸿蒙 | `ohos/libs/arm64-v8a/`（默认 primjs）+ `abi/{primjs,quickjs}/ohos/` | — |
 
