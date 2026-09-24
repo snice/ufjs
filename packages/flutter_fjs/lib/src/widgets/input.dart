@@ -287,16 +287,27 @@ class _FjsInputState extends State<FjsInput>
     final hasValue = widget.node.props['value'] != null;
     if (!hasValue) return; // unmanaged input — keep local text
     final value = widget.node.props['value'].toString();
-    if (_lastPropValue == null) {
-      _lastPropValue = value;
-      if (_controller.text.isEmpty && value.isNotEmpty)
-        _controller.text = value;
-      return;
-    }
-    if (value != _lastPropValue && value != _controller.text) {
-      _lastPropValue = value;
-      _controller.text = value;
-    }
+    // A prop that appears (or changes) is a write from JS — vant's Field
+    // never binds `:value`, it sets `el.value` (clear, formatter), and its
+    // first write is the clear button's '' over what the user typed. The
+    // old "first appearance only fills an empty field" dropped exactly
+    // that (specs/122).
+    if (value == _lastPropValue) return;
+    _lastPropValue = value;
+    if (value != _controller.text) _controller.text = value;
+  }
+
+  /// Typing makes the typed text the node's `value`, as it is the DOM
+  /// input's. JS does not echo keystrokes back (renderer.ts keeps `el.value`
+  /// in step on its side), so without this the prop kept the last JS write:
+  /// clearing twice wrote '' over '' — no change as far as
+  /// [didUpdateWidget] could tell, and the typed text stayed (specs/122).
+  /// Only a controlled node: an input that never got a `value` keeps none.
+  void _recordTypedValue(String text) {
+    final props = widget.node.props;
+    if (props['value'] == null) return;
+    widget.node.props = {...props, 'value': text};
+    _lastPropValue = text;
   }
 
   /// The field's own text style — also what [_measureLines] measures with,
@@ -369,6 +380,7 @@ class _FjsInputState extends State<FjsInput>
         border: InputBorder.none,
       ),
       onChanged: (text) {
+        _recordTypedValue(text);
         widget.dispatch(widget.node.id, FjsEvent.textChanged, text: text);
         _scheduleMeasure();
       },

@@ -785,10 +785,9 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     const emits = emitsFor(rawTag);
     if (emits.size > 0) payloadEvents.set(el, emits);
     if (rawTag === 'textarea') {
-      // vant's Field textarea: auto-height inside a vant cell is still
-      // broken — the field grows natively but the fjs flex's line-extent
-      // computation caps the element box at one line and the cell clips it
-      // (specs/077 遗留，诊断数据在该 spec 的 tasks 里)。挂账未修。
+      // vant's Field textarea: the field grows natively (auto-height, see
+      // the Field patch in the demo's vite/vant.ts); the cell follows since
+      // specs/122 (a two-pass flex line re-measures when an item grows).
       setConstProps(el, MULTILINE_PROPS);
     }
     // An HTML block box keeps its inline content on one line (`<div><span>0

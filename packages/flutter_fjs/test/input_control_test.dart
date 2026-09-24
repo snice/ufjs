@@ -48,6 +48,19 @@ MirrorTree inputTree(int id, Map<String, Object?> props) {
   return MirrorTree()..applyFrame(Uint8List.fromList(w.b));
 }
 
+/// A later SetProps frame on [id] — how `el.value = x` reaches the peer.
+void setProps(MirrorTree tree, int id, Map<String, Object?> props) {
+  final w = _W();
+  final json = utf8.encode(jsonEncode(props));
+  w.u8(UiOpCode.setProps);
+  w.u32(id);
+  w.u32(json.length);
+  w.raw(json);
+  tree
+    ..applyFrame(Uint8List.fromList(w.b))
+    ..flushDirty();
+}
+
 typedef Events = List<(int, String?)>;
 
 Widget render(
@@ -168,5 +181,38 @@ void main() {
     expect(lineChange, isNotEmpty);
     final payload = jsonDecode(lineChange.last.$2!) as Map<String, dynamic>;
     expect(payload['height'], greaterThan(0));
+  });
+
+  // vant's clear button (specs/122): Field never binds `:value`, it writes
+  // `el.value = ''`. The first write is the prop's first appearance, and a
+  // second clear writes '' again — both must empty what was typed.
+  testWidgets('an el.value write clears typed text, every time', (
+    tester,
+  ) async {
+    final tree = inputTree(1, {});
+    await tester.pumpWidget(render(tree, []));
+    final field = theField(tester);
+
+    await tester.enterText(find.byType(TextField), '233');
+    setProps(tree, 1, {'value': ''});
+    await tester.pump();
+    expect(field.controller!.text, '');
+
+    await tester.enterText(find.byType(TextField), '456');
+    setProps(tree, 1, {'value': ''});
+    await tester.pump();
+    expect(field.controller!.text, '');
+  });
+
+  testWidgets('an unrelated rebuild keeps typed text over a stale value', (
+    tester,
+  ) async {
+    final tree = inputTree(1, {'value': 'a'});
+    await tester.pumpWidget(render(tree, []));
+    final field = theField(tester);
+    await tester.enterText(find.byType(TextField), 'abc');
+    setProps(tree, 1, {'placeholder': 'x'});
+    await tester.pump();
+    expect(field.controller!.text, 'abc');
   });
 }
