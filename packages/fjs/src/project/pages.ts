@@ -146,9 +146,9 @@ export function pagesFor(root: string, platform: Platform): PageRoute[] {
 
 /** Source of the generated 'fjs/pages' module.
  *
- * `inline` (single-bundle Flutter builds and `fjs dev`) imports every page
- * straight into the bundle and registers it, so the router never asks the
- * host to load a chunk. Split builds (`--pages`) emit chunk ids instead;
+ * `inline` (single-bundle Flutter builds and `fjs dev`) bundles every page
+ * and registers a loader that runs it on first open, so the router never
+ * asks the host to load a chunk. Split builds (`--pages`) emit chunk ids instead;
  * web builds emit dynamic imports, which esbuild turns into one chunk per
  * page — the same shape, one platform over. */
 export function routeTableSource(
@@ -167,15 +167,18 @@ export function routeTableSource(
         `  { ${base}, component: () => import(${JSON.stringify(page.file)}) },`,
       );
     } else if (inline) {
-      head.push(`import __p${i} from ${JSON.stringify(page.file)};`);
-      head.push(`definePage(${JSON.stringify(page.path)}, __p${i});`);
+      // require(), not import: esbuild wraps the page lazily, so it runs on
+      // first open — after the plugins' styles, as in a split build
+      head.push(
+        `definePageLoader(${JSON.stringify(page.path)}, () => require(${JSON.stringify(page.file)}).default);`,
+      );
       entries.push(`  { ${base} },`);
     } else {
       entries.push(`  { ${base}, chunk: ${JSON.stringify(page.chunk)} },`);
     }
   });
   if (inline && platform === 'app') {
-    head.splice(1, 0, "import { definePage } from 'fjs/router';");
+    head.splice(1, 0, "import { definePageLoader } from 'fjs/router';");
   }
   return `${head.join('\n')}\nexport const routes = [\n${entries.join(
     '\n',

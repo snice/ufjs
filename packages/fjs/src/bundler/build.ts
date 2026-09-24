@@ -8,7 +8,6 @@
 //   --web             browser build: DOM tag adapter + vue-router, one
 //                     esbuild chunk per page, plus an index.html
 import fs from 'node:fs';
-import os from 'node:os';
 import { builtinModules } from 'node:module';
 import { mpBuild } from '../mp/build.js';
 import path from 'node:path';
@@ -482,7 +481,7 @@ export async function buildBundle(opts: BuildOptions): Promise<BuildResult> {
   const warnings = [...perfWarnings, ...result.warnings.map((w) => w.text)];
   // before bytecode: the snapshot has to be inside what fjsc compiles
   if (opts.styleSnapshot) {
-    const captured = await prewarmStyles(jsPath, warnings);
+    const captured = await prewarmStyles(() => captureStyleSnapshots(jsPath), warnings);
     if (captured) prependSnapshots(jsPath, captured.snapshots);
   }
 
@@ -495,9 +494,7 @@ export async function buildBundle(opts: BuildOptions): Promise<BuildResult> {
 }
 
 /** The single-bundle esbuild step: the app entry with every page imported
- * straight into one IIFE. Shared by the single-bundle build and by the style
- * prewarm of a split build (specs/119), which needs the same app in a form
- * Node can run in one go. */
+ * straight into one IIFE. */
 async function bundleSingle(
   opts: BuildOptions,
   root: string,
@@ -552,9 +549,12 @@ async function bundleSingle(
 
 /** Runs the capture on a built single bundle and reports it in the log;
  * a failure costs the prewarm, never the build (it is only a speedup). */
-async function prewarmStyles(bundlePath: string, warnings: string[]): Promise<CapturedStyles | null> {
+async function prewarmStyles(
+  capture: () => Promise<CapturedStyles | null>,
+  warnings: string[],
+): Promise<CapturedStyles | null> {
   try {
-    const captured = await captureStyleSnapshots(bundlePath);
+    const captured = await capture();
     if (captured) {
       console.log(`  ${describeCapture(captured)}`);
       for (const [route, why] of Object.entries(captured.errors)) {
@@ -576,8 +576,16 @@ async function prewarmStyles(bundlePath: string, warnings: string[]): Promise<Ca
 function sharedEntrySource(
   appModules: Map<string, string> = new Map(),
   extraShared: string[] = [],
+  entryImports: string[] = [],
 ): string {
   const lines = [
+    // What the app entry imports, in its order, before anything else: a
+    // module's styles register when it is evaluated, and the fixed list
+    // below would otherwise run fjs/plugins (vant's sheets) ahead of the
+    // shell's — the reverse of main.ts, the single bundle and the web build,
+    // so an equal-specificity rule could win in one build and lose in
+    // another (specs/121)
+    ...entryImports.map((spec) => `import ${JSON.stringify(spec)};`),
     "import * as vue from 'vue';",
     "import * as fjs from 'fjs';",
     "import * as fjsVue from 'fjs/vue';",
@@ -617,6 +625,21 @@ function sharedEntrySource(
   return `${lines.join('\n')}\nconst S = {\n${registrations.join(
     '\n',
   )}\n};\n${extra.join('\n')}\n(globalThis).__FJS_SHARED = S;\n`;
+}
+
+/** The static imports of the app entry, in source order (type-only ones
+ * left out), relative ones made absolute: the shared chunk is generated
+ * elsewhere and must still reach them. */
+export function entryImportOrder(entry: string): string[] {
+  const source = fs.readFileSync(entry, 'utf8');
+  const out: string[] = [];
+  const re = /^\s*import\s+(type\s+)?(?:[^'";]*?\s+from\s+)?['"]([^'"]+)['"]/gm;
+  for (let m = re.exec(source); m !== null; m = re.exec(source)) {
+    if (m[1]) continue;
+    const spec = m[2];
+    out.push(spec.startsWith('.') ? path.resolve(path.dirname(entry), spec) : spec);
+  }
+  return out;
 }
 
 /** Decides which of the app's own modules belong in the shared chunk.
@@ -747,7 +770,7 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
   const sharedPath = path.join(outDir, 'shared.js');
   const sharedResult = await esbuild.build({
     stdin: generatedEntry(
-      sharedEntrySource(appModules, extraShared),
+      sharedEntrySource(appModules, extraShared, entryImportOrder(entry)),
       root,
       'fjs-shared',
     ),
@@ -841,22 +864,31 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
   }
 
   if (opts.styleSnapshot) {
-    // The split output cannot run outside a host (chunks load through it),
-    // so the capture runs on a throwaway single bundle of the same app and
-    // each page's snapshot goes into that page's chunk.
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fjs-prewarm-'));
-    try {
-      const single = await bundleSingle({ ...opts, sourcemap: false, analyze: false }, root, tmp);
-      const captured = await prewarmStyles(single.jsPath, warnings);
-      if (captured) {
-        for (const page of pages) {
-          const json = captured.snapshots[page.path];
-          const file = pageChunks[page.chunk];
-          if (json !== undefined && file) prependSnapshots(file, { [page.path]: json });
-        }
+    // Captured on this very output, one fresh VM per page: shared, the
+    // entry, then the page's chunk when the router opens it — the order the
+    // device registers the sheets in. A throwaway single bundle (specs/119)
+    // registered every page's scoped sheet before the plugins' (vant)
+    // sheets, the opposite of the split order, so every snapshot was
+    // refused on the device (specs/121). A fresh VM per page also keeps
+    // other pages' sheets out of the snapshot's dependencies: on the device
+    // they may not have been opened yet.
+    const captured = await prewarmStyles(async () => {
+      const all: CapturedStyles = { snapshots: {}, errors: {}, ms: 0 };
+      for (const page of pages) {
+        const one = await captureStyleSnapshots([sharedPath, jsPath], { routes: [page.path], chunks: pageChunks });
+        if (!one) return null;
+        Object.assign(all.snapshots, one.snapshots);
+        Object.assign(all.errors, one.errors);
+        all.ms += one.ms;
       }
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      return all;
+    }, warnings);
+    if (captured) {
+      for (const page of pages) {
+        const json = captured.snapshots[page.path];
+        const file = pageChunks[page.chunk];
+        if (json !== undefined && file) prependSnapshots(file, { [page.path]: json });
+      }
     }
   }
 

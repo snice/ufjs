@@ -1,4 +1,4 @@
-// Build-time style prewarm (specs/119).
+// Build-time style prewarm (specs/119, split builds: specs/121).
 //
 // The first open of a page used to pay for every style match and computed
 // style from an empty cache, on the device, every cold start — although the
@@ -26,15 +26,30 @@ export interface CapturedStyles {
   ms: number;
 }
 
-type CaptureHook = ((results: unknown) => void) & { started?: boolean };
+type CaptureHook = ((results: unknown) => void) & {
+  started?: boolean;
+  routes?: string[];
+  loadChunk?: (chunk: string) => void;
+};
 
-/** Runs `bundlePath` with the capture hook set. Null when the bundle never
- * starts a capture (an app not built on createFjsApp, e.g. a raw element
- * API app) or does not finish within `timeoutMs`. */
+export interface CaptureOptions {
+  /** Capture only these route paths (default: every static route). */
+  routes?: string[];
+  /** Page chunk name -> file, for a split build: the router evaluates a
+   * page's chunk into the VM before mounting it, as the host does. */
+  chunks?: Record<string, string>;
+  timeoutMs?: number;
+}
+
+/** Runs `files` in order in one fresh VM with the capture hook set — a
+ * single bundle, or a split build's shared prelude then its entry. Null
+ * when the bundle never starts a capture (an app not built on createFjsApp,
+ * e.g. a raw element API app) or does not finish within `timeoutMs`. */
 export async function captureStyleSnapshots(
-  bundlePath: string,
-  timeoutMs = 60_000,
+  files: string | string[],
+  opts: CaptureOptions = {},
 ): Promise<CapturedStyles | null> {
+  const timeoutMs = opts.timeoutMs ?? 60_000;
   const t0 = Date.now();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const intervals = new Set<ReturnType<typeof setInterval>>();
@@ -75,12 +90,21 @@ export async function captureStyleSnapshots(
     (sandbox.setTimeout as (fn: () => void, ms: number) => unknown)(() => cb(Date.now()), 16);
   sandbox.cancelAnimationFrame = sandbox.clearTimeout;
   const context = vm.createContext(sandbox);
+  const run = (file: string) => vm.runInContext(fs.readFileSync(file, 'utf8'), context, { filename: file });
+  hook.routes = opts.routes;
+  const chunks = opts.chunks;
+  if (chunks) {
+    hook.loadChunk = (chunk: string) => {
+      const file = chunks[chunk];
+      if (file) run(file);
+    };
+  }
   const cleanup = () => {
     for (const t of timers) clearTimeout(t);
     for (const t of intervals) clearInterval(t);
   };
   try {
-    vm.runInContext(fs.readFileSync(bundlePath, 'utf8'), context, { filename: bundlePath });
+    for (const file of Array.isArray(files) ? files : [files]) run(file);
   } catch (e) {
     cleanup();
     throw new Error(`style prewarm: the bundle threw while loading: ${String((e as Error)?.message ?? e)}`);

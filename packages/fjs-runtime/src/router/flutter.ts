@@ -81,8 +81,29 @@ export function definePage(path: string, component: Component): void {
   registry()[path] = component;
 }
 
+/** Pages of a single bundle (and `fjs dev`), evaluated on first open. */
+const pageLoaders: Record<string, () => Component> = {};
+
+/** Called by the single bundle's generated route table: the page module
+ * runs the first time the page opens, as a split build's chunk does. Were
+ * every page imported up front, `fjs/pages` would run before `fjs/plugins`
+ * (main.ts imports it first) and each page's scoped sheet would register
+ * ahead of the library styles the plugins pull in (vant) — the reverse of
+ * the split build, so an equal-specificity override could win in one build
+ * and lose in the other (specs/121). */
+export function definePageLoader(path: string, load: () => Component): void {
+  pageLoaders[path] = load;
+}
+
 export function pageComponent(path: string): Component | undefined {
-  return registry()[path];
+  const pages = registry();
+  let page = pages[path];
+  const load = pageLoaders[path];
+  if (page === undefined && load !== undefined) {
+    delete pageLoaders[path];
+    page = pages[path] = load();
+  }
+  return page;
 }
 
 // ---- router ----------------------------------------------------------------
@@ -441,8 +462,15 @@ class FlutterRouter implements Router {
    * turn — headless, so replace() swaps the page in place under the same
    * shell and root a device builds — lets deferred content settle, and
    * exports the style caches the page left behind. A page that throws is
-   * reported and skipped; the rest still get their snapshot. */
-  async captureStyles(): Promise<Record<string, StyleSnapshot | { error: string }>> {
+   * reported and skipped; the rest still get their snapshot.
+   *
+   * A split build captures on its own output, one fresh VM per page
+   * (specs/121): `routes` narrows the run to that page, and `loadChunk`
+   * evaluates its chunk the way the host would, so the sheets register in
+   * the device's order — shared first, the page's own when it opens. */
+  async captureStyles(
+    opts: { routes?: string[]; loadChunk?: (chunk: string) => void } = {},
+  ): Promise<Record<string, StyleSnapshot | { error: string }>> {
     const out: Record<string, StyleSnapshot | { error: string }> = {};
     const settle = async () => {
       for (let round = 0; round < 3; round++) {
@@ -455,7 +483,9 @@ class FlutterRouter implements Router {
       const path = record.path;
       // no parameters to fill in at build time: these compute cold
       if (/[:*]/.test(path)) continue;
+      if (opts.routes && !opts.routes.includes(path)) continue;
       try {
+        if (record.chunk && !pageComponent(path)) opts.loadChunk?.(record.chunk);
         await this.replace(path);
         await settle();
         out[path] = styleEngine.exportSnapshot();
@@ -515,12 +545,18 @@ function importPageStyleSnapshot(path: string): void {
   if (snapshotImported.get(path) === epoch) return;
   // a refusal is remembered too: the same epoch would refuse it again
   snapshotImported.set(path, epoch);
-  styleEngine.importSnapshot(snap);
+  styleEngine.importSnapshot(snap, path);
 }
 
 export function createRouter(
   options: FlutterRouterOptions,
-): Router & { start(): void; captureStyles(): Promise<Record<string, StyleSnapshot | { error: string }>> } {
+): Router & {
+  start(): void;
+  captureStyles(opts?: {
+    routes?: string[];
+    loadChunk?: (chunk: string) => void;
+  }): Promise<Record<string, StyleSnapshot | { error: string }>>;
+} {
   const router = new FlutterRouter(options);
   active = router;
   return router;

@@ -54,12 +54,19 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
       // style caches (bundler/style-snapshot.ts, specs/119): with the hook
       // present the app mounts each route in turn and hands the snapshots
       // over instead of starting normally
-      const capture = (globalThis as { __fjsCaptureStyles?: ((r: unknown) => void) & { started?: boolean } })
-        .__fjsCaptureStyles;
+      const capture = (globalThis as {
+        __fjsCaptureStyles?: ((r: unknown) => void) & {
+          started?: boolean;
+          routes?: string[];
+          loadChunk?: (chunk: string) => void;
+        };
+      }).__fjsCaptureStyles;
       if (typeof capture === 'function') {
         // tells the build, synchronously, that this bundle does capture
         capture.started = true;
-        router.captureStyles().then(capture, (e: unknown) => capture({ __error: String(e) }));
+        router
+          .captureStyles({ routes: capture.routes, loadChunk: capture.loadChunk })
+          .then(capture, (e: unknown) => capture({ __error: String(e) }));
         return;
       }
       router.start();

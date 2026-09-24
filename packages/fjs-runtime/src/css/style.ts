@@ -1008,17 +1008,20 @@ export class StyleEngine {
   /** Fills the caches from a snapshot (object or its JSON). All-or-nothing:
    * returns false, touching nothing, when the snapshot does not match the
    * registered sheets / viewport / engine (snapshotMismatch). */
-  importSnapshot(input: StyleSnapshot | string): boolean {
+  importSnapshot(input: StyleSnapshot | string, label = ''): boolean {
+    // the label (the page's path) keeps one page's refusal from swallowing
+    // the next one's in warnOnce
+    const of = label ? ` for ${label}` : '';
     let snap: StyleSnapshot;
     try {
       snap = typeof input === 'string' ? (JSON.parse(input) as StyleSnapshot) : input;
     } catch {
-      warnOnce('style snapshot: unreadable JSON, skipped');
+      warnOnce(`style snapshot${of}: unreadable JSON, skipped`);
       return false;
     }
     const why = this.snapshotMismatch(snap);
     if (why !== null) {
-      warnOnce(`style snapshot skipped: ${why}; styles are computed at runtime instead`);
+      warnOnce(`style snapshot${of} skipped: ${why}; styles are computed at runtime instead`);
       return false;
     }
     const objs = snap.objs;

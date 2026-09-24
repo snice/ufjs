@@ -551,6 +551,37 @@ vant-basic 同步段 49 → 26 ms、vant-more 39 → 24 ms。vant-nav 同步段 
 `defaultsId`。原来是「谁先算谁进缓存」，同一父节点下两种文本可能拿到对方的样式；
 预热会改变「谁先」。命中检查现在也比 `rawText`。
 
+### 分包构建的快照在真机上全被拒（specs/121）
+
+用户 2026-09-24 Android 真机（分包构建）：vant-basic 首开 93 ms、再开 39 ms，logcat
+有一行 `style snapshot skipped: sheets registered in a different order`——预热没生效。
+
+119 的分包构建是在一份**临时单包**上抓快照的。单包里 `main.ts` 先
+`import 'fjs/pages'`，所有页面的 scoped 表先注册，`fjs/plugins`（vant 样式）后注册；
+真机上 vant 样式在 shared.js 里先注册，页面表在 chunk 打开时后注册。两边层叠顺序相反，
+校验拒绝是对的。`bench:mount` 也是单包，所以没测出来；`warnOnce` 去重又让后面每个
+被拒的页面都不再打印。
+
+改为在分包产物本身上抓：每页一个全新 VM，shared.js → bundle.js → 该页 chunk，与真机
+同序；全新 VM 也让快照不依赖其他页面的 chunk（真机上它们未必打开过）。告警带页面
+路径，每页各一行。按真机顺序（shared → index → 该页）在 Node 里回放 `build:pages`
+产物，快照全部被接受：
+
+| 首开 match miss | 不带快照 | 带快照 |
+|---|---:|---:|
+| vant-basic | 157 | 1 |
+| vant-form | 278 | 1 |
+| vant-more | 279 | 1 |
+| vant-nav | 178 | 19 |
+| vant-feedback | 49 | 0 |
+
+顺带统一了三种构建的注册顺序。demo 里单包是「页面表 → Shell → vant」（`fjs/pages`
+静态 import 所有页面，排在 `fjs/plugins` 前），分包是「vant → Shell → 页面表」（shared
+入口是固定的 import 清单，`fjs/plugins` 在 Shell 前），web 是「Shell → vant → 页面表」。
+同优先级的覆盖在不同构建里结果可能相反。现在单包的页面在首次打开时才执行
+（`definePageLoader` + `require()`，esbuild 把它包成惰性初始化），shared 入口先按
+`main.ts` 的 import 顺序导入一遍，三者都是「Shell → vant → 页面表」。
+
 ## 真机复核与分包模式的冷缓存（specs/120）
 
 用户 2026-09-24 真机（iPhone）实测：

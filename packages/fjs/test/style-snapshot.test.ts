@@ -41,6 +41,20 @@ describe('captureStyleSnapshots', () => {
     expect(describeCapture(c!)).toMatch(/1 page captured .*skipped \/b/);
   });
 
+  it('runs several files in one VM and hands the router the routes and chunk loader (specs/121)', async () => {
+    const shared = file('shared.js', 'globalThis.order = ["shared"];');
+    const chunk = file('page.js', 'globalThis.order.push("chunk");');
+    const bundle = file(
+      'bundle.js',
+      `globalThis.order.push("entry");
+       const hook = globalThis.__fjsCaptureStyles; hook.started = true;
+       hook.loadChunk("page"); hook.loadChunk("missing");
+       hook({ [hook.routes.join(",")]: { order: globalThis.order } });`,
+    );
+    const c = await captureStyleSnapshots([shared, bundle], { routes: ['/p'], chunks: { page: chunk } });
+    expect(JSON.parse(c!.snapshots['/p'])).toEqual({ order: ['shared', 'entry', 'chunk'] });
+  });
+
   it('is null, and quick, for a bundle that never takes the hook', async () => {
     const bundle = file('bundle.js', 'globalThis.x = 1;');
     const t0 = Date.now();

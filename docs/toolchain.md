@@ -1168,9 +1168,11 @@ shared.js  402.3 KB  gz 90.9 KB  bytecode 1.1 MB
 （同样的 Shell、同样等 `<defer>` 补挂），把 CSS 引擎的匹配 / 计算缓存导出成每页一份
 JSON 快照，写在该页 chunk（单包则是 bundle）的**第一行**。路由挂载页面之前导入它，
 第一次打开就和再次打开一样热。原理与实测见 [vant-mount-perf.md](vant-mount-perf.md)。
+分包构建直接在分包产物上抓：每页一个全新 VM，按真机顺序执行 shared.js → bundle.js →
+该页 chunk（specs/121），样式表注册顺序与真机一致。
 
 - **结果不变**：快照只是提前填好的缓存。样式表集合、`@media` 结果或引擎开关与构建时
-  不一致时整份放弃（日志里一行 `style snapshot skipped: …`），照常现算。
+  不一致时整份放弃（日志里每页一行 `style snapshot for /路径 skipped: …`），照常现算。
 - **不覆盖**：`fjs dev` / `fjs run`（debug）——每次保存都重建，抓取要挂一遍所有页面；
   带参数的路由（`/user/:id`）——构建期不知道参数。它们照常现算。要在模拟器上看预热
   效果，用 `fjs run ios --profile` 或 `fjs build`。
