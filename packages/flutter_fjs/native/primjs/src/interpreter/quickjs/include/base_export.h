@@ -6,8 +6,14 @@
 #define SRC_INTERPRETER_QUICKJS_INCLUDE_BASE_EXPORT_H_
 
 #if defined(WIN32)
-#define QJS_EXPORT __declspec(dllimport)
-#define QJS_EXPORT_FOR_DEVTOOL __declspec(dllimport)
+// fjs local patch (specs/114-fjsc-dual-engine): upstream marks everything
+// __declspec(dllimport) because it consumes PrimJS as a DLL. fjs only builds
+// Windows host tools (fjsc, fjsrun, fjs-test) that link the engine
+// statically, where dllimport on a definition is an error ("definition of
+// dllimport data", inspector_hooks.cc) and on a reference just adds an
+// indirection. Plain declarations are right for a static archive.
+#define QJS_EXPORT
+#define QJS_EXPORT_FOR_DEVTOOL
 #define QJS_HIDE
 #elif defined(FJS_EXPORT_ENGINE_INTERNALS)
 // fjs local patch (specs/090-devtools-split): the inspector is built as a

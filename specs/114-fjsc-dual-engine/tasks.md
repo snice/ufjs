@@ -88,3 +88,6 @@ CI 的 `build.mjs linux-arm64` 失败，报 `c++: error: unrecognized argument t
   - `build.mjs linux-arm64` 用 clang 编出两个二进制，按 CI 冒烟测试的逻辑两个都通过；
   - 本机 darwin-arm64 打包不受影响；旧 prebuilt 被静态核对拦下；
   - **Windows（ClangCL）无法在本机验证**，要看 CI 结果。
+- [x] T066 `build.mjs` 构建失败时打印 cmake 的完整输出：MSBuild 把编译错误写到 stdout，原来丢弃 stdout，失败时只剩 `Command failed`
+- [x] T067 `primjs/src/interpreter/quickjs/include/base_export.h`：`WIN32` 下导出宏不再定义为 `__declspec(dllimport)`，因为 fjs 在 Windows 上只静态链接；clang-cl 对 `inspector_hooks.cc` 报 `definition of dllimport data`。补丁已登记到 `primjs/VENDORED.md`
+- [x] T068 CI 验证（分支 `114-fjsc-windows`，run 35960274682）：linux-x64、linux-arm64、win32-x64、Bundle 全部通过。三个平台都产出 `fjsc`（primjs-4.1.1）和 `fjsc-quickjs`（quickjs-ng-0.9.0），冒烟测试分别编出对应引擎的 bundle

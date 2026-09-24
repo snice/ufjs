@@ -57,6 +57,15 @@ One cosmetic patch rides along with the module split:
 |------|-------|
 | `src/inspector/debugger_struct.h` | the literal-pool fallback for the DevTools console's JavaScript-context dropdown reads `V(debugger_context, "fjs engine")` instead of upstream's `"debugger context"` (the name `Runtime.executionContextCreated` reports when the host never calls `SetJSDebuggerName`) |
 
+## Local patch (spec 114: Windows host tools)
+
+| File | Patch |
+|------|-------|
+| `src/interpreter/quickjs/include/base_export.h` | the `WIN32` branch defines `QJS_EXPORT` / `QJS_EXPORT_FOR_DEVTOOL` empty instead of `__declspec(dllimport)`: fjs only builds Windows host tools (fjsc, fjsrun) that link PrimJS statically, and clang-cl rejects dllimport on a definition (`inspector_hooks.cc`) |
+
+Upstream's CMakeLists also only supports clang (clang-cl on Windows); see
+`native/CMakeLists.txt` and `packages/fjsc/build.mjs` for how we select it.
+
 ## Build choices (deviations from upstream defaults)
 
 - `ENABLE_QUICKJS_DEBUGGER=ON` is forced from our `CMakeLists.txt` — the
