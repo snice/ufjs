@@ -108,6 +108,29 @@ export function dragPanBindings(host: Ref<HTMLElement | null>) {
     el.scrollLeft = from.left - dx;
     el.scrollTop = from.top - dy;
   };
+  // A page that preventDefaults a touchmove stops a finger from scrolling
+  // on a phone; the same drag made with the mouse (vant's touch-emulator
+  // turns it into touches) must not scroll here either. vant's picker in a
+  // Popup — which sits inside the page's scroll-view, not teleported — spun
+  // AND dragged the page along (specs/127). Seen in the capture phase,
+  // because vant also stops propagation; checked after the dispatch, which
+  // is when the page's listeners have had their say. The microtask runs
+  // before the frame is painted, so the few pixels already panned by this
+  // move's pointermove are never shown.
+  const onTouchmoveCapture = (event: Event) => {
+    if (!from) return;
+    const start = from;
+    queueMicrotask(() => {
+      if (!event.defaultPrevented || from !== start) return;
+      const el = host.value;
+      if (el) {
+        el.scrollLeft = start.left;
+        el.scrollTop = start.top;
+      }
+      from = null;
+      panned = false;
+    });
+  };
   const onPointerup = () => {
     from = null;
     if (!panned) return;
@@ -124,6 +147,7 @@ export function dragPanBindings(host: Ref<HTMLElement | null>) {
     onPointermove,
     onPointerup,
     onPointercancel: onPointerup,
+    onTouchmoveCapture,
   };
 }
 
