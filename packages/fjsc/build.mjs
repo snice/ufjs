@@ -78,26 +78,33 @@ function compile(target, flavor, exe) {
 
   console.log(`==> compiling fjsc (${flavor}) for ${target}`);
   fs.rmSync(buildDir, { recursive: true, force: true });
-  execFileSync(
-    'cmake',
-    [
-      '-S', nativeDir, '-B', buildDir, '-DCMAKE_BUILD_TYPE=Release',
-      `-DFJS_JS_ENGINE=${flavor}`,
-      // fjsc never loads the debugger module; skip building it
-      '-DFJS_DEBUGGER=OFF',
-      ...flags,
-    ],
-    { stdio: ['ignore', 'ignore', 'inherit'] },
-  );
-  execFileSync('cmake', ['--build', buildDir, '--target', 'fjsc', '--config', 'Release'], {
-    stdio: ['ignore', 'ignore', 'inherit'],
-  });
+  run('cmake', [
+    '-S', nativeDir, '-B', buildDir, '-DCMAKE_BUILD_TYPE=Release',
+    `-DFJS_JS_ENGINE=${flavor}`,
+    // fjsc never loads the debugger module; skip building it
+    '-DFJS_DEBUGGER=OFF',
+    ...flags,
+  ]);
+  run('cmake', ['--build', buildDir, '--target', 'fjsc', '--config', 'Release']);
 
   // multi-config generators (Visual Studio) nest the binary under Release/
   const candidates = [path.join(buildDir, exe), path.join(buildDir, 'Release', exe)];
   const built = candidates.find((p) => fs.existsSync(p));
   if (!built) throw new Error(`fjsc not found after build (looked in ${candidates.join(', ')})`);
   return built;
+}
+
+/** Runs a build step quietly, but prints everything it said when it fails:
+ * MSBuild reports compile errors on stdout, so dropping stdout left a failed
+ * Windows build with nothing but "Command failed". */
+function run(cmd, args) {
+  try {
+    execFileSync(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024 });
+  } catch (e) {
+    process.stdout.write(e.stdout ?? '');
+    process.stderr.write(e.stderr ?? '');
+    throw e;
+  }
 }
 
 /** Engine ids compiled into `binary`, read statically: fjs_engine_id()'s
