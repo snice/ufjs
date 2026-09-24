@@ -20,7 +20,7 @@ fjs 用 HTML 风格的语义标签构建 UI，由 Dart 侧映射为 Flutter Widg
 | 标签 | Flutter 映射 | props / 事件 |
 |------|--------------|--------------|
 | `view` | Flex + 容器装饰 | 默认**纵向** flex（注意和 CSS 的 `row` 默认值不同）|
-| `text` | Text；有子节点时是 `Text.rich` | 文本由 setText 或子文本节点设置。**`text` 里嵌的 `text` 是同一段落里的行内片段**（各自的颜色 / 字号 / 字重 / 装饰线 / 背景色），其余子节点（`image`、`view`）是行内块，底边落在基线上。片段上的 margin / padding / border / 宽高无效（两端都是）；`text-align` / `max-lines` / `white-space` 只认最外层 |
+| `text` | Text；有子节点时是 `Text.rich` | 文本由 setText 或子文本节点设置。**`text` 里嵌的 `text` 是同一段落里的行内片段**（各自的颜色 / 字号 / 字重 / 装饰线 / 背景色），其余子节点（`image`、`view`）是行内块，底边落在基线上。片段上的 margin / padding / border / 宽高无效（两端都是）；`text-align` / `max-lines` / `white-space` 只认最外层。片段上的 `@tap` / `@click` 两端都能点（App 上是片段自己的识别器，片段里的子片段继承它，同 DOM 冒泡；specs/128） |
 | `image` | Image（`src` 是 http(s) 走 `cached_network_image`，本地图走 dev server / Flutter asset）| `src`（三种写法见下）、`mode`（14 个，见下表）、`lazy-load`、`fit`（旧写法）；`@load` / `@error`。详见下表 |
 | `canvas` | **不是 Dart 标签**：两端共用 `components/canvas.ts`，渲染成 `view` + 绘制面 `inner-canvas`（后者才是 CustomPaint）| `ref` 拿到 `getContext('2d')` / `toDataURL()` / 只读的 `width` / `height`（逻辑像素）；`@resize`；`defer-resize` 把首次 `@resize` 推迟到路由转场结束（默认关，首帧贵的图表才开）；**默认插槽是画布上方的 overlay**（tooltip、图例…）。支持范围见 [canvas-compat.md](canvas-compat.md) |
 | `button` | TextButton（Material 自带的 chrome 全部关掉）| 文本取子 text 节点；自带按下态；`type`(default/primary/warn) / `size`(default/mini) / `plain` / `loading` / `disabled` / `form-type`(submit/reset) |
@@ -603,6 +603,9 @@ Web 两端取同一组数值。新增或改默认样式时先看：
   （最近定位祖先，由 renderer 解析）的偏移；没有定位祖先时 `offsetParent`
   为 null、偏移即窗口坐标。vant Tabs 的下划线居中靠
   `title.offsetLeft + offsetWidth / 2`（specs/073）
+- `el.isConnected`：元素挂在活着的页面树里为 true，卸载后 false；裸 element
+  API（无 renderer）恒为 false。vant TextEllipsis 只在它为 true 时才测量截断
+  （specs/128）
 - `el.addEventListener` / `removeEventListener(type, listener)`：事件名同
   `on<Name>` prop（`'touchmove'` ↔ `@touchmove`），`passive` / `capture`
   选项忽略（vant Slider 经 useEventListener 挂在自身元素上的 touchmove

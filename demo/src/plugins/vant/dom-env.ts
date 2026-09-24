@@ -19,11 +19,16 @@
 
 type Style = Record<string, unknown>;
 
+type Measured = { width: number; height: number; lines: number } | null;
+
 interface FjsShared {
   'fjs/vue'?: {
-    styleEngine?: { states?: Map<number, { computed?: Style }> };
+    styleEngine?: { states?: Map<number, { computed?: Style }>; flushPending?: () => void };
+    measureTextBlock?: (style: Style, text: string, maxWidth?: number) => Measured;
   };
 }
+
+const sharedVue = () => (globalThis as { __FJS_SHARED?: FjsShared }).__FJS_SHARED?.['fjs/vue'];
 
 /** The element's RESOLVED style from the fjs style engine (camelCase,
  * lengths as numbers). The runtime keeps getComputedStyle out of scope
@@ -32,8 +37,7 @@ interface FjsShared {
 function resolvedStyle(el: unknown): Style {
   const id = (el as { id?: unknown } | null)?.id;
   if (typeof id !== 'number') return {};
-  const shared = (globalThis as { __FJS_SHARED?: FjsShared }).__FJS_SHARED;
-  return shared?.['fjs/vue']?.styleEngine?.states?.get(id)?.computed ?? {};
+  return sharedVue()?.styleEngine?.states?.get(id)?.computed ?? {};
 }
 
 const kebabToCamel = (name: string) => name.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
@@ -71,26 +75,164 @@ const INITIAL: Record<string, string> = {
   overflow: 'visible',
 };
 
+/** Values a browser reports without a unit. Everything else numeric is a
+ * length the engine keeps in px. */
+const UNITLESS = new Set(['fontWeight', 'zIndex', 'opacity', 'flexGrow', 'flexShrink', 'order']);
+
+/** What `Array.prototype.slice.apply(getComputedStyle(el))` enumerates.
+ * TextEllipsis copies every listed property onto its measuring div
+ * (specs/128), so this is the set that decides how a text lays out. */
+const ENUMERATED = [
+  'width',
+  'box-sizing',
+  'font-size',
+  'font-weight',
+  'font-style',
+  'font-family',
+  'line-height',
+  'letter-spacing',
+  'padding-top',
+  'padding-right',
+  'padding-bottom',
+  'padding-left',
+  'white-space',
+];
+
+const px = (value: unknown): number => {
+  if (typeof value === 'number') return value;
+  const n = parseFloat(String(value ?? ''));
+  return Number.isFinite(n) ? n : 0;
+};
+
 function getComputedStyle(el: unknown): Record<string, string> & {
   getPropertyValue(name: string): string;
 } {
+  // A browser recalculates style before answering. The engine batches per
+  // microtask, so an element created in this tick — TextEllipsis reads its
+  // root in onMounted — had no computed style yet: line-height came back
+  // "normal" and every cut measured against a 0px line (specs/128).
+  sharedVue()?.styleEngine?.flushPending?.();
   const style = resolvedStyle(el);
+  const fontSize = () => px(style.fontSize) || 14;
   const read = (key: string): string => {
+    // computed width is the USED width — the layout, not the declaration;
+    // for content-box that excludes the padding
+    if (key === 'width') {
+      const rect = (el as { getBoundingClientRect?: () => { width: number } } | null)?.getBoundingClientRect?.();
+      if (rect && rect.width === 0) remeasureWhenLaidOut(el);
+      if (rect) {
+        const inner = style.boxSizing === 'border-box' ? rect.width : rect.width - px(style.paddingLeft) - px(style.paddingRight);
+        return `${Math.max(0, inner)}px`;
+      }
+    }
+    // a browser resolves a unitless line-height to px in computed style;
+    // vant multiplies it by the row count
+    if (key === 'lineHeight') {
+      const v = style.lineHeight;
+      // the engine keeps a unitless value as written — a number, or the
+      // string "1.6" when it came through a var()
+      const n = typeof v === 'number' ? v : typeof v === 'string' && /^\s*[\d.]+\s*$/.test(v) ? parseFloat(v) : NaN;
+      if (Number.isFinite(n)) return `${n * fontSize()}px`;
+      if (v === undefined) return 'normal';
+      return String(v);
+    }
+    if (key === 'fontSize' && style.fontSize === undefined) return '14px';
     let v = style[key];
     if (v === undefined && (key === 'overflowX' || key === 'overflowY')) v = style.overflow;
     if (v === undefined) return INITIAL[key] ?? (key === 'overflowX' || key === 'overflowY' ? 'visible' : '');
-    if (typeof v === 'number') return v === 0 ? '0px' : `${v}px`;
+    if (typeof v === 'number') return UNITLESS.has(key) ? String(v) : v === 0 ? '0px' : `${v}px`;
     const s = String(v);
     return key === 'transform' ? toMatrix(s) : s;
   };
   return new Proxy({} as Record<string, string> & { getPropertyValue(name: string): string }, {
     get(_, prop) {
       if (prop === 'getPropertyValue') return (name: string) => read(kebabToCamel(name));
-      // Array.prototype.slice.apply(style) (TextEllipsis) — no index list
-      if (prop === 'length') return 0;
-      return typeof prop === 'string' ? read(prop) : undefined;
+      if (prop === 'length') return ENUMERATED.length;
+      if (typeof prop !== 'string') return undefined;
+      if (/^\d+$/.test(prop)) return ENUMERATED[Number(prop)];
+      return read(prop);
+    },
+    // slice() asks HasProperty before each Get; without this every index
+    // was a hole, the name list came back all null, and vant's
+    // setProperty(null, …) threw inside onMounted where Vue swallowed it
+    has(_, prop) {
+      if (typeof prop !== 'string') return false;
+      return /^\d+$/.test(prop) ? Number(prop) < ENUMERATED.length : prop === 'length' || prop === 'getPropertyValue';
     },
   });
+}
+
+/** `<` `>` `&` as the DOM's innerHTML getter serialises text. */
+const escapeHtml = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+/** innerHTML written as markup → the text it shows. */
+const htmlToText = (html: string) =>
+  html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, '\u00a0')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&');
+
+/** A detached `<div>` that can only be measured — what vant's TextEllipsis
+ * builds to binary-search its cut: styles copied off the real element, text
+ * written through innerText / innerHTML, `offsetHeight` read back after
+ * each write (specs/128). It never enters the page; the host lays the text
+ * out on its own (fjs.ui.measureText) with the font and width copied here. */
+class MeasureBox {
+  readonly style: Record<string, string> & { setProperty(name: string, value: string): void };
+  private text = '';
+  constructor() {
+    const style = {} as Record<string, string> & { setProperty(name: string, value: string): void };
+    Object.defineProperty(style, 'setProperty', {
+      value: (name: string, value: string) => {
+        if (typeof name === 'string') style[kebabToCamel(name)] = value;
+      },
+    });
+    this.style = style;
+  }
+  get innerText(): string {
+    return this.text;
+  }
+  set innerText(value: string) {
+    this.text = String(value ?? '');
+  }
+  get textContent(): string {
+    return this.text;
+  }
+  set textContent(value: string) {
+    this.text = String(value ?? '');
+  }
+  get innerHTML(): string {
+    return escapeHtml(this.text);
+  }
+  set innerHTML(value: string) {
+    this.text = htmlToText(String(value ?? ''));
+  }
+  private measure(): Measured {
+    const s = this.style;
+    const pad = (k: string) => px(s[k]);
+    const width = px(s.width) - (s.boxSizing === 'border-box' ? pad('paddingLeft') + pad('paddingRight') : 0);
+    const fontSize = px(s.fontSize) || 14;
+    const textStyle: Style = { fontSize };
+    if (s.lineHeight && s.lineHeight !== 'normal') textStyle.lineHeight = s.lineHeight.endsWith('px') ? s.lineHeight : px(s.lineHeight);
+    if (s.fontWeight) textStyle.fontWeight = s.fontWeight;
+    if (s.fontStyle) textStyle.fontStyle = s.fontStyle;
+    if (s.fontFamily) textStyle.fontFamily = s.fontFamily;
+    if (s.letterSpacing && s.letterSpacing !== 'normal') textStyle.letterSpacing = px(s.letterSpacing);
+    // no width yet (see remeasureWhenLaidOut): unmeasurable, which reads
+    // as 0 — "everything fits", the text shows uncut until the re-measure
+    if (!(width > 0)) return null;
+    return sharedVue()?.measureTextBlock?.(textStyle, this.text, width) ?? null;
+  }
+  get offsetHeight(): number {
+    const m = this.measure();
+    return m ? m.height + px(this.style.paddingTop) + px(this.style.paddingBottom) : 0;
+  }
+  get offsetWidth(): number {
+    const m = this.measure();
+    return m ? m.width + px(this.style.paddingLeft) + px(this.style.paddingRight) : 0;
+  }
 }
 
 const noop = () => {};
@@ -104,6 +246,40 @@ const classList = () => {
   };
 };
 
+/** `resize` listeners on window — vant's useWindowSize is the only one,
+ * and its windowWidth ref is what TextEllipsis (and Swipe, Sticky…) watch
+ * to measure again. */
+const resizeListeners = new Set<() => void>();
+
+/** A page mounts while its route is still pushing, and the host lays
+ * nothing out then (geometry.dart runWithoutGeometryReflow): what vant
+ * measures in onMounted has width 0. A browser would lay out first. So
+ * when a width read comes back 0, wait frame by frame for the element to
+ * get one, then fire `resize` — vant measures again. The window has no
+ * size of its own here (innerWidth stays ~0, what vant always saw); it is
+ * nudged by a hair each time only so useWindowSize's ref actually changes
+ * and the watchers run. */
+const awaitingLayout = new Set<unknown>();
+function remeasureWhenLaidOut(el: unknown): void {
+  if (awaitingLayout.has(el)) return;
+  awaitingLayout.add(el);
+  let frames = 0;
+  const check = () => {
+    const rect = (el as { getBoundingClientRect?: () => { width: number } }).getBoundingClientRect?.();
+    if (rect && rect.width > 0) {
+      awaitingLayout.delete(el);
+      const win = (globalThis as { window?: { innerWidth: number } }).window;
+      if (win) win.innerWidth = win.innerWidth === 0 ? 0.001 : 0;
+      for (const listener of resizeListeners) listener();
+    } else if (++frames < 120) {
+      requestAnimationFrame(check);
+    } else {
+      awaitingLayout.delete(el);
+    }
+  };
+  requestAnimationFrame(check);
+}
+
 /** Pages scroll inside fjs scroll views, never the document: the root
  * element only answers the reads (scrollTop 0) and absorbs the writes
  * (Popup's lock-scroll class, Toast's unclickable class). */
@@ -112,6 +288,10 @@ const rootElement = () => ({
   classList: classList(),
   scrollTop: 0,
   scrollLeft: 0,
+  // TextEllipsis mounts its measuring div here for the length of one
+  // measurement; a MeasureBox needs no parent to be measured
+  appendChild: <T>(child: T): T => child,
+  removeChild: <T>(child: T): T => child,
 });
 
 /** The first-sight half of IntersectionObserver. A page's tree is built
@@ -205,6 +385,8 @@ if (typeof window === 'undefined') {
     visibilityState: 'visible',
     addEventListener: addDocumentListener,
     removeEventListener: removeDocumentListener,
+    // only what a library builds to measure; anything else has no DOM here
+    createElement: () => new MeasureBox(),
   };
   const nav = { userAgent: 'fjs' }; // not iOS/Android: no WebView scroll workarounds
   g.window = {
@@ -213,8 +395,12 @@ if (typeof window === 'undefined') {
     setTimeout,
     clearTimeout,
     getComputedStyle,
-    addEventListener: noop,
-    removeEventListener: noop,
+    addEventListener: (type: string, listener: () => void) => {
+      if ((type === 'resize' || type === 'orientationchange') && typeof listener === 'function') resizeListeners.add(listener);
+    },
+    removeEventListener: (type: string, listener: () => void) => {
+      if (type === 'resize' || type === 'orientationchange') resizeListeners.delete(listener);
+    },
     scrollTo: noop,
     // useWindowSize: the host gives no viewport size to JS here; 0 is what
     // vant saw before (its non-browser branch)

@@ -11,13 +11,17 @@
 // internal `richSpans` prop (specs/035, fjs-runtime/src/rich-text/spans.ts).
 // Same paragraph, a fraction of the nodes; the web twin is FjsText in
 // web/components/basic.ts.
+import 'package:flutter/gestures.dart' show TapGestureRecognizer;
 import 'package:flutter/material.dart';
 
+import '../geometry.dart' show lastTapPosition;
 import '../mirror_tree.dart';
 import '../render/renderer.dart';
 import '../render/style.dart';
 import '../render/flex.dart' show isOutOfFlowPosition, stackOutOfFlow;
+import '../render/gesture.dart' show dispatchTap, hasTapEvent;
 import '../render/style_parse.dart';
+import 'dispatch.dart';
 
 // Default line height. Flutter would otherwise use the font's own metrics
 // and CSS its `normal` — two different numbers, so a two-line row came out
@@ -139,6 +143,7 @@ Widget buildText(
   MirrorTree? tree,
   List<MirrorNode> childNodes = const [],
   Widget Function(MirrorNode node)? buildNode,
+  FjsDispatch? dispatch,
 }) {
   final textAlign = style.textAlign;
   final maxLines = style.whiteSpaceNowrap ? 1 : style.maxLines;
@@ -203,6 +208,7 @@ Widget buildText(
         tree: tree,
         childNodes: inFlow,
         buildNode: buildNode,
+        dispatch: dispatch,
       ),
       over,
     );
@@ -251,7 +257,7 @@ Widget buildText(
   final spans = <InlineSpan>[
     if (node.text != null && node.text!.isNotEmpty)
       TextSpan(text: _transformed(style, node.text!)),
-    for (final kid in childNodes) _span(tree, kid, style, buildNode),
+    for (final kid in childNodes) _span(tree, kid, style, buildNode, dispatch),
   ];
   // Paragraph-level properties (align, line clamp, nowrap) come from this
   // node only: a span has no box to align or clamp.
@@ -311,8 +317,10 @@ InlineSpan _span(
   MirrorTree tree,
   MirrorNode kid,
   FjsStyle parent,
-  Widget Function(MirrorNode node)? buildNode,
-) {
+  Widget Function(MirrorNode node)? buildNode, [
+  FjsDispatch? dispatch,
+  TapGestureRecognizer? inheritedTap,
+]) {
   if (kid.tag != 'text') {
     // An inline-block box, its bottom edge on the baseline — what CSS does
     // with an <img> in a line (an image has no baseline of its own).
@@ -340,16 +348,44 @@ InlineSpan _span(
   final textStyle = style.style.isEmpty && kid.props['style'] == null
       ? null
       : fjsTextStyle(style, span: true);
+  // Flutter asks only the innermost span under the finger for a
+  // recognizer, never its parents; vant's <span @click> holds its label as
+  // a child text run, so the span's own recognizer was never consulted.
+  // Runs inside a clickable span carry it, as a DOM click bubbles.
+  final tap =
+      (dispatch == null ? null : _spanTap(kid, dispatch)) ?? inheritedTap;
   final content = TextSpan(
     text: kid.text == null || kid.text!.isEmpty
         ? null
         : _transformed(style, kid.text!),
     style: textStyle,
+    recognizer: tap,
     children: grandKids.isEmpty
         ? null
-        : [for (final n in grandKids) _span(tree, n, style, buildNode)],
+        : [
+            for (final n in grandKids)
+              _span(tree, n, style, buildNode, dispatch, tap),
+          ],
   );
   return _shifted(style.verticalAlign, parent, content) ?? content;
+}
+
+/// A span's own `@tap` / `@click`. A run inside a paragraph is a TextSpan,
+/// not a widget, so gestureNode's detector never wraps it — vant's
+/// TextEllipsis "展开" is such a span and did nothing on tap (specs/128).
+/// One recognizer per node, kept with it: TextSpan does not own the
+/// recognizer, and a new one per build would drop a tap in progress
+/// whenever the paragraph rebuilt. It is not disposed; it holds no
+/// resources beyond an arena entry, which ends with the gesture.
+final Expando<TapGestureRecognizer> _spanRecognizers = Expando();
+
+TapGestureRecognizer? _spanTap(MirrorNode kid, FjsDispatch dispatch) {
+  if (!hasTapEvent(kid) || fjsBool(kid.props['disabled'])) return null;
+  final recognizer = _spanRecognizers[kid] ??= TapGestureRecognizer();
+  recognizer
+    ..onTapUp = ((details) => lastTapPosition = details.globalPosition)
+    ..onTap = (() => dispatchTap(kid, dispatch));
+  return recognizer;
 }
 
 /// A sub/superscript: TextSpan has no baseline shift, so the run is a small

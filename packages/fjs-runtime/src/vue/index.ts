@@ -13,5 +13,8 @@ export {
   styleEngine,
 } from './renderer';
 export { useCssVars } from './css-vars';
+// a detached paragraph's size, for DOM shims that measure text the way a
+// browser's hidden <div> does (demo's vant dom-env, specs/128)
+export { measureTextBlock } from '../ui/geometry';
 export type { Element } from '../ui/element';
 export type { GlobalPointerDown } from './renderer';

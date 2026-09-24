@@ -83,6 +83,7 @@ class _TextNodeAdapter extends FjsNodeAdapter {
       tree: context.tree,
       childNodes: context.childNodes,
       buildNode: (child) => context.buildNode(context.flutterContext, child),
+      dispatch: context.dispatch,
     );
   }
 }
@@ -843,6 +844,7 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
             childNodes: context.childNodes,
             buildNode: (child) =>
                 context.buildNode(context.flutterContext, child),
+            dispatch: context.dispatch,
           ),
         ],
         const [null],

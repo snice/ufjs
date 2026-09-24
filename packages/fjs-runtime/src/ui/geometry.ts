@@ -52,6 +52,31 @@ export function boundingRectOf(id: number): FjsRect {
   return r && r.length === 4 ? makeRect(r[0], r[1], r[2], r[3]) : makeRect(0, 0, 0, 0);
 }
 
+/** A paragraph's laid-out size at [maxWidth] (0 = no wrapping), measured
+ * by the host without a node: what DOM code gets from a detached `<div>`'s
+ * offsetWidth/offsetHeight after setting its text. [style] is a resolved
+ * style map (camelCase, lengths as numbers — the style engine's `computed`),
+ * laid out with the same TextStyle a text node renders with. Null without a
+ * host that has the module (specs/128). */
+export function measureTextBlock(
+  style: Record<string, unknown>,
+  text: string,
+  maxWidth = 0,
+): { width: number; height: number; lines: number } | null {
+  if (!hasNativeHost) return null;
+  let raw: unknown;
+  try {
+    raw = invokeHost<string | null>('fjs.ui.measureText', JSON.stringify(style), text, maxWidth);
+  } catch {
+    return null;
+  }
+  if (typeof raw !== 'string') return null;
+  const r = JSON.parse(raw) as unknown;
+  return Array.isArray(r) && r.length === 3 && r.every((n) => typeof n === 'number')
+    ? { width: r[0], height: r[1], lines: r[2] }
+    : null;
+}
+
 /** Where the last pointer went down or up — a tap's position, for the
  * click event's clientX/clientY. Null before the first touch. */
 export function lastPointer(): { x: number; y: number } | null {

@@ -341,6 +341,10 @@ export interface Element {
   readonly offsetLeft: number;
   readonly offsetTop: number;
   readonly offsetParent: Element | null;
+  /** DOM `isConnected`: whether the element is mounted in a live page.
+   * vant's TextEllipsis bails out of measuring when it is false — being
+   * undefined here left every text uncut on the app (specs/128). */
+  readonly isConnected: boolean;
 }
 
 /** Finds an element's offsetParent. The Vue renderer owns the tree and the
@@ -350,6 +354,15 @@ let offsetParentResolver: ((id: number) => Element | null) | null = null;
 
 export function setOffsetParentResolver(resolver: ((id: number) => Element | null) | null): void {
   offsetParentResolver = resolver;
+}
+
+/** Whether an element is mounted in a live page. Injected by the Vue
+ * renderer, which owns the tree; the raw element API answers false, as the
+ * DOM does for a node it cannot place. */
+let connectedResolver: ((id: number) => boolean) | null = null;
+
+export function setConnectedResolver(resolver: ((id: number) => boolean) | null): void {
+  connectedResolver = resolver;
 }
 
 function offsetOf(el: { id: number }, axis: 'left' | 'top'): number {
@@ -384,6 +397,11 @@ const OFFSET_DESCRIPTORS: PropertyDescriptorMap = {
   offsetParent: {
     get(this: { id: number }) {
       return offsetParentResolver?.(this.id) ?? null;
+    },
+  },
+  isConnected: {
+    get(this: { id: number }) {
+      return connectedResolver?.(this.id) ?? false;
     },
   },
 };
