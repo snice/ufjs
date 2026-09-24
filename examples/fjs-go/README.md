@@ -32,6 +32,10 @@ flutter run          # iOS / Android / macOS 均可
    git update-index --no-skip-worktree examples/fjs-go/ohos/build-profile.json5
    ```
 
+   fjs-go 是仓库里提交的宿主，直接 `flutter run`，不经过 `fjs run`，所以
+   `fjs` 的签名存档 / 写回（spec 113，见 `docs/toolchain.md`「调试签名」）
+   管不到它。
+
 连接页有三条路，真机优先用前两条：
 
 - **扫一扫**（Android / iOS）：直接扫 `fjs dev` 在终端里画出来的二维码

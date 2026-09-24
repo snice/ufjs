@@ -121,7 +121,7 @@ function open(dir: string, argv: string[]): void {
   console.log(`opened ${target}`);
 }
 
-function opener(target: string, platform?: string): [string, string[]] {
+export function opener(target: string, platform?: string): [string, string[]] {
   // the ohos host has no IDE-neutral project file; DevEco Studio is the only
   // thing that understands an hvigor/ArkTS project tree
   if (platform === 'ohos' && process.platform === 'darwin') {

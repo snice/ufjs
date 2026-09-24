@@ -54,6 +54,7 @@ import { firstFrameNodeWarnings } from './node-budget.js';
 import { assetSourceWarnings } from './asset-check.js';
 import { flutterDir as configuredFlutterDir, isEjected } from '../project/config.js';
 import { formatLog } from '../terminal/colors.js';
+import { ensureOhosSigning } from '../project/ohos-signing.js';
 import type { Loader, Metafile } from 'esbuild';
 
 // ---- local assets ----------------------------------------------------------
@@ -1186,6 +1187,7 @@ export function releaseBuild(opts: BuildOptions, res: BuildResult): void {
   if (opts.hap) {
     // `build hap` is an OpenHarmony-fork subcommand; the stock tool would
     // fail with an unknown-command error naming flutter, which reads fine
+    ensureOhosSigning(flutterDir, { interactive: process.stdout.isTTY === true });
     const args = ['build', 'hap', ...flutterModeArgs(opts.mode, opts.flutterArgs), ...engineDefineArgs(opts.jsEngine), ...opts.flutterArgs];
     const result = spawnSync('flutter', args, { cwd: flutterDir, stdio: 'inherit' });
     if (result.status !== 0) throw new Error('flutter build hap failed');
