@@ -65,36 +65,35 @@ const tags = ref(['ui']);
       </van-radio-group>
       <text class="echo">radio = {{ radio }}</text>
     </view>
+    <view class="block">
+      <text class="block-title">Stepper / Rate / Slider</text>
+      <view class="row">
+        <van-stepper v-model="stepper" />
+        <text class="echo">stepper = {{ stepper }}</text>
+      </view>
+      <view class="row">
+        <van-rate v-model="rate" />
+        <text class="echo">rate = {{ rate }}</text>
+      </view>
+      <van-slider v-model="slider" />
+      <text class="echo">slider = {{ slider }}</text>
+    </view>
 
+    <view class="block">
+      <text class="block-title">更多 Stepper / Rate</text>
+      <view class="row">
+        <van-stepper v-model="bigStepper" step="5" min="0" max="50" integer />
+        <text class="echo">step 5 = {{ bigStepper }}</text>
+      </view>
+      <view class="row">
+        <van-rate v-model="halfRate" allow-half :size="24" color="#ffd21e" void-icon="star" void-color="#eee" />
+        <text class="echo">半星 = {{ halfRate }}</text>
+      </view>
+      <text class="hint">横向滑过星星可连续选分；竖向拖动应滚动页面。</text>
+    </view>
     <!-- 首屏以下：页面转场结束后才挂（specs/118）。占位高度约等于这几块的总高，
          内容补上时滚动条不跳。 -->
     <defer placeholder-height="1300">
-      <view class="block">
-        <text class="block-title">Stepper / Rate / Slider</text>
-        <view class="row">
-          <van-stepper v-model="stepper" />
-          <text class="echo">stepper = {{ stepper }}</text>
-        </view>
-        <view class="row">
-          <van-rate v-model="rate" />
-          <text class="echo">rate = {{ rate }}</text>
-        </view>
-        <van-slider v-model="slider" />
-        <text class="echo">slider = {{ slider }}</text>
-      </view>
-
-      <view class="block">
-        <text class="block-title">更多 Stepper / Rate</text>
-        <view class="row">
-          <van-stepper v-model="bigStepper" step="5" min="0" max="50" integer />
-          <text class="echo">step 5 = {{ bigStepper }}</text>
-        </view>
-        <view class="row">
-          <van-rate v-model="halfRate" allow-half :size="24" color="#ffd21e" void-icon="star" void-color="#eee" />
-          <text class="echo">半星 = {{ halfRate }}</text>
-        </view>
-        <text class="hint">横向滑过星星可连续选分；竖向拖动应滚动页面。</text>
-      </view>
 
       <view class="block">
         <text class="block-title">Slider 变体</text>
@@ -115,16 +114,8 @@ const tags = ref(['ui']);
         <text class="block-title">Field 变体</text>
         <van-cell-group inset>
           <van-field v-model="age" type="digit" label="年龄" placeholder="只能输入数字" />
-          <van-field
-            v-model="remark"
-            type="textarea"
-            label="备注"
-            rows="2"
-            autosize
-            maxlength="50"
-            show-word-limit
-            placeholder="多行输入"
-          />
+          <van-field v-model="remark" type="textarea" label="备注" rows="2" autosize maxlength="50" show-word-limit
+            placeholder="多行输入" />
           <van-field label="只读" model-value="不可编辑的内容" readonly />
           <van-field label="禁用" model-value="禁用状态" disabled />
         </van-cell-group>
@@ -174,29 +165,34 @@ const tags = ref(['ui']);
   padding: 16px;
   background-color: #f7f8fa;
 }
+
 .page-title {
   font-size: 20px;
   font-weight: 700;
   color: #323233;
   margin-bottom: 4px;
 }
+
 .page-note {
   font-size: 12px;
   color: #969799;
   margin-bottom: 12px;
 }
+
 .block {
   background-color: #ffffff;
   border-radius: 8px;
   padding: 12px;
   margin-bottom: 12px;
 }
+
 .block-title {
   font-size: 14px;
   font-weight: 600;
   color: #646566;
   margin-bottom: 8px;
 }
+
 .row {
   flex-direction: row;
   flex-wrap: wrap;
@@ -204,21 +200,26 @@ const tags = ref(['ui']);
   gap: 8px;
   margin-bottom: 8px;
 }
+
 .hint {
   font-size: 12px;
   color: #969799;
   margin-top: 4px;
 }
+
 .slider-box {
   padding: 12px 0;
 }
+
 .vertical-row {
   margin-top: 12px;
 }
+
 .vertical-box {
   height: 120px;
   padding: 0 12px;
 }
+
 .echo {
   font-size: 12px;
   color: #1989fa;
