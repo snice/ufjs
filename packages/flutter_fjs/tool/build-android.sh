@@ -5,15 +5,18 @@
 #
 # The flavors land in the abi cache — one directory per engine, no renaming
 # of files (Dart always opens libfjs.so):
-#   abi/primjs/android/<abi>/    libfjs.so + libfjs_debugger.so (default)
-#   abi/quickjs/android/<abi>/   libfjs.so only — the CDP inspector exists
-#                                for PrimJS only
+#   abi/primjs/android/<abi>/            libfjs.so (default engine)
+#   abi/primjs/android-debugger/<abi>/   libfjs_debugger.so
+#   abi/quickjs/android/<abi>/           libfjs.so only — the CDP inspector
+#                                        exists for PrimJS only
 # android/build.gradle points jniLibs at abi/<flavor>/android for the flavor
 # the build asked for — nothing is copied anywhere else.
 #
 # spec 090: libfjs.so is the engine and goes into every build;
 # libfjs_debugger.so is the CDP inspector + transport, loaded only by debug
-# builds; release APKs drop the file automatically (see android/build.gradle).
+# builds. It lives in its own directory (spec 115) because android/build.gradle
+# attaches that directory to the `debug` source set only — release and
+# profile APKs never merge it.
 #
 # Needs ANDROID_NDK_HOME (or ANDROID_NDK_ROOT / ANDROID_HOME with an ndk/ dir),
 # r28 or newer: from r28 the NDK aligns LOAD segments to 16 KB by default, which
@@ -49,7 +52,7 @@ HOST_TAG=$(uname -s | tr '[:upper:]' '[:lower:]')-x86_64
 [ "$(uname -s)" = "Darwin" ] && HOST_TAG=darwin-x86_64
 STRIP="$NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin/llvm-strip"
 
-rm -rf "$OUT" "$ABI_CACHE"/primjs/android "$ABI_CACHE"/quickjs/android
+rm -rf "$OUT" "$ABI_CACHE"/{primjs,quickjs}/android "$ABI_CACHE"/{primjs,quickjs}/android-debugger
 
 # flavor <engine> <build-debugger? ON|OFF>
 flavor() {
@@ -81,9 +84,10 @@ flavor() {
             "$STRIP" --strip-unneeded "$ABI_CACHE/$engine/android/$abi/$so"
         done
         if [ "$debugger" = "ON" ]; then
+            mkdir -p "$ABI_CACHE/$engine/android-debugger/$abi"
             for so in libfjs_debugger.so; do
-                cp "$OUT/$engine-$abi/$so" "$ABI_CACHE/$engine/android/$abi/$so"
-                "$STRIP" --strip-unneeded "$ABI_CACHE/$engine/android/$abi/$so"
+                cp "$OUT/$engine-$abi/$so" "$ABI_CACHE/$engine/android-debugger/$abi/$so"
+                "$STRIP" --strip-unneeded "$ABI_CACHE/$engine/android-debugger/$abi/$so"
             done
         fi
     done
@@ -93,4 +97,4 @@ flavor primjs  ON
 flavor quickjs OFF
 
 echo "built:"
-ls -lh "$ABI_CACHE"/{primjs,quickjs}/android/*/libfjs*.so | awk '{print "  " $NF " " $5}'
+ls -lh "$ABI_CACHE"/{primjs,quickjs}/android*/*/libfjs*.so | awk '{print "  " $NF " " $5}'

@@ -217,9 +217,9 @@ Windows 没有传输实现，attach 直接返回 -1。
 
 | 平台 | 机制 |
 |---|---|
-| Android | `android/build.gradle` L55-59：release 任务从 jniLibs 排除 `**/libfjs_debugger.so`；`-PfjsKeepDebugger=true` 可保留 |
+| Android | 模块在 `abi/primjs/android-debugger/<abi>/`，`android/build.gradle` 只把这个目录挂到 `debug` 源集；`-PfjsKeepDebugger=true` 改挂 `main`。不能用 `jniLibs.excludes`——AGP 忽略源集上的过滤，0.1.6 的 release APK 因此带着模块（spec 115）。`tool/test/android_debugger_strip_check.mjs` 实跑三个变体的合并来断言 |
 | iOS / macOS | `fjs_debugger.xcframework` 是静态归档，只有 `ios/Classes/FlutterFjsPlugin.m` L36-50 的 `#if DEBUG` keep-alive 表引用它，Release/Profile 一个 member 都不拉 |
-| ohos | `ohos/build-profile.json5` 的 `buildModeBinder` 把 release/profile 绑到带 `nativeLib.filter.excludes` 的配置，插件 HAR 里就没这个文件 |
+| ohos | **宿主** `ohos/entry/build-profile.json5` 的 `buildModeBinder` 把 release/profile 绑到排除 `**/libfjs_debugger.so` 的 `fjs_no_debugger`（CLI 托管宿主由 `patchOhosEntryDebuggerFilter` 补上，其它宿主手加，片段见 toolchain.md）。插件自己 `ohos/build-profile.json5` 的 binder 只在 fork 把插件组装成 HAR 时生效，而 fork 通常以 `file:` 源码依赖接入，0.1.6 的 release HAP 因此带着模块（spec 115） |
 | 桌面 | `fjsrun` / `fjs-test` 只链 `libfjs`，用 `native/tools/debugger-module.h` 的 dlopen 找邻接的模块，找不到就报"本构建无调试器" |
 
 Dart 侧对称（`lib/src/ffi.dart` L205-263）：非 `kDebugMode` 直接不找；

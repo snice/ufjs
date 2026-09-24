@@ -7,6 +7,7 @@ import {
   patchAndroidAbiFilters,
   patchAndroidToolchain,
   patchHostMain,
+  patchOhosEntryDebuggerFilter,
   selectDevServerPort,
   syncHostMain,
   syncNativeHostConfig,
@@ -740,5 +741,101 @@ describe('devicesFor', () => {
       { id: 'dead-ohos', name: 'offline', targetPlatform: 'ohos-arm64', isSupported: false },
     ];
     expect(devicesFor('ohos', withDead).map((d) => d.id)).not.toContain('dead-ohos');
+  });
+});
+
+describe('patchOhosEntryDebuggerFilter (spec 115)', () => {
+  // what the ohos flutter fork's `flutter create` writes
+  const entry = [
+    '{',
+    '  "apiType": \'stageMode\',',
+    '  "buildOption": {',
+    '  },',
+    '  "targets": [',
+    '    {',
+    '      "name": "default",',
+    '      "runtimeOS": "HarmonyOS"',
+    '    },',
+    '    {',
+    '      "name": "ohosTest",',
+    '    }',
+    '  ]',
+    '}',
+  ].join('\n');
+  const root = '{ "app": { "buildModeSet": [ { "name": "debug" }, { "name": "profile" }, { "name": "release" } ] } }';
+
+  function host(entryBody: string, rootBody = root): { dir: string; file: string } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fjs-ohos-entry-'));
+    const file = path.join(dir, 'ohos/entry/build-profile.json5');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, entryBody);
+    fs.writeFileSync(path.join(dir, 'ohos/build-profile.json5'), rootBody);
+    return { dir, file };
+  }
+
+  it('binds release and profile to a filter that drops the debugger', () => {
+    const { dir, file } = host(entry);
+    try {
+      patchOhosEntryDebuggerFilter(dir);
+      const out = fs.readFileSync(file, 'utf8');
+      expect(out).toContain('"excludes": ["**/libfjs_debugger.so"]');
+      expect(out).toMatch(/"buildModeName": "release",\s*"mappings": \[\{ "targetName": "default", "buildOptionName": "fjs_no_debugger" \}\]/);
+      expect(out).toContain('"buildModeName": "profile"');
+      expect(out).not.toContain('"buildModeName": "debug"');
+      // inserted as siblings of "targets", which is left as it was
+      expect(out.indexOf('"buildModeBinder"')).toBeLessThan(out.indexOf('"targets"'));
+      expect(out.slice(out.indexOf('  "targets"'))).toBe(entry.slice(entry.indexOf('  "targets"')));
+      // JSON5 with the comment and trailing commas stripped must still parse
+      const json = out.replace(/\/\/[^\n]*/g, '').replace(/'/g, '"').replace(/,(\s*[\]}])/g, '$1');
+      expect(() => JSON.parse(json)).not.toThrow();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('is idempotent', () => {
+    const { dir, file } = host(entry);
+    try {
+      patchOhosEntryDebuggerFilter(dir);
+      const once = fs.readFileSync(file, 'utf8');
+      patchOhosEntryDebuggerFilter(dir);
+      expect(fs.readFileSync(file, 'utf8')).toBe(once);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves out profile when the project has no such build mode', () => {
+    const { dir, file } = host(entry, '{ "app": { "buildModeSet": [ { "name": "debug" }, { "name": "release" } ] } }');
+    try {
+      patchOhosEntryDebuggerFilter(dir);
+      const out = fs.readFileSync(file, 'utf8');
+      expect(out).toContain('"buildModeName": "release"');
+      expect(out).not.toContain('"buildModeName": "profile"');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('only warns when the entry already has its own build options', () => {
+    const own = entry.replace('  "targets": [', '  "buildModeBinder": [],\n  "targets": [');
+    const { dir, file } = host(own);
+    try {
+      const warnings: string[] = [];
+      patchOhosEntryDebuggerFilter(dir, (m) => warnings.push(m));
+      expect(fs.readFileSync(file, 'utf8')).toBe(own);
+      expect(warnings.join('\n')).toMatch(/may still ship libfjs_debugger\.so[\s\S]*fjs_no_debugger/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does nothing without an ohos host', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fjs-ohos-entry-'));
+    try {
+      expect(() => patchOhosEntryDebuggerFilter(dir)).not.toThrow();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

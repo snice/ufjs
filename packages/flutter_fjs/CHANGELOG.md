@@ -1,3 +1,12 @@
+## 0.1.7（未发布）
+
+- **release / profile 包不再带调试器模块（spec 115）**：0.1.6 的 Android release APK
+  每个 ABI 多带一个 `libfjs_debugger.so`（arm64 495 KB，三个 ABI 共约 1.3 MB），
+  鸿蒙 release HAP 同样带着（433 KB）。Android 端 `jniLibs.excludes` 被 AGP 忽略，
+  现在调试器放在单独的 `abi/primjs/android-debugger/`，只挂到 `debug` 源集；鸿蒙端插件
+  以源码依赖接入时插件侧过滤不生效，改由宿主 `entry/build-profile.json5` 过滤
+  （`@ufjs/cli` 托管的宿主自动补上，其它宿主见 `docs/toolchain.md`）。
+
 ## 0.1.6
 
 - **默认 JS 引擎换成 PrimJS 4.1.1（specs/088–091）**：带内置 Chrome DevTools

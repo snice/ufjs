@@ -3,6 +3,23 @@
   "apiType": 'stageMode',
   "buildOption": {
   },
+  // fjs (spec 115): release/profile HAPs leave the debugger module out
+  "buildOptionSet": [
+    {
+      "name": "fjs_no_debugger",
+      "nativeLib": { "filter": { "excludes": ["**/libfjs_debugger.so"] } }
+    }
+  ],
+  "buildModeBinder": [
+    {
+      "buildModeName": "release",
+      "mappings": [{ "targetName": "default", "buildOptionName": "fjs_no_debugger" }]
+    },
+    {
+      "buildModeName": "profile",
+      "mappings": [{ "targetName": "default", "buildOptionName": "fjs_no_debugger" }]
+    }
+  ],
   "targets": [
     {
       "name": "default",
