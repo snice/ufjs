@@ -11,7 +11,7 @@ import {
   createRenderer,
   type RendererOptions,
 } from '@vue/runtime-core';
-import { create, forgetHandlers, forgetElementStyle, insert, remove, setHoverStyle, setText, setProps, setConstProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setOffsetParentResolver, type Element, type EventPayload } from '../ui/element';
+import { create, forgetHandlers, forgetElementStyle, insert, remove, setHoverStyle, setText, setProps, setConstProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setConnectedResolver, setOffsetParentResolver, type Element, type EventPayload } from '../ui/element';
 import { transitionClassesOf } from './transition-classes';
 import { lastPointer } from '../ui/geometry';
 import { hasNativeHost, invokeHost, registerPreFlush } from '../host';
@@ -527,6 +527,15 @@ const POSITIONED = new Set(['relative', 'absolute', 'fixed', 'sticky']);
 
 // offsetParent (ui/element.ts): the nearest positioned ancestor, else the
 // page root the element hangs under — the DOM's `<body>` fallback.
+// hoisted `fixed` elements hang off an overlay host that is itself a child
+// of the page root, so the same walk covers them
+setConnectedResolver((id) => {
+  for (let cur: number | null | undefined = id; cur != null; cur = parentOf.get(cur)) {
+    if (pageRoots.has(cur)) return true;
+  }
+  return false;
+});
+
 setOffsetParentResolver((id) => {
   let cur = parentOf.get(id);
   let last: number | null = null;

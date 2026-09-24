@@ -10,6 +10,8 @@
 // logical pixels in the window's space, the same space touch events report
 // (touch.dart), so a rect and a touch point can be subtracted.
 
+import 'dart:convert';
+
 import 'package:flutter/rendering.dart'
     show RenderObjectWithLayoutCallbackMixin;
 import 'package:flutter/gestures.dart';
@@ -18,6 +20,8 @@ import 'package:flutter/widgets.dart';
 
 import 'mirror_tree.dart';
 import 'registry/host.dart';
+import 'render/style.dart' show FjsStyle;
+import 'widgets/text.dart' show fjsTextStyle;
 
 /// Where the last tap landed, recorded by the tap detector (gesture.dart)
 /// just before it dispatches the tap — the click that JS then asks about.
@@ -74,6 +78,28 @@ void registerGeometryHostModules({
     final origin = box.localToGlobal(Offset.zero);
     return '[${_num(origin.dx)},${_num(origin.dy)},'
         '${_num(box.size.width)},${_num(box.size.height)}]';
+  });
+
+  host.register('fjs.ui.measureText', (args) {
+    final styleJson = args.isNotEmpty ? args[0]?.toString() : null;
+    final text = args.length > 1 ? args[1]?.toString() ?? '' : '';
+    final maxWidth = args.length > 2 && args[2] is num
+        ? (args[2] as num).toDouble()
+        : double.infinity;
+    // The text a node renders is a Text widget: it merges the app's
+    // DefaultTextStyle (the theme's font and spacing) and scales by
+    // MediaQuery. A bare TextPainter did neither and measured ~2.5%
+    // narrower, so vant's cut left "展开" wrapping to a third line. Any
+    // mounted page node carries the same inherited context.
+    BuildContext? context;
+    for (final id in tree.rootChildren) {
+      final element = tree.node(id)?.element;
+      if (element is Element && element.mounted) {
+        context = element;
+        break;
+      }
+    }
+    return measureTextBlock(styleJson, text, maxWidth, context: context);
   });
 
   host.register('fjs.ui.pointer', (args) {
@@ -202,4 +228,51 @@ int _nodeAt(MirrorTree tree, PointerEvent event) {
     }
   }
   return 0;
+}
+
+/// A paragraph's laid-out size at [maxWidth], without a node: what a DOM
+/// library gets from a detached `<div>`'s `offsetHeight` after writing its
+/// `innerText`. vant's TextEllipsis binary-searches the longest prefix that
+/// fits `rows + 0.5` lines this way (specs/128). [styleJson] is a resolved
+/// style map (camelCase, as the style engine sends it); the TextStyle and
+/// strut are the ones a single-run text node renders with (text.dart), so
+/// the measured break points are the ones that will be painted.
+/// Answers `"[width,height,lines]"`.
+String measureTextBlock(
+  String? styleJson,
+  String text,
+  double maxWidth, {
+  BuildContext? context,
+}) {
+  Map<String, Object?> props = const {};
+  if (styleJson != null && styleJson.isNotEmpty) {
+    try {
+      final decoded = jsonDecode(styleJson);
+      if (decoded is Map<String, Object?>) props = decoded;
+    } on FormatException {
+      // an unreadable style measures as the default text style
+    }
+  }
+  final own = fjsTextStyle(FjsStyle(props));
+  final inherited = context == null ? null : DefaultTextStyle.of(context);
+  final textStyle = inherited?.style.merge(own) ?? own;
+  final painter =
+      TextPainter(
+        text: TextSpan(text: text, style: textStyle),
+        strutStyle: StrutStyle.fromTextStyle(textStyle, forceStrutHeight: true),
+        textDirection: TextDirection.ltr,
+        textScaler: context == null
+            ? TextScaler.noScaling
+            : MediaQuery.textScalerOf(context),
+        textHeightBehavior: inherited?.textHeightBehavior,
+      )..layout(
+        maxWidth: maxWidth.isFinite && maxWidth > 0
+            ? maxWidth
+            : double.infinity,
+      );
+  final lines = painter.computeLineMetrics().length;
+  final result =
+      '[${_num(painter.width)},${_num(painter.height)},${lines == 0 ? 1 : lines}]';
+  painter.dispose();
+  return result;
 }

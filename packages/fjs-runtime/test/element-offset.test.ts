@@ -71,4 +71,22 @@ describe('offset geometry', () => {
     await flush();
     expect(tabs.value.offsetParent?.id).toBe(root.id);
   });
+
+  // vant's TextEllipsis measures only when `root.isConnected` — undefined
+  // here left every text uncut on the app (specs/128)
+  it('isConnected follows the element into and out of the page', async () => {
+    setOpSink(() => {});
+    const show = ref(true);
+    const box = ref<any>(null);
+    const App: any = defineComponent(() => () =>
+      h('view', null, show.value ? [h('view', { ref: box }, 'text')] : []) as VNode,
+    );
+    createApp(App).mount(flutterRoot());
+    await flush();
+    const el = box.value;
+    expect(el.isConnected).toBe(true);
+    show.value = false;
+    await flush();
+    expect(el.isConnected).toBe(false);
+  });
 });
