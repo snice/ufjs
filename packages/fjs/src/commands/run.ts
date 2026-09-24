@@ -1129,6 +1129,10 @@ async function startDevServer(port: number, host: string): Promise<DevServerHand
   const cli = process.argv[1];
   const child = spawn(process.execPath, [cli, 'dev', '--pages', '--port', String(port), '--host', host, '--no-qr'], {
     cwd: process.cwd(),
+    // `fjs run` has already materialized the flavor (FJS_JS_ENGINE is in
+    // this env); without the marker the child runs the engine runner a
+    // second time and prints the same flavor line again
+    env: { ...process.env, FJS_ENGINE_MATERIALIZED: '1' },
     stdio: ['ignore', 'inherit', 'inherit'],
   });
   await waitForPort(port, child);
