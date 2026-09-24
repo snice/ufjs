@@ -40,13 +40,22 @@ const version = JSON.parse(
   fs.readFileSync(path.join(repo, 'packages', 'fjs', 'package.json'), 'utf8'),
 ).version;
 
-/** target -> extra cmake flags. Everything else builds natively. */
+/** target -> extra cmake flags. Everything else builds natively.
+ *
+ * PrimJS's upstream CMakeLists is written for clang only: it hard-codes
+ * -faddrsig and -fno-sanitize=safe-stack, which gcc rejects, and its Windows
+ * branch expects clang-cl (clang -W flags next to /MT, /EHsc) plus a
+ * LINK_RUNTIME_TYPE it never defaults. So Linux names clang explicitly —
+ * runners default to gcc — and Windows asks Visual Studio for the ClangCL
+ * toolset (native/CMakeLists.txt defaults LINK_RUNTIME_TYPE to MD).
+ * quickjs-ng builds with either compiler; one compiler per target keeps the
+ * two flavors comparable. */
 const TARGETS = {
   'darwin-arm64': ['-DCMAKE_OSX_ARCHITECTURES=arm64', '-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0'],
   'darwin-x64': ['-DCMAKE_OSX_ARCHITECTURES=x86_64', '-DCMAKE_OSX_DEPLOYMENT_TARGET=10.15'],
-  'linux-x64': [],
-  'linux-arm64': [],
-  'win32-x64': [],
+  'linux-x64': ['-DCMAKE_C_COMPILER=clang', '-DCMAKE_CXX_COMPILER=clang++'],
+  'linux-arm64': ['-DCMAKE_C_COMPILER=clang', '-DCMAKE_CXX_COMPILER=clang++'],
+  'win32-x64': ['-T', 'ClangCL'],
 };
 
 function hostTarget() {
@@ -89,6 +98,16 @@ function compile(target, flavor, exe) {
   const built = candidates.find((p) => fs.existsSync(p));
   if (!built) throw new Error(`fjsc not found after build (looked in ${candidates.join(', ')})`);
   return built;
+}
+
+/** Engine ids compiled into `binary`, read statically: fjs_engine_id()'s
+ * literal sits NUL-terminated in the data section, so this works for a
+ * Linux or Windows binary on a Mac too. A fjsc embeds exactly one. */
+function embeddedEngines(binary) {
+  const text = fs.readFileSync(binary).toString('latin1');
+  const ids = new Set();
+  for (const m of text.matchAll(/\0(primjs-\d+\.\d+\.\d+|quickjs-ng-\d+\.\d+\.\d+)\0/g)) ids.add(m[1]);
+  return [...ids];
 }
 
 /** The engine id `binary` reports (fjsc without arguments prints its usage
@@ -141,9 +160,18 @@ function build(target) {
           `fjsc-prebuilt artifact into packages/fjsc/ (nothing to commit).`,
       );
     }
-    // a wrong flavor here is exactly what shipped in 0.1.4; only a binary
-    // this machine can run can be asked
-    let check = 'not verified on this machine';
+    // a wrong flavor here is exactly what shipped in 0.1.4. Every binary is
+    // checked statically — that also catches a stale pre-114 prebuilt/ copy
+    // on a Mac, where Linux/Windows binaries cannot run — and a binary this
+    // machine can run is asked as well.
+    const embedded = embeddedEngines(built);
+    if (embedded.length !== 1 || embedded[0] !== id) {
+      throw new Error(
+        `${built} (${origin}) embeds engine ${embedded.join(', ') || '(none)'}, expected ${id} for ${flavor}` +
+          (origin.startsWith('prebuilt') ? ' — a stale prebuilt/ from before spec 114? Unzip a fresh fjsc-prebuilt artifact.' : ''),
+      );
+    }
+    let check = `embeds ${id}; not run on this machine`;
     if (target === hostTarget()) {
       const got = reportedEngine(built);
       if (got !== id) {

@@ -71,3 +71,20 @@
   - 与 spec/plan 的出入：
     - spec §3 的示例写着终端会打印 `fjsc: … engine …` 这一行，但 CLI 一直是 `stdio: pipe`、不回显这一行。本次没有改回显，改为直接读 bundle 头核对引擎；
     - npm 包的 `license` 字段由 `MIT` 改为 `MIT AND Apache-2.0`，因为包里链接了 PrimJS（Apache-2.0）。plan 没写这一条，改动很小，已写进 `docs/publishing.md`。
+
+## 补遗：CI 上 Linux / Windows 的 primjs 编不过（2026-09-24）
+
+CI 的 `build.mjs linux-arm64` 失败，报 `c++: error: unrecognized argument to '-fno-sanitize=' option: 'safe-stack'` / `-faddrsig`。
+原因是 PrimJS 上游 CMakeLists 只支持 clang，Windows 分支按 clang-cl 写，而且依赖一个没有默认值的
+`LINK_RUNTIME_TYPE`；Linux runner 默认用的是 gcc。0.1.x 时 fjsc 是 quickjs-ng 版，所以当时没暴露。
+
+- [x] T060 `packages/fjsc/build.mjs`：Linux 目标指定 `clang`/`clang++`，Windows 目标用 `-T ClangCL`
+- [x] T061 `native/CMakeLists.txt`：primjs flavor 在非 clang 编译器下于 configure 阶段 `FATAL_ERROR` 并给出参数（宪法 V）；Windows 下 `LINK_RUNTIME_TYPE` 默认为 `MD`
+- [x] T062 `fjsc-release.yml`：Linux job 先确认有 clang，没有就用 apt 安装
+- [x] T063 `build.mjs` 对所有目标静态读取二进制内嵌的引擎 id 并核对，本机目标另外运行核对；能拦下 9 月 18 日留下的 quickjs 版 `prebuilt/linux-*/fjsc`、`prebuilt/win32-x64/fjsc.exe`
+- [x] T064 文档：`docs/publishing.md`（clang 要求、解压前先清空 prebuilt/、静态核对），`docs/toolchain.md`（Linux 本机编 native 要加 clang 参数）
+- [x] T065 验证：
+  - Docker（ubuntu 24.04 / node:22-bookworm，aarch64）复现了 gcc 下的失败，现在改为 configure 阶段就给出清晰报错；
+  - `build.mjs linux-arm64` 用 clang 编出两个二进制，按 CI 冒烟测试的逻辑两个都通过；
+  - 本机 darwin-arm64 打包不受影响；旧 prebuilt 被静态核对拦下；
+  - **Windows（ClangCL）无法在本机验证**，要看 CI 结果。

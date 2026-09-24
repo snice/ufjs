@@ -96,9 +96,16 @@ npx fjs build --pages && npx vue-tsc --noEmit && npx vite build
 | `bin/fjsc`（Windows 为 `fjsc.exe`） | `primjs-4.1.1`，默认 |
 | `bin/fjsc-quickjs`（`fjsc-quickjs.exe`） | `quickjs-ng-0.9.0` |
 
+**PrimJS 只能用 clang 编**：上游 CMakeLists 写死了 `-faddrsig`、`-fno-sanitize=safe-stack`
+等 gcc 不认的参数，Windows 分支按 clang-cl 写。所以 `build.mjs` 在 Linux 上指定
+`clang`/`clang++`，在 Windows 上用 Visual Studio 的 `ClangCL` 工具集；CI 的 Linux job
+会确认 clang 已安装。用 gcc 配置 primjs flavor 时，`native/CMakeLists.txt` 会在
+configure 阶段直接报错，不会等到编译到一半才失败。
+
 `build.mjs` 对每个 flavor 各用一棵 cmake 树（`build/<target>-<flavor>`），显式传
 `-DFJS_JS_ENGINE=<flavor> -DFJS_DEBUGGER=OFF`；目标是本机平台时把两个二进制各跑
-一次，核对自报的引擎 id，不符就中止——0.1.4 就是因为没传 flavor、也没核对，把
+一次，核对自报的引擎 id；所有目标（包括 Mac 上跑不起来的 Linux / Windows 二进制）
+还会静态读出二进制里内嵌的引擎 id 字符串核对一次。任何一项不符就中止——0.1.4 就是因为没传 flavor、也没核对，把
 quickjs-ng 当 `bin/fjsc` 发了出去。包里带 `LICENSE-primjs`（Apache-2.0）和
 `LICENSE-quickjs-ng`，`license` 字段是 `MIT AND Apache-2.0`。
 
@@ -119,7 +126,8 @@ trusted publisher 的，包得先存在**，覆盖不了首次发布。
 所以流程是「CI 只编译，本地发布」：
 
 1. Actions → **Build fjsc binaries** → Run workflow
-2. 下载 `fjsc-prebuilt` artifact，解压到 `packages/fjsc/`
+2. 下载 `fjsc-prebuilt` artifact，**先清空 `packages/fjsc/prebuilt/`** 再解压到 `packages/fjsc/`
+   （spec 114 之前留下的 `prebuilt/<target>/fjsc` 是 quickjs-ng，`build.mjs` 会拦下并报错）
 3. `node packages/fjsc/build.mjs --all` —— darwin 现编，其余用解压进来的
 4. 本地逐个 `npm publish`，带 OTP
 

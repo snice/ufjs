@@ -83,6 +83,23 @@ else()
     # The inspector now binds the engine internals it uses across a module
     # boundary, so they cannot stay hidden — see primjs/src/.../base_export.h.
     add_compile_definitions(FJS_EXPORT_ENGINE_INTERNALS)
+    # Upstream PrimJS hard-codes clang-only flags (-faddrsig,
+    # -fno-sanitize=safe-stack) and, on Windows, clang-cl conventions. With
+    # gcc the configure step passes and the build dies deep in logging.cc;
+    # say so up front instead (Linux: CC=clang CXX=clang++, Windows:
+    # -T ClangCL — see packages/fjsc/build.mjs).
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR
+            "fjs: the primjs flavor needs clang (found ${CMAKE_CXX_COMPILER_ID}). "
+            "Linux: -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++; "
+            "Windows (Visual Studio generator): -T ClangCL. "
+            "The quickjs flavor (-DFJS_JS_ENGINE=quickjs) builds with any compiler.")
+    endif()
+    if(WIN32 AND NOT DEFINED LINK_RUNTIME_TYPE)
+        # upstream's `if(${LINK_RUNTIME_TYPE} STREQUAL "MT")` is a configure
+        # error when the variable is unset; /MD matches our own targets
+        set(LINK_RUNTIME_TYPE MD)
+    endif()
     add_subdirectory(primjs EXCLUDE_FROM_ALL)
     # tool/build-apple.sh archives `libquickjs.a` into the xcframeworks; the
     # upstream target's output name is "quick".
