@@ -42,6 +42,12 @@ jobs:
         with:
           node-version: '22'
 
+      # PrimJS builds with clang only; build.mjs names it (ClangCL on Windows,
+      # which the windows image ships with Visual Studio)
+      - name: Ensure clang
+        if: runner.os == 'Linux'
+        run: command -v clang++ || (sudo apt-get update && sudo apt-get install -y clang)
+
       - name: Build fjsc
         run: node packages/fjsc/build.mjs ${{ matrix.target }}
 

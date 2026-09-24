@@ -62,6 +62,10 @@ cmake --build build-native -j
 ./build-native/fjs-test
 ```
 
+Linux 上要加 `-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++`：默认的
+primjs flavor 只能用 clang 编（上游写死了 clang 专用参数），用 gcc 时 configure
+阶段就会报错；quickjs flavor 不挑编译器。
+
 ### fjsc 的查找顺序
 
 引擎静态链接在 `fjsc` 里，**一个 flavor 就是一个二进制**；编出的 bundle 头里带
