@@ -230,14 +230,30 @@ export function ensureFlutterHost(
   if (!fs.existsSync(pubspec)) {
     fs.mkdirSync(path.dirname(dir), { recursive: true });
     const packageName = dartPackageName(name);
-    // ohos only when the flutter on PATH is the OpenHarmony fork — the
-    // stock tool rejects the platform and would abort host creation
-    const platforms = `android,ios${flutterSupportsOhos() ? ',ohos' : ''}`;
+    const platforms = hostPlatforms().join(',');
     const result = spawnSync('flutter', ['create', `--platforms=${platforms}`, '--project-name', packageName, dir], {
       stdio: 'inherit',
     });
     if (result.status !== 0) {
       throw new Error('flutter create failed');
+    }
+  } else if (managed) {
+    // A deleted platform dir (`rm -rf .fjs/flutter/ohos` to start that side
+    // over, or a host made before the ohos fork was on PATH) would otherwise
+    // stay missing for good — `flutter build hap` then fails with "don't have
+    // a entry module". flutter create on an existing project only adds the
+    // files that are missing, so pubspec/main.dart are left alone.
+    const missing = hostPlatforms().filter((p) => !fs.existsSync(path.join(dir, p)));
+    if (missing.length > 0) {
+      console.log(`host: recreating ${missing.join(', ')} under ${dir}`);
+      const result = spawnSync(
+        'flutter',
+        ['create', `--platforms=${missing.join(',')}`, '--project-name', dartPackageName(name), dir],
+        { stdio: 'inherit' },
+      );
+      if (result.status !== 0) {
+        throw new Error('flutter create failed');
+      }
     }
   }
   const libDir = path.join(dir, 'lib');
@@ -798,6 +814,13 @@ function escapeXml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+/** Platforms a generated host carries. ohos only when the flutter on PATH is
+ * the OpenHarmony fork — the stock tool rejects the platform and would abort
+ * host creation. */
+function hostPlatforms(): string[] {
+  return ['android', 'ios', ...(flutterSupportsOhos() ? ['ohos'] : [])];
 }
 
 function removeDefaultWidgetTest(dir: string): void {

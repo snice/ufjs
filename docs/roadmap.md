@@ -189,7 +189,8 @@ uni-app 那张表：
   **待本机验证**：iOS / macOS 来回切换
 - ✅ 鸿蒙调试签名跟着机器走（`specs/113-ohos-signing-reuse`，2026-09）：DevEco 首次签名后 `fjs run ohos` /
   `fjs build --hap` 把 `signingConfigs` 存进 `~/.fjs/ohos-signing/`，宿主重建后自动写回；没有可用签名时在
-  flutter 之前报错并打开 DevEco，不再等 hvigor 跑 20 秒。**待本机验证**：鸿蒙模拟器
+  flutter 之前报错并打开 DevEco，不再等 hvigor 跑 20 秒。鸿蒙模拟器上 `fjs run ohos` 与 `fjs build --hap` 均已实测；删掉 `.fjs/flutter/ohos`
+  后宿主会自动补建
 - ✅ fjsc 双引擎（`specs/114-fjsc-dual-engine`，2026-09）：每个 `@ufjs/fjsc-<平台>` 带 `bin/fjsc`（primjs）与
   `bin/fjsc-quickjs`；CLI 按二进制自报的引擎 id 挑 fjsc（`FJSC_PATH` 不符即报错），编完再核对，`fjs doctor`
   分引擎列出。修掉 0.1.4 把 quickjs-ng 当默认 `bin/fjsc` 发布、primjs 构建到运行时才失败的问题。
