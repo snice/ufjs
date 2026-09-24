@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.14...3.31)
 project(fjs LANGUAGES C CXX)
 
 # Keep in sync with pubspec.yaml `version:`.
-set(FJS_VERSION 0.1.6)
+set(FJS_VERSION 0.1.7)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)

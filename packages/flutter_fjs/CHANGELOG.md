@@ -1,4 +1,4 @@
-## 0.1.7（未发布）
+## 0.1.7
 
 - **release / profile 包不再带调试器模块（spec 115）**：0.1.6 的 Android release APK
   每个 ABI 多带一个 `libfjs_debugger.so`（arm64 495 KB，三个 ABI 共约 1.3 MB），
