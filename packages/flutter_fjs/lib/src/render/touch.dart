@@ -25,6 +25,7 @@ import 'package:flutter/widgets.dart';
 import '../ffi.dart' show FjsEvent;
 import '../mirror_tree.dart';
 import '../widgets/dispatch.dart';
+import 'pointer_claim.dart';
 import 'style.dart';
 
 /// Pointer travel that turns a press into a gesture this node claims. Below
@@ -191,6 +192,9 @@ class _FjsTouchNodeState extends State<FjsTouchNode> {
     // but losing to a scroller is how touchcancel is noticed
     _recognizer.action = widget.action;
     _recognizer.addPointer(event);
+    // tells the page-root blur this press was the page's (pointer_claim);
+    // a `touch-action`-only node, with no listener, does not count
+    if (hasTouchEvents(widget.node)) markPointerClaimed(event.pointer);
     if (_listens('onTouchstart')) {
       _dispatch(FjsEvent.touchStart, [event.pointer], stamp: _ms(event));
     }

@@ -283,6 +283,12 @@ release 下 Flutter asset 的**键**不能带查询串，但 `asset://` 页面�
 |---|---|
 | `@input` / `@text-changed` | 当前文本。与 `input` 逐字节相同 |
 | `@focus` / `@blur` | 当前文本，一次转换一条 |
+
+**点外面失焦**（specs/124）：输入框聚焦时，点页面上**没有事件处理的地方**
+（空白、静态文字）会失焦、派 `@blur`、收起键盘，与浏览器一致。点带
+`@tap` / `@click` / `@touch*` 的节点或 button / switch 等控件**不失焦**——事件
+归页面处理，要收键盘自己调 `blur()`（vant 清除图标因此清空后仍保持焦点）。
+拖动、滚动不失焦。
 | `@confirm` | 当前文本。复用 `FJS_EVENT_TEXT_SUBMITTED`(4)——它就是 `input` 的 `@submit` 在多行下的名字 |
 | `@linechange` | `{"height":68,"lineCount":3}`，字段顺序固定；`height` 是**内容**高（不是盒子高），一位小数 |
 
