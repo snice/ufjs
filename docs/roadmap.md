@@ -181,7 +181,9 @@ uni-app 那张表：
   跨机器需 `fjs dev --remote-tools`。**待本机验证**：`flutter test` 与局域网真机附加
 - ✅ PrimJS 的 `queueMicrotask` 兜底不再吞异常（`specs/108-queue-microtask-errors`，2026-09）：
   回调异常按 quickjs-ng 原生同款前缀与格式上报，非函数参数同步抛 `TypeError`
-- [ ] 两个引擎都没有注册 Promise rejection tracker，普通未处理拒绝不打日志（需 native，待开 spec）
+- ✅ 未处理的 Promise 拒绝打日志（`specs/111-promise-rejection-tracker`，2026-09）：两个引擎在 pump 排空后
+  报 `[fjs] unhandled promise rejection`；顺带修掉 PrimJS 未处理拒绝列表只进不出的内存泄漏。
+  **待办**：用 `tool/build-*.sh` 重新生成各平台预编译产物后才会进 App
 - ✅ 清理入库的构建产物与死代码（`specs/109-no-committed-build-artifacts`，2026-09）：spec 093 e2e 的
   `bundle.js` / `relay.cjs` 改由 `e2e/build.mjs` 生成、不再入库（Linux 上重跑 11/11）；删除从未编译的
   `primjs/src/wasm/`；`fjsrun` 补 `<ctime>`，Linux 可编

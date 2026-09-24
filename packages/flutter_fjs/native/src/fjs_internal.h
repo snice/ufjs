@@ -47,6 +47,8 @@ struct FJSVM {
     int64_t next_handle_id = 1;
     char last_error[1024] = {0};
     const FjsDebuggerTransport *dbg_transport = nullptr;
+    /* spec 111: rejections still unhandled, reported after each job drain */
+    fjsengine::RejectionState rejections;
 };
 
 namespace fjs {

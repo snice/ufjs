@@ -152,6 +152,53 @@ int main() {
     CHECK(job_ran, "throwing timer does not starve queued jobs");
     CHECK(err_logged, "throwing timer's error is reported");
 
+    /* spec 111: a promise rejected with no handler by the end of a pump's
+     * job drain is reported once, error level — both engine flavors. A
+     * handler attached within the same drain means it was handled. */
+    {
+        auto rejections_since = [](size_t from, const char *needle) {
+            int n = 0;
+            for (size_t i = from; i < g_logs.size(); i++) {
+                if (g_logs[i].find("unhandled promise rejection") != std::string::npos &&
+                    (!needle || g_logs[i].find(needle) != std::string::npos))
+                    n++;
+            }
+            return n;
+        };
+        size_t mark = g_logs.size();
+        eval_ok(vm, "Promise.reject(new Error('rej-boom'))");
+        fjs_vm_pump(vm, now + 4000);
+        CHECK(rejections_since(mark, "rej-boom") == 1,
+              "unhandled rejection is reported once, with its message");
+        fjs_vm_pump(vm, now + 4001);
+        CHECK(rejections_since(mark, "rej-boom") == 1,
+              "the same rejection is not reported again by a later pump");
+
+        mark = g_logs.size();
+        eval_ok(vm, "Promise.reject(new Error('rej-caught')).catch(function(){})");
+        fjs_vm_pump(vm, now + 4002);
+        CHECK(rejections_since(mark, nullptr) == 0, "a caught rejection is not reported");
+
+        mark = g_logs.size();
+        eval_ok(vm,
+                "var lateP = Promise.reject(new Error('rej-late'));"
+                "Promise.resolve().then(function(){ lateP.catch(function(){}) });");
+        fjs_vm_pump(vm, now + 4003);
+        CHECK(rejections_since(mark, nullptr) == 0,
+              "a rejection caught later in the same drain is not reported");
+
+        mark = g_logs.size();
+        eval_ok(vm, "(async function(){ throw new Error('rej-async') })()");
+        fjs_vm_pump(vm, now + 4004);
+        CHECK(rejections_since(mark, "rej-async") == 1, "an async function's throw is reported");
+
+        mark = g_logs.size();
+        eval_ok(vm, "Promise.reject('rej-plain-string')");
+        fjs_vm_pump(vm, now + 4005);
+        CHECK(rejections_since(mark, "rej-plain-string") == 1,
+              "a non-Error rejection reason is reported too");
+    }
+
     /* ---- exceptions ---- */
     const char *bad_src = "undefinedFn()";
     int32_t rc = fjs_vm_eval_source(vm, (const uint8_t *)bad_src,
