@@ -19,6 +19,16 @@ Everything not needed by the `quickjs` CMake target was dropped:
 `*.podspec`). `src/interpreter/primjs/` (snapshot/embedded asm, only used
 when `ENABLE_COMPATIBLE_MM` + arm64 is on) was removed too.
 
+`src/wasm/` (616 KB) went later (spec 109): no CMakeLists references it, so it
+was never compiled — the pruning above had simply missed it. Removing it left
+the desktop build and `fjs-test` (debugger cases included) unchanged.
+
+`src/napi/` (812 KB) is also never compiled into anything we ship, but it
+**stays**: `src/gc/trace-gc.h` includes `src/napi/internal/primjs_napi_defines.h`,
+and upstream's CMakeLists declares the napi targets (EXCLUDE_FROM_ALL still
+needs their sources at generate time). Dropping it means one more local CMake
+patch to carry on every upgrade, for source that never reaches a binary.
+
 ## Local patches (spec 090: inspector as a separate module)
 
 Upstream links the inspector into the engine. We ship it as its own module

@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime> /* nanosleep: macOS pulled it in transitively, glibc does not */
 #include <string>
 #include <vector>
 

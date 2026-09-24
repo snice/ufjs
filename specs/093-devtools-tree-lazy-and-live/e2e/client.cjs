@@ -2,7 +2,10 @@
 // against the REAL relay (dist-equivalent bundle) + REAL PrimJS VM running
 // the fixture app built from the REAL runtime source.
 const { createRequire } = require('node:module');
-const req = createRequire('/Volumes/zt/Documents/flutter-js/packages/fjs/package.json');
+const path = require('node:path');
+// ws is packages/fjs's dependency; resolve it from there, relative to this
+// checkout (spec 109: no machine-specific paths)
+const req = createRequire(path.resolve(__dirname, '../../../packages/fjs/package.json'));
 const WS = req('ws');
 
 const URL = 'ws://127.0.0.1:49902/cdp';

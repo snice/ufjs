@@ -182,6 +182,11 @@ uni-app 那张表：
 - ✅ PrimJS 的 `queueMicrotask` 兜底不再吞异常（`specs/108-queue-microtask-errors`，2026-09）：
   回调异常按 quickjs-ng 原生同款前缀与格式上报，非函数参数同步抛 `TypeError`
 - [ ] 两个引擎都没有注册 Promise rejection tracker，普通未处理拒绝不打日志（需 native，待开 spec）
+- ✅ 清理入库的构建产物与死代码（`specs/109-no-committed-build-artifacts`，2026-09）：spec 093 e2e 的
+  `bundle.js` / `relay.cjs` 改由 `e2e/build.mjs` 生成、不再入库（Linux 上重跑 11/11）；删除从未编译的
+  `primjs/src/wasm/`；`fjsrun` 补 `<ctime>`，Linux 可编
+- [ ] fjs-go 内置的 `assets/shared.fjsbundle.gz` 是 quickjs-ng 字节码，默认引擎已是 PrimJS——
+  按 PrimJS 重新部署 showcase 后执行 `examples/fjs-go/tool/refresh-seed.sh`
 
 实机对拍时抓到三个只有跑起来才看得见的问题：Dart 的 mode 分支漏了 `center`
 （静静降级成 `scaleToFill`）；web 的 `heightFix` 因为 column flex 的 stretch 被
