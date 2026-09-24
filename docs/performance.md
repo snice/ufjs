@@ -122,6 +122,10 @@ jsi-and-native-modules.md)。
 导入本身 ~4 ms。快照与运行时的样式表 / 视口 / 引擎开关不一致就整份放弃。细节、代价
 （包体积）与对拍见 [vant-mount-perf.md](vant-mount-perf.md) 的 specs/119 一节。
 
+分包构建（`--pages` / `fjs run --profile|--release`）里，页面 chunk 注册自己的 scoped
+样式表时以前会清空整个样式缓存，每个新页面都从全冷开始；specs/120 之后，新作用域的表
+不再触发失效。见 [vant-mount-perf.md](vant-mount-perf.md) 的「真机复核」一节。
+
 ## 样式驻留带来的变化（2026-09）
 
 把 style 从「每节点一份内联 JSON」改成「一次 DEFINE_STYLE + 每节点 13 字节

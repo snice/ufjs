@@ -551,6 +551,37 @@ vant-basic 同步段 49 → 26 ms、vant-more 39 → 24 ms。vant-nav 同步段 
 `defaultsId`。原来是「谁先算谁进缓存」，同一父节点下两种文本可能拿到对方的样式；
 预热会改变「谁先」。命中检查现在也比 `rawText`。
 
+## 真机复核与分包模式的冷缓存（specs/120）
+
+用户 2026-09-24 真机（iPhone）实测：
+
+| `[nav] mounted` | `fjs run ios`（debug，dev server 单包） | `fjs run ios --profile`（分包 + 字节码） |
+|---|---:|---:|
+| vant-basic | 31 ms | 75 ms |
+| vant-feedback | 17 | 59 |
+| vant-form | — | 68 |
+| vant-more | 37 | 69 |
+| vant-nav | 51 | 81 |
+
+profile 反而慢，有三笔账：
+
+1. **分包模式下计时窗口里有 chunk 的读取与执行**（`_mountWhenReady` 从 `_ensureChunk`
+   开始计时）：日志里同一页前一行的 `fetch 0–3ms, eval 12–16ms`。dev 单包没有这笔。
+2. **每个 chunk 注册 scoped 样式表都会清空整个样式缓存**（specs/120 修复）。`register()`
+   以前一律 `matchEpoch++`、清 `matchCache`、把所有存活元素标脏：新页面从全冷开始，
+   垫在下面的页面整页重算。dev 单包在启动时就注册完了所有表，碰不到。离线复现
+   （前面挂过 vant-basic、vant-more 再挂 vant-form）：同步段 44–47 → 65–73 ms，
+   match miss 86 → 234。现在注册一张**从未有元素用过的作用域**的表（且不含 `:root` /
+   `@keyframes`、不改引擎开关）直接跳过失效——scoped 规则只命中带该作用域的元素，
+   不可能改变任何已有答案。修复后同一场景 match miss 86、同步段 45 ms，与不注册一致。
+3. **那次 profile 构建没有带上 119 的快照**：日志里的 chunk 大小（vant-form 22565 B）
+   与不带快照的字节码一致（带快照约 100 KB）。构建输出里应当有一行
+   `style prewarm: N pages captured …`；没有这行，多半是本地 `@ufjs/cli` 的 dist 没有
+   重新构建（`pnpm --filter @ufjs/cli run build`，AGENTS.md §4.6）。
+
+复核时按这三点对照：看构建日志的 `style prewarm` 行，看 `[nav] chunk … eval` 那一行，
+`[nav] mounted` 减去 chunk 的 fetch + eval 才是 navMount 本身。
+
 ## 附录：怎么复现与怎么量
 
 ```bash
