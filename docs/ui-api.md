@@ -37,6 +37,7 @@ fjs 用 HTML 风格的语义标签构建 UI，由 Dart 侧映射为 Flutter Widg
 | `checkbox-group` | 容器 + 控件作用域 | `onValueChanged` 载荷是选中项 `name` 的 JSON 数组串，按文档顺序 |
 | `label` | 容器 + 点击转发 | `for` 指向控件的 `id`，没有就取子树第一个控件；checkbox/radio/switch 是切换，input 是聚焦；没有子节点时渲染自己的文本 |
 | `form` | **不是 Dart 标签**：两端都由 JS 组件实现（Flutter 走 `components/form.ts`，web 走 `web/components/form.ts`），渲染成一个 `view` | `@submit` 载荷是 `{name: value}` JSON 串，子树里每个带 `name` 的控件都在（未改动的也带默认值），值取控件当前态——未受控的输入框也算；`@reset` 只发事件，**值的回滚归页面**，所以进表单的字段都该绑 `:value`，没绑的页面清不掉。配 `<button form-type="submit">` / `="reset"` |
+| `defer` | **不是 Dart 标签**：两端都由 JS 组件实现（`components/defer.ts`，web 走 `web/components/defer.ts`），挂上之后**不留包裹层** | 首屏优先：插槽内容等页面转场结束（[`onPageSettled`](#页面onpagesettled)）才挂载，之前只渲染一个占位盒子；`placeholder-height`（px，数字或 `'120px'`）给占位定高，补挂时滚动条不跳。只包首屏以下的内容，见[下文](#首屏优先defer) |
 | `slider` | Slider | `value` / `min` / `max` / `name`，`onValueChanged`（两位小数的数值串）|
 | `progress` | Linear/CircularProgressIndicator | `value`(0-1)，缺省为 indeterminate；`type: circular` |
 | `divider` | Divider | `color` / `height` |
@@ -870,6 +871,33 @@ Navigator 在跑转场动画的时候——首屏建图、解析大 JSON 这类�
 > **`<canvas>` 有个现成的开关**：加 `defer-resize`，它的**首次** `@resize`
 > 就会等转场结束再派，图表页照常在 `@resize` 里建图即可。默认不延迟。见
 > [canvas-compat.md](canvas-compat.md)。
+
+### 首屏优先：`<defer>`
+
+```vue
+<scroll-view class="page" scroll-y>
+  <view class="block">…首屏可见的部分，照常同步挂载…</view>
+  <defer placeholder-height="1200">
+    <view class="block">…首屏以下，转场结束后才挂…</view>
+  </defer>
+</scroll-view>
+```
+
+**为什么需要它**：Flutter 侧一个页面在 navMount 里同步挂载，push 转场在等它。
+解释器下一个 vant 节点挂载约 150 µs（Vue + 元素层 + 级联，模拟器口径），350 个
+节点的表单就是 50 ms 冻住的转场——单价削到头也一样（specs/118 的拆账见
+[vant-mount-perf.md](vant-mount-perf.md)）。剩下的杠杆只有让首帧少挂节点。
+
+* 补挂时机是 `onPageSettled`，不是「下一帧」：下一帧仍在转场里，补挂那几十
+  毫秒会压在动画帧上。代价是折叠线下的内容晚 ~300 ms 出现。
+* 挂上之后插槽内容直接是父元素的孩子（Fragment），`.page > .block` 这类选择器、
+  flex 布局与不包 `<defer>` 时一致。
+* 不做自动推迟：挂载前没有布局，猜错折叠线会让首屏空白。折叠线由页面作者决定。
+* 页面已在屏上（没有转场）时也是异步的：下一个微任务就挂。
+* 小程序端编译成透明 `<block>`（skyline 按需构建，没有这笔账），见
+  [miniprogram.md](miniprogram.md)。
+
+demo 的 vant-form / vant-more / vant-nav / vant-basic 就是这么写的。
 
 **离场那一侧不需要单独的钩子**：路由把页面拆掉本来就排在离场动画之后
 （Flutter 是 `route.dispose()` → `navPop`，web 是 `<Transition>` 的

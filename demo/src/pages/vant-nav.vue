@@ -85,37 +85,41 @@ function swipeItemStyle(i: number) {
       </view>
     </view>
 
-    <view class="block">
-      <text class="block-title">Swipe（横向拖动）</text>
-      <!-- min-width:0 是关键：fjs 两端的 view 都是 flex 容器，vant 的滑轨
-           (N×100%) 会把 min-width:auto 的祖先逐级撑破（整页横向 blowout） -->
-      <van-swipe :loop="false" style="min-width: 0; height: 100px; overflow: hidden;">
-        <van-swipe-item :style="swipeItemStyle(0)">1</van-swipe-item>
-        <van-swipe-item :style="swipeItemStyle(1)">2</van-swipe-item>
-        <van-swipe-item :style="swipeItemStyle(2)">3</van-swipe-item>
-      </van-swipe>
-    </view>
+    <!-- 首屏以下：页面转场结束后才挂（specs/118）。占位高度约等于这几块的总高，
+         内容补上时滚动条不跳。 -->
+    <defer placeholder-height="700">
+      <view class="block">
+        <text class="block-title">Swipe（横向拖动）</text>
+        <!-- min-width:0 是关键：fjs 两端的 view 都是 flex 容器，vant 的滑轨
+             (N×100%) 会把 min-width:auto 的祖先逐级撑破（整页横向 blowout） -->
+        <van-swipe :loop="false" style="min-width: 0; height: 100px; overflow: hidden;">
+          <van-swipe-item :style="swipeItemStyle(0)">1</van-swipe-item>
+          <van-swipe-item :style="swipeItemStyle(1)">2</van-swipe-item>
+          <van-swipe-item :style="swipeItemStyle(2)">3</van-swipe-item>
+        </van-swipe>
+      </view>
 
-    <view class="block">
-      <text class="block-title">Popup + Picker（{{ pickerValue || '未选择' }}）</text>
-      <van-button type="primary" @click="showPicker = true">选择城市</van-button>
-    </view>
+      <view class="block">
+        <text class="block-title">Popup + Picker（{{ pickerValue || '未选择' }}）</text>
+        <van-button type="primary" @click="showPicker = true">选择城市</van-button>
+      </view>
 
-    <view class="block">
-      <text class="block-title">NumberKeyboard（{{ keyboardValue || '未输入' }}）</text>
-      <van-button type="primary" @click="showKeyboard = true">弹出键盘</van-button>
-    </view>
+      <view class="block">
+        <text class="block-title">NumberKeyboard（{{ keyboardValue || '未输入' }}）</text>
+        <van-button type="primary" @click="showKeyboard = true">弹出键盘</van-button>
+      </view>
 
-    <view class="block tail">
-      <text class="echo">这段垫底内容用来确认 Tabbar 悬浮在页面最下、内容可从其下方滚过。</text>
-    </view>
+      <view class="block tail">
+        <text class="echo">这段垫底内容用来确认 Tabbar 悬浮在页面最下、内容可从其下方滚过。</text>
+      </view>
 
-    <van-popup v-model:show="showPicker" position="bottom" round>
-      <van-picker :columns="pickerColumns" @confirm="onPickerConfirm" @cancel="showPicker = false" />
-    </van-popup>
+      <van-popup v-model:show="showPicker" position="bottom" round>
+        <van-picker :columns="pickerColumns" @confirm="onPickerConfirm" @cancel="showPicker = false" />
+      </van-popup>
 
-    <van-number-keyboard v-model="keyboardValue" :show="showKeyboard" extra-key="." :maxlength="8"
-      @blur="showKeyboard = false" @close="showKeyboard = false" />
+      <van-number-keyboard v-model="keyboardValue" :show="showKeyboard" extra-key="." :maxlength="8"
+        @blur="showKeyboard = false" @close="showKeyboard = false" />
+    </defer>
   </scroll-view>
   <safe-area edges="bottom">
     <van-tabbar :fixed="false" :safe-area-inset-bottom="false" :border="false" v-model="tabbarActive">

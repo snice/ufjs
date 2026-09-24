@@ -7,7 +7,7 @@
 // goes through this layer, worked). Both halves of that failure are
 // asserted here: the name resolves, and an unknown one is loud.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { create, setProps, installEventDispatcher } from '../src/ui/element';
+import { create, setProps, installEventDispatcher, forgetHandlers } from '../src/ui/element';
 import { getWriter, setOpSink } from '../src/host';
 import { patchProp } from '../src/vue/renderer';
 
@@ -159,5 +159,54 @@ describe('addEventListener', () => {
     // the prop handler goes, the listener stays: no `false` to the peer
     expect(sentProps(() => setProps(el, { onTouchmove: null })).onTouchmove).toBeUndefined();
     expect(sentProps(() => el.removeEventListener('touchmove', fn)).onTouchmove).toBe(false);
+  });
+});
+
+// specs/118: forgetHandlers drops only the event types the node registered
+// (an index kept per node) instead of trying every type there is. The
+// behaviour must be the same — nothing registered on the node survives —
+// for prop handlers and DOM listeners alike.
+describe('forgetHandlers', () => {
+  const TAP = 1;
+  const TOUCH_MOVE = 16;
+  const move = JSON.stringify({ ts: 1, touches: [[1, 10, 20]] });
+
+  it('drops prop handlers and DOM listeners of every type the node used', (): void => {
+    const el = create('view');
+    const seen: string[] = [];
+    setProps(el, { onTap: () => seen.push('tap'), onTouchmove: () => seen.push('prop-move') });
+    el.addEventListener('touchmove', () => seen.push('listener-move'));
+    forgetHandlers(el.id);
+    dispatchEvent()(el.id, TAP, null);
+    dispatchEvent()(el.id, TOUCH_MOVE, move);
+    expect(seen).toEqual([]);
+  });
+
+  it('leaves other nodes alone', (): void => {
+    const a = create('view');
+    const b = create('view');
+    const seen: string[] = [];
+    setProps(a, { onTap: () => seen.push('a') });
+    setProps(b, { onTap: () => seen.push('b') });
+    forgetHandlers(a.id);
+    dispatchEvent()(a.id, TAP, null);
+    dispatchEvent()(b.id, TAP, null);
+    expect(seen).toEqual(['b']);
+  });
+
+  it('is a no-op on a node that never registered anything, and twice', (): void => {
+    const el = create('view');
+    expect(() => {
+      forgetHandlers(el.id);
+      forgetHandlers(el.id);
+    }).not.toThrow();
+  });
+
+  it('a node re-registering after a forget gets a fresh marker', (): void => {
+    const el = create('view');
+    setProps(el, { onTap: () => {} });
+    forgetHandlers(el.id);
+    // the registry no longer has it, so the peer must be told again
+    expect(sentProps(() => setProps(el, { onTap: () => {} })).onTap).toBe(true);
   });
 });

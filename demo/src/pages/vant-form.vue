@@ -66,99 +66,103 @@ const tags = ref(['ui']);
       <text class="echo">radio = {{ radio }}</text>
     </view>
 
-    <view class="block">
-      <text class="block-title">Stepper / Rate / Slider</text>
-      <view class="row">
-        <van-stepper v-model="stepper" />
-        <text class="echo">stepper = {{ stepper }}</text>
-      </view>
-      <view class="row">
-        <van-rate v-model="rate" />
-        <text class="echo">rate = {{ rate }}</text>
-      </view>
-      <van-slider v-model="slider" />
-      <text class="echo">slider = {{ slider }}</text>
-    </view>
-
-    <view class="block">
-      <text class="block-title">更多 Stepper / Rate</text>
-      <view class="row">
-        <van-stepper v-model="bigStepper" step="5" min="0" max="50" integer />
-        <text class="echo">step 5 = {{ bigStepper }}</text>
-      </view>
-      <view class="row">
-        <van-rate v-model="halfRate" allow-half :size="24" color="#ffd21e" void-icon="star" void-color="#eee" />
-        <text class="echo">半星 = {{ halfRate }}</text>
-      </view>
-      <text class="hint">横向滑过星星可连续选分；竖向拖动应滚动页面。</text>
-    </view>
-
-    <view class="block">
-      <text class="block-title">Slider 变体</text>
-      <view class="slider-box">
-        <van-slider v-model="range" range />
-      </view>
-      <text class="echo">range = {{ range.join(' ~ ') }}</text>
-      <view class="row vertical-row">
-        <view class="vertical-box">
-          <van-slider v-model="verticalSlider" vertical />
+    <!-- 首屏以下：页面转场结束后才挂（specs/118）。占位高度约等于这几块的总高，
+         内容补上时滚动条不跳。 -->
+    <defer placeholder-height="1300">
+      <view class="block">
+        <text class="block-title">Stepper / Rate / Slider</text>
+        <view class="row">
+          <van-stepper v-model="stepper" />
+          <text class="echo">stepper = {{ stepper }}</text>
         </view>
-        <text class="echo">vertical = {{ verticalSlider }}</text>
+        <view class="row">
+          <van-rate v-model="rate" />
+          <text class="echo">rate = {{ rate }}</text>
+        </view>
+        <van-slider v-model="slider" />
+        <text class="echo">slider = {{ slider }}</text>
       </view>
-      <text class="hint">拖动滑块时页面不应跟着滚动。</text>
-    </view>
 
-    <view class="block">
-      <text class="block-title">Field 变体</text>
-      <van-cell-group inset>
-        <van-field v-model="age" type="digit" label="年龄" placeholder="只能输入数字" />
-        <van-field
-          v-model="remark"
-          type="textarea"
-          label="备注"
-          rows="2"
-          autosize
-          maxlength="50"
-          show-word-limit
-          placeholder="多行输入"
-        />
-        <van-field label="只读" model-value="不可编辑的内容" readonly />
-        <van-field label="禁用" model-value="禁用状态" disabled />
-      </van-cell-group>
-      <text class="echo">age = {{ age || '∅' }} · remark 长度 = {{ remark.length }}</text>
-    </view>
+      <view class="block">
+        <text class="block-title">更多 Stepper / Rate</text>
+        <view class="row">
+          <van-stepper v-model="bigStepper" step="5" min="0" max="50" integer />
+          <text class="echo">step 5 = {{ bigStepper }}</text>
+        </view>
+        <view class="row">
+          <van-rate v-model="halfRate" allow-half :size="24" color="#ffd21e" void-icon="star" void-color="#eee" />
+          <text class="echo">半星 = {{ halfRate }}</text>
+        </view>
+        <text class="hint">横向滑过星星可连续选分；竖向拖动应滚动页面。</text>
+      </view>
 
-    <view class="block">
-      <text class="block-title">Cell 内的控件</text>
-      <van-cell-group inset>
-        <van-cell title="接收通知" center>
-          <template #right-icon>
-            <van-switch v-model="notify" size="20px" />
-          </template>
-        </van-cell>
-        <van-cell title="同意协议" clickable @click="agree = !agree">
-          <template #right-icon>
-            <van-checkbox v-model="agree" />
-          </template>
-        </van-cell>
-      </van-cell-group>
-      <text class="echo">notify = {{ notify }} · agree = {{ agree }}</text>
-    </view>
+      <view class="block">
+        <text class="block-title">Slider 变体</text>
+        <view class="slider-box">
+          <van-slider v-model="range" range />
+        </view>
+        <text class="echo">range = {{ range.join(' ~ ') }}</text>
+        <view class="row vertical-row">
+          <view class="vertical-box">
+            <van-slider v-model="verticalSlider" vertical />
+          </view>
+          <text class="echo">vertical = {{ verticalSlider }}</text>
+        </view>
+        <text class="hint">拖动滑块时页面不应跟着滚动。</text>
+      </view>
 
-    <view class="block">
-      <text class="block-title">Radio / Checkbox 变体</text>
-      <van-radio-group v-model="plan">
-        <van-radio name="month" shape="square">按月</van-radio>
-        <van-radio name="year" shape="square">按年</van-radio>
-      </van-radio-group>
-      <text class="echo">plan = {{ plan }}</text>
-      <van-checkbox-group v-model="tags" direction="horizontal" :max="2">
-        <van-checkbox name="ui" shape="square">UI</van-checkbox>
-        <van-checkbox name="js" shape="square">JS</van-checkbox>
-        <van-checkbox name="dart" shape="square">Dart</van-checkbox>
-      </van-checkbox-group>
-      <text class="echo">tags（最多 2 个）= {{ tags.join(', ') || '∅' }}</text>
-    </view>
+      <view class="block">
+        <text class="block-title">Field 变体</text>
+        <van-cell-group inset>
+          <van-field v-model="age" type="digit" label="年龄" placeholder="只能输入数字" />
+          <van-field
+            v-model="remark"
+            type="textarea"
+            label="备注"
+            rows="2"
+            autosize
+            maxlength="50"
+            show-word-limit
+            placeholder="多行输入"
+          />
+          <van-field label="只读" model-value="不可编辑的内容" readonly />
+          <van-field label="禁用" model-value="禁用状态" disabled />
+        </van-cell-group>
+        <text class="echo">age = {{ age || '∅' }} · remark 长度 = {{ remark.length }}</text>
+      </view>
+
+      <view class="block">
+        <text class="block-title">Cell 内的控件</text>
+        <van-cell-group inset>
+          <van-cell title="接收通知" center>
+            <template #right-icon>
+              <van-switch v-model="notify" size="20px" />
+            </template>
+          </van-cell>
+          <van-cell title="同意协议" clickable @click="agree = !agree">
+            <template #right-icon>
+              <van-checkbox v-model="agree" />
+            </template>
+          </van-cell>
+        </van-cell-group>
+        <text class="echo">notify = {{ notify }} · agree = {{ agree }}</text>
+      </view>
+
+      <view class="block">
+        <text class="block-title">Radio / Checkbox 变体</text>
+        <van-radio-group v-model="plan">
+          <van-radio name="month" shape="square">按月</van-radio>
+          <van-radio name="year" shape="square">按年</van-radio>
+        </van-radio-group>
+        <text class="echo">plan = {{ plan }}</text>
+        <van-checkbox-group v-model="tags" direction="horizontal" :max="2">
+          <van-checkbox name="ui" shape="square">UI</van-checkbox>
+          <van-checkbox name="js" shape="square">JS</van-checkbox>
+          <van-checkbox name="dart" shape="square">Dart</van-checkbox>
+        </van-checkbox-group>
+        <text class="echo">tags（最多 2 个）= {{ tags.join(', ') || '∅' }}</text>
+      </view>
+    </defer>
   </scroll-view>
 </template>
 

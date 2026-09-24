@@ -13,6 +13,7 @@ const INNER_CANVAS_TAG = 'inner-canvas';
 import { decodeTouchEvent, isTouchEvent, type FjsTouchEvent } from './touch';
 import { devtoolsSlots, devtoolsStructuralVersion } from '../devtools-hooks';
 import { boundingRectOf, type FjsRect } from './geometry';
+import { utf8Encode } from './utf8';
 
 /** Event names accepted in props; handlers never cross the JSI boundary —
  * only their existence is sent (e.g. onTap: true) and native dispatches
@@ -128,6 +129,18 @@ const eventHandlers = new Map<string, (payload?: EventPayload) => void>();
  * template also binds (vant's Slider button has `@touchstart` from its
  * render function and a touchmove from useEventListener). */
 const domListeners = new Map<string, Set<(event: unknown) => void>>();
+/** Which event types each node ever registered (prop handler or DOM
+ * listener). forgetHandlers walks this instead of every type there is:
+ * trying all 33 cost two key strings and two Map deletes per type, per
+ * removed node — ~33k strings to tear down one vant form, the bulk of its
+ * 29 ms unmount (specs/118). Most nodes register nothing and pay nothing. */
+const nodeEventTypes = new Map<number, number[]>();
+
+function noteEventType(nodeId: number, type: number): void {
+  const types = nodeEventTypes.get(nodeId);
+  if (types === undefined) nodeEventTypes.set(nodeId, [type]);
+  else if (!types.includes(type)) types.push(type);
+}
 const workerHandlers = new Map<number, (data: string) => void>();
 /** Events that address a subsystem instead of a node (worker messages,
  * navigator callbacks). `id` is that subsystem's own handle. */
@@ -205,12 +218,6 @@ function recordField(nodeId: number, key: string, value: unknown): void {
     : String(value));
 }
 
-/** The distinct event type numbers (onTap and onClick are one). Dropping a
- * node's handlers walks these instead of the registry: the registry holds
- * every handler in the app, and scanning it per removed node made teardown
- * cost more the longer the app had been running. */
-const EVENT_TYPES: number[] = [...new Set(Object.values(EventType))];
-
 /** Forgets every handler registered for one node.
  *
  * Handlers outlive their node otherwise, and a handler is a closure over its
@@ -218,9 +225,17 @@ const EVENT_TYPES: number[] = [...new Set(Object.values(EventType))];
  * written in. The tree bookkeeping lives in the renderer, so dropping a
  * SUBTREE is its job (see forgetSubtree); this drops one node. */
 export function forgetHandlers(nodeId: number): void {
-  for (let i = 0; i < EVENT_TYPES.length; i++) {
-    eventHandlers.delete(handlerKey(nodeId, EVENT_TYPES[i]));
-    domListeners.delete(handlerKey(nodeId, EVENT_TYPES[i]));
+  // Only the types this node registered (nodeEventTypes above) — never a
+  // scan of the registry, which holds every handler in the app and would
+  // make teardown slower the longer the app has run.
+  const types = nodeEventTypes.get(nodeId);
+  if (types !== undefined) {
+    for (let i = 0; i < types.length; i++) {
+      const key = handlerKey(nodeId, types[i]);
+      eventHandlers.delete(key);
+      domListeners.delete(key);
+    }
+    nodeEventTypes.delete(nodeId);
   }
   fieldNames.delete(nodeId);
   fieldFormTypes.delete(nodeId);
@@ -409,67 +424,71 @@ export function create(tag: string): Element {
   return el;
 }
 
+/** Everything an element does, on ONE shared prototype.
+ *
+ * Elements used to be object literals carrying their own closures: nine
+ * methods plus a `style` getter and five offset getters installed with
+ * defineProperty, per node. Under the interpreter that was ~7 µs of a
+ * 12 µs create() (specs/118) — all allocation, since nothing here needs
+ * per-node state beyond `id` and `tag`. `this` is the element; every
+ * member reads its id off `this` instead of a captured variable.
+ *
+ * Members a subsystem adds to one element (a text control's `value`, a
+ * canvas surface's `getContext`) are still own properties set on that
+ * instance, and shadow nothing here. */
+const ELEMENT_PROTO = {
+  appendChild(this: Element, child: Element): Element {
+    insert(this, child);
+    return child;
+  },
+  removeChild(this: Element, child: Element): Element {
+    getWriter().removeChild(this.id, child.id);
+    getWriter().remove(child.id);
+    forgetHandlers(child.id);
+    forgetElementStyle(child.id);
+    if (child.tag === INNER_CANVAS_TAG) detachCanvas(child as { __canvas?: unknown });
+    scheduleFlush();
+    return child;
+  },
+  setText(this: Element, text: string): Element {
+    getWriter().setText(this.id, text);
+    scheduleFlush();
+    return this;
+  },
+  setProps(this: Element, props: Record<string, unknown>): Element {
+    setProps(this, props);
+    return this;
+  },
+  getBoundingClientRect(this: Element): FjsRect {
+    return boundingRectOf(this.id);
+  },
+  addEventListener(this: Element, type: string, listener: (event: unknown) => void): void {
+    addDomListener(this, type, listener);
+  },
+  removeEventListener(this: Element, type: string, listener: (event: unknown) => void): void {
+    removeDomListener(this, type, listener);
+  },
+  focus(this: Element): void {
+    if (hasNativeHost) invokeHost('fjs.control.focus', this.id);
+  },
+  blur(this: Element): void {
+    if (hasNativeHost) invokeHost('fjs.control.blur', this.id);
+  },
+};
+// Fresh style object per access (no per-element cache to clean up on
+// removal) — the allocation is trivial next to the bridge write it wraps.
+Object.defineProperty(ELEMENT_PROTO, 'style', {
+  get(this: Element) {
+    return createElementStyle(this.id);
+  },
+});
+Object.defineProperties(ELEMENT_PROTO, OFFSET_DESCRIPTORS);
+
 function makeElement(id: number, tag: string): Element {
-  const el: Element = {
-    id,
-    tag,
-    // Real value attached by the defineProperty below — lazily, because a
-    // page has hundreds of elements and almost none is ever touched by a
-    // DOM-style library.
-    style: null as unknown as FjsElementStyle,
-    // replaced by the OFFSET_DESCRIPTORS getters below
-    offsetWidth: 0,
-    offsetHeight: 0,
-    offsetLeft: 0,
-    offsetTop: 0,
-    offsetParent: null,
-    appendChild(child) {
-      insert(el, child);
-      return child;
-    },
-    removeChild(child) {
-      getWriter().removeChild(id, child.id);
-      getWriter().remove(child.id);
-      forgetHandlers(child.id);
-      forgetElementStyle(child.id);
-      if (child.tag === INNER_CANVAS_TAG) detachCanvas(child as { __canvas?: unknown });
-      scheduleFlush();
-      return child;
-    },
-    setText(text) {
-      getWriter().setText(id, text);
-      scheduleFlush();
-      return el;
-    },
-    setProps(props) {
-      setProps(el, props);
-      return el;
-    },
-    getBoundingClientRect() {
-      return boundingRectOf(id);
-    },
-    addEventListener(type, listener) {
-      addDomListener(el, type, listener);
-    },
-    removeEventListener(type, listener) {
-      removeDomListener(el, type, listener);
-    },
-    focus() {
-      if (hasNativeHost) invokeHost('fjs.control.focus', id);
-    },
-    blur() {
-      if (hasNativeHost) invokeHost('fjs.control.blur', id);
-    },
-  };
-  // Fresh object per access (no per-element cache to clean up on removal) —
-  // the allocation is trivial next to the bridge write it wraps.
-  Object.defineProperty(el, 'style', {
-    get() {
-      return createElementStyle(id);
-    },
-  });
-  Object.defineProperties(el, OFFSET_DESCRIPTORS);
-  return el;
+  const el = Object.create(ELEMENT_PROTO) as { id: number; tag: string };
+  el.id = id;
+  el.tag = tag;
+  return el as Element;
 }
 
 // ---- DOM-shaped element style (el.style) -----------------------------------
@@ -588,13 +607,18 @@ function createElementStyle(id: number): FjsElementStyle {
 export function setProps(el: Element, props: Record<string, unknown>): void {
   const clean: Record<string, unknown> = {};
   let changed = false;
-  for (const [key, value] of Object.entries(props)) {
+  // for-in, not Object.entries: the renderer calls this once per prop
+  // patch, and the entries array plus a pair array per key was allocation
+  // for a loop that almost always runs exactly once
+  for (const key in props) {
+    const value = props[key];
     if (typeof value === 'function' && key.startsWith(EVENT_PREFIX)) {
       const type = EventType[key];
       if (type !== undefined) {
         const registryKey = handlerKey(el.id, type);
         const had = eventHandlers.has(registryKey) || domListeners.has(registryKey);
         eventHandlers.set(registryKey, value as (payload?: EventPayload) => void);
+        noteEventType(el.id, type);
         if (!had) {
           clean[CANONICAL_EVENT_PROP[key] ?? key] = true;
           changed = true;
@@ -631,6 +655,32 @@ export function setProps(el: Element, props: Record<string, unknown>): void {
   scheduleFlush();
 }
 
+const constPropsJson = new WeakMap<object, Uint8Array>();
+
+/** setProps for a props object that never changes — a module-level
+ * constant such as the renderer's v-if anchor style. Its JSON is built once
+ * per object and reused for every node: a page has one anchor per falsy
+ * v-if, and serializing the same `{style: {display: 'none'}}` for each was
+ * 20 µs apiece (specs/118). The frame bytes are exactly what setProps
+ * writes for the same object.
+ *
+ * Contract: plain data only — no `on*` handlers (they need the registry
+ * path above) — and the object must not be mutated after its first use,
+ * or later nodes get the stale JSON. Freeze it at the definition site. */
+export function setConstProps(el: Element, props: Readonly<Record<string, unknown>>): void {
+  // cached as encoded bytes, not the JSON string: writing even an ASCII
+  // string walks it char by char, a byte copy does not
+  let json = constPropsJson.get(props);
+  if (json === undefined) {
+    json = utf8Encode(JSON.stringify(props));
+    constPropsJson.set(props, json);
+  }
+  for (const key in props) recordField(el.id, key, props[key]);
+  getWriter().setPropsEncoded(el.id, json);
+  devtoolsSlots.recordProps(el.id, props as Record<string, unknown>);
+  scheduleFlush();
+}
+
 /** `touchmove` → the `onTouchmove` prop's event. Undefined for a DOM event
  * this side has no equivalent of. */
 function domEventProp(type: string): string | undefined {
@@ -652,6 +702,7 @@ function addDomListener(el: Element, type: string, listener: (event: unknown) =>
   let set = domListeners.get(key);
   if (!set) domListeners.set(key, (set = new Set()));
   set.add(listener);
+  noteEventType(el.id, EventType[prop]);
   if (!marked) {
     getWriter().setProps(el.id, { [CANONICAL_EVENT_PROP[prop] ?? prop]: true });
     scheduleFlush();

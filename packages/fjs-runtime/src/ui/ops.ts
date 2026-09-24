@@ -99,14 +99,49 @@ export class OpWriter {
     this.len += b.length;
   }
 
-  private utf8(s: string): void {
-    this.bytes(utf8Encode(s));
+  /** Writes `s` as a length-prefixed UTF-8 string (u32 prefix when `wide`,
+   * else u16).
+   *
+   * Nearly everything that crosses here is ASCII — text content, and the
+   * JSON of every SetProps — and for ASCII the UTF-8 bytes ARE the char
+   * codes. Encoding into a temporary Uint8Array first and copying it in
+   * cost an allocation plus a second pass per string; under the
+   * interpreter that was most of a SetText (specs/118: 6.3 → 4.6 µs). The
+   * scan bails to utf8Encode on the first non-ASCII code unit, so anything
+   * else (CJK, emoji, lone surrogates) gets exactly the bytes it always got. */
+  private str(s: string, wide: boolean): void {
+    const n = s.length;
+    for (let i = 0; i < n; i++) {
+      if (s.charCodeAt(i) >= 0x80) {
+        const encoded = utf8Encode(s);
+        if (wide) this.u32(encoded.length);
+        else this.u16(encoded.length);
+        this.bytes(encoded);
+        return;
+      }
+    }
+    if (wide) this.u32(n);
+    else this.u16(n);
+    this.ensure(n);
+    const b = this.buf;
+    let p = this.len;
+    for (let i = 0; i < n; i++) b[p++] = s.charCodeAt(i);
+    this.len = p;
   }
+
+  /** Encoded tag names. A page uses a dozen distinct tags across hundreds of
+   * creates, and re-encoding "view" every time was 2.3 µs of a 4.5 µs
+   * create op (specs/118). */
+  private tagBytes = new Map<string, Uint8Array>();
 
   create(id: number, tag: string): this {
     this.u8(UiOp.Create);
     this.u32(id);
-    const encoded = utf8Encode(tag);
+    let encoded = this.tagBytes.get(tag);
+    if (encoded === undefined) {
+      encoded = utf8Encode(tag);
+      this.tagBytes.set(tag, encoded);
+    }
     this.u16(encoded.length);
     this.bytes(encoded);
     return this;
@@ -134,11 +169,9 @@ export class OpWriter {
   }
 
   setText(id: number, text: string): this {
-    const encoded = utf8Encode(drawableText(text));
     this.u8(UiOp.SetText);
     this.u32(id);
-    this.u32(encoded.length);
-    this.bytes(encoded);
+    this.str(drawableText(text), true);
     return this;
   }
 
@@ -185,7 +218,17 @@ export class OpWriter {
   }
 
   setProps(id: number, props: Record<string, unknown>): this {
-    return this.writeProps(id, utf8Encode(JSON.stringify(props)));
+    return this.setPropsJson(id, JSON.stringify(props));
+  }
+
+  /** SetProps from an already-stringified props object — the element layer
+   * caches the JSON of constant props (element.ts setConstProps) instead of
+   * re-serializing the same object for every node. */
+  setPropsJson(id: number, json: string): this {
+    this.u8(UiOp.SetProps);
+    this.u32(id);
+    this.str(json, true);
+    return this;
   }
 
   /** The `:hover` variant of a node's computed style, keyed like SetStyle's
@@ -311,6 +354,13 @@ export class OpWriter {
     if (this.defined.size === 0) return;
     this.defined.clear();
     this.u8(UiOp.ResetStyles);
+  }
+
+  /** SetProps from JSON already encoded as UTF-8 — for props written the
+   * same way on many nodes (element.ts setConstProps): one buffer copy
+   * instead of re-walking the string per node. */
+  setPropsEncoded(id: number, json: Uint8Array): this {
+    return this.writeProps(id, json);
   }
 
   private writeProps(id: number, json: Uint8Array): this {

@@ -63,33 +63,37 @@ function fakeSubmit(): void {
       </van-cell-group>
     </view>
 
-    <view class="block">
-      <text class="block-title">Divider</text>
-      <van-divider>默认文字</van-divider>
-      <van-divider dashed :hairline="false" content-position="left">虚线·左</van-divider>
-      <van-divider :hairline="false">粗线</van-divider>
-    </view>
-
-    <view class="block">
-      <text class="block-title">Grid（图标来自 @font-face 字体）</text>
-      <van-grid :column-num="3" :border="true">
-        <van-grid-item icon="home-o" text="首页" />
-        <van-grid-item icon="search" text="搜索" />
-        <van-grid-item icon="setting-o" text="设置" />
-      </van-grid>
-    </view>
-
-    <view class="block">
-      <text class="block-title">Badge（依赖 absolute 定位）</text>
-      <view class="row">
-        <van-badge :content="5">
-          <van-button type="primary">消息</van-button>
-        </van-badge>
-        <van-badge dot>
-          <van-button>红点</van-button>
-        </van-badge>
+    <!-- 首屏以下：页面转场结束后才挂（specs/118）。占位高度约等于这几块的总高，
+         内容补上时滚动条不跳。 -->
+    <defer placeholder-height="500">
+      <view class="block">
+        <text class="block-title">Divider</text>
+        <van-divider>默认文字</van-divider>
+        <van-divider dashed :hairline="false" content-position="left">虚线·左</van-divider>
+        <van-divider :hairline="false">粗线</van-divider>
       </view>
-    </view>
+
+      <view class="block">
+        <text class="block-title">Grid（图标来自 @font-face 字体）</text>
+        <van-grid :column-num="3" :border="true">
+          <van-grid-item icon="home-o" text="首页" />
+          <van-grid-item icon="search" text="搜索" />
+          <van-grid-item icon="setting-o" text="设置" />
+        </van-grid>
+      </view>
+
+      <view class="block">
+        <text class="block-title">Badge（依赖 absolute 定位）</text>
+        <view class="row">
+          <van-badge :content="5">
+            <van-button type="primary">消息</van-button>
+          </van-badge>
+          <van-badge dot>
+            <van-button>红点</van-button>
+          </van-badge>
+        </view>
+      </view>
+    </defer>
   </scroll-view>
 </template>
 

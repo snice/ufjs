@@ -222,6 +222,14 @@ interface FjsFormProps extends FjsContainerProps {
   onReset?: () => void;
 }
 
+/** 首屏优先：插槽内容在页面转场结束（onPageSettled）后才挂载，之前只有一个
+ * 占位盒子。挂上之后不留包裹层——插槽内容直接是父元素的孩子。 */
+interface FjsDeferProps {
+  /** 挂载前占位的高度（px，数字或 '120px'），避免补挂时滚动位置跳动。默认 0。 */
+  placeholderHeight?: number | string;
+  'placeholder-height'?: number | string;
+}
+
 interface FjsSliderProps extends FjsBaseProps, FjsTouchEvents {
   name?: string;
   value?: FjsNumberish;
@@ -498,6 +506,8 @@ interface FjsGlobalComponents {
   Label: FjsComponent<FjsLabelProps>;
   form: FjsComponent<FjsFormProps>;
   Form: FjsComponent<FjsFormProps>;
+  defer: FjsComponent<FjsDeferProps>;
+  Defer: FjsComponent<FjsDeferProps>;
   slider: FjsComponent<FjsSliderProps>;
   Slider: FjsComponent<FjsSliderProps>;
   'picker-view': FjsComponent<FjsPickerViewProps>;
@@ -567,6 +577,8 @@ declare module 'vue' {
     Label: FjsGlobalComponents['Label'];
     form: FjsGlobalComponents['form'];
     Form: FjsGlobalComponents['Form'];
+    defer: FjsGlobalComponents['defer'];
+    Defer: FjsGlobalComponents['Defer'];
     slider: FjsGlobalComponents['slider'];
     Slider: FjsGlobalComponents['Slider'];
     'picker-view': FjsGlobalComponents['picker-view'];

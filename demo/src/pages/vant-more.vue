@@ -63,66 +63,70 @@ const longText =
       </van-card>
     </view>
 
-    <view class="block">
-      <text class="block-title">Progress</text>
-      <van-progress class="progress" :percentage="percent" />
-      <van-progress class="progress" :percentage="percent" stroke-width="8" :pivot-text="`${percent}/100`" />
-      <van-progress class="progress" inactive :percentage="75" />
-      <view class="row">
-        <van-button size="small" @click="step(-10)">减少</van-button>
-        <van-button size="small" type="primary" @click="step(10)">增加</van-button>
-        <text class="echo">{{ percent }}%</text>
+    <!-- 首屏以下：页面转场结束后才挂（specs/118）。占位高度约等于这几块的总高，
+         内容补上时滚动条不跳。 -->
+    <defer placeholder-height="1200">
+      <view class="block">
+        <text class="block-title">Progress</text>
+        <van-progress class="progress" :percentage="percent" />
+        <van-progress class="progress" :percentage="percent" stroke-width="8" :pivot-text="`${percent}/100`" />
+        <van-progress class="progress" inactive :percentage="75" />
+        <view class="row">
+          <van-button size="small" @click="step(-10)">减少</van-button>
+          <van-button size="small" type="primary" @click="step(10)">增加</van-button>
+          <text class="echo">{{ percent }}%</text>
+        </view>
       </view>
-    </view>
 
-    <view class="block">
-      <text class="block-title">Circle（SVG 描边 dasharray）</text>
-      <view class="row">
-        <van-circle v-model:current-rate="circleA" :rate="percent" :speed="100" layer-color="#ebedf0"
-          :text="`${Math.round(circleA)}%`" />
-        <van-circle v-model:current-rate="circleB" :rate="100 - percent" :speed="100" :text="`${Math.round(circleB)}%`"
-          color="#ee0a24" layer-color="#ebedf0" />
+      <view class="block">
+        <text class="block-title">Circle（SVG 描边 dasharray）</text>
+        <view class="row">
+          <van-circle v-model:current-rate="circleA" :rate="percent" :speed="100" layer-color="#ebedf0"
+            :text="`${Math.round(circleA)}%`" />
+          <van-circle v-model:current-rate="circleB" :rate="100 - percent" :speed="100" :text="`${Math.round(circleB)}%`"
+            color="#ee0a24" layer-color="#ebedf0" />
+        </view>
+        <view class="row">
+          <van-button size="small" @click="step(-10)">减少</van-button>
+          <van-button size="small" type="primary" @click="step(10)">增加</van-button>
+          <text class="echo">{{ percent }}%</text>
+        </view>
       </view>
-      <view class="row">
-        <van-button size="small" @click="step(-10)">减少</van-button>
-        <van-button size="small" type="primary" @click="step(10)">增加</van-button>
-        <text class="echo">{{ percent }}%</text>
+
+      <view class="block">
+        <text class="block-title">Steps</text>
+        <van-steps :active="stepsActive" active-color="#1989fa">
+          <van-step>下单</van-step>
+          <van-step>支付</van-step>
+          <van-step>发货</van-step>
+          <van-step>完成</van-step>
+        </van-steps>
       </view>
-    </view>
 
-    <view class="block">
-      <text class="block-title">Steps</text>
-      <van-steps :active="stepsActive" active-color="#1989fa">
-        <van-step>下单</van-step>
-        <van-step>支付</van-step>
-        <van-step>发货</van-step>
-        <van-step>完成</van-step>
-      </van-steps>
-    </view>
+      <view class="block">
+        <text class="block-title">CountDown{{ countDownFinished ? '（已结束）' : '' }}</text>
+        <van-count-down :time="countDownTime" format="HH:mm:ss" @finish="countDownFinished = true" />
+        <text class="echo">重进页面时间重置，证明是 JS 计时而非样式。</text>
+      </view>
 
-    <view class="block">
-      <text class="block-title">CountDown{{ countDownFinished ? '（已结束）' : '' }}</text>
-      <van-count-down :time="countDownTime" format="HH:mm:ss" @finish="countDownFinished = true" />
-      <text class="echo">重进页面时间重置，证明是 JS 计时而非样式。</text>
-    </view>
+      <view class="block">
+        <text class="block-title">Skeleton</text>
+        <van-skeleton title avatar :row="3" />
+      </view>
 
-    <view class="block">
-      <text class="block-title">Skeleton</text>
-      <van-skeleton title avatar :row="3" />
-    </view>
+      <view class="block">
+        <text class="block-title">Empty</text>
+        <van-empty description="无内容（默认图是 SVG，两端渲染一致）" />
+        <van-empty image="search" description="搜索无结果" />
+      </view>
 
-    <view class="block">
-      <text class="block-title">Empty</text>
-      <van-empty description="无内容（默认图是 SVG，两端渲染一致）" />
-      <van-empty image="search" description="搜索无结果" />
-    </view>
-
-    <!-- 放最后：它挂载时会碰 DOM 测量（innerText/scrollHeight），App 端若抛错
-         不至于影响上面的探测块。 -->
-    <view class="block">
-      <text class="block-title">TextEllipsis</text>
-      <van-text-ellipsis :content="longText" :rows="2" expand-text="展开" collapse-text="收起" />
-    </view>
+      <!-- 放最后：它挂载时会碰 DOM 测量（innerText/scrollHeight），App 端若抛错
+           不至于影响上面的探测块。 -->
+      <view class="block">
+        <text class="block-title">TextEllipsis</text>
+        <van-text-ellipsis :content="longText" :rows="2" expand-text="展开" collapse-text="收起" />
+      </view>
+    </defer>
   </scroll-view>
 </template>
 

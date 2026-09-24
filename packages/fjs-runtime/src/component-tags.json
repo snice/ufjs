@@ -1,5 +1,6 @@
 [
   "canvas",
+  "defer",
   "form",
   "list-view",
   "picker",

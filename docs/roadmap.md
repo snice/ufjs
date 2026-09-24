@@ -47,6 +47,11 @@
   鼠标拖拽、swiper 一次一页（见 docs/web.md「已知差异」）
 - ✅ **navMount 不强制 first-paint layout**（specs/086）：页面 `onMounted`
   里的 `getBoundingClientRect` 不再把整页 `flushLayout` 叠在 JS 栈上冻转场
+- ✅ **vant 页首开提速 + `<defer>`**（specs/118）：元素层削分配（Element 原型化、
+  标签字节缓存、ASCII 直写、常量 props 预编码、事件类型按节点索引、惰性 HTML
+  属性不过桥）、子树标脏去重；新内置标签 `<defer>` 把首屏以下的内容推到转场结束
+  后挂。vant-form 首开同步段 204 → 38 ms、卸载 29 → 7 ms（离线基准，容器口径），
+  见 [vant-mount-perf.md](vant-mount-perf.md)。离线基准 `pnpm --filter demo run bench:mount`
 
 ## 工具链分发（已完成 2026-08）
 
