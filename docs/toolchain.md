@@ -726,9 +726,9 @@ dev server 本来就在向局域网提供源码与 bundle。
 
   | 平台 | 引擎 | 调试模块 | 非 debug 怎么剔除 |
   |------|------|----------|-------------------|
-  | Android | `libfjs.so`（arm64 1.85 MB） | `libfjs_debugger.so`（482 KB） | 调试器在单独的 `abi/primjs/android-debugger/`，`android/build.gradle` 只把它挂到 **`debug` 源集**，release / profile / 自定义构建类型都合并不到它；`-PfjsKeepDebugger=true` 改挂 `main`（spec 115：之前用的 `jniLibs.excludes` 被 AGP 忽略，0.1.6 的 release APK 带着它） |
+  | Android | `libfjs.so`（arm64 1.28 MB） | `libfjs_debugger.so`（482 KB） | 调试器在单独的 `abi/primjs/android-debugger/`，`android/build.gradle` 只把它挂到 **`debug` 源集**，release / profile / 自定义构建类型都合并不到它；`-PfjsKeepDebugger=true` 改挂 `main`（spec 115：之前用的 `jniLibs.excludes` 被 AGP 忽略，0.1.6 的 release APK 带着它） |
   | iOS / macOS | `fjs.xcframework` | `fjs_debugger.xcframework` | 静态归档按需拉取——只有 `FlutterFjsPlugin.m` 的 `#if DEBUG` 引用它，Release/Profile 一个字节都不链 |
-  | ohos | `libfjs.so`（arm64 1.81 MB） | `libfjs_debugger.so`（422 KB） | **宿主的** `ohos/entry/build-profile.json5` 用 `buildModeBinder` 把 release/profile 绑到排除 `**/libfjs_debugger.so` 的 `fjs_no_debugger`；CLI 托管的宿主自动补上。fork 把插件当 `file:` 源码依赖，插件自己的 binder 不起作用（spec 115） |
+  | ohos | `libfjs.so`（arm64 1.21 MB） | `libfjs_debugger.so`（422 KB） | **宿主的** `ohos/entry/build-profile.json5` 用 `buildModeBinder` 把 release/profile 绑到排除 `**/libfjs_debugger.so` 的 `fjs_no_debugger`；CLI 托管的宿主自动补上。fork 把插件当 `file:` 源码依赖，插件自己的 binder 不起作用（spec 115） |
   | 桌面 | `libfjs.dylib`（1.08 MB） | `libfjs_debugger.dylib`（474 KB） | `fjsrun` dlopen，文件不在就报"本构建无调试器" |
 
   纯 Flutter 宿主（例如 fjs-go）和已 eject 的宿主要自己在 `ohos/entry/build-profile.json5`
@@ -744,11 +744,20 @@ dev server 本来就在向局域网提供源码与 bundle。
   ],
   ```
 
+  **导出符号（spec 116）**：Android / 鸿蒙的 `libfjs.so` 只导出 `fjs_*`，primjs 版再加上
+  调试器模块实际引用的约 190 个引擎符号。清单在构建时从调试器的目标文件生成
+  （`native/cmake/libfjs-exports.cmake`，修饰名随 ABI 变化，所以不提交固定清单），配合
+  `--gc-sections`：primjs arm64 1.85 → 1.28 MB、armeabi-v7a 1.16 → 0.77 MB，quickjs arm64
+  1.35 → 1.13 MB（MiB，与上表同一口径）。调试器多用一个引擎符号时会自动导出；万一生成出错，`fjs_debugger` 以
+  `--no-undefined` 链接，构建期直接报缺哪个符号。重建产物后
+  `node packages/flutter_fjs/tool/test/libfjs_exports_check.mjs` 核对（构建脚本末尾会自动跑）。
+
   `node packages/flutter_fjs/tool/test/android_debugger_strip_check.mjs <宿主>/android`
   会跑一遍 debug / profile / release 三个变体的 jniLibs 合并并断言结果，改动这套配置
   后跑它（spec 115）。
 
-  对比拆分前：Android arm64 的 release `libfjs.so` 从 2.21 MB 降到 1.85 MB，
+  对比拆分前：Android arm64 的 release `libfjs.so` 从 2.21 MB 降到 1.85 MB（spec 116
+  收窄导出符号后再降到 1.28 MB，见下），
   桌面从 1.44 MB 降到 1.08 MB（−26%）。
 
   运行时数据平面（元素树/fetch 记录）仍由 `__FJS_DEVTOOLS__` 门控，仅在

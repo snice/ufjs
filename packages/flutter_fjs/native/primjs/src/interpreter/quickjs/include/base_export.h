@@ -21,7 +21,9 @@
 // uses must cross the .so boundary. Upstream can hide them because it links
 // the inspector into the engine; we cannot. Widening the whole QJS_HIDE set
 // instead of annotating individual declarations keeps the patch to one file
-// and survives PrimJS upgrades — the cost is a larger dynamic symbol table.
+// and survives PrimJS upgrades. The shipped ELF libfjs.so does not pay for it:
+// its final link narrows exports to fjs_* plus what the debugger module
+// actually references (spec 116, native/cmake/libfjs-exports.cmake).
 #define QJS_EXPORT __attribute__((visibility("default")))
 #define QJS_EXPORT_FOR_DEVTOOL __attribute__((visibility("default")))
 #define QJS_HIDE __attribute__((visibility("default")))

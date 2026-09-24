@@ -91,3 +91,6 @@ cp "$ABI_CACHE"/primjs/ohos/arm64-v8a/*.so "$LIBS/arm64-v8a/"
 echo "built:"
 ls -lh "$ABI_CACHE"/{primjs,quickjs}/ohos/arm64-v8a/libfjs*.so \
     | awk '{print "  " $NF " " $5}'
+
+# spec 116: exports narrowed to fjs_* + what the debugger imports
+node "$ROOT/tool/test/libfjs_exports_check.mjs" --only ohos

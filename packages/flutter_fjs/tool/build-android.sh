@@ -98,3 +98,6 @@ flavor quickjs OFF
 
 echo "built:"
 ls -lh "$ABI_CACHE"/{primjs,quickjs}/android*/*/libfjs*.so | awk '{print "  " $NF " " $5}'
+
+# spec 116: exports narrowed to fjs_* + what the debugger imports
+node "$ROOT/tool/test/libfjs_exports_check.mjs" --only android

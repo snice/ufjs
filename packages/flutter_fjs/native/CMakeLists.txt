@@ -169,19 +169,24 @@ set_target_properties(fjs PROPERTIES
 
 # ---- pluggable debugger module (spec 090) ---------------------------------
 # inspector (CDP semantics) + transport (socket) + attach/detach. Dart opens
-# it only in debug builds; release drops the file — Android via
-# android/build.gradle's jniLibs exclude, Apple by not force-loading the
-# archive. Its engine symbols resolve against the already-loaded libfjs.
+# it only in debug builds; release leaves the file out — Android by attaching
+# it to the `debug` source set only, ohos through the host entry's nativeLib
+# filter (spec 115), Apple by not force-loading the archive. Its engine
+# symbols resolve against the already-loaded libfjs.
 if(FJS_DEBUGGER_ENABLED)
-    set(FJS_DEBUGGER_SOURCES
-        src/debugger-plugin.cpp $<TARGET_OBJECTS:quickjs_inspector>)
-
-    add_library(fjs_debugger SHARED ${FJS_DEBUGGER_SOURCES})
-    target_include_directories(fjs_debugger PRIVATE
+    # its own object library so the export map below can read the module's
+    # undefined symbols before libfjs is linked (spec 116)
+    add_library(fjs_debugger_plugin OBJECT src/debugger-plugin.cpp)
+    target_include_directories(fjs_debugger_plugin PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${FJS_ENGINE_INCLUDE_DIRS}
     )
+    set_target_properties(fjs_debugger_plugin PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    set(FJS_DEBUGGER_OBJECTS
+        $<TARGET_OBJECTS:fjs_debugger_plugin> $<TARGET_OBJECTS:quickjs_inspector>)
+
+    add_library(fjs_debugger SHARED ${FJS_DEBUGGER_OBJECTS})
     target_link_libraries(fjs_debugger PRIVATE fjs)
     if(ANDROID)
         find_library(LOG_LIB_DBG log)
@@ -192,12 +197,73 @@ if(FJS_DEBUGGER_ENABLED)
     # references fjs_vm_debugger_attach at link time (Dart looks it up at
     # runtime), which is exactly why a Release link that omits -force_load
     # pulls zero bytes of it into the app binary.
-    add_library(fjs_debugger_core STATIC ${FJS_DEBUGGER_SOURCES})
-    target_include_directories(fjs_debugger_core PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${FJS_ENGINE_INCLUDE_DIRS}
-    )
+    add_library(fjs_debugger_core STATIC ${FJS_DEBUGGER_OBJECTS})
+endif()
+
+# ---- what libfjs.so exports (spec 116) ------------------------------------
+# FJS_EXPORT_ENGINE_INTERNALS makes PrimJS's internals visible at compile
+# time so the debugger module can bind to them — which left libfjs exporting
+# ~2800 symbols: ~200 KB of symbol tables, and every exported function a GC
+# root the linker could not drop. On ELF the final link now narrows that to a
+# version script: fjs_* plus exactly what the debugger module references
+# (see cmake/libfjs-exports.cmake), and --gc-sections removes what nothing
+# reaches. arm64 primjs: 1.94 MB -> 1.34 MB. Apple ships static archives that
+# the app's own link dead-strips, so this is ELF only. LTO was measured at a
+# further 21 KB and left out.
+option(FJS_TRIM_EXPORTS "Narrow libfjs.so exports to fjs_* + the debugger's imports (ELF)" ON)
+if(FJS_TRIM_EXPORTS AND UNIX AND NOT APPLE)
+    if(NOT CMAKE_NM)
+        message(WARNING "fjs: no nm in this toolchain (CMAKE_NM) — libfjs.so keeps exporting "
+                        "every engine symbol (spec 116 export trimming skipped)")
+    else()
+        set(FJS_EXPORT_MAP ${CMAKE_CURRENT_BINARY_DIR}/libfjs-exports.map)
+        set(FJS_EXPORT_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/cmake/libfjs-exports.cmake)
+        if(FJS_DEBUGGER_ENABLED)
+            set(FJS_DEBUGGER_OBJECT_LIST ${CMAKE_CURRENT_BINARY_DIR}/fjs-debugger-objects.txt)
+            file(GENERATE OUTPUT ${FJS_DEBUGGER_OBJECT_LIST}
+                CONTENT "$<JOIN:${FJS_DEBUGGER_OBJECTS},\n>\n")
+            add_custom_command(OUTPUT ${FJS_EXPORT_MAP}
+                COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM} -DOBJECTS_FILE=${FJS_DEBUGGER_OBJECT_LIST}
+                        -DOUT=${FJS_EXPORT_MAP} -P ${FJS_EXPORT_SCRIPT}
+                DEPENDS ${FJS_DEBUGGER_OBJECTS} fjs_debugger_plugin quickjs_inspector
+                        ${FJS_EXPORT_SCRIPT} ${FJS_DEBUGGER_OBJECT_LIST}
+                COMMENT "fjs: libfjs export map (fjs_* + debugger imports)"
+                VERBATIM)
+        else()
+            add_custom_command(OUTPUT ${FJS_EXPORT_MAP}
+                COMMAND ${CMAKE_COMMAND} -DOUT=${FJS_EXPORT_MAP} -P ${FJS_EXPORT_SCRIPT}
+                DEPENDS ${FJS_EXPORT_SCRIPT}
+                COMMENT "fjs: libfjs export map (fjs_* only)"
+                VERBATIM)
+        endif()
+        add_custom_target(fjs_export_map DEPENDS ${FJS_EXPORT_MAP})
+        add_dependencies(fjs fjs_export_map)
+        set_property(TARGET fjs APPEND PROPERTY LINK_DEPENDS ${FJS_EXPORT_MAP})
+        target_compile_options(fjs PRIVATE -ffunction-sections -fdata-sections)
+        target_link_options(fjs PRIVATE
+            "LINKER:--version-script=${FJS_EXPORT_MAP}" "LINKER:--gc-sections")
+        # lld-only niceties; GNU ld neither needs nor knows them (it does not
+        # reject version-script names that are undefined)
+        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.18)
+            include(CheckLinkerFlag)
+            check_linker_flag(CXX "LINKER:--undefined-version" FJS_LD_UNDEFINED_VERSION)
+            check_linker_flag(CXX "LINKER:--icf=all" FJS_LD_ICF)
+            if(FJS_LD_UNDEFINED_VERSION)
+                # a link-library item, not a link option: the NDK toolchain
+                # appends -Wl,--no-undefined-version after the options, and
+                # the last of the two wins
+                target_link_libraries(fjs PRIVATE "-Wl,--undefined-version")
+            endif()
+            if(FJS_LD_ICF)
+                target_link_options(fjs PRIVATE "LINKER:--icf=all")
+            endif()
+        endif()
+        if(FJS_DEBUGGER_ENABLED)
+            # an engine symbol the map failed to export is a link error here,
+            # not an undefined-symbol dlopen failure in a debug build
+            target_link_options(fjs_debugger PRIVATE "LINKER:--no-undefined")
+        endif()
+    endif()
 endif()
 
 # ---- host smoke test -------------------------------------------------------

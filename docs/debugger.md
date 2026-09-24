@@ -49,6 +49,10 @@ libfjs.so（纯引擎：PrimJS 4.1.1 + 一张空钩子表 + 一个传输槽位�
 spec 090 §2.1 记了一次推翻：初版把 inspector 留在引擎里只拆传输，release
 只减 2%；实测引擎→inspector 只有 6 个符号 10 个调用点，于是把整个语义层
 （~430 KB）挪进模块，Android arm64 `libfjs.so` 2.21 MB → 1.85 MB，桌面 −26%。
+模块要调用的引擎内部符号在编译期全部可见（`FJS_EXPORT_ENGINE_INTERNALS`），但 ELF
+产物的最终链接用版本脚本只导出 `fjs_*` 与模块实际引用的那批（spec 116，构建时从模块的
+目标文件生成），`libfjs.so` 再降到 1.28 MB；`fjs_debugger` 以 `--no-undefined` 链接，
+清单漏了符号会在构建期报错，而不是 debug 包里 dlopen 失败。
 
 ## 3. 四条契约（宪法 II：改一侧必改另一侧）
 
