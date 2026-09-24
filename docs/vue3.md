@@ -296,7 +296,7 @@ vnode 会得到指名报错。
 
 ### vant 的接入（demo 是参考实现）
 
-三个文件加一个侧影，各管一件事：
+四个文件加一个侧影，各管一件事：
 
 1. **`src/plugins/vant.ts`**（**无平台后缀**——带 `.app.ts` / `.web.ts` 会
    静默跳过另一端，页面报 `Failed to resolve component`）：对用到的组件逐个
@@ -337,6 +337,12 @@ vnode 会得到指名报错。
 
    锚点在 vant 升级后对不上时，该补丁跳过、构建告警一次并写明哪个功能在
    App 端失效——降级成「这个功能又坏了」，而不是产出坏 bundle。
+5. **`src/plugins/vant-touch.web.ts`**（**只 web**）：引入 vant 官方的
+   `@vant/touch-emulator`。vant 是移动端库，Field 清除图标只听
+   `touchstart`，Slider / Swipe / Picker 拖动也都是 touch 处理——桌面浏览器
+   用鼠标永远触发不到（点清除只会让输入框失焦，文字还在）。emulator 把鼠标
+   转成 touch 事件，真触摸设备上它自己跳过。App 端的触摸本来就是 touch
+   事件，也没有 document 可打补丁，所以带 `.web.ts` 后缀（specs/123）
 
 ### 已知差异（登记过的）
 
