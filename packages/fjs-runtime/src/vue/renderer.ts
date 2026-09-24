@@ -11,7 +11,7 @@ import {
   createRenderer,
   type RendererOptions,
 } from '@vue/runtime-core';
-import { create, forgetHandlers, forgetElementStyle, insert, remove, setHoverStyle, setText, setProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setOffsetParentResolver, type Element, type EventPayload } from '../ui/element';
+import { create, forgetHandlers, forgetElementStyle, insert, remove, setHoverStyle, setText, setProps, setConstProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setOffsetParentResolver, type Element, type EventPayload } from '../ui/element';
 import { transitionClassesOf } from './transition-classes';
 import { lastPointer } from '../ui/geometry';
 import { hasNativeHost, invokeHost, registerPreFlush } from '../host';
@@ -449,6 +449,13 @@ const hadActiveStyle = new Set<number>();
 
 /** The whole style a v-if / fragment anchor ever needs. */
 const ANCHOR_STYLE = { display: 'none' };
+// The constant prop writes of createElement / createComment, frozen so the
+// element layer can serialize each one once for the whole app
+// (setConstProps): a page carries one anchor per falsy v-if and one
+// htmlBlock marker per div.
+const ANCHOR_PROPS = Object.freeze({ style: Object.freeze(ANCHOR_STYLE) });
+const HTML_BLOCK_PROPS = Object.freeze({ htmlBlock: true });
+const MULTILINE_PROPS = Object.freeze({ multiline: true });
 
 /** DOM `Node.contains` over the shadow tree: true when `other` is this node
  * or one of its descendants. vant's Checker does
@@ -782,14 +789,14 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
       // broken — the field grows natively but the fjs flex's line-extent
       // computation caps the element box at one line and the cell clips it
       // (specs/077 遗留，诊断数据在该 spec 的 tasks 里)。挂账未修。
-      setProps(el, { multiline: true });
+      setConstProps(el, MULTILINE_PROPS);
     }
     // An HTML block box keeps its inline content on one line (`<div><span>0
     // </span>/50</div>`, vant's word limit), where an fjs view stacks its
     // children. The marker lets the Dart view tell the two apart
     // (node_adapters.dart, _ViewNodeAdapter); `p` / `h1`… carry it too, so
     // they are never taken for inline runs inside such a box.
-    if (HTML_BLOCK_TAGS.has(rawTag)) setProps(el, { htmlBlock: true });
+    if (HTML_BLOCK_TAGS.has(rawTag)) setConstProps(el, HTML_BLOCK_PROPS);
     if (mapped) {
       // remember defaults; the style engine merges them ahead of matched
       // rules and user style
@@ -848,7 +855,7 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     void text;
     const el = create('view');
     track(el);
-    setProps(el, { style: ANCHOR_STYLE });
+    setConstProps(el, ANCHOR_PROPS);
     return el;
   },
 
@@ -968,7 +975,28 @@ function makeHandle(id: number): HostNode {
 /** Vue hands us raw attribute keys (`:on-tap` stays 'on-tap'); the element
  * API expects camelCase (onTap). HTML event names map to native ones. */
 function camelize(key: string): string {
-  return key.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
+  let out = camelized.get(key);
+  if (out === undefined) {
+    out = key.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
+    camelized.set(key, out);
+  }
+  return out;
+}
+// Every patchProp starts with camelize, and a page patches the same few
+// dozen keys hundreds of times: a regex replace per call was measurable
+// under the interpreter (specs/118). The key set is bounded by the source.
+const camelized = new Map<string, string>();
+
+/** HTML attributes nothing on the Flutter side reads: accessibility and
+ * data attributes that vant (and any DOM-authored library) writes on nearly
+ * every element. The Dart widgets never look at them and the CSS engine does
+ * not support attribute selectors (it warns and skips those rules), so
+ * sending them only cost a JSON serialization and a bridge write each —
+ * ~180 of vant-form's ~300 plain prop writes (specs/118). They still reach
+ * DevTools, so the Elements panel shows the same attributes as before.
+ * `id` is NOT here: a touch event reports it as `event.target.id`. */
+function isInertAttribute(key: string): boolean {
+  return key === 'role' || key === 'tabindex' || key.startsWith('aria-') || key.startsWith('data-');
 }
 
 const HTML_EVENT_ALIASES: Record<string, string> = {
@@ -1040,7 +1068,19 @@ const OPTION_MODIFIER = /(?:Once|Passive|Capture)$/;
 /** `${elementId}:${event}` of every `.once` handler that already ran. */
 const onceFired = new Set<string>();
 
+/** parseEventName results per prop key — the same handful of keys
+ * (`onClick`, `onTouchstartPassive`…) are patched on every element. */
+const parsedEventNames = new Map<string, { name: string; once: boolean }>();
+
 function parseEventName(prop: string): { name: string; once: boolean } {
+  const cached = parsedEventNames.get(prop);
+  if (cached !== undefined) return cached;
+  const parsed = parseEventNameUncached(prop);
+  parsedEventNames.set(prop, parsed);
+  return parsed;
+}
+
+function parseEventNameUncached(prop: string): { name: string; once: boolean } {
   let name = prop;
   let once = false;
   let m: RegExpMatchArray | null;
@@ -1129,6 +1169,10 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
     setText(el, prop === 'innerHTML' ? htmlToText(raw) : raw);
     return;
   }
+  if (isInertAttribute(key)) {
+    devtoolsSlots.recordProps(el.id, { [key]: nextValue });
+    return;
+  }
   if (prop === 'id') {
     // no selector engine matches on it, but a touch event reports it as
     // `event.target.id`, the way the DOM does
@@ -1175,7 +1219,7 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
       // `.once` is remembered per element and event, not per closure: an
       // inline handler is a new function every render, and Vue re-patches
       // the prop each time — a closure flag would re-arm on every render
-      const onceKey = `${el.id}:${native}`;
+      const onceKey = once ? `${el.id}:${native}` : '';
       const rawPayload = payloadEvents.get(el)?.has(name.slice(2).toLowerCase()) === true;
       setProps(el, {
         [native]: (payload?: EventPayload) => {

@@ -405,6 +405,9 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
   };
 }
 
+/** `<defer>` on the web (web/components/defer.ts) — the same export name
+ * the Flutter entry has, for code that builds its own app. */
+export { FjsDefer } from '../web/components/defer';
 export { useRouter, useRoute, definePage } from '../router/web';
 export type { FjsPlugin } from './plugin';
 export type { Router, RouteLocation, RouteRecord, RouteMeta } from '../router/types';

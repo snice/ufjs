@@ -57,6 +57,15 @@
   `nodeEventTypes.get(id)`；`forgetHandlers` 只遍历这个列表。
   没有注册过任何事件的节点（大多数）零字符串拼接。
 
+**实现中追加（T015a，2026-09-24）**：T011–T016 落地后同机 A/B 元素层只降 24%
+（目标 40%）。重新剖析发现 vant-form 的 297 次「其他 prop」写入里 ~180 次是
+`role` / `tabindex` / `aria-*` / `data-*`——Dart 侧（`flutter_fjs/lib`）与 CSS 引擎
+（属性选择器不支持，`warnOnce` 跳过）都不读，却每次走完整 JSON + 过桥。改为：
+renderer 只把它们记进 devtools（Elements 面板仍可见），不写 op 帧。同时两处
+缓存：`camelize(key)` 按 key 缓存；`parseEventName` 按 prop 名缓存，`.once` 的
+`onceKey` 只在 `once` 时才拼。**这会让帧里少掉这些 SetProps**（不再逐字节等于
+改前）——对拍改为：去掉这几类属性后的 op 流与改前一致。
+
 **否掉的备选**：
 - *事件注册表改嵌套 `Map<id, Map<type, fn>>`*：更彻底，但要改 dispatch 热路径和
   canvas 的 `nodeHandler`，收益和按节点记类型相同（卸载只差删除那一步），改动面更大。
@@ -74,6 +83,12 @@ Vue 自底向上挂载：`insert(C→P)` 走 C 的子树，`insert(P→GP)` 又�
 正确性：同一 epoch 内（未 flush 之前）整棵已在 `dirtyList`；之后往这棵子树里插入
 的新孩子会自己触发 `recomputeSubtree(child)`，不依赖祖先重走。flush 会 `dirtyEpoch++`，
 戳自动失效。没有 state 的节点（锚点、未跟踪文本）无戳可打，照常下探。
+
+**实现中追加（T016a，2026-09-24）**：T015a 后元素层 −32…−38%，仍差一点。
+`ensure()` 每个元素新建两个空 `Set`（classes / scopes），`parseClassValue` 每次
+正则 split + 新 Set。classes 从不原地修改（整体替换），scopes 只有 `addScope`
+原地加 → 共享一个空集 + scopes 写时复制；class 串 → Set 按串缓存（上限 4096，
+超了整表清空），`setClasses` 调整 `:disabled` 标记前先复制。语义不变。
 
 **否掉的备选**：
 - *挂载期间完全不标、mount 结束统一标整页*：要知道「挂载何时结束」，Vue 没有

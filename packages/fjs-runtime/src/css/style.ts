@@ -281,6 +281,10 @@ interface ElementState {
    * tracked while some `A + B` rule exists, and part of the chain key. */
   prevSig?: string;
   dirtyEpoch?: number; // which pending set this element is already in
+  /** The pending set in which this element's WHOLE subtree was walked by
+   * markDirty(id, true). A later subtree walk in the same set stops here:
+   * everything below is already queued (see markDirty). */
+  subtreeEpoch?: number;
   applied?: Record<string, unknown>; // last style actually pushed to native
   appliedActive?: Record<string, unknown>; // last :active style pushed to native
   appliedHover?: Record<string, unknown>; // last :hover style pushed to native
@@ -657,8 +661,11 @@ export class StyleEngine {
     }
     this.states.set(id, {
       tag,
-      classes: new Set(),
-      scopes: new Set(),
+      // shared until first written: most elements get a class list (which
+      // replaces this set wholesale) and many never get a scope — two fresh
+      // Sets per created element were pure allocation (specs/118)
+      classes: EMPTY_CLASSES,
+      scopes: EMPTY_CLASSES,
       defaults,
       defaultsId,
       rawText,
@@ -730,11 +737,16 @@ export class StyleEngine {
   setClasses(id: number, value: unknown): void {
     const s = this.states.get(id);
     if (!s) return;
-    const classes = parseClassValue(value);
+    let classes = parseClassValue(value);
     // the state token follows setDisabled, never the class value (a caller
-    // may echo classesOf() back)
-    classes.delete(DISABLED_CLASS);
-    if (s.classes.has(DISABLED_CLASS)) classes.add(DISABLED_CLASS);
+    // may echo classesOf() back). parseClassValue hands out SHARED sets, so
+    // adjust a copy, and only when the token is actually involved.
+    const wantDisabled = s.classes.has(DISABLED_CLASS);
+    if (classes.has(DISABLED_CLASS) !== wantDisabled) {
+      classes = new Set(classes);
+      if (wantDisabled) classes.add(DISABLED_CLASS);
+      else classes.delete(DISABLED_CLASS);
+    }
     this.replaceClasses(id, s, classes);
   }
 
@@ -929,6 +941,8 @@ export class StyleEngine {
   addScope(id: number, scope: string): void {
     const s = this.states.get(id);
     if (!s || s.scopes.has(scope)) return;
+    // copy-on-write: ensure() starts every element on the shared empty set
+    if (s.scopes === EMPTY_CLASSES) s.scopes = new Set();
     s.scopes.add(scope);
     s.selfSig = undefined;
     this.markDirty(id, true);
@@ -1013,7 +1027,24 @@ export class StyleEngine {
           warnOnce('style: subtree walk hit its visit cap (cyclic tree?)');
           break;
         }
-        this.mark(nid);
+        // Vue mounts bottom-up: every insert of a subtree root re-walks the
+        // subtree it carries, so a node N levels deep used to be visited N
+        // times per mount (vant-form: ~6 ms of pure re-marking, specs/118).
+        // A subtree already walked in THIS pending set is fully queued, and
+        // anything attached below it since then was queued by its own
+        // insert (nodeOps.insert → recomputeSubtree(child)), so it can be
+        // skipped whole. The flush bumps dirtyEpoch, which retires every
+        // stamp at once. Untracked nodes (v-if anchors) carry no state and
+        // are simply walked through, as before.
+        const state = this.states.get(nid);
+        if (state !== undefined) {
+          if (state.subtreeEpoch === this.dirtyEpoch) continue;
+          state.subtreeEpoch = this.dirtyEpoch;
+          if (state.dirtyEpoch !== this.dirtyEpoch) {
+            state.dirtyEpoch = this.dirtyEpoch;
+            this.dirtyList.push(nid);
+          }
+        }
         const kids = this.childrenOf.get(nid);
         if (kids !== undefined) {
           for (let i = 0; i < kids.length; i++) stack.push(kids[i]);
@@ -1884,7 +1915,31 @@ function joinSorted(set: Set<string>): string {
   return out.join('\u0002');
 }
 
+/** The class set of an element that has none yet. Shared and never
+ * mutated: class lists are replaced wholesale, scopes copy on first write
+ * (addScope). */
+const EMPTY_CLASSES: Set<string> = new Set();
+
+/** Parsed class strings. Element class sets are never mutated in place
+ * (replaceClasses swaps the whole set; setClasses/setDisabled copy before
+ * editing), so one set per distinct string can be shared by every element
+ * that carries it — vant repeats the same few dozen class strings across a
+ * page, and the regex split plus a fresh Set per patch was measurable under
+ * the interpreter (specs/118). Cleared wholesale past the cap: the key space
+ * is bounded by the source, the cap only guards against generated names. */
+const classSetCache = new Map<string, Set<string>>();
+const CLASS_SET_CACHE_MAX = 4096;
+
 function parseClassValue(value: unknown): Set<string> {
+  if (typeof value === 'string') {
+    let cached = classSetCache.get(value);
+    if (cached === undefined) {
+      if (classSetCache.size >= CLASS_SET_CACHE_MAX) classSetCache.clear();
+      cached = new Set(value.split(/\s+/).filter(Boolean));
+      classSetCache.set(value, cached);
+    }
+    return cached;
+  }
   let text = '';
   if (typeof value === 'string') text = value;
   else if (Array.isArray(value)) text = value.filter((v) => typeof v === 'string').join(' ');

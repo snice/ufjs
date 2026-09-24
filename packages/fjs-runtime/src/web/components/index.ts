@@ -21,8 +21,11 @@
 //   list-view   list-view.ts — the web one is a windowed virtual list; the
 //               Flutter renderer mounts ../../components/list-view.ts, which
 //               leaves the windowing to ListView.builder.
+//   defer.ts    defer — the shared ../../components/defer.ts factory, settled
+//               by the web router instead of the Flutter one.
 import { FjsCanvasSurface } from './canvas';
 import { FjsListView } from './list-view';
+import { FjsDefer } from './defer';
 import {
   FjsButton,
   FjsDivider,
@@ -85,6 +88,8 @@ export const fjsComponents: Record<string, unknown> = {
   textarea: FjsWebTextarea,
   'scroll-view': FjsScrollView,
   'list-view': FjsListView,
+  // below-the-fold content, mounted after the page settles (specs/118)
+  defer: FjsDefer,
   swiper: FjsSwiper,
   // No behaviour of its own: a page is a page with or without the wrapper
   // (spec 009 Q2). Registered so it is not treated as an unknown tag.

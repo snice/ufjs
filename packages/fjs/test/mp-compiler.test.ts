@@ -93,6 +93,22 @@ describe('genWxml', () => {
     expect(r.wxml).toContain(`data-a="{{ { label: 'a  b' } }}"`);
   });
 
+  // specs/118: <defer> only splits the first frame of a JS-mounted page;
+  // skyline builds nodes on demand, so it is a transparent block here and
+  // placeholder-height (static or bound, either spelling) is dropped.
+  it('compiles <defer> to a transparent block without placeholder-height', () => {
+    const r = compile(
+      '<view><defer placeholder-height="200"><text>a</text></defer>' +
+        '<defer :placeholderHeight="count" v-if="wifi"><text>b</text></defer></view>',
+    );
+    expect(r.wxml).not.toContain('<defer');
+    expect(r.wxml).not.toMatch(/placeholder/i);
+    // the scope class <template> blocks get too; a wx block renders no box
+    expect(r.wxml).toMatch(/<block[^>]*>\s*<text[^>]*>a<\/text>\s*<\/block>/);
+    expect(r.wxml).toContain('<block wx:if="{{ wifi }}"');
+    expect(r.usingComponents?.has?.('defer') ?? false).toBe(false);
+  });
+
   it('converts template literals in :class to concatenation', () => {
     const r = compile('<view :class="`slide-${i + 1}`" />');
     expect(r.wxml).toContain("'slide-' + (i + 1)");

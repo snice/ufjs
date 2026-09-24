@@ -4,36 +4,38 @@
 
 ## 契约层（先做，后面都依赖它）
 
-- [ ] T001 确认不改 op 协议 / natives / 事件类型：`ops.ts` 只加缓存与写入快路径，帧字节不变（plan §1 II）；把「改前」帧 dump 存到 scratchpad 作对拍基线（`fjsrun --hex` 跑 demo bench bundle）
-- [ ] T002 `defer` 进内置组件清单：`packages/fjs-runtime/src/component-tags.json`，并在 `packages/fjs-runtime/src/vue-global.d.ts` 声明 `defer`（`placeholderHeight?: number | string`）
+- [x] T001 确认不改 op 协议 / natives / 事件类型：`ops.ts` 只加缓存与写入快路径，帧字节不变（plan §1 II）；把「改前」帧 dump 存到 scratchpad 作对拍基线（`fjsrun --hex` 跑 demo bench bundle）
+- [x] T002 `defer` 进内置组件清单：`packages/fjs-runtime/src/component-tags.json`，并在 `packages/fjs-runtime/src/vue-global.d.ts` 声明 `defer`（`placeholderHeight?: number | string`）
 
 ## 实现
 
-- [ ] T010 离线基准入库（先做，作为改前基线）：`demo/bench/mount.ts` + `demo/package.json` 的 `bench:mount`；跑一轮记录改前数字
-- [ ] T011 `OpWriter`：标签字节缓存、私有 `str()`（ASCII 直写 / 非 ASCII 回落）、`setText`/`setProps` 改走 `str()`、新增 `setPropsJson`：`packages/fjs-runtime/src/ui/ops.ts`
-- [ ] T012 Element 原型化（`ELEMENT_PROTO` + `Object.create`）：`packages/fjs-runtime/src/ui/element.ts`
-- [ ] T013 `setProps` 去 `Object.entries`；新增 `setConstProps`（按 props 对象身份缓存 JSON）：`packages/fjs-runtime/src/ui/element.ts`
-- [ ] T014 按节点记已注册事件类型，`forgetHandlers` 只删这些（含 `addDomListener`/`removeDomListener`）：`packages/fjs-runtime/src/ui/element.ts`
-- [ ] T015 锚点 / `htmlBlock` / `multiline` 常量 props 走 `setConstProps`：`packages/fjs-runtime/src/vue/renderer.ts`
-- [ ] T016 子树标脏 epoch 去重（`ElementState.subtreeEpoch`）：`packages/fjs-runtime/src/css/style.ts`
-- [ ] T017 跑 `bench:mount` 看卸载；> 10 ms 则继续查 `forgetSubtree`（`onceFired` 前缀扫描、`styleEngine.forget`）：`packages/fjs-runtime/src/vue/renderer.ts`
-- [ ] T018 `createDefer` 工厂 + Flutter 实例 `FjsDefer`：`packages/fjs-runtime/src/components/defer.ts`；在 `packages/fjs-runtime/src/app/flutter.ts` 注册 `defer`
-- [ ] T019 demo 的 vant-form / vant-more / vant-nav / vant-basic 首屏以下分组包进 `<defer>`：`demo/src/pages/vant-*.vue`
+- [x] T010 离线基准入库（先做，作为改前基线）：`demo/bench/mount.ts` + `demo/package.json` 的 `bench:mount`；跑一轮记录改前数字
+- [x] T011 `OpWriter`：标签字节缓存、私有 `str()`（ASCII 直写 / 非 ASCII 回落）、`setText`/`setProps` 改走 `str()`、新增 `setPropsJson`：`packages/fjs-runtime/src/ui/ops.ts`
+- [x] T012 Element 原型化（`ELEMENT_PROTO` + `Object.create`）：`packages/fjs-runtime/src/ui/element.ts`
+- [x] T013 `setProps` 去 `Object.entries`；新增 `setConstProps`（按 props 对象身份缓存 JSON）：`packages/fjs-runtime/src/ui/element.ts`
+- [x] T014 按节点记已注册事件类型，`forgetHandlers` 只删这些（含 `addDomListener`/`removeDomListener`）：`packages/fjs-runtime/src/ui/element.ts`
+- [x] T015 锚点 / `htmlBlock` / `multiline` 常量 props 走 `setConstProps`：`packages/fjs-runtime/src/vue/renderer.ts`
+- [x] T015a renderer 不再把 `role`/`tabindex`/`aria-*`/`data-*` 写进 op 帧（只记 devtools）；`camelize` 与 `parseEventName` 按 key 缓存：`packages/fjs-runtime/src/vue/renderer.ts`（plan §3.1 追加）
+- [x] T016 子树标脏 epoch 去重（`ElementState.subtreeEpoch`）：`packages/fjs-runtime/src/css/style.ts`
+- [x] T016a `ensure()` 共享空 class/scope 集（scopes 写时复制）、class 串解析结果按串缓存：`packages/fjs-runtime/src/css/style.ts`（plan §3.2 追加）
+- [x] T017 跑 `bench:mount` 看卸载；> 10 ms 则继续查 `forgetSubtree`（`onceFired` 前缀扫描、`styleEngine.forget`）：`packages/fjs-runtime/src/vue/renderer.ts`
+- [x] T018 `createDefer` 工厂 + Flutter 实例 `FjsDefer`：`packages/fjs-runtime/src/components/defer.ts`；在 `packages/fjs-runtime/src/app/flutter.ts` 注册 `defer`
+- [x] T019 demo 的 vant-form / vant-more / vant-nav / vant-basic 首屏以下分组包进 `<defer>`：`demo/src/pages/vant-*.vue`
 
 ## 两端对齐
 
-- [ ] T020 Web 侧 `<defer>`：`packages/fjs-runtime/src/web/components/defer.ts`（同一工厂 + `router/web` 的 `onPageSettled` + `div` 占位），登记进 `packages/fjs-runtime/src/web/components/index.ts`
-- [ ] T021 小程序：`packages/fjs/src/mp/wxml.ts` 把 `defer` 编译成透明 `<block>`，丢弃 `placeholder-height`
-- [ ] T022 重建 `@ufjs/cli`（`component-tags.json` 被内联）；两端对拍：`build:pages`（Flutter bundle）与 `build:web` 都把 `defer` 当组件而非元素（检查产物里没有 `create("defer")` / 未知标签警告）
+- [x] T020 Web 侧 `<defer>`：`packages/fjs-runtime/src/web/components/defer.ts`（同一工厂 + `router/web` 的 `onPageSettled` + `div` 占位），登记进 `packages/fjs-runtime/src/web/components/index.ts`
+- [x] T021 小程序：`packages/fjs/src/mp/wxml.ts` 把 `defer` 编译成透明 `<block>`，丢弃 `placeholder-height`
+- [x] T022 重建 `@ufjs/cli`（`component-tags.json` 被内联）；两端对拍：`build:pages`（Flutter bundle）与 `build:web` 都把 `defer` 当组件而非元素（检查产物里没有 `create("defer")` / 未知标签警告）
 
 ## 测试
 
-- [ ] T030 `packages/fjs-runtime/test/ops-ascii.test.ts`：`str()` 写出的字节与 `utf8Encode` 逐字节一致（ASCII / 2B / 3B / 代理对 / 孤立代理）；标签缓存后 `create` 帧不变；`setPropsJson` 与 `setProps` 同帧
-- [ ] T031 `packages/fjs-runtime/test/element-proto.test.ts`：`Element` 成员齐全、`this` 绑定正确、`style`/offset getter 按实例 id 工作、两个元素互不串
-- [ ] T032 `packages/fjs-runtime/test/element-handlers.test.ts` 补用例：`forgetHandlers` 后 dispatch 不再命中、DOM listener 同样清掉、未注册事件的节点 forget 不出错
-- [ ] T033 CSS 标脏：在 `packages/fjs-runtime/test/css.test.ts` 旁新增 `css-mark-dedupe.test.ts`——自底向上挂载后样式正确、同 epoch 内移动已挂子树后样式正确、`markVisited` 显著下降
-- [ ] T034 `packages/fjs-runtime/test/defer.test.ts`：settled 前只出占位（带高度）、settled 后出内容且无包裹元素、settled 前卸载不补挂、非法 `placeholder-height` 告警
-- [ ] T035 `packages/fjs/test/mp-compiler.test.ts` 补用例：`<defer placeholder-height="200">` 编译成 `<block>`
+- [x] T030 `packages/fjs-runtime/test/ops-ascii.test.ts`：`str()` 写出的字节与 `utf8Encode` 逐字节一致（ASCII / 2B / 3B / 代理对 / 孤立代理）；标签缓存后 `create` 帧不变；`setPropsJson` 与 `setProps` 同帧
+- [x] T031 `packages/fjs-runtime/test/element-proto.test.ts`：`Element` 成员齐全、`this` 绑定正确、`style`/offset getter 按实例 id 工作、两个元素互不串
+- [x] T032 `packages/fjs-runtime/test/element-handlers.test.ts` 补用例：`forgetHandlers` 后 dispatch 不再命中、DOM listener 同样清掉、未注册事件的节点 forget 不出错
+- [x] T033 CSS 标脏：在 `packages/fjs-runtime/test/css.test.ts` 旁新增 `css-mark-dedupe.test.ts`——自底向上挂载后样式正确、同 epoch 内移动已挂子树后样式正确、`markVisited` 显著下降
+- [x] T034 `packages/fjs-runtime/test/defer.test.ts`：settled 前只出占位（带高度）、settled 后出内容且无包裹元素、settled 前卸载不补挂、非法 `placeholder-height` 告警
+- [x] T035 `packages/fjs/test/mp-compiler.test.ts` 补用例：`<defer placeholder-height="200">` 编译成 `<block>`
 
 ## 文档
 

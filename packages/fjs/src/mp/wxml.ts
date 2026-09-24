@@ -527,7 +527,7 @@ function genNode(node: TemplateChildNode, ctx: Ctx, scope: Scope, depth: number,
     return pad(depth) + `{{ ${inlineExpr(expr, ctx, scope)} }}\n`;
   }
   if (node.type !== NodeTypes.ELEMENT) return '';
-  const el = node as ElementNode;
+  let el = node as ElementNode;
 
   const forDir = opts.skipFor ? undefined : findDir(el, 'for');
   if (forDir) {
@@ -559,7 +559,14 @@ function genNode(node: TemplateChildNode, ctx: Ctx, scope: Scope, depth: number,
     if (listed !== null) return listed;
   }
 
-  const isBlock = el.tag === 'template';
+  // <defer> (specs/118) exists to keep below-the-fold content out of the
+  // first frame of a JS-mounted page. Skyline builds its nodes on demand, so
+  // there is no such cost to split here: it compiles to a transparent block
+  // and its content renders with the rest of the page. placeholder-height
+  // only sizes the pre-mount box the other two targets show, so it goes.
+  const isDefer = el.tag === 'defer' && !ctx.vueImports.has('defer');
+  if (isDefer) el = { ...el, props: el.props.filter((p) => !isDeferOnlyProp(p)) };
+  const isBlock = el.tag === 'template' || isDefer;
   const resolved = isBlock ? { tag: 'block', custom: false } : resolveTag(el, ctx);
   if (resolved.strip) {
     // dropped wholesale (native tabBar replaces the app's custom one);
@@ -2152,6 +2159,14 @@ function exprContent(exp: ExpressionNode | undefined): string {
   return exp && exp.type === NodeTypes.SIMPLE_EXPRESSION
     ? (exp as SimpleExpressionNode).content
     : '';
+}
+
+/** `placeholder-height`, static or bound, in either spelling. */
+function isDeferOnlyProp(p: ElementNode['props'][number]): boolean {
+  const names = ['placeholder-height', 'placeholderHeight'];
+  if (p.type === NodeTypes.ATTRIBUTE) return names.includes(p.name);
+  const arg = p.type === NodeTypes.DIRECTIVE ? p.arg : undefined;
+  return p.name === 'bind' && arg?.type === NodeTypes.SIMPLE_EXPRESSION && names.includes(arg.content);
 }
 
 function staticAttr(el: ElementNode, name: string): string | null {
