@@ -96,10 +96,10 @@ describe('resolveVars fast path', () => {
     );
     engine.setClasses(1, 'pad');
     await styleTick();
-    // the substituted values go through the usual normalization; the mixed
-    // calc stays for the peer's length parser to fold
+    // the substituted values go through the usual normalization; an
+    // all-px calc folds to one length (specs/129)
     expect(applied.get(1)?.padding).toBe(2);
-    expect(applied.get(1)?.margin).toBe('calc(2px + 3px)');
+    expect(applied.get(1)?.margin).toBe('5px');
   });
 });
 

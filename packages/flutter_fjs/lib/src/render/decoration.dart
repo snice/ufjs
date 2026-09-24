@@ -216,15 +216,15 @@ Widget decorateNode(
   // the box adds its padding and border on top. fjs boxes are border-box
   // otherwise (css-compat.md). A % padding is left out of the sum.
   final contentBox = style.style['boxSizing'] == 'content-box';
-  final EdgeInsets boxExtra = !contentBox
-      ? EdgeInsets.zero
-      : (style.padding ?? defaultPadding ?? EdgeInsets.zero) +
-            EdgeInsets.only(
-              top: side?.top?.width ?? 0,
-              right: side?.right?.width ?? 0,
-              bottom: side?.bottom?.width ?? 0,
-              left: side?.left?.width ?? 0,
-            );
+  final EdgeInsets paddingAndBorder =
+      (style.padding ?? defaultPadding ?? EdgeInsets.zero) +
+      EdgeInsets.only(
+        top: side?.top?.width ?? 0,
+        right: side?.right?.width ?? 0,
+        bottom: side?.bottom?.width ?? 0,
+        left: side?.left?.width ?? 0,
+      );
+  final EdgeInsets boxExtra = contentBox ? paddingAndBorder : EdgeInsets.zero;
   Widget sizedBox(
     Widget child,
     double? width,
@@ -234,6 +234,17 @@ Widget decorateNode(
     if (contentBox) {
       if (width != null) width += boxExtra.horizontal;
       if (height != null) height += boxExtra.vertical;
+    } else {
+      // a border-box never shrinks past its own padding and border: the
+      // content clamps at 0 instead. vant's Popover arrow is the classic
+      // CSS triangle, `width: 0; height: 0; border-width: 6px` — squeezed
+      // to 0×0 it painted as a flat sliver (specs/129)
+      if (width != null && width < paddingAndBorder.horizontal) {
+        width = paddingAndBorder.horizontal;
+      }
+      if (height != null && height < paddingAndBorder.vertical) {
+        height = paddingAndBorder.vertical;
+      }
     }
     // width/height (or `all`) tracks animate the resolved size the same way
     // (spec 045 追加). Size is a LAYOUT property: every animation frame
@@ -291,7 +302,8 @@ Widget decorateNode(
       // that owns the box's width/height (spec 079)
       borderRadius: fractionRadius ?? borderRadius,
       border: border,
-      boxShadow: style.boxShadows,
+      // an overflow-hidden box paints its shadow outside the clip (below)
+      boxShadow: style.overflowHidden ? null : style.boxShadows,
     );
     Widget buildBox(Decoration decoration, Widget? inner) {
       return Container(
@@ -477,6 +489,20 @@ Widget decorateNode(
           ? ClipRRect(borderRadius: borderRadius, child: w)
           : ClipRect(child: w),
     );
+    // CSS clips the CONTENT at the padding box; the box's own shadow lies
+    // outside that and stays visible. Drawn inside the clip it was cut
+    // away whole — vant's Popover content is `overflow: hidden` with a
+    // box-shadow, and showed no shadow on the app (specs/129).
+    final shadows = style.boxShadows;
+    if (shadows != null) {
+      w = DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: borderRadius,
+          boxShadow: shadows,
+        ),
+        child: w,
+      );
+    }
   }
   // margin sits OUTSIDE the sized/decorated box, as in CSS: it must not eat
   // into width/height, the background must not paint through it, and the

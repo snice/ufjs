@@ -209,6 +209,87 @@ describe('StyleEngine', () => {
     expect(applied.get(el)?.color).toBe('blue');
   });
 
+  // specs/129: vant's `.van-popover { overflow: visible }` must reset the
+  // `overflow-y: auto` of `.van-popup` (an earlier rule) — the longhand
+  // surviving made the app clip the popover and its shadow
+  it('lets the overflow shorthand reset both longhands', async () => {
+    const { engine, applied, add } = makeEngine();
+    const el = add(1, 'view', null);
+    engine.setClasses(1, 'popup popover');
+    engine.register(null, `.popup { overflow-y: auto } .popover { overflow: visible }`);
+    await styleTick();
+    expect(applied.get(el)).toMatchObject({ overflow: 'visible', overflowX: 'visible', overflowY: 'visible' });
+
+    expect(parseInlineCss('overflow: hidden auto')).toMatchObject({ overflowX: 'hidden', overflowY: 'auto' });
+    // fjs's text truncation value is not a box overflow: longhands untouched
+    expect(parseInlineCss('overflow: ellipsis')).toEqual({ overflow: 'ellipsis' });
+  });
+
+  // specs/129: vant's Popover arrow — popperjs writes data-popper-placement
+  // on the popover, and the arrow (a descendant) is styled off it
+  it('matches attribute selectors on reported attributes, descendants too', async () => {
+    const { engine, applied, add } = makeEngine();
+    const pop = add(1, 'view', null);
+    const arrow = add(2, 'view', 1);
+    engine.setClasses(1, 'pop');
+    engine.setClasses(2, 'arrow');
+    engine.register(
+      null,
+      `.pop[data-placement^=top] .arrow { color: red }
+       .pop[data-placement=bottom] .arrow { color: blue }
+       .pop[data-open] { opacity: 0.5 }`,
+    );
+    await styleTick();
+    expect(applied.get(arrow)?.color).toBeUndefined();
+
+    engine.setAttribute(1, 'data-placement', 'top-start');
+    await styleTick();
+    expect(applied.get(arrow)?.color).toBe('red');
+
+    engine.setAttribute(1, 'data-placement', 'bottom');
+    await styleTick();
+    expect(applied.get(arrow)?.color).toBe('blue');
+
+    engine.setAttribute(1, 'data-open', '');
+    await styleTick();
+    expect(applied.get(pop)?.opacity).toBe(0.5);
+    engine.setAttribute(1, 'data-open', null);
+    await styleTick();
+    expect(applied.get(pop)?.opacity).toBeUndefined();
+  });
+
+  it('resolves currentColor in an element\'s own border to its color', async () => {
+    const { engine, applied, add } = makeEngine();
+    const el = add(1, 'view', null);
+    engine.setClasses(1, 'arrow');
+    engine.register(null, `.arrow { color: #fff; border-top-color: currentColor; fill: currentColor }`);
+    await styleTick();
+    expect(applied.get(el)).toMatchObject({ borderTopColor: '#fff', fill: 'currentColor' });
+  });
+
+  it('folds calc() products left behind by var() substitution', async () => {
+    const { engine, applied, add } = makeEngine();
+    const el = add(1, 'view', null);
+    engine.setClasses(1, 'arrow');
+    engine.register(
+      null,
+      `:root { --size: 6px }
+       .arrow { margin-top: calc(var(--size) * -1); left: calc(-1 * 4px); width: calc(50% - 12px / 2) }`,
+    );
+    await styleTick();
+    expect(applied.get(el)).toMatchObject({ marginTop: '-6px', left: '-4px', width: 'calc(50% - 6px)' });
+  });
+
+  it('keys attributes set before the rule that tests them was registered', async () => {
+    const { engine, applied, add } = makeEngine();
+    const el = add(1, 'view', null);
+    engine.setAttribute(1, 'data-x', 'on');
+    await styleTick();
+    engine.register(null, `[data-x=on] { color: green }`);
+    await styleTick();
+    expect(applied.get(el)?.color).toBe('green');
+  });
+
   it('lets inline style and tag defaults participate in the right order', async () => {
     const { engine, applied, add } = makeEngine();
     const el = add(1, 'div', null);

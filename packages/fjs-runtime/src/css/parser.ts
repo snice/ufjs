@@ -45,10 +45,14 @@ export interface Compound {
   last?: boolean;
   notFirst?: boolean;
   notLast?: boolean;
-  /** `[class<op>value]` tests — the one attribute the engine knows (an
-   * element's class list). Component libraries hang shared decoration on
-   * them: vant's hairlines are `[class*=van-hairline]::after`. */
+  /** `[class<op>value]` tests against the element's class list. Component
+   * libraries hang shared decoration on them: vant's hairlines are
+   * `[class*=van-hairline]::after`. */
   classAttr?: ClassAttrTest[];
+  /** Tests on any other attribute (specs/129): popperjs marks vant's
+   * Popover with `data-popper-placement`, and the arrow's side and colour
+   * hang off `.van-popover[data-popper-placement^=top] .van-popover__arrow`. */
+  attrs?: AttrTest[];
 }
 
 export interface ClassAttrTest {
@@ -56,9 +60,27 @@ export interface ClassAttrTest {
   value: string;
 }
 
-/** `[class*=x]`, `[class^="x"]`, … — every attribute selector the engine
- * supports. Anything else in brackets stays unsupported syntax. */
-const CLASS_ATTR_RE = /\[\s*class\s*([~|^$*]?=)\s*(?:"([^"]*)"|'([^']*)'|([\w-]+))\s*\]/g;
+/** `[name]` (op undefined: present) or `[name<op>value]`. */
+export interface AttrTest {
+  name: string;
+  op?: ClassAttrTest['op'];
+  value?: string;
+}
+
+/** `[class*=x]`, `[data-x^="y"]`, `[data-x]`, … — attribute selectors. The
+ * `class` attribute tests the element's class list; any other name tests
+ * the attributes the renderer reports (StyleEngine.setAttribute). A case
+ * flag (`i` / `s`) stays unsupported syntax. */
+/** Attribute names a selector can test: the class list, and the attributes
+ * the renderer reports to the engine (vue/renderer.ts isInertAttribute).
+ * Anything else — `input[type=search]` — is never reported and would match
+ * nothing silently, so it stays unsupported syntax with its warning. */
+function isMatchableAttr(name: string): boolean {
+  const n = name.toLowerCase();
+  return n === 'class' || n === 'role' || n === 'tabindex' || n.startsWith('data-') || n.startsWith('aria-');
+}
+
+const ATTR_RE = /\[\s*([\w-]+)\s*(?:([~|^$*]?=)\s*(?:"([^"]*)"|'([^']*)'|([\w-]+))\s*)?\]/g;
 
 /** The pseudo-element kinds a selector/rule can carry. `placeholder` has no
  * decoration box: its declarations style the input's hint text and leave the
@@ -440,8 +462,25 @@ function parseDeclarations(block: string): Record<string, unknown> {
       continue;
     }
     out[key] = normalizeValue(key, value);
+    if (key === 'overflow') expandOverflow(value, out);
   }
   return out;
+}
+
+const OVERFLOW_KEYWORDS = new Set(['visible', 'hidden', 'clip', 'scroll', 'auto']);
+
+/** `overflow` is a shorthand: it resets overflow-x AND overflow-y. Kept as
+ * `overflow` too (text truncation reads it), but the longhands must follow,
+ * or a longhand from a weaker rule survives it — vant's `.van-popover
+ * { overflow: visible }` left `.van-popup`'s `overflow-y: auto` in force,
+ * and the app clipped the popover's shadow (specs/129). `overflow: x y`
+ * sets them separately; fjs's own `ellipsis` value is not a box overflow
+ * and leaves the longhands alone. */
+function expandOverflow(value: string, out: Record<string, unknown>): void {
+  const parts = value.trim().toLowerCase().split(/\s+/);
+  if (parts.length > 2 || !parts.every((p) => OVERFLOW_KEYWORDS.has(p))) return;
+  out.overflowX = parts[0];
+  out.overflowY = parts[1] ?? parts[0];
 }
 
 /** Writes the `font` shorthand's longhands into [out] at this point of the
@@ -566,7 +605,7 @@ export function parseSelector(raw: string): Selector | null {
   // them is the negation vant-class stylesheets use
   // (`.van-skeleton-paragraph:not(:first-child)`); anything else left here
   // has to be plain compound syntax.
-  if (/[([:]/.test(text.replace(/:not\(:?(?:first|last)-child\)|:(?:first|last)-child|:disabled(?![\w-])/g, '').replace(CLASS_ATTR_RE, ''))) {
+  if (/[([:]/.test(text.replace(/:not\(:?(?:first|last)-child\)|:(?:first|last)-child|:disabled(?![\w-])/g, '').replace(ATTR_RE, (m, name: string) => (isMatchableAttr(name) ? '' : m)))) {
     warnOnce(`selector "${raw.trim()}" uses unsupported syntax (attr/pseudo/id), skipped`);
     return null
   }
@@ -610,7 +649,7 @@ export function parseSelector(raw: string): Selector | null {
   let pseudos = (active ? 1 : 0) + (hover ? 1 : 0);
   for (const c of compounds) {
     // an attribute selector weighs like a class
-    specificity += (c.classes.length + (c.classAttr?.length ?? 0)) * 10 + (c.tag ? 1 : 0);
+    specificity += (c.classes.length + (c.classAttr?.length ?? 0) + (c.attrs?.length ?? 0)) * 10 + (c.tag ? 1 : 0);
     if (c.first) pseudos++;
     if (c.last) pseudos++;
     if (c.notFirst) pseudos++;
@@ -672,14 +711,19 @@ function parseCompound(text: string): Compound | null {
   let notFirst = false;
   let notLast = false;
   const classAttr: ClassAttrTest[] = [];
+  const attrs: AttrTest[] = [];
   let i = 0;
   while (i < text.length) {
     const ch = text[i];
     if (ch === '[') {
-      CLASS_ATTR_RE.lastIndex = i;
-      const m = CLASS_ATTR_RE.exec(text);
+      ATTR_RE.lastIndex = i;
+      const m = ATTR_RE.exec(text);
       if (!m || m.index !== i) return null // unreachable via parseSelector
-      classAttr.push({ op: m[1] as ClassAttrTest['op'], value: m[2] ?? m[3] ?? m[4] });
+      const name = m[1].toLowerCase();
+      const op = m[2] as ClassAttrTest['op'] | undefined;
+      const value = m[3] ?? m[4] ?? m[5];
+      if (name === 'class' && op) classAttr.push({ op, value: value ?? '' });
+      else attrs.push(op ? { name, op, value: value ?? '' } : { name });
       i += m[0].length;
     } else if (ch === '.') {
       let j = i + 1;
@@ -734,5 +778,6 @@ function parseCompound(text: string): Compound | null {
     ...(notFirst ? { notFirst: true } : {}),
     ...(notLast ? { notLast: true } : {}),
     ...(classAttr.length ? { classAttr } : {}),
+    ...(attrs.length ? { attrs } : {}),
   };
 }

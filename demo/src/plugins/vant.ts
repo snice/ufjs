@@ -35,6 +35,7 @@ import {
   NoticeBar,
   NumberKeyboard,
   Picker,
+  Popover,
   Popup,
   Progress,
   Radio,
@@ -48,6 +49,7 @@ import {
   Step,
   Stepper,
   Steps,
+  Sticky,
   Swipe,
   SwipeItem,
   Switch,
@@ -80,6 +82,7 @@ import 'vant/es/nav-bar/style/index.mjs';
 import 'vant/es/notice-bar/style/index.mjs';
 import 'vant/es/number-keyboard/style/index.mjs';
 import 'vant/es/picker/style/index.mjs';
+import 'vant/es/popover/style/index.mjs';
 import 'vant/es/popup/style/index.mjs';
 import 'vant/es/progress/style/index.mjs';
 import 'vant/es/radio-group/style/index.mjs';
@@ -93,6 +96,7 @@ import 'vant/es/slider/style/index.mjs';
 import 'vant/es/step/style/index.mjs';
 import 'vant/es/stepper/style/index.mjs';
 import 'vant/es/steps/style/index.mjs';
+import 'vant/es/sticky/style/index.mjs';
 import 'vant/es/swipe-item/style/index.mjs';
 import 'vant/es/swipe/style/index.mjs';
 import 'vant/es/switch/style/index.mjs';
@@ -127,6 +131,7 @@ export default (app: App) => {
   app.use(NoticeBar);
   app.use(NumberKeyboard);
   app.use(Picker);
+  app.use(Popover);
   app.use(Popup);
   app.use(Progress);
   app.use(Radio);
@@ -140,6 +145,7 @@ export default (app: App) => {
   app.use(Step);
   app.use(Stepper);
   app.use(Steps);
+  app.use(Sticky);
   app.use(Swipe);
   app.use(SwipeItem);
   app.use(Switch);

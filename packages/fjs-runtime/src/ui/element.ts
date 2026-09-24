@@ -187,6 +187,10 @@ const fieldFormTypes = new Map<number, string>();
 /** The value a control currently holds: the last bound `value` prop, then
  * whatever the user did to it. */
 const fieldValues = new Map<number, string>();
+/** Last reported scroll offset per scroller (from its scroll events), or
+ * what a library wrote to `scrollTop` / `scrollLeft`. Only nodes that ever
+ * scrolled or were written to have an entry. */
+const scrollOffsets = new Map<number, { top: number; left: number }>();
 
 export function fieldName(nodeId: number): string | undefined {
   return fieldNames.get(nodeId);
@@ -240,6 +244,7 @@ export function forgetHandlers(nodeId: number): void {
   fieldNames.delete(nodeId);
   fieldFormTypes.delete(nodeId);
   fieldValues.delete(nodeId);
+  scrollOffsets.delete(nodeId);
 }
 
 export function registerWorkerHandler(
@@ -282,23 +287,98 @@ export function installEventDispatcher(): void {
       if (eventType === 3 || eventType === 5) {
         fieldValues.set(nodeId, payload ?? '');
       }
-      const key = handlerKey(nodeId, eventType);
-      const handler = eventHandlers.get(key);
-      const listeners = domListeners.get(key);
-      if (!handler && !listeners) return;
-      if (isTouchEvent(eventType)) {
-        const event = decodeTouchEvent(eventType, payload);
-        if (!event) return;
-        handler?.(event);
-        if (listeners) for (const fn of [...listeners]) fn(event);
+      if (eventType === SCROLL_EVENT && payload) recordScroll(nodeId, payload);
+      if (eventType === TAP_EVENT && parentResolver) {
+        bubbleTap(nodeId, payload);
         return;
       }
-      handler?.(payload ?? undefined);
-      if (listeners) {
-        const event = { detail: payload ?? undefined, preventDefault() {}, stopPropagation() {} };
-        for (const fn of [...listeners]) fn(event);
-      }
+      deliver(nodeId, eventType, payload);
     };
+}
+
+/** The tap being delivered right now: where it landed and whether a
+ * handler stopped it. The renderer's DOM-shaped event reads it for
+ * `target` and wires `stopPropagation()` to it. Null outside a tap. */
+export interface TapDispatch {
+  readonly targetId: number;
+  stopped: boolean;
+}
+let tapDispatch: TapDispatch | null = null;
+
+export function currentTapDispatch(): TapDispatch | null {
+  return tapDispatch;
+}
+
+const TAP_EVENT = 1;
+const SCROLL_EVENT = 12;
+
+function recordScroll(nodeId: number, payload: string): void {
+  try {
+    const d = JSON.parse(payload) as { scrollTop?: unknown; scrollLeft?: unknown };
+    scrollOffsets.set(nodeId, {
+      top: typeof d.scrollTop === 'number' ? d.scrollTop : 0,
+      left: typeof d.scrollLeft === 'number' ? d.scrollLeft : 0,
+    });
+  } catch {
+    // a payload that is not the scroll JSON leaves the offset as it was
+  }
+}
+
+function scrollOffset(id: number, axis: 'top' | 'left'): number {
+  return scrollOffsets.get(id)?.[axis] ?? 0;
+}
+
+function writeScrollOffset(id: number, axis: 'top' | 'left', value: unknown): void {
+  const n = Number(value);
+  const cur = scrollOffsets.get(id) ?? { top: 0, left: 0 };
+  cur[axis] = Number.isFinite(n) ? n : 0;
+  scrollOffsets.set(id, cur);
+}
+
+/** A DOM click bubbles; a Flutter tap goes to the innermost detector only
+ * (the arena's deepest recognizer wins), so an ancestor's handler never
+ * ran — vant's Popover listens on a `<span>` around a `van-button` that has
+ * a click handler of its own, and never opened (specs/129). The host still
+ * reports one node; the walk up to every listening ancestor happens here,
+ * which also cannot double-fire: the ancestors' detectors lost the arena. */
+function bubbleTap(nodeId: number, payload: string | null): void {
+  const outer = tapDispatch;
+  const state: TapDispatch = { targetId: nodeId, stopped: false };
+  tapDispatch = state;
+  try {
+    for (let id: number | undefined = nodeId; id !== undefined && !state.stopped; id = parentResolver?.(id)?.id) {
+      deliver(id, TAP_EVENT, payload);
+    }
+  } finally {
+    tapDispatch = outer;
+  }
+}
+
+/** Hands one node's event to its prop handler and DOM listeners. */
+function deliver(nodeId: number, eventType: number, payload: string | null): void {
+  const key = handlerKey(nodeId, eventType);
+  const handler = eventHandlers.get(key);
+  const listeners = domListeners.get(key);
+  if (!handler && !listeners) return;
+  if (isTouchEvent(eventType)) {
+    const event = decodeTouchEvent(eventType, payload);
+    if (!event) return;
+    handler?.(event);
+    if (listeners) for (const fn of [...listeners]) fn(event);
+    return;
+  }
+  handler?.(payload ?? undefined);
+  if (listeners) {
+    const tap = tapDispatch;
+    const event = {
+      detail: payload ?? undefined,
+      preventDefault() {},
+      stopPropagation() {
+        if (tap) tap.stopped = true;
+      },
+    };
+    for (const fn of [...listeners]) fn(event);
+  }
 }
 
 export interface Element {
@@ -345,6 +425,25 @@ export interface Element {
    * vant's TextEllipsis bails out of measuring when it is false — being
    * undefined here left every text uncut on the app (specs/128). */
   readonly isConnected: boolean;
+  /** DOM node-walk members. `parentNode` / `parentElement` are the parent
+   * in the mounted tree (null above the page root or once removed);
+   * `nodeType` is 1 and `tagName` the fjs tag upper-cased (`VIEW`), as the
+   * DOM reports an element. */
+  readonly parentNode: Element | null;
+  readonly parentElement: Element | null;
+  readonly nodeType: number;
+  readonly tagName: string;
+  readonly nodeName: string;
+  /** The scroller's offset as of its last scroll event (0 before one).
+   * Writable without effect on the host — the DOM-shaped write vant's Tabs
+   * makes must not throw. */
+  scrollTop: number;
+  scrollLeft: number;
+  readonly clientTop: number;
+  readonly clientLeft: number;
+  /** DOM attribute writes, through the renderer's attribute path. */
+  setAttribute(name: string, value: unknown): void;
+  removeAttribute(name: string): void;
 }
 
 /** Finds an element's offsetParent. The Vue renderer owns the tree and the
@@ -363,6 +462,25 @@ let connectedResolver: ((id: number) => boolean) | null = null;
 
 export function setConnectedResolver(resolver: ((id: number) => boolean) | null): void {
   connectedResolver = resolver;
+}
+
+/** An element's parent in the mounted tree — the logical one, so a node
+ * hoisted into an overlay reports its overlay host, as a teleported DOM
+ * node reports its new parent. Injected by the Vue renderer; without it
+ * `parentNode` is null and taps do not bubble. */
+let parentResolver: ((id: number) => Element | null) | null = null;
+
+export function setParentResolver(resolver: ((id: number) => Element | null) | null): void {
+  parentResolver = resolver;
+}
+
+/** Where `setAttribute` goes: the renderer's attribute path (its
+ * patchProp), so an attribute a library writes lands exactly where the
+ * same attribute from a template would. Without a renderer it is dropped. */
+let attributeSink: ((el: Element, name: string, value: string | null) => void) | null = null;
+
+export function setAttributeSink(sink: ((el: Element, name: string, value: string | null) => void) | null): void {
+  attributeSink = sink;
 }
 
 function offsetOf(el: { id: number }, axis: 'left' | 'top'): number {
@@ -402,6 +520,68 @@ const OFFSET_DESCRIPTORS: PropertyDescriptorMap = {
   isConnected: {
     get(this: { id: number }) {
       return connectedResolver?.(this.id) ?? false;
+    },
+  },
+  // The node-walk members: vant's useScrollParent climbs `parentNode` while
+  // `nodeType === 1`, looking for the overflow-y scroller its Sticky
+  // listens to — without them it stopped at the first step and listened
+  // on window, which never scrolls here (specs/129).
+  parentNode: {
+    get(this: { id: number }) {
+      return parentResolver?.(this.id) ?? null;
+    },
+  },
+  parentElement: {
+    get(this: { id: number }) {
+      return parentResolver?.(this.id) ?? null;
+    },
+  },
+  nodeType: {
+    get() {
+      return 1;
+    },
+  },
+  tagName: {
+    get(this: { tag: string }) {
+      return this.tag.toUpperCase();
+    },
+  },
+  nodeName: {
+    get(this: { tag: string }) {
+      return this.tag.toUpperCase();
+    },
+  },
+  // popperjs adds an offsetParent's scroll offset and border to every
+  // coordinate; undefined made them NaN, and the popover sat at 0,0
+  // (specs/129). The offset is the last one the scroller reported. A write
+  // is remembered but does not scroll: the host has no synchronous scroll
+  // command. It must not throw either — vant's Tabs assigns scrollLeft.
+  scrollTop: {
+    get(this: { id: number }) {
+      return scrollOffset(this.id, 'top');
+    },
+    set(this: { id: number }, v: unknown) {
+      writeScrollOffset(this.id, 'top', v);
+    },
+  },
+  scrollLeft: {
+    get(this: { id: number }) {
+      return scrollOffset(this.id, 'left');
+    },
+    set(this: { id: number }, v: unknown) {
+      writeScrollOffset(this.id, 'left', v);
+    },
+  },
+  // the DOM's top/left border width. Not tracked here: 0, which is exact for
+  // the overlay host popovers are positioned in (it has no border)
+  clientTop: {
+    get() {
+      return 0;
+    },
+  },
+  clientLeft: {
+    get() {
+      return 0;
     },
   },
 };
@@ -485,6 +665,14 @@ const ELEMENT_PROTO = {
   },
   removeEventListener(this: Element, type: string, listener: (event: unknown) => void): void {
     removeDomListener(this, type, listener);
+  },
+  // popperjs writes its `data-popper-placement` this way, and skips the
+  // element (no position at all) unless it looks like an HTML element
+  setAttribute(this: Element, name: string, value: unknown): void {
+    attributeSink?.(this, String(name), value == null ? null : String(value));
+  },
+  removeAttribute(this: Element, name: string): void {
+    attributeSink?.(this, String(name), null);
   },
   focus(this: Element): void {
     if (hasNativeHost) invokeHost('fjs.control.focus', this.id);

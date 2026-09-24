@@ -80,7 +80,9 @@ afterEach(() => {
 
 describe('unmount', () => {
   it('drops the handlers of a whole subtree, not just its root', async () => {
-    let taps = 0;
+    // which handlers ran, not how often: a tap bubbles (specs/129), so
+    // tapping a row also reaches the root
+    const hit = new Set<string>();
     const rows = ref([1, 2, 3]);
     const app = createApp({
       render: () =>
@@ -88,10 +90,10 @@ describe('unmount', () => {
           'view',
           // the root's own handler: this one was already dropped before,
           // because Vue does name the subtree root
-          { onTap: () => taps++ },
+          { onTap: () => hit.add('root') },
           rows.value.map((n) =>
             // a row's handler closes over `n`, like `@tap="() => open(item)"`
-            h('view', { key: n, onTap: () => taps++ }, [h('text', null, `row${n}`)]),
+            h('view', { key: n, onTap: () => hit.add(`row${n}`) }, [h('text', null, `row${n}`)]),
           ),
         ),
     });
@@ -100,15 +102,15 @@ describe('unmount', () => {
 
     // the handlers are live while the page is: root + three rows
     tapEverything();
-    expect(taps).toBe(4);
+    expect(hit.size).toBe(4);
 
-    taps = 0;
+    hit.clear();
     app.unmount();
     await flush();
 
     // ...and gone with it. Before the subtree walk dropped them, the three
     // rows still answered — each one pinning the page it belonged to.
     tapEverything();
-    expect(taps).toBe(0);
+    expect(hit.size).toBe(0);
   });
 });

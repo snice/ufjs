@@ -581,6 +581,15 @@ Web 两端取同一组数值。新增或改默认样式时先看：
 `target` / `currentTarget` 是元素本身。click 事件带 `clientX/clientY`
 （按需读取）。
 
+**tap / click 冒泡**（specs/129）：两端一致，点中的节点先收到，再由内向外
+交给每个挂了 `@tap` / `@click`（或 `addEventListener('click')`）的祖先，
+同 DOM click。冒泡时 `target` 是点中的节点、`currentTarget` 是当前监听节点
+（Vue 的 `.self` 修饰符因此成立），`stopPropagation()` / `@click.stop` 截断
+后续祖先。App 上 Flutter 只把点击交给最内层的识别器，冒泡在 JS 派发层完成，
+祖先自己的识别器不会再触发一次。以前 App 不冒泡：vant Popover 的点击挂在
+包住按钮的 `<span>` 上，按钮自己有 click 监听，弹层永远不开。只有 tap 冒泡，
+输入 / 焦点等事件仍只派给自己；触摸事件另见下文。
+
 ### 元素上的 DOM 形状 API
 
 任何元素（经 `ref` 拿到的、或作为事件 `target` 的）都带一小组 DOM 形状的
@@ -606,6 +615,16 @@ Web 两端取同一组数值。新增或改默认样式时先看：
 - `el.isConnected`：元素挂在活着的页面树里为 true，卸载后 false；裸 element
   API（无 renderer）恒为 false。vant TextEllipsis 只在它为 true 时才测量截断
   （specs/128）
+- `el.parentNode` / `parentElement`：挂载树里的逻辑父节点（页面根之上、
+  卸载后为 null；`position: fixed` 元素是弹层宿主）。`nodeType` 恒为 1，
+  `tagName` / `nodeName` 是 fjs 标签的大写（`VIEW`）。vant `useScrollParent`
+  沿 `parentNode` 找 `overflow-y` 滚动祖先，Sticky 靠它监听页面的 scroll-view
+  （specs/129）
+- `el.scrollTop` / `scrollLeft`：滚动容器最近一次 scroll 事件报告的偏移，
+  没滚过为 0；可写但不会真的滚动（宿主没有同步滚动命令），写入只是记下。
+  `clientTop` / `clientLeft` 恒为 0。popperjs 定位弹层时会读这几个值
+- `el.setAttribute(name, value)` / `removeAttribute(name)`：走 renderer 的
+  属性路径，与模板里写同名属性等价（popperjs 写 `data-popper-placement`）
 - `el.addEventListener` / `removeEventListener(type, listener)`：事件名同
   `on<Name>` prop（`'touchmove'` ↔ `@touchmove`），`passive` / `capture`
   选项忽略（vant Slider 经 useEventListener 挂在自身元素上的 touchmove
@@ -615,7 +634,10 @@ Web 两端取同一组数值。新增或改默认样式时先看：
   （`icon.contains(event.target)`），App 上此前因缺这个方法抛
   `TypeError: not a function`、勾选无反应（specs/072）。Web 端即原生
   `Node.contains`。`position: fixed` 的元素在 App 上挂到弹层宿主下，与 DOM 里
-  Teleport 到 body 一样不再算作逻辑父元素的后代
+  Teleport 到 body 一样不再算作逻辑父元素的后代。按下点在 `::before` /
+  `::after` 装饰盒上时，document 级按下事件的 `target` 是生成它的元素（浏览器里
+  伪元素从不是事件目标）——vant 按钮的 `::before` 盖满按钮，以前 Popover 的
+  点外关闭把再次点按钮当成了点外面（specs/129）
 - `input` / `textarea` 元素另有 `focus()` / `blur()`：DOM 式的控件焦点。
   vant Field 拿着模板 ref 调 `inputRef.value.blur()` 在只读字段聚焦时拒焦，
   App 上此前因缺这个方法在 `onFocus` 里抛 `TypeError`（specs/077）。App 端
@@ -690,8 +712,8 @@ function onMove(e: FjsTouchEvent) {
   对象。没有 DOM 那种事件委托。因此靠 `target` 判断点中哪个子节点的写法在
   App 上只认得监听节点本身——例如 vant Checkbox / Radio 设了 `label-disabled`
   时，App 上点图标也不会切换（默认不设时点哪都切换，两端一致）。
-- 事件由内向外派发到路径上每个监听节点（相当于冒泡），但
-  `stopPropagation()` 在 Flutter 上是空实现；`preventDefault()` 同理——原生
+- 事件由内向外派发到路径上每个监听节点（相当于冒泡），但触摸事件的
+  `stopPropagation()` 在 Flutter 上是空实现（tap / click 的冒泡可以截断，见上文）；`preventDefault()` 同理——原生
   默认行为要用 `touch-action` 关，那条两端都生效。
 - App 上一根手指按在哪个节点，后续的 move/end 就一直归它，等价于 web 的
   pointer capture；web 侧实现也真的调了 `setPointerCapture`。

@@ -33,7 +33,7 @@
 | `:hover` | ⚠️ | 只能写在最后一个复合选择器上；App 端仅桌面鼠标触发；后代超界不支持 |
 | `:root` / `:host` | ⚠️ | 只收**自定义属性**（`--x`），作为每棵页面树继承链的起点；其他声明 `warnOnce` 跳过。组件库（vant 的 `--van-*`）的主题变量都声明在这里 |
 | `#id` | ❌ | |
-| 属性选择器 `[class<op>value]` | ⚠️ | 只认 **`class` 属性**：`=` / `~=` / `\|=` / `^=` / `$=` / `*=`，权重同一个类（specs/069，vant 的 `[class*=van-hairline]::after` 发丝线靠它）。`^=`/`$=`/`=` 比对的是按源顺序拼回的 class 串（空白与重复类名规整过）。其他属性（`[type=search]`）照旧 `warnOnce` 跳过 |
+| 属性选择器 `[name]` / `[name<op>value]` | ⚠️ | 运算 `=` / `~=` / `\|=` / `^=` / `$=` / `*=`，权重同一个类。认两类属性：**`class`**（specs/069，vant 的 `[class*=van-hairline]::after` 发丝线靠它；`^=`/`$=`/`=` 比对按源顺序拼回的 class 串）与 **`data-*` / `aria-*` / `role` / `tabindex`**（specs/129：popperjs 写的 `data-popper-placement` 决定 vant Popover 箭头朝向，可放在祖先复合选择器上）。后一类不过桥，只由 JS 侧样式引擎记着匹配；只有被某条选择器用到的属性名变化才触发重算。其他属性（`[type=search]`）照旧 `warnOnce` 跳过——它们从不报给引擎，放行只会静默不命中；大小写标志（`i`/`s`）不支持 |
 | `:nth-child` / `:not()` / 其他伪类 | ❌ | roadmap 之外的按需补充 |
 | 相邻兄弟组合器 `+` | ✅ | 匹配**紧邻的前一个参与兄弟**（跳过裸文字，与结构伪类同规则）；`a + b + c` 链与 `>` 混用可正常回溯。层叠权重与后代/子代组合器相同（组合器本身不计分）。缓存正确性：存在 `+` 规则时前兄弟的签名进 chainKey——前者类名/scope 切换、兄弟插入删除都会即时重算后者（vant 的 `.van-button__loading + .van-button__text { margin-left: 4px }` 图标间距靠它）；没有 `+` 规则的页面零额外开销 |
 | 后续兄弟组合器 `~` | ❌ | |
@@ -71,19 +71,19 @@ CSS 文本里用 kebab-case（`font-size: 16px`），内联对象用 camelCase
 | `background-color` | ✅ | |
 | `color` | ✅ | 继承 |
 | `opacity` | ✅ | |
-| `overflow: hidden` | ✅ | 容器上是裁剪 |
+| `overflow: hidden` | ✅ | 容器上是裁剪。只裁内容：盒子自身的 `box-shadow` 画在裁剪外，同 CSS（specs/129，vant Popover 的阴影以前被裁没）。`overflow` 是简写，同时重置 `overflow-x` / `overflow-y`；`overflow: x y` 分别设置 |
 | `overflow: ellipsis` | ⚠️ | fjs 扩展，text 节点上是截断省略 |
 | `pointer-events: none` | ⚠️ | 节点照画但不接命中，点击落到下面的节点（specs/069：vant 步进器 +/- 的伪元素线条盖在按钮上）。子树里用 `pointer-events: auto` 重新打开**不支持** |
-| **百分比尺寸**（spec 036）| ✅ | `%`/`calc()` 参照父盒内容宽高；参照无界（列表、scroll-view 纵向）退化为 auto，与 web 同规则；详见下方「单位」 |
+| **百分比尺寸**（spec 036）| ✅ | `%`/`calc()` 参照父盒内容宽高；参照无界（列表、scroll-view 纵向）退化为 auto，与 web 同规则；详见下方「单位」。全是 px 的 `calc()`（含乘除一个数，`calc(var(--x) * -1)`）由引擎折成一个长度下发（specs/129） |
 | **百分比间距与偏移**（spec 044）| ✅ | `padding` / `margin`（简写与长手）四边参照**父盒宽**（上下边也是，CSS 语义）；`top`/`bottom` 参照父盒高、`left`/`right` 参照父盒宽；row flex 子项由父把容器宽上界传下去（同 `width: 50%` 的机制）。**不生效的少数消费点**：`input` 的 `contentPadding`、text 节点路径上的 margin/padding——布局前就要数的场景只认绝对值（与 `<swiper>` 高度同款登记） |
-| `box-sizing` | ⚠️ | 默认 `border-box`（web 侧基础样式表钉死 fjs 标签）。页面/组件库写 `content-box` 时，显式 width/height 作为内容区尺寸、另加 padding 与 border，超出父级时保持自身尺寸并溢出（vant tabs 的 nav，specs/073）；% padding 不计入 |
+| `box-sizing` | ⚠️ | 默认 `border-box`（web 侧基础样式表钉死 fjs 标签）。border-box 盒子不会小于自身 padding + border（内容区收到 0 为止，同 CSS），所以 `width: 0; height: 0` 加边框的 CSS 三角形两端同尺寸（specs/129，vant Popover 箭头）。页面/组件库写 `content-box` 时，显式 width/height 作为内容区尺寸、另加 padding 与 border，超出父级时保持自身尺寸并溢出（vant tabs 的 nav，specs/073）；% padding 不计入 |
 
 ### 边框与圆角
 
 | 属性 | 支持 | 说明 |
 |---|---|---|
 | `border`（简写）| ✅ | `1px dashed #ccc` |
-| `border-width` / `border-color` / `border-style` | ✅ | 覆盖简写的对应分量；1~4 值按边展开（`border-width: 1px 0 0` 只画上边，vant 分割线；specs/069）。简写不写颜色时取 `currentColor`（元素的文字色），同 CSS |
+| `border-width` / `border-color` / `border-style` | ✅ | 覆盖简写的对应分量；1~4 值按边展开（`border-width: 1px 0 0` 只画上边，vant 分割线；specs/069）。简写不写颜色时取 `currentColor`（元素的文字色），同 CSS。单边只写颜色 / 样式（`border-bottom-color`）时宽度沿用 `border-width`；连 `border-width` 都没写才是默认 1px 细线（specs/129） |
 | `border-style` 值 | ⚠️ | `solid` / `dashed` / `dotted` 真画；`double` / `groove` 等按 solid |
 | `border-radius` | ✅ | `12` \| `'8px'` \| `'8px 16px'` \| `'1px 2px 3px 4px'` |
 | `border-radius: %` | ⚠️ | 横向依宽、纵向依高解成椭圆角（specs/069：van-radio 圆点、van-switch 圆钮）。确定 px 盒直接解析；**相对尺寸**（`width: 50%` 等，spec 079）在尺寸 LayoutBuilder 里按解析后的盒尺寸解析，圆角跟着真实盒子走。内容自适应的盒子写百分比圆角保持方角（参照是画出来的尺寸，布局前不可知，约束参照会把 `10%` 放大成 pill；50% 圆不受影响——RRect 会把超限圆角钳回半盒）。自绘/覆盖路径（dashed/分边 painter、foregroundDecoration）上的 % 圆角保持方角并告警一次。`a / b` 椭圆写法不支持（整条丢弃并告警） |
@@ -120,7 +120,7 @@ CSS 文本里用 kebab-case（`font-size: 16px`），内联对象用 camelCase
 | `position: relative` | ✅ | 成为定位上下文；配 top/left 只挪画面不动布局 |
 | `position: absolute` | ✅ | 脱流，按最近定位祖先摆；偏移从定位祖先的 **padding 边**量起（CSS 包含块，specs/069 修正——以前从内容边量，vant `.van-cell::after` 发丝线缩进一个 padding）。`margin: auto` + 对边 + 尺寸在该轴居中（vant 对话框 `left: 0; right: 0; width: 320px; margin: 0 auto`）。绝对定位盒自身的 margin 折进 inset 偏移（`top: 0; margin-top: 4px` ⇒ 盒顶 4，声明尺寸不被缩小——vant badge 圆点，specs/073）；**百分比 margin 在 abs 盒上暂不生效**（margin 按盒宽参照、top/bottom inset 按盒高，参照系不同折不进去，needs a spec）。**溢出部分可点**：带点击/触摸处理的绝对定位盒超出祖先边界的部分照样接收按下（同 web 的 `overflow: visible`；vant Slider 24px 圆钮挂在 2px 轨道上，以前只有轨道那 2px 能按中，其余落到 scroll-view）。纯装饰的定位盒不参与 |
 | `position: sticky` | ✅ | web / 小程序 webview 原生 CSS；Flutter 端按「滚动容器直接子节点（或 sticky-section 内）」语义走 sliver 吸顶，`top` 即 pin 线（specs/052/053）。深层嵌套 Flutter 端不吸顶并告警（web 会吸顶于最近滚动祖先）；小程序 skyline 的 wxss sticky 未承诺，请用组件 |
-| `position: fixed` | ⚠️ | 元素被运行时整体挪进页面的**置顶 overlay 宿主**（保留标签 `fjs-overlay-host`，Dart 侧经 `OverlayPortal` 渲染在根 Overlay 上），全屏、不随页面滚动、盖在宿主 chrome 之上（specs/069）。偏移与 `%` 尺寸参照整屏。**不是通用的视口定位**：上下层级只看插入顺序（`z-index` 仍不支持）；从原父元素继承的样式断开（同 web 上 teleport 到 `<body>`）；弹层动画时序由 Flutter 侧驱动，可能与 web 有出入；**不经宿主 safe-area 包裹**，`top: 0` 会顶进状态栏区域，宿主要自行留出安全区。旧宿主不认识保留标签时退化为页面内的全屏盒（会随滚动带走）。**诊断**：hoist 由样式引擎回调触发（解析结果 `position === 'fixed'`）；`createStaticVNode`（静态提升 vnode）在本 renderer 没有 DOM innerHTML 语义，app 构建以 `hoistStatic: false` 规避（specs/070），手写静态 vnode 会得到指名报错 |
+| `position: fixed` | ⚠️ | 元素被运行时整体挪进页面的**置顶 overlay 宿主**（保留标签 `fjs-overlay-host`，Dart 侧经 `OverlayPortal` 渲染在根 Overlay 上），全屏、不随页面滚动、盖在宿主 chrome 之上（specs/069）。偏移与 `%` 尺寸参照整屏。**不是通用的视口定位**：`position` 不再是 `fixed` 时元素回到原父节点的原位置（specs/129：vant Sticky 往回滚时解除吸顶）；fixed 元素之间按 `z-index` 排序、相等保持插入顺序（specs/129：吸顶的 vant Sticky 99 不再盖住后打开的 Popover 2000+），与页面内元素之间仍不建模层叠上下文；`left` / `top` 为 `auto` 时贴宿主的 0，**不是** CSS 的 static position（web 上停在元素原来的位置）——需要两端一致就显式写偏移；从原父元素继承的样式断开（同 web 上 teleport 到 `<body>`）；弹层动画时序由 Flutter 侧驱动，可能与 web 有出入；**不经宿主 safe-area 包裹**，`top: 0` 会顶进状态栏区域，宿主要自行留出安全区。旧宿主不认识保留标签时退化为页面内的全屏盒（会随滚动带走）。**诊断**：hoist 由样式引擎回调触发（解析结果 `position === 'fixed'`）；`createStaticVNode`（静态提升 vnode）在本 renderer 没有 DOM innerHTML 语义，app 构建以 `hoistStatic: false` 规避（specs/070），手写静态 vnode 会得到指名报错 |
 | `top` / `right` / `bottom` / `left` | ✅ | |
 | `z-index` | ⚠️ | 只在**同一包含块的绝对定位兄弟之间**生效：按 z-index 排序（相等保持树序，`auto` 记 0），负值画在文档流内容之下（specs/073，vant 步骤条圆点的白底盖住连接线靠它）。不建模层叠上下文——跨包含块、文档流元素之间仍是顺序即层级。例外：`sticky-header` 组件自带的 `z-index: 1`（web 端）是组件默认外观的一部分，不开放给页面 CSS |
 
@@ -222,9 +222,10 @@ props、CSS 走同一条引擎，整棵子树由一个画笔画出
 **`currentColor`**（vant 两端兼容收尾）：`color` 属性上的 `currentColor`
 由引擎消解成继承值（CSS 语义就是"取自身颜色"，原样下发会让 App 端解析成黑——
 vant spinner 的 `color: currentColor` 之前画黑线就是这个）；伪元素样式里的
-`currentColor` 全属性替换成宿主计算色；`fill` / `stroke` 保留关键字、由 svg
-画笔按节点文字色解析；`border` 简写省略颜色时的取值见边框小节。其余属性
-（`background-color` 等）上的关键字 App 端读不出、按缺失处理，web 原生认识。
+`currentColor` 全属性替换成宿主计算色；元素自身的其余属性（边框色、背景色、
+阴影……）同样替换成元素的计算色（specs/129，vant Popover 箭头是
+`border-top-color: currentColor`）；`fill` / `stroke` 保留关键字、由 svg
+画笔按节点文字色解析；`border` 简写省略颜色时的取值见边框小节。
 
 同一个解析器也服务 `<canvas>` 的 `fillStyle` / `strokeStyle`
 （[canvas-compat.md](canvas-compat.md)）——那边解析失败会画成黑色，所以

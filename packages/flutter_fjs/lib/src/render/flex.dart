@@ -824,7 +824,7 @@ Widget stackOutOfFlow(
   final padding = (lengths: style.paddingLengths, base: style.padding);
   // stable: equal z-index keeps tree order
   final indexed = [
-    for (var i = 0; i < over.length; i++) (i, _zIndexOf(over[i].$1), over[i]),
+    for (var i = 0; i < over.length; i++) (i, zIndexOf(over[i].$1), over[i]),
   ]..sort((a, b) => a.$2 != b.$2 ? a.$2.compareTo(b.$2) : a.$1.compareTo(b.$1));
   final below = [
     for (final e in indexed)
@@ -855,13 +855,34 @@ Widget stackOutOfFlow(
   );
 }
 
+/// A border-box never shrinks past its own padding and border (the
+/// content clamps at 0) — decoration.dart does the same for in-flow boxes.
+/// Out-of-flow boxes size through the Positioned slot instead, so the
+/// declared px width/height is raised here. vant's Popover arrow is the CSS
+/// triangle `width: 0; height: 0; border-width: 6px`: a 0×0 slot flattened
+/// it to a sliver (specs/129). Percentages and content-box keep their path.
+FjsLength? _atLeastEdges(
+  FjsStyle s,
+  FjsLength? length, {
+  required bool horizontal,
+}) {
+  if (length == null || length.isRelative) return length;
+  if (s.style['boxSizing'] == 'content-box') return length;
+  final b = s.boxBorders();
+  final pad = s.padding ?? EdgeInsets.zero;
+  final min = horizontal
+      ? pad.horizontal + (b?.left?.width ?? 0) + (b?.right?.width ?? 0)
+      : pad.vertical + (b?.top?.width ?? 0) + (b?.bottom?.width ?? 0);
+  return length.px < min ? FjsLength.px(min) : length;
+}
+
 /// `z-index` among the absolute children of one containing block: CSS
 /// paints them by z-index, tree order breaking ties (`auto` counts as 0),
 /// negative ones under the in-flow content. vant's steps lean on it — the
 /// dot's white `z-index: 1` box masks the connecting line that follows it
 /// in the tree. Stacking contexts across containing blocks are not modelled
 /// (css-compat.md).
-int _zIndexOf(MirrorNode? node) {
+int zIndexOf(MirrorNode? node) {
   if (node == null) return 0;
   final v = FjsStyle.of(node).style['zIndex'];
   if (v is num) return v.toInt();
@@ -933,8 +954,8 @@ Widget positionedChild(
     top: _inset(s.topLength, m.top),
     right: _inset(s.rightLength, m.right),
     bottom: _inset(s.bottomLength, m.bottom),
-    width: s.widthLength,
-    height: s.heightLength,
+    width: _atLeastEdges(s, s.widthLength, horizontal: true),
+    height: _atLeastEdges(s, s.heightLength, horizontal: false),
     autoX: auto.horizontal,
     autoY: auto.vertical,
     padding: padding,
