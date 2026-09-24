@@ -151,7 +151,10 @@ class _FjsInputState extends State<FjsInput>
     var color = const Color(0xFF999999);
     var fontSize = style.fontSize ?? 14.0;
     FontWeight? fontWeight;
-    var height = 1.4;
+    // A browser lays the placeholder out in the input's own line box, so
+    // with no `line-height` key it takes the field's — a fixed 1.4 made an
+    // empty field a different height from a filled one.
+    var height = _lineHeight(style);
     final raw = widget.node.props['placeholderStyle']?.toString();
     if (raw != null && raw.isNotEmpty) {
       for (final part in raw.split(';')) {
@@ -368,9 +371,23 @@ class _FjsInputState extends State<FjsInput>
       fontFamily: style.fontFamily,
       fontFamilyFallback: style.fontFamilyFallback,
       letterSpacing: style.letterSpacing,
-      height: style.lineHeightMultiplier ?? 1.4,
+      height: _lineHeight(style),
       leadingDistribution: TextLeadingDistribution.even,
     );
+  }
+
+  /// The field's line height as a multiplier. `24px` is divided by the font
+  /// size, as text.dart does for text nodes: vant's control inherits the
+  /// cell's `line-height: 24px`, and reading only unitless values dropped it
+  /// to 1.4 — a 19.6px line box in a 24px row, sitting ~2px above the
+  /// label's text (specs/126).
+  double _lineHeight(FjsStyle style) {
+    final multiplier = style.lineHeightMultiplier;
+    if (multiplier != null) return multiplier;
+    final abs = style.lineHeightAbsolute;
+    final fontSize = style.fontSize ?? 14;
+    if (abs != null && abs > 0 && fontSize > 0) return abs / fontSize;
+    return 1.4;
   }
 
   @override
