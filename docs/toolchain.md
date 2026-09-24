@@ -1295,10 +1295,16 @@ CLI（`fjs run/build/dev`）会把 flavor 写进自身环境变量（之后启�
 `bin/engine.dart`（`dart run flutter_fjs:engine <flavor>`）。runner 只做
 构建文件做不到的两件事：
 
-- **宿主的 pod install**：在宿主 `.dart_tool/flutter_fjs/engine_flavor`
-  记录上次的 flavor，变了就 touch 宿主 `ios|macos/Podfile`、清宿主
-  build 下的 Xcode xcframework 缓存，让下一次构建重新 pod install 并重链。
-  只写宿主文件。
+- **宿主的 pod install**：在宿主 `.dart_tool/flutter_fjs/engine_flavor.v2`
+  记录上次的 flavor（没有记录时按「未知」处理，失效一次），变了就 touch 宿主
+  `ios|macos/Podfile`（Flutter 见 Podfile 比 Podfile.lock 新会重跑 pod install），
+  并递归删掉宿主 `build/` 下的 `XCFrameworkIntermediates/flutter_fjs` 与
+  `flutter_fjs/flutter_fjs.framework`，让下一次构建重拷切片、重链。只写宿主文件。
+
+**为什么 iOS/macOS 切换要主动让缓存失效**（spec 112）：两个 flavor 的 `libfjs.a`
+同名、只是目录不同，而 CocoaPods 的 xcframework 复制阶段按「输入是否比输出新」决定
+重拷——git 检出的另一份时间戳可能更旧，会被判定为最新而继续链接旧引擎。所以由
+runner 在切换时删掉派生的缓存目录。Android（Gradle 按内容判断）不受影响。
 - **鸿蒙 libs**：按内容比对 `ohos/libs` 与目标 flavor，一致就什么都不做；
   需要换时，只有 flutter_fjs 是 **path 依赖**才复制，在 pub-cache 里会
   报错退出——鸿蒙要用非默认引擎，请用 path 依赖。宿主没有 `ohos/`
