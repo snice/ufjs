@@ -43,7 +43,7 @@ drifts:
 | `src/interpreter/quickjs/source/inspector_hooks.cc` | **new** — the table itself + a link anchor for the GC write barriers in `gc/collector.cc`, which only the inspector calls |
 | `src/interpreter/quickjs/source/quickjs.cc` (8 sites), `quickjs_gc.cc` (2 sites) | the ten direct inspector calls now go through the table; each already sat behind `#ifdef ENABLE_QUICKJS_DEBUGGER` + a runtime flag |
 | `src/interpreter/quickjs/include/quickjs-inner.h` | includes `inspector_hooks.h` |
-| `src/interpreter/quickjs/include/base_export.h` | `QJS_HIDE` becomes default-visible under `FJS_EXPORT_ENGINE_INTERNALS`: the inspector binds ~two dozen engine internals across the module boundary |
+| `src/interpreter/quickjs/include/base_export.h` | `QJS_HIDE` becomes default-visible under `FJS_EXPORT_ENGINE_INTERNALS`: the inspector binds ~two dozen engine internals across the module boundary; the shipped ELF `libfjs.so` still exports only `fjs_*` plus the debugger module's imports — its link uses a version script generated from the module's objects (spec 116) |
 | `CMakeLists.txt` | `PRIMJS_INSPECTOR_AS_MODULE` keeps the inspector sources out of the `quickjs` target and gives them their own `quickjs_inspector` OBJECT target |
 
 **Never define the six seam functions in the engine as forwarders.** Same

@@ -77,7 +77,7 @@ flavor 作为更小、更快的纯计算回退，定位不变。
 | 引擎裸 RSS | ~2.4 MB | ~2.4 MB | 平 |
 | **驻留堆**（60 万个存活对象） | 182.8 MB | **154.1 MB** | **Q 省 16%** |
 | 峰值 RSS（churn 压测脚本） | **728 MB** | 778 MB | P 省 6% |
-| Android arm64 `libfjs.so` | 1.94 MB | 1.41 MB | Q -27% |
+| Android arm64 `libfjs.so` | 1.34 MB | 1.19 MB | Q -11%（spec 116 收窄导出前是 1.94 / 1.41 MB） |
 | （debug 附加）`libfjs_debugger.so` | +0.49 MB | 无此文件 | release 两侧都不背 |
 | abi/ 双平台缓存总量 | 30 MB | 17 MB | — |
 | 字节码 bundle（161 KB 源码） | **473 KB** | 613 KB | **P -23%** |

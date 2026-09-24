@@ -6,6 +6,10 @@
   现在调试器放在单独的 `abi/primjs/android-debugger/`，只挂到 `debug` 源集；鸿蒙端插件
   以源码依赖接入时插件侧过滤不生效，改由宿主 `entry/build-profile.json5` 过滤
   （`@ufjs/cli` 托管的宿主自动补上，其它宿主见 `docs/toolchain.md`）。
+- **`libfjs.so` 瘦身约三成（spec 116）**：Android / 鸿蒙的引擎库只导出 `fjs_*` 和调试器
+  模块实际用到的符号（此前 PrimJS 内部 2800 多个符号全部导出），并开启 `--gc-sections`。
+  arm64 primjs 1.94 → 1.34 MB、armeabi-v7a 1.22 → 0.81 MB、x86_64 1.93 → 1.34 MB；quickjs
+  arm64 1.41 → 1.19 MB；鸿蒙 primjs 1.90 → 1.26 MB。行为不变，debug 构建照常可附加调试器。
 
 ## 0.1.6
 

@@ -198,6 +198,9 @@ uni-app 那张表：
   挪到 `abi/primjs/android-debugger/` 只挂 `debug` 源集（`jniLibs.excludes` 被 AGP 忽略）；鸿蒙由宿主
   `entry/build-profile.json5` 过滤，CLI 托管宿主自动补丁；`tool/test/android_debugger_strip_check.mjs`
   实跑三变体断言。iOS Release 核实无需改动。**待发布**：随 0.1.7
+- ✅ `libfjs.so` 收窄导出符号（`specs/116-libfjs-export-trim`，2026-09）：版本脚本在构建时从调试器目标文件
+  生成，只导出 `fjs_*` + 调试器所需，配 `--gc-sections`；arm64 primjs 1.94 → 1.34 MB。`fjs_debugger` 以
+  `--no-undefined` 链接兜底，`tool/test/libfjs_exports_check.mjs` 核对产物。**待发布**：随 0.1.7
 - ✅ 清理入库的构建产物与死代码（`specs/109-no-committed-build-artifacts`，2026-09）：spec 093 e2e 的
   `bundle.js` / `relay.cjs` 改由 `e2e/build.mjs` 生成、不再入库（Linux 上重跑 11/11）；删除从未编译的
   `primjs/src/wasm/`；`fjsrun` 补 `<ctime>`，Linux 可编
