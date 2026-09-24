@@ -16,7 +16,7 @@
 ## 两端对齐
 
 - [x] T020 Web 侧：确认 `packages/fjs-runtime/src/web/` 里 `<image>` 走浏览器 `<img>`、不经过 path_provider，不需要改（结论：`web/components/basic.ts` 渲染原生 `<img>`，缓存交给浏览器，不需要改）
-- [x] T021 两端行为对拍：hello-fjs 的 fetch 页在 `fjs dev --web` 和 `fjs run ios` 上都显示狗图（iOS 部分由用户在本机验证）（web 代码没动，`fjs build` 通过；**iOS 部分待用户本机验收**）
+- [x] T021 两端行为对拍：hello-fjs 的 fetch 页在 `fjs dev --web` 和 `fjs run ios` 上都显示狗图（iOS 部分由用户在本机验证）（web 代码没动，`fjs build` 通过；iOS 部分用户已在本机验收通过，2026-09-24）
 
 ## 测试
 
@@ -32,4 +32,4 @@
 
 - [x] T050 `pnpm run typecheck`（全 workspace 通过；新 clone 要先执行 `fjs build` 生成被 gitignore 的 `src/fjs-*.d.ts`，否则 demo/hello-fjs 会报 `icon-mind` 类型缺失。这个问题改动前就有，和本 spec 无关）
 - [x] T051 `pnpm test`（webview 36、cli 378、runtime 685、webgl 30，全部通过）
-- [x] T052 spec.md 第 6 节逐条核对，把 spec 状态改成 done（用户本机验收的条目标注出来）（第 1–4、6、7 条已核对；第 5 条 iOS 实机验收待用户完成）
+- [x] T052 spec.md 第 6 节逐条核对，把 spec 状态改成 done（用户本机验收的条目标注出来）（第 1–7 条全部核对完毕；第 5 条由用户在本机 iOS 模拟器验收通过）
