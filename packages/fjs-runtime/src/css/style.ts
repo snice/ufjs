@@ -537,6 +537,10 @@ export class StyleEngine {
    * the lookup allocation-free. */
   private nextObjId = 1;
   private defaultsIds = new WeakMap<object, number>();
+  /** Every scope an element has carried. Only grows. A scoped sheet whose
+   * scope is NOT in here cannot change any cached answer — see the fast
+   * path in register() (specs/120). */
+  private seenScopes = new Set<string>();
   /** Reused by markDirty so a walk allocates nothing. */
   private walkStack: number[] = [];
   private counters = { recompute: 0, computeHit: 0, computeMiss: 0, matchHit: 0, matchMiss: 0, applied: 0, flushMs: 0, flushes: 0, markMs: 0, markCalls: 0, markVisited: 0 };
@@ -575,6 +579,8 @@ export class StyleEngine {
 
   /** Registers a <style> block. scope=null means global (non-scoped). */
   register(scope: string | null, cssText: string): void {
+    const flagsBefore = this.shapeFlags();
+    let touchesRoot = false;
     const fontFaces: FontFaceDecl[] = [];
     const keyframes: KeyframesDecl[] = [];
     const all = parseStylesheet(cssText, scope, this.nextOrder, fontFaces, keyframes);
@@ -599,6 +605,7 @@ export class StyleEngine {
         }
         continue;
       }
+      touchesRoot = true;
       for (const [k, v] of Object.entries(r.decls)) {
         if (k.startsWith('--')) (this.rootCustom ??= {})[normalizeVarKey(k)] = String(v);
         else warnOnce(`":root" declaration "${k}" is not supported (only custom properties), skipped`);
@@ -629,6 +636,28 @@ export class StyleEngine {
           break;
         }
       }
+    }
+    // A split build (specs/120) evaluates each page's chunk when the page is
+    // first opened, and the chunk registers the page's scoped sheet. Clearing
+    // every cache for it made every page open fully cold and restyled the
+    // pages stacked below — which is why a --profile build mounted slower
+    // than the dev server's single bundle. A scoped rule only matches an
+    // element carrying its scope (or, for :deep, an ancestor that does), and
+    // chain keys carry every scope of the element and its ancestors: while no
+    // element has ever carried this scope, no answer in the caches and no
+    // live element can change. The other conditions cover what reaches
+    // beyond the scope: :root tokens and @keyframes are global, and the shape
+    // flags decide the key format and match layout. Anything else (a global
+    // sheet, a dev re-registration) still clears it all: narrower
+    // invalidation was judged not worth its risk (specs/120 plan §3).
+    if (
+      scope !== null &&
+      !this.seenScopes.has(scope) &&
+      !touchesRoot &&
+      keyframes.length === 0 &&
+      this.shapeFlags() === flagsBefore
+    ) {
+      return;
     }
     this.matchEpoch++;
     // every MatchResult (and the computed styles hanging off it) is stale
@@ -713,6 +742,12 @@ export class StyleEngine {
     if (kids === undefined) return;
     for (let i = 0; i < kids.length; i++) this.mark(kids[i]);
     this.scheduleFlush();
+  }
+
+  /** The flags that decide signature format and match-result shape, as one
+   * comparable value (register's fast path compares before / after). */
+  private shapeFlags(): number {
+    return (this.hasMedia ? 1 : 0) | (this.hasStructural ? 2 : 0) | (this.hasSiblingRules ? 4 : 0) | (this.hasPseudo ? 8 : 0);
   }
 
   /** @internal Test/diagnostic view of cache sizes. */
@@ -941,6 +976,7 @@ export class StyleEngine {
   addScope(id: number, scope: string): void {
     const s = this.states.get(id);
     if (!s || s.scopes.has(scope)) return;
+    this.seenScopes.add(scope);
     // copy-on-write: ensure() starts every element on the shared empty set
     if (s.scopes === EMPTY_CLASSES) s.scopes = new Set();
     s.scopes.add(scope);

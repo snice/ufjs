@@ -114,6 +114,10 @@ jsi-and-native-modules.md)。
 的**。`JSON.stringify` 一个小对象 1.3 µs，而把同样 30 个 ASCII 字符逐个写进缓冲区
 也要几微秒——所以常量 props 缓存的是编码好的字节（一次 `set()` 拷贝），不是 JSON 串。
 
+分包构建（`--pages` / `fjs run --profile|--release`）里，页面 chunk 注册自己的 scoped
+样式表时以前会清空整个样式缓存，每个新页面都从全冷开始；specs/120 之后，新作用域的表
+不再触发失效。见 [vant-mount-perf.md](vant-mount-perf.md) 的「真机复核」一节。
+
 ## 样式驻留带来的变化（2026-09）
 
 把 style 从「每节点一份内联 JSON」改成「一次 DEFINE_STYLE + 每节点 13 字节

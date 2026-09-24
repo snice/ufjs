@@ -492,6 +492,35 @@ vant-form / vant-more / vant-nav / vant-basic 把首屏以下的分组包进 `<d
   热 ~28 ms，容器口径）。样式匹配结果落盘或构建期预热，另立 spec。
 - IFR / 构建期首帧快照：不做（spec 118 Non-goals）。
 
+## 真机复核与分包模式的冷缓存（specs/120）
+
+用户 2026-09-24 真机（iPhone）实测：
+
+| `[nav] mounted` | `fjs run ios`（debug，dev server 单包） | `fjs run ios --profile`（分包 + 字节码） |
+|---|---:|---:|
+| vant-basic | 31 ms | 75 ms |
+| vant-feedback | 17 | 59 |
+| vant-form | — | 68 |
+| vant-more | 37 | 69 |
+| vant-nav | 51 | 81 |
+
+profile 反而慢，两笔账：
+
+1. **分包模式下计时窗口里有 chunk 的读取与执行**（`_mountWhenReady` 从 `_ensureChunk`
+   开始计时）：日志里同一页前一行的 `fetch 0–3ms, eval 12–16ms`。dev 单包没有这笔。
+2. **每个 chunk 注册 scoped 样式表都会清空整个样式缓存**（specs/120 修复）。`register()`
+   以前一律 `matchEpoch++`、清 `matchCache`、把所有存活元素标脏：新页面从全冷开始，
+   垫在下面的页面整页重算。dev 单包在启动时就注册完了所有表，碰不到。离线复现
+   （前面挂过 vant-basic、vant-more 再挂 vant-form）：同步段 44–47 → 65–73 ms，
+   match miss 86 → 234。现在注册一张**从未有元素用过的作用域**的表（且不含 `:root` /
+   `@keyframes`、不改引擎开关）直接跳过失效——scoped 规则只命中带该作用域的元素，
+   不可能改变任何已有答案。修复后同一场景 match miss 86、同步段 45 ms，与不注册一致。
+
+复核时 `[nav] mounted` 要减去前一行 chunk 的 fetch + eval，才是 navMount 本身。
+
+构建期样式预热（冷态 CSS 那一段）试过一版，真机复核没有体感收益，已撤回；首开的冷态
+CSS 仍按上文「还没做的」处理。
+
 ## 附录：怎么复现与怎么量
 
 ```bash
