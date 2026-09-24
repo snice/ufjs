@@ -1,7 +1,7 @@
 # Spec: 把 path_provider_foundation 限制在 FFI 版之前，修复 iOS 网络图崩溃
 
 - **ID**: 117-pin-path-provider-foundation
-- **状态**: ready
+- **状态**: done
 - **日期**: 2026-09-24
 
 ## 1. 要解决什么
