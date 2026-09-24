@@ -179,6 +179,9 @@ uni-app 那张表：
   非回环连接做 token 质询（经 CDP `Runtime.evaluate`，不改 native），未认证连接不占会话
   槽位；dev server 只接受本机工具，`eval` / `perf` / `debug-relay` 要求已登记工具，
   跨机器需 `fjs dev --remote-tools`。**待本机验证**：`flutter test` 与局域网真机附加
+- ✅ PrimJS 的 `queueMicrotask` 兜底不再吞异常（`specs/108-queue-microtask-errors`，2026-09）：
+  回调异常按 quickjs-ng 原生同款前缀与格式上报，非函数参数同步抛 `TypeError`
+- [ ] 两个引擎都没有注册 Promise rejection tracker，普通未处理拒绝不打日志（需 native，待开 spec）
 
 实机对拍时抓到三个只有跑起来才看得见的问题：Dart 的 mode 分支漏了 `center`
 （静静降级成 `scaleToFill`）；web 的 `heightFix` 因为 column flex 的 stretch 被

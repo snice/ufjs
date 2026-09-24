@@ -1336,7 +1336,14 @@ dart-define 却没重新 pod install。
   全局只有一个 flavor 有：优先在 runtime 兼容层补，不要改 vendored 引擎
   源码或 native 注册——那会让每个 flavor × 平台的引擎产物重编重发，
   而缺的这个全局几乎总能用已验证存在的机制（promise 微任务、定时器）
-  包出来。
+  包出来。包的时候要把**报错行为**一并对齐（specs/108）：原生 `queueMicrotask` 的
+  回调就是任务本身，抛错会被 `vm.cpp` 以 `[fjs] unhandled rejection in a
+  microtask job: …` 打出来；兜底版本的任务是 `.then` 回调，抛错只会让派生的
+  Promise 变成 rejected，而原生侧没有注册 rejection tracker——早期兜底因此在默认
+  引擎上把回调里的异常全部吞掉。现在兜底用 try/catch 包住回调，按同样的前缀和
+  「消息 + 栈」格式经 `console.error` 上报，非函数参数同步抛 `TypeError`。
+  （普通 Promise 的未处理拒绝两个引擎目前都不会打日志，需要 native 注册
+  tracker，另行处理。）
 
 同进程内不混用两个引擎：它们各占一套 VM 与符号，双引擎热切换意味着
 每个 App 永久背两份引擎体积，对比实验用不上；要对比就按上面整 App
