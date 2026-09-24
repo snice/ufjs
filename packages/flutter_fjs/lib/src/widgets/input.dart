@@ -110,10 +110,18 @@ class _FjsInputState extends State<FjsInput>
 
   static const int _defaultMultilineLines = 3;
 
-  /// `confirm-type`. `return` (the default) means the key inserts a newline,
+  /// `confirm-type`, else the DOM `enterkeyhint` (same values; `enter` is
+  /// `return`), else a `type="search"` field's search key — what a browser
+  /// shows for it. `return` (the default) means the key inserts a newline,
   /// which is also why it does not fire `@confirm`.
   TextInputAction? get _textInputAction {
-    switch (widget.node.props['confirmType']?.toString()) {
+    final confirm = widget.node.props['confirmType']?.toString();
+    final hint = widget.node.props['enterkeyhint']?.toString().toLowerCase();
+    final key =
+        confirm ??
+        (hint == 'enter' ? 'return' : hint) ??
+        (_domType == 'search' ? 'search' : null);
+    switch (key) {
       case 'send':
         return TextInputAction.send;
       case 'search':
@@ -181,9 +189,43 @@ class _FjsInputState extends State<FjsInput>
     return value != null && value > 0 ? value : null;
   }
 
+  /// The page's DOM `type`, lower-cased. vant's Field writes `type`,
+  /// `inputmode` and `enterkeyhint` the way it would on a browser <input>
+  /// (its mapInputType turns `digit` into `tel` + `numeric` and `number`
+  /// into `text` + `decimal`) and never the fjs props, so they are read here
+  /// as aliases — without them a password field showed its text and every
+  /// numeric field got the full keyboard (specs/125).
+  String? get _domType => widget.node.props['type']?.toString().toLowerCase();
+
+  /// `secure` or a DOM `type="password"`. Never on a multiline field: a
+  /// browser has no masked textarea, and TextField asserts on one.
+  bool get _obscure =>
+      !_multiline &&
+      (fjsBool(widget.node.props['secure']) || _domType == 'password');
+
+  /// Precedence follows the browser, with the fjs prop on top: `keyboard`,
+  /// then `inputmode` (which a browser lets override `type`), then `type`.
+  /// Unknown values fall through to text, as a browser's do.
   TextInputType? get _keyboardType {
-    switch (widget.node.props['keyboard']?.toString()) {
+    final fallback = _multiline ? TextInputType.multiline : null;
+    final keyboard = widget.node.props['keyboard']?.toString();
+    if (keyboard != null && keyboard.isNotEmpty) {
+      return _keyboardFor(keyboard) ?? fallback;
+    }
+    final mode = widget.node.props['inputmode']?.toString().toLowerCase();
+    final fromMode = mode == null ? null : _keyboardFor(mode);
+    if (fromMode != null) return fromMode;
+    final fromType = _domType == null ? null : _keyboardFor(_domType!);
+    return fromType ?? fallback;
+  }
+
+  /// One table for `keyboard`, `inputmode` and `type` values — they share
+  /// most names. `numeric` is a number pad with no decimal point, as iOS
+  /// shows it for the attribute.
+  static TextInputType? _keyboardFor(String value) {
+    switch (value) {
       case 'number':
+      case 'numeric':
         return TextInputType.number;
       case 'decimal':
         return const TextInputType.numberWithOptions(decimal: true);
@@ -191,10 +233,10 @@ class _FjsInputState extends State<FjsInput>
         return TextInputType.phone;
       case 'email':
         return TextInputType.emailAddress;
+      case 'url':
+        return TextInputType.url;
       default:
-        return fjsBool(widget.node.props['multiline'])
-            ? TextInputType.multiline
-            : null;
+        return null;
     }
   }
 
@@ -339,7 +381,10 @@ class _FjsInputState extends State<FjsInput>
     final textField = TextField(
       controller: _controller,
       focusNode: _focusNode,
-      obscureText: fjsBool(widget.node.props['secure']),
+      obscureText: _obscure,
+      // a masked field must not learn or suggest what is typed into it
+      enableSuggestions: !_obscure,
+      autocorrect: !_obscure,
       // null + expands fills the box the page sized and scrolls inside it;
       // 3 stops at three lines and scrolls; 1 is the single-line field.
       maxLines: expands ? null : _maxLines,

@@ -213,9 +213,12 @@ export const FjsInput = defineComponent({
         // `rows` expresses "three lines" the way maxLines: 3 does on
         // Flutter — it follows the font size, and a CSS height still wins.
         rows: props.multiline && !props.autoHeight ? 3 : undefined,
-        enterkeyhint: props.multiline && confirms.value
-          ? props.confirmType
-          : undefined,
+        // Only when textarea's confirm key asks for one: otherwise the
+        // page's own `enterkeyhint` (in attrs) stays — spreading undefined
+        // over it here dropped it (specs/125).
+        ...(props.multiline && confirms.value
+          ? { enterkeyhint: props.confirmType }
+          : {}),
         style: inputStyle(),
         value: text.value,
         placeholder: props.placeholder,
@@ -226,15 +229,16 @@ export const FjsInput = defineComponent({
           emit('focus', (event.target as HTMLInputElement).value),
         onBlur: (event: FocusEvent) =>
           emit('blur', (event.target as HTMLInputElement).value),
+        // `secure` / `keyboard` are the fjs props and win; without them the
+        // page's DOM `type` (in attrs) is kept — `<input type="password">`
+        // used to be forced to `text` and showed the password (specs/125).
         ...(props.multiline
           ? {}
-          : {
-              type: props.secure
-                ? 'password'
-                : props.keyboard === 'number'
-                  ? 'number'
-                  : 'text',
-            }),
+          : props.secure
+            ? { type: 'password' }
+            : props.keyboard === 'number'
+              ? { type: 'number' }
+              : { type: (attrs.type as string | undefined) ?? 'text' }),
         onInput,
         onKeydown,
       });

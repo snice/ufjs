@@ -132,7 +132,8 @@ void main() {
         ),
       ),
     );
-    expect(theField(tester).decoration!.filled, isFalse);  });
+    expect(theField(tester).decoration!.filled, isFalse);
+  });
 
   testWidgets('rows sizes a multiline field without auto-height', (
     tester,
@@ -142,9 +143,7 @@ void main() {
     expect(theField(tester).maxLines, 2);
   });
 
-  testWidgets('el.focus()/el.blur() find the field by node id', (
-    tester,
-  ) async {
+  testWidgets('el.focus()/el.blur() find the field by node id', (tester) async {
     final tree = inputTree(1, {});
     await tester.pumpWidget(render(tree, []));
     final field = theField(tester);
@@ -214,5 +213,63 @@ void main() {
     setProps(tree, 1, {'placeholder': 'x'});
     await tester.pump();
     expect(field.controller!.text, 'abc');
+  });
+
+  // specs/125: vant writes the DOM attributes, never secure/keyboard.
+  Future<TextField> fieldFor(
+    WidgetTester tester,
+    Map<String, Object?> props,
+  ) async {
+    await tester.pumpWidget(render(inputTree(1, props), []));
+    return theField(tester);
+  }
+
+  testWidgets('type=password masks the text and turns suggestions off', (
+    tester,
+  ) async {
+    final field = await fieldFor(tester, {'type': 'password'});
+    expect(field.obscureText, isTrue);
+    expect(field.enableSuggestions, isFalse);
+    expect(field.autocorrect, isFalse);
+  });
+
+  testWidgets('DOM type / inputmode pick the keyboard', (tester) async {
+    // vant digit: type=tel + inputmode=numeric — inputmode wins
+    var field = await fieldFor(tester, {'type': 'tel', 'inputmode': 'numeric'});
+    expect(field.keyboardType, TextInputType.number);
+    // vant number: type=text + inputmode=decimal
+    field = await fieldFor(tester, {'type': 'text', 'inputmode': 'decimal'});
+    expect(
+      field.keyboardType,
+      const TextInputType.numberWithOptions(decimal: true),
+    );
+    field = await fieldFor(tester, {'type': 'tel'});
+    expect(field.keyboardType, TextInputType.phone);
+    field = await fieldFor(tester, {'type': 'email'});
+    expect(field.keyboardType, TextInputType.emailAddress);
+    field = await fieldFor(tester, {'type': 'bogus'});
+    expect(field.keyboardType, TextInputType.text);
+  });
+
+  testWidgets('keyboard beats inputmode', (tester) async {
+    final field = await fieldFor(tester, {
+      'keyboard': 'email',
+      'inputmode': 'numeric',
+    });
+    expect(field.keyboardType, TextInputType.emailAddress);
+  });
+
+  testWidgets('enterkeyhint / type=search pick the confirm key', (
+    tester,
+  ) async {
+    var field = await fieldFor(tester, {'enterkeyhint': 'done'});
+    expect(field.textInputAction, TextInputAction.done);
+    field = await fieldFor(tester, {'type': 'search'});
+    expect(field.textInputAction, TextInputAction.search);
+    field = await fieldFor(tester, {
+      'confirmType': 'send',
+      'enterkeyhint': 'done',
+    });
+    expect(field.textInputAction, TextInputAction.send);
   });
 }
