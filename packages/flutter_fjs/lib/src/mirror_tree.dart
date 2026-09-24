@@ -123,13 +123,6 @@ class _NodeSignal extends ChangeNotifier {
 /// Applies op frames and notifies listeners (the engine wires this to
 /// setState). ids: node handles from JS; 0 is the root container.
 class MirrorTree {
-  MirrorTree({void Function(String message)? debugLog}) : _debugLog = debugLog;
-
-  /// Optional sink for op-stream diagnostics (specs/070). The engine wires
-  /// it to its log channel so the device-side log sheet can show what the
-  /// op stream actually contained — debugPrint dies with the attach.
-  final void Function(String message)? _debugLog;
-
   final Map<int, MirrorNode> _nodes = {};
 
   /// Every live node — for the rare whole-tree scan (the global pointer's

@@ -243,11 +243,7 @@ class FjsEngine extends ChangeNotifier {
 
   final FjsBindings bind = FjsBindings.instance();
 
-  /// Op-stream diagnostics route to the same log channel as engine errors,
-  /// so the device-side log sheet shows what actually arrived (specs/070).
-  late final MirrorTree tree = MirrorTree(
-    debugLog: (message) => _log(3, message),
-  );
+  final MirrorTree tree = MirrorTree();
   final HostRegistry host = HostRegistry();
 
   /// Whether the dev performance overlay is showing. [FjsApp] watches it;

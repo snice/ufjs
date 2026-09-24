@@ -1,6 +1,6 @@
 {
   "name": "@ufjs/runtime",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "description": "JS runtime for flutter_fjs: element API, batched UI op protocol, Vue 3 custom renderer",
   "license": "MIT",
   "repository": {

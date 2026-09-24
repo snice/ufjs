@@ -1,3 +1,26 @@
+## 0.1.6
+
+- **默认 JS 引擎换成 PrimJS 4.1.1（specs/088–091）**：带内置 Chrome DevTools
+  协议调试器，`fjs debug` 可断点、看 Elements / Network。quickjs-ng 0.9.0 作为
+  第二个 flavor 保留，两份预编译产物都在 `abi/{primjs,quickjs}/` 下随包发布。
+  **字节码不跨引擎**：bundle 头带引擎 id，必须用同 flavor 的 `fjsc` 编（`@ufjs/cli`
+  0.1.6 起按引擎自动挑选，spec 114）。旧版 CLI 编出的 quickjs 字节码在默认 PrimJS
+  下会被拒绝加载。
+- **引擎切换不再改写插件目录（spec 105/112）**：Android 的 gradle、iOS/macOS 的
+  podspec 按 `FJS_JS_ENGINE`（环境变量或 `--dart-define`）直接选用对应产物；
+  `dart run flutter_fjs:engine <flavor>` 负责鸿蒙 `ohos/libs` 与宿主 pods 失效。
+  iOS/macOS 来回切换后仍链接旧引擎的问题已修（Xcode 缓存递归清理）。
+- **调试器是可插拔模块（spec 090）**：非 debug 构建物理剔除 `libfjs_debugger`，
+  release 包里没有 CDP 入口；调试通道对非本机连接做 token 质询（spec 107）。
+- 未处理的 Promise 拒绝在两个引擎上都打 `[fjs] unhandled promise rejection`，
+  顺带修掉 PrimJS 未处理拒绝列表的内存泄漏（spec 111）。
+- `FjsEngine` 新增 `assetBundle`，正式构建的资源可改从网络读取。
+- 布局与交互修复：flex 主轴百分比参照（spec 106）、fixed + transition 盒内
+  `height: 100%`（spec 101）、`touch-action: none` 不再吞 `@tap`（spec 097）、
+  image 位置类 mode 与 `heightFix`（spec 102）、vant 组件两端对拍（specs/068–077）。
+- 性能：导航挂载窗口内跳过同步 `flushLayout`（spec 086）；热更新只留页面与整包
+  两档（spec 095）。
+
 ## 0.1.5
 
 - **修 Flutter 3.44 编译错误**：官方 3.44 把 `CupertinoPageTransitionsBuilder`
