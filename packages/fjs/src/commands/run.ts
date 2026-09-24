@@ -85,8 +85,8 @@ export async function runCommand(argv: string[]): Promise<void> {
     };
     const res = await buildBundle(buildOpts);
     releaseBuild(buildOpts, res);
-    // non-debug host: the debugger module could never be dlopened, so the
-    // materialization drops it (spec 091 round 4)
+    // non-debug host: the build layer leaves the debugger module out
+    // (spec 105; the flag is informational now)
     materializeJsEngine(opts.jsEngine, {
       flutterDir,
       explicit: opts.jsEngineExplicit,

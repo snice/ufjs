@@ -22,10 +22,11 @@ environment:
   sdk: ">=3.10.0 <4.0.0"
   flutter: ">=3.38.0"
 
-# spec 091: `dart run flutter_fjs:engine <primjs|quickjs>` materializes an
-# engine flavor from abi/ over the plugin's platform locations — the manual
-# path for pure Flutter hosts (fjs-go); @ufjs/cli shells out to the same
-# runner for `fjs run/build --js-engine`.
+# spec 091/105: `dart run flutter_fjs:engine <primjs|quickjs>` finishes an
+# engine switch the build files cannot do alone — ohos libs and the host's
+# pod install (android/ios/macos pick the flavor at build time and this
+# package's directory is not modified for them). Pure Flutter hosts (fjs-go)
+# run it by hand; @ufjs/cli runs it for `fjs run/build --js-engine`.
 executables:
   engine:
 

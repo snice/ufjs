@@ -99,9 +99,11 @@ class FjsEngine extends ChangeNotifier {
 
   VoidCallback? _unwatchPointer;
 
-  /// spec 091: a flavor requested through --dart-define but not actually
-  /// materialized before the build is the one silent failure this feature
-  /// could produce — make it loud once per VM in debug builds.
+  /// spec 091/105: a flavor requested through --dart-define that the app
+  /// was not built with is the one silent failure this feature can produce
+  /// — iOS/macOS pick the flavor at pod install, so a changed dart-define
+  /// without a fresh pod install keeps the old engine. Loud once per VM in
+  /// debug builds.
   void _warnEngineFlavorMismatch() {
     if (!kDebugMode) return;
     const requested = String.fromEnvironment('FJS_JS_ENGINE', defaultValue: 'primjs');
@@ -113,11 +115,12 @@ class FjsEngine extends ChangeNotifier {
             : '';
     if (actualFlavor.isEmpty || actualFlavor == requested) return;
     const hint =
-        'dart run flutter_fjs:engine $requested   # then rebuild the app\n'
-        '(or drop the --dart-define to stay on the engine this app embeds)';
+        'dart run flutter_fjs:engine $requested   # from the host root: re-runs\n'
+        '                                          # pod install / switches ohos libs\n'
+        'then rebuild (or drop the --dart-define to stay on the engine this app embeds)';
     final message =
         '[fjs] FJS_JS_ENGINE=$requested but this app embeds "$actual".\n'
-        'Materialize the requested flavor before building:\n$hint';
+        'The build did not pick up the requested flavor:\n$hint';
     _log(2, message);
     debugPrint(message);
   }

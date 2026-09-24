@@ -165,6 +165,12 @@ uni-app 那张表：
 - ✅ 事件首参按 web emits 判定（`specs/104-event-first-arg-by-emits`，2026-09）：
   103 只看标签，`<view @click.stop>` 在 Flutter 端抛错；现在按「该事件是否在
   web 组件 emits 中」决定裸载荷还是事件对象，`event-emits.ts` 由漂移单测锁住
+- ✅ 引擎 flavor 不再改写插件目录（`specs/105-engine-flavor-no-plugin-writes`，2026-09）：
+  091 把选中引擎复制进 flutter_fjs 自身目录（多数宿主下是共享 pub-cache）；
+  现在 Android 的 gradle 与 iOS/macOS 的 podspec 按 `FJS_JS_ENGINE` 直接引用
+  对应产物，鸿蒙仅 path 依赖可切；CLI 不再静默跳过 runner 失败；
+  `tool/check-publish.mjs` 发布前校验。**待本机验证**：各平台真机构建与
+  `dart pub publish --dry-run`
 
 实机对拍时抓到三个只有跑起来才看得见的问题：Dart 的 mode 分支漏了 `center`
 （静静降级成 `scaleToFill`）；web 的 `heightFix` 因为 column flex 的 stretch 被
