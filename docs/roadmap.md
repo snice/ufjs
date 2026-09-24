@@ -193,14 +193,14 @@ uni-app 那张表：
 - ✅ fjsc 双引擎（`specs/114-fjsc-dual-engine`，2026-09）：每个 `@ufjs/fjsc-<平台>` 带 `bin/fjsc`（primjs）与
   `bin/fjsc-quickjs`；CLI 按二进制自报的引擎 id 挑 fjsc（`FJSC_PATH` 不符即报错），编完再核对，`fjs doctor`
   分引擎列出。修掉 0.1.4 把 quickjs-ng 当默认 `bin/fjsc` 发布、primjs 构建到运行时才失败的问题。
-  **待发布**：新版 `@ufjs/fjsc-*` 与 `@ufjs/cli`，发布后执行 0.1.4 的 deprecate（`docs/publishing.md`）
+  已随 0.1.6 发布，`@ufjs/fjsc-*@0.1.4` 已 deprecate
 - ✅ release / profile 不带调试器模块（`specs/115-android-release-drop-debugger`，2026-09）：Android 调试器
   挪到 `abi/primjs/android-debugger/` 只挂 `debug` 源集（`jniLibs.excludes` 被 AGP 忽略）；鸿蒙由宿主
   `entry/build-profile.json5` 过滤，CLI 托管宿主自动补丁；`tool/test/android_debugger_strip_check.mjs`
-  实跑三变体断言。iOS Release 核实无需改动。**待发布**：随 0.1.7
+  实跑三变体断言。iOS Release 核实无需改动。已随 0.1.7 发布
 - ✅ `libfjs.so` 收窄导出符号（`specs/116-libfjs-export-trim`，2026-09）：版本脚本在构建时从调试器目标文件
   生成，只导出 `fjs_*` + 调试器所需，配 `--gc-sections`；arm64 primjs 1.94 → 1.34 MB。`fjs_debugger` 以
-  `--no-undefined` 链接兜底，`tool/test/libfjs_exports_check.mjs` 核对产物。**待发布**：随 0.1.7
+  `--no-undefined` 链接兜底，`tool/test/libfjs_exports_check.mjs` 核对产物。已随 0.1.7 发布
 - ✅ 清理入库的构建产物与死代码（`specs/109-no-committed-build-artifacts`，2026-09）：spec 093 e2e 的
   `bundle.js` / `relay.cjs` 改由 `e2e/build.mjs` 生成、不再入库（Linux 上重跑 11/11）；删除从未编译的
   `primjs/src/wasm/`；`fjsrun` 补 `<ctime>`，Linux 可编
