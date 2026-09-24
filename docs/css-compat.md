@@ -262,7 +262,10 @@ vant spinner 的 `color: currentColor` 之前画黑线就是这个）；伪元�
 `left`/`right` 参照父盒**宽**。
 一条 CSS 规则同样适用：**参照无界时百分比退化成 auto / 0**。列表里、
 `scroll-view` 里纵向是无界的，所以 `height: 50%` 在那里不生效（web 上同理），
-要撑高就给 `flex-grow` 或写死 px。
+要撑高就给 `flex-grow` 或写死 px。只写了 `min-height`（高度仍是 auto）的盒子
+同样**不是**百分比高度的参照（CSS 规范，两端一致，specs/106）；例外是
+`overflow: hidden` + 高度过渡 + 固定高度的盒子，内容虽被解封成无界高度，
+`height: 100%` 仍按盒高解析（共享元素飞行盒，specs/101）。
 
 高度确定的普通列里 `height: 100%` 是**生效**的，尽管 Flutter 的 `Flex` 按设计
 给子节点无界主轴：声明了主轴百分比（或 % 间距 / 偏移，spec 044）的那个子节点，

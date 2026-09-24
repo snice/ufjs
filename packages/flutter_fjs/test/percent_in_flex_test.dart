@@ -192,6 +192,74 @@ void main() {
     expect(_colored(tester, const Color(0xFFEEF4FF)).height, 0);
   });
 
+  // specs/106: `min-height` gives the flex [200, ∞] — the same shape the
+  // uncapped fly box below gets — but CSS does not resolve a percentage
+  // height against a min-height box. specs/101 inferred the reference from
+  // that shape and resolved it to 200 here, while web kept it auto.
+  testWidgets('a min-height box in a scroller is not a % reference', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _render(_fillTree(outer: '"width":200,"minHeight":200'), scrollable: true),
+    );
+    expect(tester.takeException(), isNull);
+    expect(_colored(tester, const Color(0xFFEEF4FF)).height, 0);
+  });
+
+  testWidgets('nor is a min-width row in a horizontal scroller', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _render(
+        _tree((w) {
+          w.create(1, 'view');
+          w.props(1, '{"style":{}}');
+          w.insert(0, 1);
+          w.create(2, 'view');
+          w.props(
+            2,
+            '{"style":{"flexDirection":"row","minWidth":200,"height":40}}',
+          );
+          w.insert(1, 2);
+          w.create(3, 'view');
+          w.props(
+            3,
+            '{"style":{"width":"100%","height":20,"backgroundColor":"#eef4ff"}}',
+          );
+          w.insert(2, 3);
+        }),
+        scrollable: true,
+        scrollAxis: Axis.horizontal,
+      ),
+    );
+    expect(tester.takeException(), isNull);
+    expect(_colored(tester, const Color(0xFFEEF4FF)).width, 0);
+  });
+
+  // specs/101 → 106: overflow hidden + a declared height transition uncaps
+  // the content's height (vant's collapse must not squash its content), but
+  // the box still has a definite height and `height: 100%` resolves against
+  // it — the shared-element fly box, which cropped its image from the top
+  // when the child fell back to its intrinsic height.
+  testWidgets('an uncapped overflow-hidden box stays the % reference', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _render(
+        _fillTree(
+          outer:
+              '"width":200,"height":150,"overflow":"hidden",'
+              '"transition":"height 300ms linear"',
+        ),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+    expect(
+      _colored(tester, const Color(0xFFEEF4FF)).size,
+      const Size(200, 150),
+    );
+  });
+
   testWidgets('an absolute child covers the box it is positioned in', (
     tester,
   ) async {

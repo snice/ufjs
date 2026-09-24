@@ -171,6 +171,10 @@ uni-app 那张表：
   对应产物，鸿蒙仅 path 依赖可切；CLI 不再静默跳过 runner 失败；
   `tool/check-publish.mjs` 发布前校验。**待本机验证**：各平台真机构建与
   `dart pub publish --dry-run`
+- ✅ flex 主轴百分比参照改为显式标记（`specs/106-flex-percent-basis-explicit`，2026-09）：
+  101 从「max 无穷、min > 0」推断参照，把 CSS `min-height` / `min-width` 盒子里的
+  `height/width: 100%` 也解析了（web 为 auto）；现在只有装饰层解封高度时打的
+  `FjsUncappedHeightScope` 才让 min 生效。**待本机验证**：`flutter test` 与飞行盒真机
 
 实机对拍时抓到三个只有跑起来才看得见的问题：Dart 的 mode 分支漏了 `center`
 （静静降级成 `scaleToFill`）；web 的 `heightFix` 因为 column flex 的 stretch 被

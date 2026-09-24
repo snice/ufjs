@@ -336,11 +336,17 @@ Widget decorateNode(
       // only while the height is a transition target: an overflow-hidden
       // box of FIXED height keeps bounding its content, so a child's
       // `height: 100%` still resolves against it (vant's tabs wrap → nav)
+      // The uncapped content still sits in a box of known height: OverflowBox
+      // keeps the parent's min, so it arrives as [box height, ∞]. That is
+      // also exactly the shape CSS min-height produces, where `height: 100%`
+      // must NOT resolve — so the box says so explicitly instead of letting
+      // buildFlex guess from the constraints (specs/106; the shared-element
+      // fly box of specs/101 is this case).
       final content = style.overflowHidden && height != null && animatesHeight
           ? OverflowBox(
               maxHeight: double.infinity,
               alignment: Alignment.topCenter,
-              child: child,
+              child: FjsUncappedHeightScope(style: style, child: child),
             )
           : child;
       return animateSize(
@@ -583,6 +589,38 @@ class _BoxBordersTween extends Tween<FjsBoxBorders> {
       left: side(begin?.left, end?.left),
     );
   }
+}
+
+/// Marks the content of a box whose height [decorateNode] uncapped
+/// (overflow hidden + a declared height transition + a definite height):
+/// the content is laid out under [minHeight = box height, maxHeight = ∞],
+/// and the box's own flex should still resolve main-axis percentages
+/// against that min (specs/101's fly box).
+///
+/// A marker rather than an inference because CSS `min-height` produces the
+/// same constraints, and there a percentage height does not resolve
+/// (specs/106). Keyed by the style of the node that set it: the first flex
+/// under it is that node's own (the uncapped child is its buildBox), while
+/// any deeper node's flex has its own style — or, sharing an interned
+/// style, is uncapped itself and sets a nearer marker.
+class FjsUncappedHeightScope extends InheritedWidget {
+  const FjsUncappedHeightScope({
+    super.key,
+    required this.style,
+    required super.child,
+  });
+
+  final FjsStyle style;
+
+  @override
+  bool updateShouldNotify(FjsUncappedHeightScope oldWidget) =>
+      !identical(style, oldWidget.style);
+
+  /// Whether [style]'s box is the one the nearest marker was set for.
+  static bool marks(BuildContext context, FjsStyle style) => identical(
+    context.dependOnInheritedWidgetOfExactType<FjsUncappedHeightScope>()?.style,
+    style,
+  );
 }
 
 /// Marks the subtree inside a box that clips its content — CSS
