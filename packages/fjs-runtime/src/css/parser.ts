@@ -98,6 +98,10 @@ export interface CssRule {
    * mix pseudo and non-pseudo selectors are split at parse time, so one
    * rule never spans two worlds. */
   pseudo?: PseudoKind;
+  /** Build-time hash of the style sheet this rule came from (specs/119),
+   * '' when the sheet was registered without one. Used only to check a
+   * build-time style snapshot against the sheets registered at runtime. */
+  sheet?: string;
 }
 
 // ---- @media conditions ------------------------------------------------------

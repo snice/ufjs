@@ -2,4 +2,4 @@
 // See mount-core.ts for what the columns mean.
 import { runMountBench } from './mount-core';
 
-runMountBench(true).catch((e) => console.error(String(e?.stack ?? e)));
+runMountBench('defer').catch((e) => console.error(String(e?.stack ?? e)));

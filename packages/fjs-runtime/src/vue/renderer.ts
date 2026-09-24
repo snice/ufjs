@@ -1328,8 +1328,10 @@ export function releaseRoot(root: HostNode): void {
 /** Registers a SFC <style> block with the style engine (called by the code
  * the fjs esbuild plugin injects). scope=null means a global (non-scoped)
  * block. */
-export function registerStyles(scope: string | null, cssText: string): void {
-  styleEngine.register(scope, cssText);
+export function registerStyles(scope: string | null, cssText: string, hash?: string): void {
+  // `hash` is the sheet's build-time identity (bundler/vue-plugin.ts
+  // styleSheetHash); the style snapshot check needs it (specs/119)
+  styleEngine.register(scope, cssText, hash);
 }
 
 // spec 089/090: hand the DevTools data plane the shadow tree it serializes

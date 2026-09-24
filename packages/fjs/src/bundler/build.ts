@@ -8,6 +8,7 @@
 //   --web             browser build: DOM tag adapter + vue-router, one
 //                     esbuild chunk per page, plus an index.html
 import fs from 'node:fs';
+import os from 'node:os';
 import { builtinModules } from 'node:module';
 import { mpBuild } from '../mp/build.js';
 import path from 'node:path';
@@ -52,7 +53,8 @@ import {
 import { printAnalysis } from './analyze.js';
 import { firstFrameNodeWarnings } from './node-budget.js';
 import { assetSourceWarnings } from './asset-check.js';
-import { flutterDir as configuredFlutterDir, isEjected } from '../project/config.js';
+import { prependSnapshots, captureStyleSnapshots, describeCapture, type CapturedStyles } from './style-snapshot.js';
+import { flutterDir as configuredFlutterDir, isEjected, readConfig } from '../project/config.js';
 import { formatLog } from '../terminal/colors.js';
 import { ensureOhosSigning } from '../project/ohos-signing.js';
 import type { Loader, Metafile } from 'esbuild';
@@ -192,6 +194,11 @@ export function engineDefineArgs(engine?: JsEngine): string[] {
 
 export interface BuildOptions {
   entry?: string;
+  /** Build-time style prewarm (specs/119, bundler/style-snapshot.ts). Set by
+   * `fjs build` / `fjs run` for app targets unless `fjs.styleSnapshot` is
+   * false; `fjs dev` leaves it off — capturing mounts every page, too slow
+   * for a rebuild on every save. */
+  styleSnapshot?: boolean;
   outDir: string;
   /** Minify the bundles. Default true for `fjs build`; `fjs dev` turns it
    * off so the served bundle stays readable in a stack trace. */
@@ -470,6 +477,32 @@ export async function buildBundle(opts: BuildOptions): Promise<BuildResult> {
     return res;
   }
 
+  const { jsPath, result } = await bundleSingle(opts, root, outDir);
+  if (opts.sourcemap) stampDebuggerMap(jsPath, root, outDir);
+  const warnings = [...perfWarnings, ...result.warnings.map((w) => w.text)];
+  // before bytecode: the snapshot has to be inside what fjsc compiles
+  if (opts.styleSnapshot) {
+    const captured = await prewarmStyles(jsPath, warnings);
+    if (captured) prependSnapshots(jsPath, captured.snapshots);
+  }
+
+  const res: BuildResult = { jsPath, warnings };
+  if (result.metafile) res.metafiles = { [jsPath]: result.metafile };
+  if (opts.bytecode) {
+    res.bytecodePath = compileBytecode(jsPath, outDir, 'bundle', opts.jsEngine);
+  }
+  return res;
+}
+
+/** The single-bundle esbuild step: the app entry with every page imported
+ * straight into one IIFE. Shared by the single-bundle build and by the style
+ * prewarm of a split build (specs/119), which needs the same app in a form
+ * Node can run in one go. */
+async function bundleSingle(
+  opts: BuildOptions,
+  root: string,
+  outDir: string,
+): Promise<{ jsPath: string; result: esbuild.BuildResult }> {
   const baseName = 'bundle';
   const jsPath = path.join(outDir, `${baseName}.js`);
   const entry = path.resolve(opts.entry ?? 'src/main.ts');
@@ -514,15 +547,25 @@ export async function buildBundle(opts: BuildOptions): Promise<BuildResult> {
     logLevel: 'warning',
     legalComments: 'none',
   });
-  if (opts.sourcemap) stampDebuggerMap(jsPath, root, outDir);
-  const warnings = [...perfWarnings, ...result.warnings.map((w) => w.text)];
+  return { jsPath, result };
+}
 
-  const res: BuildResult = { jsPath, warnings };
-  if (result.metafile) res.metafiles = { [jsPath]: result.metafile };
-  if (opts.bytecode) {
-    res.bytecodePath = compileBytecode(jsPath, outDir, baseName, opts.jsEngine);
+/** Runs the capture on a built single bundle and reports it in the log;
+ * a failure costs the prewarm, never the build (it is only a speedup). */
+async function prewarmStyles(bundlePath: string, warnings: string[]): Promise<CapturedStyles | null> {
+  try {
+    const captured = await captureStyleSnapshots(bundlePath);
+    if (captured) {
+      console.log(`  ${describeCapture(captured)}`);
+      for (const [route, why] of Object.entries(captured.errors)) {
+        warnings.push(`style prewarm: ${route} threw while mounting, it computes styles at runtime (${why})`);
+      }
+    }
+    return captured;
+  } catch (e) {
+    warnings.push(`style prewarm skipped: ${String((e as Error)?.message ?? e)}`);
+    return null;
   }
-  return res;
 }
 
 // ---- split build (--pages) -------------------------------------------------
@@ -795,6 +838,26 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
     warnings.push(...pageResult.warnings.map((w) => w.text));
     if (pageResult.metafile) metafiles[chunkPath] = pageResult.metafile;
     pageChunks[page.chunk] = chunkPath;
+  }
+
+  if (opts.styleSnapshot) {
+    // The split output cannot run outside a host (chunks load through it),
+    // so the capture runs on a throwaway single bundle of the same app and
+    // each page's snapshot goes into that page's chunk.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fjs-prewarm-'));
+    try {
+      const single = await bundleSingle({ ...opts, sourcemap: false, analyze: false }, root, tmp);
+      const captured = await prewarmStyles(single.jsPath, warnings);
+      if (captured) {
+        for (const page of pages) {
+          const json = captured.snapshots[page.path];
+          const file = pageChunks[page.chunk];
+          if (json !== undefined && file) prependSnapshots(file, { [page.path]: json });
+        }
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   }
 
   const res: BuildResult = { jsPath, sharedPath, pageChunks, warnings };
@@ -1136,6 +1199,8 @@ export async function buildCommand(argv: string[]): Promise<void> {
     await mpBuild({ root: process.cwd(), outDir: opts.outDir });
     return;
   }
+  // app targets get the build-time style prewarm unless the project opts out
+  if (!opts.web) opts.styleSnapshot = readConfig().styleSnapshot !== false;
   const t0 = Date.now();
   const res = await buildBundle(opts);
   for (const w of res.warnings) console.warn(formatLog('warn', w));

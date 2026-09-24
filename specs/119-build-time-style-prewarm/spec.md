@@ -85,7 +85,10 @@ built dist/app/bundle.js (812ms)
      → 拒绝导入，照常冷算且结果正确；
    - 导入后 `register()` 新表 → 缓存照常失效，不残留快照结果。
 2. `pnpm --filter demo run build:pages` 输出每页快照的统计行；页面 chunk 末尾带快照。
-3. **对拍**：`bench:mount`（加预热）的 op 流与不预热逐字节相同。
+3. **对拍**：`bench:mount`（加预热）与不预热的 op 流，**逐节点解析后的样式与树结构相同**
+   （把 SetStyle 引用的样式 id 换成 DefineStyle 的内容后逐行比较）。原始字节允许不同：
+   快照按内容去重对象，内容相同的计算样式共用一个对象，DefineStyle 更少、帧更小。
+   不预热时的 op 流仍须与改前逐字节相同。（2026-09-24 实现中调整，见 plan §3.5）
 4. 离线基准（容器）vant-form **首开**（冷）：navMount 同步段的 CSS 与补挂段的
    CSS 各自降到不预热时的 ≤ 50%；match miss 冷态 ≈ 0。导入本身的耗时单列报出。
 5. `build:pages` 的构建时间增量单列报出（demo，11 个页面）。

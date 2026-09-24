@@ -31,7 +31,8 @@ import {
   type Component,
 } from '@vue/runtime-core';
 // createApp here is the fjs custom renderer's, not runtime-dom's
-import { createApp as createVueApp, flutterRoot, releaseRoot } from '../vue/renderer';
+import { createApp as createVueApp, flutterRoot, releaseRoot, styleEngine } from '../vue/renderer';
+import type { StyleSnapshot } from '../css/style';
 import { remove, setProps, registerSystemHandler, type Element } from '../ui/element';
 import { hasNativeHost, invokeHost } from '../host';
 import { Matcher } from './match';
@@ -404,6 +405,9 @@ class FlutterRouter implements Router {
           'without calling definePage — check the chunk eval error above)',
       );
     }
+    // the page's chunk has run (its scoped sheets are registered), so this
+    // is the moment its build-time style snapshot can be checked and loaded
+    importPageStyleSnapshot(entry.location.path);
     const root = flutterRoot(this.options.rootTag ?? 'view');
     // the marker the Dart navigator matches its route against
     setProps(root, { __navKey: entry.key });
@@ -431,6 +435,37 @@ class FlutterRouter implements Router {
     entry.app = app;
     app.mount(root);
     Object.assign(this.currentRoute, entry.location);
+  }
+
+  /** Build-time style capture (specs/119): mounts every static route in
+   * turn — headless, so replace() swaps the page in place under the same
+   * shell and root a device builds — lets deferred content settle, and
+   * exports the style caches the page left behind. A page that throws is
+   * reported and skipped; the rest still get their snapshot. */
+  async captureStyles(): Promise<Record<string, StyleSnapshot | { error: string }>> {
+    const out: Record<string, StyleSnapshot | { error: string }> = {};
+    const settle = async () => {
+      for (let round = 0; round < 3; round++) {
+        for (let i = 0; i < 8; i++) await Promise.resolve();
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      styleEngine.flushPending();
+    };
+    for (const record of this.routes) {
+      const path = record.path;
+      // no parameters to fill in at build time: these compute cold
+      if (/[:*]/.test(path)) continue;
+      try {
+        await this.replace(path);
+        await settle();
+        out[path] = styleEngine.exportSnapshot();
+      } catch (e) {
+        out[path] = { error: String((e as Error)?.stack ?? e) };
+      }
+    }
+    this.teardown(this.stack[this.stack.length - 1]);
+    this.stack = [];
+    return out;
   }
 
   private teardown(entry: PageEntry | undefined): void {
@@ -463,7 +498,29 @@ function blankLocation(): RouteLocation {
 
 let active: FlutterRouter | null = null;
 
-export function createRouter(options: FlutterRouterOptions): Router & { start(): void } {
+/** The epoch each page's snapshot was last imported under. A reopen in the
+ * same epoch is warm already; after a sheet registration cleared the caches
+ * the snapshot is worth loading again. */
+const snapshotImported = new Map<string, number>();
+
+/** Loads the build-time style snapshot of `path`, if the build attached one
+ * (`fjs build` appends it to the page chunk, see bundler/style-snapshot.ts).
+ * Kept as a JSON string until the page is first opened: a page never
+ * visited never pays the parse. */
+function importPageStyleSnapshot(path: string): void {
+  const table = (globalThis as { __fjsStyleSnapshots?: Record<string, string> }).__fjsStyleSnapshots;
+  const snap = table?.[path];
+  if (snap === undefined) return;
+  const epoch = styleEngine.snapshotEpoch;
+  if (snapshotImported.get(path) === epoch) return;
+  // a refusal is remembered too: the same epoch would refuse it again
+  snapshotImported.set(path, epoch);
+  styleEngine.importSnapshot(snap);
+}
+
+export function createRouter(
+  options: FlutterRouterOptions,
+): Router & { start(): void; captureStyles(): Promise<Record<string, StyleSnapshot | { error: string }>> } {
   const router = new FlutterRouter(options);
   active = router;
   return router;
