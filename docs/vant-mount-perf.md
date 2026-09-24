@@ -304,6 +304,110 @@ iPhone 17 模拟器、`fjs run ios` debug、chunk 预热后（完整五页见
 那 160ms layout 不再叠在 JS 栈上。转场不再冻这一拍。layout 仍在下一 Flutter
 帧发生——那是后续刀。
 
+## 086 之后还剩什么：三分账与 Vue 3.6 评估（2026-09-24）
+
+086 之后模拟器上 vant 页 `[nav] mounted` 是 40–98 ms。目标是「16 ms 里挂更多
+节点」，所以先把剩下的钱按层分开。这一轮只做测量与原型，**没有改生产代码**。
+
+### 方法：离线挂载基准
+
+没有 Flutter 的机器上也能量 JS 侧：临时入口（不提交）直接把 demo 的
+`src/plugins/*` 装进 `createApp(page)`，在 `fjsrun`（PrimJS，Release）里挂载 →
+卸载，每页 1 次冷 + 7 次热（取最小）。同一棵树再用一个**空渲染器**
+（`createRenderer` 的 nodeOps 只建普通 JS 对象）挂一遍，那就是「Vue 自己」的价钱。
+
+```bash
+cd demo && pnpm exec fjs build src/_vbench.ts --out /tmp/vb
+../packages/flutter_fjs/native/build-native/fjsrun --frames --pump 50 /tmp/vb/app/bundle.js
+```
+
+注意：vant 在 mount 过程中读 rect（`ui/geometry.ts` 同步 `flushNow()`），所以
+CSS flush 发生在 `app.mount()` **里面**，不能用 mount 前后两段计时分账，要读
+`styleEngine.stats` 的差值。
+
+### 三分账（Linux 容器 CPU，约为模拟器的 2 倍慢，看比例）
+
+vant-form（346 元素）：
+
+| | 冷（首开） | 热（重开，min） |
+|---|---:|---:|
+| 合计 | 200–237 ms | 106 ms |
+| CSS 重算（flushMs） | 78–90 ms | 29 ms |
+| 标脏（markMs） | 6 ms | 6 ms |
+| Vue 本身（空渲染器） | 37 ms | 34 ms |
+| fjs renderer + element API + op 编码（余数） | ~80 ms | ~37 ms |
+
+其它页同构：热态 Vue ≈ 1/3、fjs 这一层 ≈ 1/3、CSS ≈ 1/3；**冷态 CSS 占到 40%**
+（267 次 match miss 是首开专有的账）。
+
+换成单价：热态约 **300 µs/节点**（模拟器约 150 µs）。按这个价，16 ms 只够
+~100 个 vant 节点——单靠削常数到不了「346 节点 16 ms」，见下文结论。
+
+### Vue 3.6（Vapor）：对这条管线基本无效
+
+1. **Vapor 用不上。** `@vue/runtime-vapor@3.6.0-rc.9` 直接 import
+   `@vue/runtime-dom`，模板实例化是 `document.createElement('template')` +
+   `innerHTML` + `cloneNode`，**没有 `createRenderer` 那样的自定义渲染器入口**。
+   接进来等于在 QuickJS 里实现一个带 HTML 解析的 mini-DOM。
+2. **就算接上也打不到 vant。** Vapor 只编译 SFC 模板（`<script setup vapor>`）；
+   vant 组件是 TSX 渲染函数，照样走 VDOM（interop 模式还要额外付一层）。
+   vant 页里页面自己的模板只是薄壳，钱花在 vant 组件的 setup + 渲染上。
+3. **3.6 的 VDOM 模式（新响应式内核）实测**：把 `fjs-runtime` 钉住的
+   `@vue/{runtime-core,reactivity,shared}` 临时换成 3.6.0-rc.9，与 3.5.42 交替
+   各跑 3 轮——热态 **零差别**（vant-form 106 对 106–110 ms，空渲染器 34 对
+   32 ms）；冷态部分页面好一些（vant-feedback 余数 43 → 13 ms，vant-form
+   117–140 → 70–98 ms），CSS 段不动。可以跟正式版升级，不能指望它解决问题。
+
+### fjs 这一层：分配是主因（已原型验证）
+
+单价（PrimJS，2000 次取 min）：
+
+| 操作 | 现在 | 原型 |
+|---|---:|---:|
+| `utf8Encode("view")` | 2.3 µs | — |
+| `create("view")` | 12.1 µs | **2.7 µs** |
+| `setProps({htmlBlock:true})` | 14.3 µs | 10.2 µs |
+| `setProps({style: ANCHOR})`（v-if 锚点） | 19.6 µs | 13.5 µs |
+| `setText("hello")` | 6.3 µs | 4.6 µs |
+
+原型三刀：①`makeElement` 的 9 个方法 + `style`/offset getter 挪到共享原型
+（现在每节点 9 个闭包 + 2 次 `defineProperty`）；②`OpWriter.create` 按标签缓存
+UTF-8 字节；③ASCII 字符串直接写进帧缓冲，不再经过临时 `Uint8Array`
+（`setText`/`setProps` 的 JSON 几乎都是 ASCII）。页面上 vant-form 挂载期的
+renderer ops **51 → 34 ms（−33%）**，整页热态 106 → 98.5 ms。
+
+还没原型、但数据已经指向的：
+
+- `setProps` 每个布尔/常量 prop 都 `Object.entries` + `JSON.stringify` +
+  devtools 记账；锚点 141 个每个都重新序列化同一份 `ANCHOR_STYLE`。常量
+  props 可以预编码成字节缓存，或者给 `htmlBlock` / 事件标记这类布尔开一个
+  二进制 op（**动 op 协议，两端同步改**）。
+- 标脏：Vue 自底向上挂载，每次 `insert` 子树根都 `recomputeSubtree`，同一
+  节点被祖先链上的每次插入重复走一遍（6 ms）。未计算过的新子树只需标根。
+- **卸载一个 vant-form 要 ~27 ms**（`remove` 一次调用）：返回时那一拍的来源，
+  和首开是两笔账。
+
+### 结论：常数优化的上限，与 Lynx 式的「首屏优先」
+
+把三块都削到位（元素层 −50%、冷态 CSS 接近热态、Vue 不动）大约是 vant-form
+热态 ~70 ms（模拟器 ~35 ms）——仍然到不了 16 ms。**瓶颈是解释器下的每节点
+单价**，想要「16 ms 出首屏」必须减少首帧要挂的节点数，这正是 ReactLynx
+「首帧直出」那类方案的核心：首屏先出、其余后补。
+
+在 fjs 的单线程模型里（threading-model.md），可落地的对应物按投入排：
+
+1. **首屏优先的分片挂载**（应用层即可验证）：一个内置 `<defer>` 类组件，
+   首帧只渲染占位，下一帧 / 转场结束后再挂真正内容。vant-form 这种长表单
+   首屏可见的通常不到一半。
+2. **样式缓存持久化**：冷态 CSS 比热态多出 ~50 ms（容器），全是首开 match /
+   compute miss。链签名 → 匹配结果是纯函数于样式表，可以在构建期（fjsrun
+   无头跑一遍页面）或首次运行后落盘，下次冷启动直接命中。
+3. **构建期首帧快照（Lynx IFR 的对应物）**：构建期无头挂载，把首帧 op 帧
+   存进包里；navMount 时 Dart 先上快照，JS 转场后再按确定的节点 id 补挂载。
+   收益最大也最重：需要「挂载确定性 + 节点 id 对齐」这层水合协议，另立 spec。
+
+以上每一条落地前按规矩先 `/spec`；原型 diff 没有提交。
+
 ## 附录：怎么复现与怎么量
 
 ```bash
