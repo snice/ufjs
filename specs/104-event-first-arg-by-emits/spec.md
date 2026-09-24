@@ -1,7 +1,7 @@
 # Spec: 事件首参按「web 组件是否 emit 该事件」判定——修 103 的 `@click.stop` 回归
 
 - **ID**: 104-event-first-arg-by-emits
-- **状态**: ready
+- **状态**: done
 - **日期**: 2026-09-24
 - **来源**: 近 3 天代码 review。specs/103 之后，Flutter 端 `<view @click.stop>`、
   `<button @click.prevent>` 直接抛 `TypeError: Cannot read properties of
@@ -129,3 +129,13 @@ renderer 读它），并用单测把它与 web 组件实际的 `emits` 锁在一
     但要改十几个 web 组件文件。
   - C：只把 `onClick`（及 `onDblclick` 等 DOM 专有拼写）硬编码为「总交事件对象」，
     不建表。最省事，但以后组件新增/删减 emit 时会再次静默漂移。
+
+## 8. 验收记录（2026-09-24）
+
+1. typecheck：`@ufjs/runtime`、`@ufjs/cli` 等包通过；demo / hello-fjs 的
+   `icon-mind` / `web-view` TS2339 在干净 HEAD 上同样存在，属既有问题，另行处理。
+2. `pnpm test` 全过；新增 4 条 renderer 用例在回退 renderer 改动后失败、恢复后通过；
+   103 原有用例原样通过；漂移测试覆盖 `fjsComponents` 全部组件。
+3. 见 1。
+4. `docs/ui-api.md`、`docs/roadmap.md` 已更新。
+5. **待验**：本环境无 Flutter SDK，设备观测未执行。

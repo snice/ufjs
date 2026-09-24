@@ -85,10 +85,15 @@ metadata 一到再换成真实比例，父布局不会抖。样式里没给那�
 却没写 `width`）就退化成普通内容盒，并 `warnOnce` 说明。九个位置类 mode 与
 `heightFix` 的宽优先规则都是照微信小程序实拍对齐的（`specs/102-image-mode-wechat-parity`）。
 
-> **首参形状（specs/103）**：fjs 标签的事件首参就是**裸载荷**（字符串 /
-> 数字 / 无参），与 web 端组件 `emit` 的交付一致——`JSON.parse(payload)`
-> 直接可用；绑在**非 fjs 标签**（如 vant 的 `div`）上的事件首参是**事件
-> 对象**（`detail` / `target` / `clientX`），对应 web 那边的原生 DOM 事件。
+> **首参形状（specs/103、104）**：看事件，不只看标签，以 web 为准。
+> fjs 标签在 web 上 `emits` 的事件（下表里的 `@tap` / `@load` / `@input` /
+> `@change` / `@scroll`……）首参是**裸载荷**（字符串 / 数字 / 无参），
+> `JSON.parse(payload)` 直接可用；其余事件——尤其是 fjs 标签上的 `@click`
+> ——在 web 上透传到根 DOM 元素，首参是**事件对象**（`detail` / `target` /
+> `clientX` / `stopPropagation`），所以 `@click.stop` / `.prevent` 两端都能用。
+> 绑在**非 fjs 标签**（如 vant 的 `div`）上的事件一律是事件对象。
+> 每个标签 emit 哪些事件见 `fjs-runtime/src/event-emits.ts`。
+> 已知限制：`@tap.stop` 两端都不可用（`tap` 是无参 emit）。
 
 | 事件 | 载荷 | 次数 |
 |---|---|---|

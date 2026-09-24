@@ -162,6 +162,9 @@ uni-app 那张表：
   （`JSON.parse(payload)`）静默抛错，图片页 mode / load-error 两个面板整块
   空白；现在 fjs 标签首参=裸载荷（与 web 组件 emit 同源）、非 fjs 标签
   仍=事件对象，demo vant 的 Field/Stepper 由项目内补丁兜底
+- ✅ 事件首参按 web emits 判定（`specs/104-event-first-arg-by-emits`，2026-09）：
+  103 只看标签，`<view @click.stop>` 在 Flutter 端抛错；现在按「该事件是否在
+  web 组件 emits 中」决定裸载荷还是事件对象，`event-emits.ts` 由漂移单测锁住
 
 实机对拍时抓到三个只有跑起来才看得见的问题：Dart 的 mode 分支漏了 `center`
 （静静降级成 `scaleToFill`）；web 的 `heightFix` 因为 column flex 的 stretch 被
