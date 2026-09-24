@@ -234,6 +234,24 @@ describe('form', () => {
 });
 
 describe('input', () => {
+  // specs/125: the DOM attributes a page (or vant) writes are kept
+  it('keeps the page\'s type and enterkeyhint', () => {
+    const host = mount(() => [
+      h(FjsInput, { type: 'password' }),
+      h(FjsInput, { type: 'tel', inputmode: 'numeric', enterkeyhint: 'done' }),
+      h(FjsInput, { type: 'password', keyboard: 'number' }),
+      h(FjsInput, {}),
+    ]);
+    const inputs = host.querySelectorAll('input');
+    expect(inputs[0].getAttribute('type')).toBe('password');
+    expect(inputs[1].getAttribute('type')).toBe('tel');
+    expect(inputs[1].getAttribute('inputmode')).toBe('numeric');
+    expect(inputs[1].getAttribute('enterkeyhint')).toBe('done');
+    // the fjs prop wins over the DOM attribute
+    expect(inputs[2].getAttribute('type')).toBe('number');
+    expect(inputs[3].getAttribute('type')).toBe('text');
+  });
+
   it('emits focus and blur with the current text', async () => {
     const seen: Array<[string, string]> = [];
     const host = mount(() =>
