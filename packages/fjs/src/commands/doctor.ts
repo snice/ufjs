@@ -12,7 +12,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { findFjsc, fjscPackageName } from '../bundler/build.js';
+import { fjscPackageName, locateFjsc, type FjscLookup } from '../bundler/build.js';
+import { ENGINE_IDS, resolveJsEngine, type JsEngine } from '../project/engine.js';
 import { pagesDir, scanPages } from '../project/pages.js';
 import { flutterDir as configuredFlutterDir, isEjected } from '../project/config.js';
 import { colorSupported } from '../dev/qrcode.js';
@@ -44,7 +45,8 @@ export async function doctorCommand(argv: string[]): Promise<void> {
     { label: 'entry', run: () => entryCheck(root) },
     { label: 'pages', run: () => pagesCheck(root) },
     { label: 'packages', run: () => versionCheck(root) },
-    { label: 'fjsc', run: fjscCheck },
+    { label: 'fjsc primjs', run: () => fjscCheck('primjs') },
+    { label: 'fjsc quickjs', run: () => fjscCheck('quickjs') },
     { label: 'flutter', run: flutterCheck },
     { label: 'android', run: androidCheck },
     ...(process.platform === 'darwin' ? [{ label: 'ios', run: iosCheck }] : []),
@@ -198,24 +200,31 @@ function versionCheck(root: string): Result {
   return { status: 'ok', detail };
 }
 
-function fjscCheck(): Result {
-  const fjsc = findFjsc();
-  if (!fjsc) {
+/** One row per engine flavor (spec 114): the flavor this project builds
+ * with (FJS_JS_ENGINE or the default) must have its fjsc, the other one only
+ * matters after a --js-engine switch. */
+function fjscCheck(engine: JsEngine): Result {
+  const current = resolveJsEngine() === engine;
+  let found: FjscLookup;
+  try {
+    found = locateFjsc(engine);
+  } catch (e) {
+    // FJSC_PATH points at the other flavor
+    return { status: current ? 'fail' : 'warn', detail: 'FJSC_PATH is the wrong flavor', hint: (e as Error).message };
+  }
+  if (found.path === null) {
+    const seen = found.tried.map((t) => `${t.path} is ${t.engineId ?? 'not a fjsc'}`).join('\n');
     return {
-      status: 'warn',
-      detail: 'not found',
+      status: current ? 'fail' : 'warn',
+      detail: `not found (${ENGINE_IDS[engine]})`,
       hint:
-        `bytecode and release builds need it; it normally arrives with ${fjscPackageName()}.\n` +
+        (seen ? `${seen}\n` : '') +
+        `${current ? 'bytecode and release builds need it' : `needed for --js-engine ${engine}`}; ` +
+        `it normally arrives with ${fjscPackageName()}.\n` +
         'in a repo checkout: node packages/fjsc/build.mjs, then export FJSC_PATH=<binary>',
     };
   }
-  const source =
-    process.env.FJSC_PATH && fs.existsSync(process.env.FJSC_PATH)
-      ? 'FJSC_PATH'
-      : fjsc.includes('node_modules')
-        ? 'npm'
-        : 'local build';
-  return { status: 'ok', detail: `${fjsc} (${source})` };
+  return { status: 'ok', detail: `${found.path} (${found.source})` };
 }
 
 async function flutterCheck(): Promise<Result> {

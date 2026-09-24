@@ -17,7 +17,7 @@ import { gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import esbuild from 'esbuild';
 import { WORKERS_DIR, writeWorkers } from '../project/workers.js';
-import { materializeJsEngine, resolveJsEngine, type JsEngine } from '../project/engine.js';
+import { ENGINE_IDS, materializeJsEngine, resolveJsEngine, type JsEngine } from '../project/engine.js';
 import { ensureFlutterHost, projectName } from '../commands/run.js';
 import {
   vueSfcPlugin,
@@ -933,10 +933,46 @@ export function fjscPackageName(): string {
   return `@ufjs/fjsc-${process.platform}-${arch}`;
 }
 
-/** Locates the fjsc binary: $FJSC_PATH, a repo checkout's own cmake build, or
- * the prebuilt npm package. [engine] picks the flavor — the binary embeds the
- * engine (bytecode + engine id come from it), so a quickjs build must use the
- * quickjs flavor built into native/build-native-quickjs.
+/** Engine id a fjsc binary reports for itself, or null when it is not a
+ * runnable fjsc. Run without arguments, fjsc prints its usage plus
+ * `engine: <id> (abi N)` on stderr (native/tools/fjsc.cpp). Cached per path:
+ * one split build compiles a dozen chunks. */
+const fjscEngineCache = new Map<string, string | null>();
+export function fjscEngine(file: string): string | null {
+  const cached = fjscEngineCache.get(file);
+  if (cached !== undefined) return cached;
+  const r = spawnSync(file, [], { stdio: 'pipe' });
+  const out = `${r.stderr?.toString() ?? ''}${r.stdout?.toString() ?? ''}`;
+  const id = r.error ? null : (/engine: (\S+)/.exec(out)?.[1] ?? null);
+  fjscEngineCache.set(file, id);
+  return id;
+}
+
+export type FjscSource = 'FJSC_PATH' | 'local build' | 'npm';
+export type FjscLookup =
+  | { path: string; source: FjscSource; engineId: string }
+  | { path: null; tried: { path: string; engineId: string | null }[] };
+
+export interface FjscLookupOptions {
+  /** test seam: packages/flutter_fjs/native directories to look in */
+  nativeDirs?: string[];
+  /** test seam: the npm package directory, null for none */
+  npmDir?: string | null;
+}
+
+/** Locates the fjsc that compiles for [engine]: $FJSC_PATH, a repo
+ * checkout's own cmake build, or the prebuilt npm package — in that order,
+ * and only a binary whose self-reported engine id matches wins.
+ *
+ * The binary embeds the engine, so the flavor IS the binary, and only the
+ * binary can say which one it is. Paths and file names cannot: the published
+ * @ufjs/fjsc-*@0.1.4 ships a quickjs-ng build as `bin/fjsc`, and a
+ * `build-native` tree's CMake cache may hold either flavor. A mismatch used
+ * to surface only when the app refused the bundle at load time (spec 114).
+ * Directory names therefore only order the probes.
+ *
+ * FJSC_PATH never falls through: a value someone set explicitly that points
+ * at the wrong flavor is a mistake to report, not to paper over.
  *
  * The checkout wins over the npm package on purpose. @ufjs/cli declares the
  * prebuilt binary as an optional dependency, so a workspace install pulls it in
@@ -944,85 +980,129 @@ export function fjscPackageName(): string {
  * compiling bundles with the *published* engine instead of the one they just
  * built. None of these paths can match from inside node_modules, so an
  * installed copy still lands on the npm package. */
-export function findFjsc(engine?: JsEngine): string | null {
-  if (process.env.FJSC_PATH && fs.existsSync(process.env.FJSC_PATH)) {
-    return process.env.FJSC_PATH;
-  }
-
-  const exe = process.platform === 'win32' ? 'fjsc.exe' : 'fjsc';
-  const here = import.meta.dirname ?? '.';
-  // The npm package ships the primjs flavor only, so a quickjs request can
-  // never fall through to it — that would silently mint bundles with the
-  // wrong engine id and wrong bytecode.
-  const quickjs = engine === 'quickjs';
-  const buildDirs = quickjs ? ['build-native-quickjs'] : ['build-native', 'build-native-quickjs'];
-  const candidates: string[] = [];
-  for (const dir of buildDirs) {
-    candidates.push(
-      // running from packages/fjs/{src,dist} inside the monorepo checkout
-      path.resolve(here, '..', '..', 'flutter_fjs', 'native', dir, exe),
-      path.resolve(here, '..', '..', '..', 'flutter_fjs', 'native', dir, exe),
-      // repo root as cwd
-      path.resolve(process.cwd(), 'packages', 'flutter_fjs', 'native', dir, exe),
+export function locateFjsc(engine: JsEngine = resolveJsEngine(), opts: FjscLookupOptions = {}): FjscLookup {
+  const want = ENGINE_IDS[engine];
+  const explicit = process.env.FJSC_PATH;
+  if (explicit && fs.existsSync(explicit)) {
+    const id = fjscEngine(explicit);
+    if (id === want) return { path: explicit, source: 'FJSC_PATH', engineId: id };
+    throw new Error(
+      `FJSC_PATH=${explicit} is ${id ?? 'not a recognizable fjsc'}, but this build targets ${want} ` +
+        `(--js-engine / FJS_JS_ENGINE). Point FJSC_PATH at a ${engine} fjsc, or unset it.`,
     );
   }
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
-  }
-  if (quickjs) return null;
 
-  const require = createRequire(import.meta.url);
-  try {
-    // resolve the manifest, not bin/fjsc: a binary has no "exports" entry
-    const manifest = require.resolve(`${fjscPackageName()}/package.json`);
-    const binary = path.join(path.dirname(manifest), 'bin', exe);
-    if (fs.existsSync(binary)) return binary;
-  } catch {
-    // no prebuilt package for this platform
+  const exe = process.platform === 'win32' ? '.exe' : '';
+  const tried: { path: string; engineId: string | null }[] = [];
+  const probe = (file: string, source: FjscSource): FjscLookup | null => {
+    if (!fs.existsSync(file) || tried.some((t) => t.path === file)) return null;
+    const id = fjscEngine(file);
+    tried.push({ path: file, engineId: id });
+    return id === want ? { path: file, source, engineId: id } : null;
+  };
+
+  const here = import.meta.dirname ?? '.';
+  const nativeDirs = opts.nativeDirs ?? [
+    // running from packages/fjs/{src,dist} inside the monorepo checkout
+    path.resolve(here, '..', '..', 'flutter_fjs', 'native'),
+    path.resolve(here, '..', '..', '..', 'flutter_fjs', 'native'),
+    // repo root as cwd
+    path.resolve(process.cwd(), 'packages', 'flutter_fjs', 'native'),
+  ];
+  // the flavor's conventional tree first; the other one may still hold it
+  const trees = engine === 'quickjs' ? ['build-native-quickjs', 'build-native'] : ['build-native', 'build-native-quickjs'];
+  for (const tree of trees) {
+    for (const dir of nativeDirs) {
+      const hit = probe(path.join(dir, tree, `fjsc${exe}`), 'local build');
+      if (hit) return hit;
+    }
   }
-  return null;
+
+  let npmDir = opts.npmDir;
+  if (npmDir === undefined) {
+    npmDir = null;
+    try {
+      // resolve the manifest, not bin/fjsc: a binary has no "exports" entry
+      const require = createRequire(import.meta.url);
+      npmDir = path.dirname(require.resolve(`${fjscPackageName()}/package.json`));
+    } catch {
+      // no prebuilt package for this platform
+    }
+  }
+  if (npmDir) {
+    // both names for either flavor: pre-114 packages carry a single bin/fjsc
+    for (const name of ['fjsc', 'fjsc-quickjs']) {
+      const hit = probe(path.join(npmDir, 'bin', `${name}${exe}`), 'npm');
+      if (hit) return hit;
+    }
+  }
+  return { path: null, tried };
+}
+
+/** The fjsc for [engine], or null — see locateFjsc. Throws only for a
+ * FJSC_PATH of the wrong flavor. */
+export function findFjsc(engine?: JsEngine): string | null {
+  return locateFjsc(engine).path;
 }
 
 export function compileBytecode(
   jsPath: string,
   outDir: string,
   baseName = 'app',
-  engine?: JsEngine,
+  engine: JsEngine = resolveJsEngine(),
+  lookup?: FjscLookupOptions,
 ): string {
-  const fjsc = findFjsc(engine);
-  if (!fjsc) {
-    if (engine === 'quickjs') {
-      throw new Error(
-        'quickjs fjsc not found — the npm-distributed binary is primjs-only.\n' +
-          'Build the quickjs flavor and point FJSC_PATH at it:\n' +
-          '\n' +
-          '  cd packages/flutter_fjs/native\n' +
+  const found = locateFjsc(engine, lookup);
+  const want = ENGINE_IDS[engine];
+  if (found.path === null) {
+    const seen = found.tried.length
+      ? `looked at (none is ${want}):\n` +
+        found.tried.map((t) => `  ${t.path} — ${t.engineId ?? 'not a recognizable fjsc'}`).join('\n') +
+        '\n\n'
+      : '';
+    const build =
+      engine === 'quickjs'
+        ? '  cd packages/flutter_fjs/native\n' +
           '  cmake -B build-native-quickjs -DFJS_JS_ENGINE=quickjs -DFJS_DEBUGGER=OFF\n' +
           '  cmake --build build-native-quickjs -j\n' +
-          '  export FJSC_PATH=$PWD/build-native-quickjs/fjsc',
-      );
-    }
+          '  export FJSC_PATH=$PWD/build-native-quickjs/fjsc'
+        : '  git clone https://github.com/snice/ufjs && cd ufjs\n' +
+          '  node packages/fjsc/build.mjs\n' +
+          '  export FJSC_PATH=$PWD/packages/fjsc/npm/fjsc-<platform>/bin/fjsc';
     throw new Error(
-      `fjsc compiler not found — bytecode and release builds need it.\n` +
-        `\n` +
-        `It normally arrives with ${fjscPackageName()}, an optional dependency of\n` +
-        `@ufjs/cli. If your platform has no prebuilt binary yet, build one from the\n` +
-        `repository and point FJSC_PATH at it:\n` +
-        `\n` +
-        `  git clone https://github.com/snice/ufjs && cd ufjs\n` +
-        `  node packages/fjsc/build.mjs\n` +
-        `  export FJSC_PATH=$PWD/packages/fjsc/npm/fjsc-<platform>/bin/fjsc\n` +
-        `\n` +
-        `Reinstalling with the optional dependency enabled also works\n` +
-        `(npm i --include=optional).`,
+      `no ${engine} fjsc found (${want}) — bytecode and release builds need it.\n` +
+        seen +
+        `It normally arrives with ${fjscPackageName()} (bin/fjsc = primjs, bin/fjsc-quickjs =\n` +
+        `quickjs), an optional dependency of @ufjs/cli; packages published before spec 114\n` +
+        `carry one flavor only. Updating @ufjs/cli, or reinstalling with optional\n` +
+        `dependencies enabled (npm i --include=optional), usually fixes it. Otherwise\n` +
+        `build one and point FJSC_PATH at it:\n\n` +
+        build,
     );
   }
   const out = path.join(outDir, `${baseName}.fjsbundle`);
-  const r = spawnSync(fjsc, [jsPath, out], { stdio: 'pipe' });
+  const r = spawnSync(found.path, [jsPath, out], { stdio: 'pipe' });
   if (r.status !== 0) {
     throw new Error(`fjsc failed:\n${r.stderr?.toString() ?? r.stdout?.toString()}`);
   }
+  // the probe already matched; this catches a binary swapped in between or a
+  // fjsc that disagrees with its own usage line
+  const made = /engine (\S+)\)/.exec(r.stdout?.toString() ?? '')?.[1];
+  if (made === undefined) {
+    warnOnceFjscOutput(found.path);
+  } else if (made !== want) {
+    fs.rmSync(out, { force: true });
+    throw new Error(`${found.path} compiled ${path.basename(out)} for ${made}, expected ${want}; the bundle was removed`);
+  }
   return out;
+}
+
+let fjscOutputWarned = false;
+function warnOnceFjscOutput(file: string): void {
+  if (fjscOutputWarned) return;
+  fjscOutputWarned = true;
+  // a changed output format must not stop every build — the probe decided
+  console.warn(`fjs: warning: cannot read the engine id from ${file}'s output; relying on its usage line`);
 }
 
 export async function buildCommand(argv: string[]): Promise<void> {
