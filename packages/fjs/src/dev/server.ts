@@ -346,9 +346,11 @@ export async function devCommand(argv: string[]): Promise<void> {
   // also has a Flutter host should still materialize it, or the flag would
   // be silently accepted and ignored. Best effort only: JS-only projects
   // (no host dir) and a missing runner must not take the dev server down —
-  // the next `fjs run` materializes for real.
+  // the next `fjs run` materializes for real. A dev server spawned by
+  // `fjs run` skips it: the parent has just done the same work.
   const engineOpts = opts.jsEngine ?? resolveJsEngine();
-  if (engineOpts !== 'primjs' || fs.existsSync(path.resolve(opts.flutterDir))) {
+  const materialized = process.env.FJS_ENGINE_MATERIALIZED === '1';
+  if (!materialized && (engineOpts !== 'primjs' || fs.existsSync(path.resolve(opts.flutterDir)))) {
     try {
       materializeJsEngine(engineOpts, {
         flutterDir: opts.flutterDir,

@@ -187,6 +187,9 @@ uni-app 那张表：
 - ✅ iOS/macOS 上 `--js-engine` 切换后仍运行旧引擎（`specs/112-engine-switch-stale-build`，2026-09）：runner
   递归清 Xcode 缓存（spec 105 的一层查找从未命中）；戳记升到 v2，已处于错误状态的宿主会重新失效一次。
   **待本机验证**：iOS / macOS 来回切换
+- ✅ 鸿蒙调试签名跟着机器走（`specs/113-ohos-signing-reuse`，2026-09）：DevEco 首次签名后 `fjs run ohos` /
+  `fjs build --hap` 把 `signingConfigs` 存进 `~/.fjs/ohos-signing/`，宿主重建后自动写回；没有可用签名时在
+  flutter 之前报错并打开 DevEco，不再等 hvigor 跑 20 秒。**待本机验证**：鸿蒙模拟器
 - ✅ 清理入库的构建产物与死代码（`specs/109-no-committed-build-artifacts`，2026-09）：spec 093 e2e 的
   `bundle.js` / `relay.cjs` 改由 `e2e/build.mjs` 生成、不再入库（Linux 上重跑 11/11）；删除从未编译的
   `primjs/src/wasm/`；`fjsrun` 补 `<ctime>`，Linux 可编

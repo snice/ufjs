@@ -24,6 +24,7 @@ import {
   type PlistValue,
 } from '../project/config.js';
 import { ENGINE_IDS, materializeJsEngine, resolveJsEngine, type JsEngine } from '../project/engine.js';
+import { ensureOhosSigning } from '../project/ohos-signing.js';
 import type { FlutterMode } from '../bundler/build.js';
 import { lanAddresses } from '../dev/server.js';
 
@@ -92,6 +93,7 @@ export async function runCommand(argv: string[]): Promise<void> {
       explicit: opts.jsEngineExplicit,
       debugger: false,
     });
+    if (opts.platform === 'ohos') ensureOhosSigning(flutterDir, { interactive: process.stdout.isTTY === true });
     stopStaleApp(opts.platform, device.id, flutterDir);
     const args = [
       'run',
@@ -114,6 +116,9 @@ export async function runCommand(argv: string[]): Promise<void> {
 
   ensureFlutterHost(flutterDir, projectName(root), !isEjected(root));
   materializeJsEngine(opts.jsEngine, { flutterDir, explicit: opts.jsEngineExplicit });
+  // before the dev server: a missing signature would otherwise surface only
+  // after hvigor has run for ~20s, with a dev server left to clean up
+  if (opts.platform === 'ohos') ensureOhosSigning(flutterDir, { interactive: process.stdout.isTTY === true });
 
   const dev = await startDevServer(opts.port, opts.host);
   const cleanup = () => {
@@ -1124,6 +1129,10 @@ async function startDevServer(port: number, host: string): Promise<DevServerHand
   const cli = process.argv[1];
   const child = spawn(process.execPath, [cli, 'dev', '--pages', '--port', String(port), '--host', host, '--no-qr'], {
     cwd: process.cwd(),
+    // `fjs run` has already materialized the flavor (FJS_JS_ENGINE is in
+    // this env); without the marker the child runs the engine runner a
+    // second time and prints the same flavor line again
+    env: { ...process.env, FJS_ENGINE_MATERIALIZED: '1' },
     stdio: ['ignore', 'inherit', 'inherit'],
   });
   await waitForPort(port, child);

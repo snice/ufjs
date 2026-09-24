@@ -866,6 +866,31 @@ debug 模式下模拟器/真机没有 Android 的 `10.0.2.2` 那种主机别名�
 release 模式与 Android 同一条链路（字节码烤进 assets），`fjs build --hap`
 出 `flutter build hap` 的包。
 
+#### 调试签名（spec 113）
+
+HarmonyOS 设备和模拟器只装 AGC 签发的调试证书，申请要登录华为账号，没有
+公开 CLI，所以**每台机器、每个 bundleName 第一次**仍要在 DevEco 里点：
+File → Project Structure → Signing Configs → 勾选 Automatically generate
+signature → OK。DevEco 把证书放进 `~/.ohos/config/`，把证书路径和用本机
+`~/.ohos/config/material` 加密的密码写进宿主的 `ohos/build-profile.json5`。
+
+`.fjs/flutter` 随时可能重建，后一半会丢，所以 `fjs run ohos`（debug 与
+`--release/--profile`）和 `fjs build --hap` 在调用 flutter **之前**先检查签名：
+
+| 宿主的 `signingConfigs` | 本机存档 | 行为 |
+|---|---|---|
+| 非空 | 没有或不同 | 原样存到 `~/.fjs/ohos-signing/<bundleName>.json5`（0600），打印 `signing saved`；宿主为准 |
+| 非空 | 相同 | 不动 |
+| 空 | 有效 | 写回宿主，打印 `signing restored … (expires …)` |
+| 空 | 没有或失效 | 报错退出并写明原因；终端里运行时（macOS）顺手用 DevEco 打开 `ohos/` |
+
+「有效」指存档里 p12 / cer / p7b 三个文件都在、p7b 的 bundle-name 与宿主
+`AppScope/app.json5` 一致且未过期；设备 UDID 不查，没登记的设备仍由安装步骤报错。
+读写都只动 `signingConfigs` 数组那一段原文，文件其它部分（注释、尾逗号、已
+eject 宿主里用户的改动）逐字节不变，非空的宿主配置永远不会被覆盖。存档里的
+密码只能在本机解开，换机器要重新点一次。仓库里提交的 `examples/fjs-go/ohos`
+不经过 `.fjs`，不受这套流程管，见其 README。
+
 引擎侧的 `libfjs.so`（arm64-v8a）是预编译入库的，重编 native 后跑
 `packages/flutter_fjs/tool/build-ohos.sh`（用 DevEco 自带的 llvm 交叉编译）。
 
