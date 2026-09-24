@@ -1342,8 +1342,12 @@ dart-define 却没重新 pod install。
   Promise 变成 rejected，而原生侧没有注册 rejection tracker——早期兜底因此在默认
   引擎上把回调里的异常全部吞掉。现在兜底用 try/catch 包住回调，按同样的前缀和
   「消息 + 栈」格式经 `console.error` 上报，非函数参数同步抛 `TypeError`。
-  （普通 Promise 的未处理拒绝两个引擎目前都不会打日志，需要 native 注册
-  tracker，另行处理。）
+  普通 Promise 的未处理拒绝由 native 报告（specs/111）：每次 pump 排空微任务后，
+  仍无处理器的拒绝以 `[fjs] unhandled promise rejection: …`（error 级，消息 + 栈）
+  打出，同一轮里后来被 `.catch` 的不报。quickjs-ng 走 `JS_SetHostPromiseRejectionTracker`；
+  PrimJS 从运行时自带的 `unhandled_rejections` 列表逐条取出——在此之前没人取，
+  列表只进不出，每条未处理拒绝的 Error 都活到 VM 销毁。已知差异：PrimJS 会把
+  非 Error 的 reason 包成 Error，显示为 `Error: <值>`。
 
 同进程内不混用两个引擎：它们各占一套 VM 与符号，双引擎热切换意味着
 每个 App 永久背两份引擎体积，对比实验用不上；要对比就按上面整 App

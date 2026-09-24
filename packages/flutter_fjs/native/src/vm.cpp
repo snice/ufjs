@@ -125,6 +125,7 @@ FJSVM *fjs_vm_create(void) {
      * startup, and the default budget tripped there. 32 MiB is well
      * under the main-thread stack on every target platform. */
     fjsengine::set_max_stack_size(vm->ctx, 32u * 1024 * 1024);
+    fjsengine::track_rejections(vm->rt, &vm->rejections); /* spec 111 */
     if (!fjs::install_natives(vm)) {
         fjsengine::free_context(vm->ctx);
         fjsengine::free_runtime(vm->rt);
@@ -139,6 +140,7 @@ void fjs_vm_destroy(FJSVM *vm) {
     fjs::dbg::transport_closed(vm); /* lets the transport release before the ctx */
     for (auto &t : vm->timers) fjsengine::free_value(vm->ctx, t.callback);
     vm->timers.clear();
+    fjsengine::clear_rejections(vm->ctx, &vm->rejections);
     fjsengine::free_context(vm->ctx);
     fjsengine::free_runtime(vm->rt);
     delete vm; /* the handle table dies here too — every outstanding
@@ -350,6 +352,20 @@ int32_t fjs_vm_pump(FJSVM *vm, int64_t now_ms_) {    if (!vm) return -1;
         }
         if (r == 0) break;
         executed++;
+    }
+
+    /* 3) spec 111: promises rejected with no handler by the end of the
+     * drain — what browsers report as "Uncaught (in promise)". Checked
+     * here, not at rejection time: a handler attached later in the same
+     * drain has already cancelled the report. Before this, both engines
+     * dropped these silently (async function throws, fetch failures nobody
+     * awaited), and PrimJS kept every one of them alive forever. */
+    fjsengine::Value reason;
+    while (fjsengine::take_unhandled_rejection(vm->ctx, &vm->rejections, &reason)) {
+        std::string msg = format_exception(vm, reason);
+        fjsengine::free_value(vm->ctx, reason);
+        std::string out = "[fjs] unhandled promise rejection: " + msg;
+        log_line(vm, FJS_LOG_ERROR, out.c_str(), (int32_t)out.size());
     }
     return executed;
 }

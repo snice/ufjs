@@ -22,6 +22,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstddef>
+#include <vector>
 
 #if defined(FJS_ENGINE_QUICKJS)
 #include "quickjs.h" /* quickjs-ng */
@@ -81,6 +82,56 @@ inline Value call(Context *ctx, ValueConst func, ValueConst this_obj, int argc,
 }
 inline int execute_pending_job(Runtime *rt, Context **pctx) {
     return JS_ExecutePendingJob(rt, pctx);
+}
+
+/* Unhandled promise rejections (spec 111). quickjs-ng reports them through
+ * a host tracker: is_handled=false when a promise is rejected with no
+ * handler, true when one is attached afterwards. Entries wait here for the
+ * pump's end-of-drain check, so a handler attached later in the same drain
+ * cancels the report. Both values are held (dup'd) until taken or cleared. */
+struct RejectionState {
+    struct Entry {
+        Value promise;
+        Value reason;
+    };
+    std::vector<Entry> pending;
+};
+inline void rejection_tracker_(JSContext *ctx, JSValueConst promise, JSValueConst reason,
+                               bool is_handled, void *opaque) {
+    auto *st = static_cast<RejectionState *>(opaque);
+    if (!is_handled) {
+        st->pending.push_back({JS_DupValue(ctx, promise), JS_DupValue(ctx, reason)});
+        return;
+    }
+    for (size_t i = 0; i < st->pending.size(); i++) {
+        if (JS_VALUE_GET_PTR(st->pending[i].promise) == JS_VALUE_GET_PTR(promise)) {
+            JS_FreeValue(ctx, st->pending[i].promise);
+            JS_FreeValue(ctx, st->pending[i].reason);
+            st->pending.erase(st->pending.begin() + (long)i);
+            return;
+        }
+    }
+}
+inline void track_rejections(Runtime *rt, RejectionState *st) {
+    JS_SetHostPromiseRejectionTracker(rt, rejection_tracker_, st);
+}
+/* Hands over the reason of the oldest rejection still unhandled (the caller
+ * frees it); false when there is none. */
+inline bool take_unhandled_rejection(Context *ctx, RejectionState *st, Value *reason) {
+    if (st->pending.empty()) return false;
+    RejectionState::Entry e = st->pending.front();
+    st->pending.erase(st->pending.begin());
+    JS_FreeValue(ctx, e.promise);
+    *reason = e.reason;
+    return true;
+}
+/* Before the context goes: JS_FreeRuntime asserts nothing is still held. */
+inline void clear_rejections(Context *ctx, RejectionState *st) {
+    for (auto &e : st->pending) {
+        JS_FreeValue(ctx, e.promise);
+        JS_FreeValue(ctx, e.reason);
+    }
+    st->pending.clear();
 }
 inline void run_gc(Runtime *rt) { JS_RunGC(rt); }
 inline void compute_memory_usage(Runtime *rt, MemoryUsage *s) { JS_ComputeMemoryUsage(rt, s); }
@@ -213,6 +264,22 @@ inline Value call(Context *ctx, ValueConst func, ValueConst this_obj, int argc,
 inline int execute_pending_job(Runtime *rt, Context **pctx) {
     return LEPUS_ExecutePendingJob(rt, pctx);
 }
+
+/* Unhandled promise rejections (spec 111). PrimJS tracks them itself: a
+ * promise rejected with no handler goes on rt->unhandled_rejections (as an
+ * Error — a non-Error reason is wrapped), and attaching a handler later
+ * takes it off again. LEPUS_MoveUnhandledRejectionToException pops the
+ * oldest into the pending exception. Nothing drained that list before
+ * spec 111, so it only ever grew: every unhandled rejection's Error stayed
+ * alive for the whole VM. No per-VM state; the runtime frees what is left. */
+struct RejectionState {};
+inline void track_rejections(Runtime *, RejectionState *) {}
+inline bool take_unhandled_rejection(Context *ctx, RejectionState *, Value *reason) {
+    if (!LEPUS_MoveUnhandledRejectionToException(ctx)) return false;
+    *reason = LEPUS_GetException(ctx);
+    return true;
+}
+inline void clear_rejections(Context *, RejectionState *) {}
 inline void run_gc(Runtime *rt) { LEPUS_RunGC(rt); }
 inline void compute_memory_usage(Runtime *rt, MemoryUsage *s) { LEPUS_ComputeMemoryUsage(rt, s); }
 
