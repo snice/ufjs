@@ -217,20 +217,19 @@ Widget buildFlex(
             ? _mainAutoMargins(FjsStyle.of(childNode), horizontal)
             : null;
         if (auto != null && auto.lead) children.add(const Spacer());
-        children.add(
-          _flexChild(
-            child: child,
-            childNode: childNode,
-            horizontal: horizontal,
-            stretches: flexAlignment == CrossAxisAlignment.stretch,
-            crossAlign: selfAligned && childNode != null
-                ? FjsStyle.of(childNode).alignSelf ?? effectiveCrossAlignment
-                : null,
-            mainAxisMax: mainAxisMax,
-            defaultGrow: growChildren ? 1 : null,
-            blockFlow: blockFlow,
-          ),
+        final item = _flexChild(
+          child: child,
+          childNode: childNode,
+          horizontal: horizontal,
+          stretches: flexAlignment == CrossAxisAlignment.stretch,
+          crossAlign: selfAligned && childNode != null
+              ? FjsStyle.of(childNode).alignSelf ?? effectiveCrossAlignment
+              : null,
+          mainAxisMax: mainAxisMax,
+          defaultGrow: growChildren ? 1 : null,
+          blockFlow: blockFlow,
         );
+        children.add(measureCross ? _crossLineItem(item) : item);
         if (auto != null && auto.trail) children.add(const Spacer());
       }
       if (cull) {
@@ -503,6 +502,21 @@ AlignmentGeometry _crossAlignment(CrossAxisAlignment align, bool horizontal) {
 /// before, `canUpdate` fails on the mismatched keys inside, and the whole
 /// subtree is rebuilt from scratch. Keying the wrapper is what lets a move
 /// stay a move.
+/// Puts [FjsCrossLineItem] between a measuring flex and one of its items,
+/// under the item's Flexible — flex parent data has to land on the flex's
+/// direct render child, which the proxy now is.
+Widget _crossLineItem(Widget item) {
+  if (item is Flexible) {
+    return Flexible(
+      key: item.key,
+      flex: item.flex,
+      fit: item.fit,
+      child: FjsCrossLineItem(child: item.child),
+    );
+  }
+  return FjsCrossLineItem(key: item.key, child: item);
+}
+
 Widget _flexChild({
   required Widget child,
   required MirrorNode? childNode,

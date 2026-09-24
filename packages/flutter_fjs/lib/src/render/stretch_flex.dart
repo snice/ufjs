@@ -40,6 +40,11 @@ mixin FjsShrinkStretchFlex on RenderFlex {
     markNeedsLayout();
   }
 
+  /// True while the second (stretching) pass runs: the children are being
+  /// laid out with the cross axis tight at the measured line. See
+  /// [RenderFjsCrossLineItem] for why a child needs to know.
+  bool get inCrossPass => _crossTight != null;
+
   @override
   CrossAxisAlignment get crossAxisAlignment =>
       _measuring ? CrossAxisAlignment.center : super.crossAxisAlignment;
@@ -99,6 +104,73 @@ mixin FjsShrinkStretchFlex on RenderFlex {
       p = p.parent;
     }
     return false;
+  }
+}
+
+/// Keeps a two-pass flex's line size live (specs/122).
+///
+/// The second pass hands every item a TIGHT cross constraint, and Flutter
+/// makes any child laid out under a tight constraint its own relayout
+/// boundary. From then on a change deep inside the item — a textarea
+/// growing a line, a text wrapping onto another — stops at the item: it
+/// re-lays out at the same tight size and the flex never re-measures. That
+/// is how vant's autosize field stayed one cell high while its text grew
+/// out of the clipped cell (specs/077 T060).
+///
+/// This proxy sits between the flex and each item. In the stretching pass
+/// it passes the constraint on with a sub-pixel of slack on the cross max,
+/// so the item is no longer tight and its subtree's dirtiness reaches the
+/// proxy; the proxy itself stays at the tight size, and forwards that
+/// dirtiness to the flex (the same pairing Flutter's own
+/// markNeedsLayoutForSizedByParentChange does). Outside that pass it is a
+/// plain pass-through.
+class FjsCrossLineItem extends SingleChildRenderObjectWidget {
+  const FjsCrossLineItem({super.key, super.child});
+
+  @override
+  RenderFjsCrossLineItem createRenderObject(BuildContext context) =>
+      RenderFjsCrossLineItem();
+}
+
+class RenderFjsCrossLineItem extends RenderProxyBox {
+  /// Whether the last layout came from the stretching pass under a tight
+  /// constraint — the only case the item would otherwise cut the flex off.
+  bool _forwardsDirt = false;
+
+  /// Small enough to never show (the item sizes to its content clamped to
+  /// the line, and the line is what this box reports), large enough to
+  /// make the constraint not `isTight`.
+  static const double _slack = 1e-3;
+
+  @override
+  void performLayout() {
+    final c = constraints;
+    final p = parent;
+    _forwardsDirt = c.isTight && p is FjsShrinkStretchFlex && p.inCrossPass;
+    final child = this.child;
+    if (child == null) {
+      size = c.smallest;
+      return;
+    }
+    if (!_forwardsDirt) {
+      child.layout(c, parentUsesSize: true);
+      size = child.size;
+      return;
+    }
+    final horizontal = (p as RenderFlex).direction == Axis.horizontal;
+    child.layout(
+      horizontal
+          ? c.copyWith(maxHeight: c.maxHeight + _slack)
+          : c.copyWith(maxWidth: c.maxWidth + _slack),
+      parentUsesSize: true,
+    );
+    size = c.constrain(child.size);
+  }
+
+  @override
+  void markNeedsLayout() {
+    super.markNeedsLayout();
+    if (_forwardsDirt && parent != null) markParentNeedsLayout();
   }
 }
 

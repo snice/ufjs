@@ -49,7 +49,7 @@
 
 ## 遗留（已挂账，改天解决）
 
-- [ ] T060 **多行输入（vant Field textarea）在 App 端不随内容长高**：
+- [x] T060 （specs/122 修复：两段式 flex 第二段的紧约束让子项成了 relayout boundary，脏标记传不到行）**多行输入（vant Field textarea）在 App 端不随内容长高**：
   超过约两行的内容被 cell 裁掉，行 3 底部裁半行。两轮重跑复现，诊断
   已到约束层：
   - peer 的 auto-height 语义成立：TextField 收到 `maxLines: null` +
