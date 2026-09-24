@@ -103,9 +103,13 @@ String _selectOhos(String root, String host, String engine) {
 /// Records [engine] in the host's .dart_tool and, when it changed, makes the
 /// next Xcode build re-run pod install and relink. Host files only.
 String _markHostFlavor(String host, String engine) {
-  final stamp = File('$host/.dart_tool/flutter_fjs/engine_flavor');
-  // no stamp yet: pods were installed without a flavor, i.e. primjs
-  final previous = stamp.existsSync() ? stamp.readAsStringSync().trim() : 'primjs';
+  // v2 (spec 112): hosts that ran spec 105's runner hold a v1 stamp that
+  // may already name the new flavor while their build still links the old
+  // one (the cache drop never matched), so the v1 stamp is not trusted.
+  final stamp = File('$host/.dart_tool/flutter_fjs/engine_flavor.v2');
+  // no stamp: we cannot know what the last build linked — invalidate once
+  // (one pod install and a relink) rather than guess
+  final previous = stamp.existsSync() ? stamp.readAsStringSync().trim() : null;
   if (previous == engine) return 'unchanged';
   stamp.parent.createSync(recursive: true);
   stamp.writeAsStringSync('$engine\n');
@@ -115,21 +119,42 @@ String _markHostFlavor(String host, String engine) {
     final podfile = File('$host/$platform/Podfile');
     if (podfile.existsSync()) podfile.setLastModifiedSync(DateTime.now());
   }
-  // Xcode caches the extracted xcframework slice and its incremental
-  // bookkeeping may skip relinking flutter_fjs; drop both so the switch is
-  // real on the first build
-  final build = Directory('$host/build');
-  if (build.existsSync()) {
-    for (final config in build.listSync().whereType<Directory>()) {
-      for (final stale in [
-        Directory('${config.path}/XCFrameworkIntermediates/flutter_fjs'),
-        Directory('${config.path}/flutter_fjs/flutter_fjs.framework'),
-      ]) {
-        if (stale.existsSync()) stale.deleteSync(recursive: true);
-      }
+  _dropXcodeCaches(Directory('$host/build'));
+  return 'invalidated (${previous ?? 'unknown'} → $engine)';
+}
+
+/// Deletes, anywhere under the host's build dir, the copy of the engine
+/// slice Xcode extracted (`XCFrameworkIntermediates/flutter_fjs`) and the
+/// linked plugin framework (`flutter_fjs/flutter_fjs.framework`).
+///
+/// Both flavors ship a `libfjs.a` under the same name, and the CocoaPods
+/// copy phase re-runs only when its input is NEWER than its output — a
+/// quickjs archive checked out earlier than the last primjs copy looked
+/// up to date, and a switch kept linking primjs (spec 112). The search is
+/// recursive because Flutter nests these a few levels down:
+///   build/ios/Debug-iphonesimulator/XCFrameworkIntermediates/flutter_fjs
+///   build/macos/Build/Products/Debug/XCFrameworkIntermediates/flutter_fjs
+/// Spec 091 looked only at build/<one level>/…, which never matched; it
+/// did not show then because every switch re-copied files with fresh
+/// timestamps. Keep in step with tool/test/xcode_cache_paths_check.mjs.
+void _dropXcodeCaches(Directory build, [int depth = 0]) {
+  if (depth > 6 || !build.existsSync()) return;
+  for (final entry in build.listSync(followLinks: false).whereType<Directory>()) {
+    final name = _name(entry.path);
+    if (name == 'XCFrameworkIntermediates') {
+      final stale = Directory('${entry.path}/flutter_fjs');
+      if (stale.existsSync()) stale.deleteSync(recursive: true);
+      continue;
     }
+    if (name == 'flutter_fjs') {
+      final product = Directory('${entry.path}/flutter_fjs.framework');
+      if (product.existsSync()) product.deleteSync(recursive: true);
+      continue;
+    }
+    // bundles never contain either; skipping them keeps the walk cheap
+    if (name.endsWith('.app') || name.endsWith('.framework') || name.endsWith('.dSYM')) continue;
+    _dropXcodeCaches(entry, depth + 1);
   }
-  return 'invalidated ($previous → $engine)';
 }
 
 String? _pubCacheRoot() {

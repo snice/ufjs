@@ -184,6 +184,9 @@ uni-app 那张表：
 - ✅ 未处理的 Promise 拒绝打日志（`specs/111-promise-rejection-tracker`，2026-09）：两个引擎在 pump 排空后
   报 `[fjs] unhandled promise rejection`；顺带修掉 PrimJS 未处理拒绝列表只进不出的内存泄漏。
   **待办**：用 `tool/build-*.sh` 重新生成各平台预编译产物后才会进 App
+- ✅ iOS/macOS 上 `--js-engine` 切换后仍运行旧引擎（`specs/112-engine-switch-stale-build`，2026-09）：runner
+  递归清 Xcode 缓存（spec 105 的一层查找从未命中）；戳记升到 v2，已处于错误状态的宿主会重新失效一次。
+  **待本机验证**：iOS / macOS 来回切换
 - ✅ 清理入库的构建产物与死代码（`specs/109-no-committed-build-artifacts`，2026-09）：spec 093 e2e 的
   `bundle.js` / `relay.cjs` 改由 `e2e/build.mjs` 生成、不再入库（Linux 上重跑 11/11）；删除从未编译的
   `primjs/src/wasm/`；`fjsrun` 补 `<ctime>`，Linux 可编
