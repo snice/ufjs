@@ -51,8 +51,9 @@
   → 保留 `track()` 里的实例赋值（一次属性写入，量级可忽略）。
 - **ASCII 直写**：`str(s, wide)` 先扫一遍，全 ASCII 就按 `charCodeAt` 写进缓冲；
   任一字符 ≥ 0x80 回落 `utf8Encode`。比「总是编码」少一次分配 + 一次拷贝。
-- **常量 props**：`setConstProps` 以 props 对象身份为键缓存 `JSON.stringify` 结果；
-  写帧时 `setPropsJson` 直接 `str()`。devtools `recordProps` 照调。
+- **常量 props**：`setConstProps` 以 props 对象身份为键缓存**编码后的 UTF-8 字节**；
+  写帧时 `setPropsEncoded` 一次缓冲拷贝。（实现中调整：最初缓存 JSON 串再 `str()`，
+  实测仍 10.7 µs——解释器里逐字符写 30 字节不便宜，改缓存字节。）devtools `recordProps` 照调。
 - **按节点记事件类型**：`setProps` / `addDomListener` 注册时把 type 推进
   `nodeEventTypes.get(id)`；`forgetHandlers` 只遍历这个列表。
   没有注册过任何事件的节点（大多数）零字符串拼接。

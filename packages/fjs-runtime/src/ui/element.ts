@@ -13,6 +13,7 @@ const INNER_CANVAS_TAG = 'inner-canvas';
 import { decodeTouchEvent, isTouchEvent, type FjsTouchEvent } from './touch';
 import { devtoolsSlots, devtoolsStructuralVersion } from '../devtools-hooks';
 import { boundingRectOf, type FjsRect } from './geometry';
+import { utf8Encode } from './utf8';
 
 /** Event names accepted in props; handlers never cross the JSI boundary —
  * only their existence is sent (e.g. onTap: true) and native dispatches
@@ -654,7 +655,7 @@ export function setProps(el: Element, props: Record<string, unknown>): void {
   scheduleFlush();
 }
 
-const constPropsJson = new WeakMap<object, string>();
+const constPropsJson = new WeakMap<object, Uint8Array>();
 
 /** setProps for a props object that never changes — a module-level
  * constant such as the renderer's v-if anchor style. Its JSON is built once
@@ -667,13 +668,15 @@ const constPropsJson = new WeakMap<object, string>();
  * path above) — and the object must not be mutated after its first use,
  * or later nodes get the stale JSON. Freeze it at the definition site. */
 export function setConstProps(el: Element, props: Readonly<Record<string, unknown>>): void {
+  // cached as encoded bytes, not the JSON string: writing even an ASCII
+  // string walks it char by char, a byte copy does not
   let json = constPropsJson.get(props);
   if (json === undefined) {
-    json = JSON.stringify(props);
+    json = utf8Encode(JSON.stringify(props));
     constPropsJson.set(props, json);
   }
   for (const key in props) recordField(el.id, key, props[key]);
-  getWriter().setPropsJson(el.id, json);
+  getWriter().setPropsEncoded(el.id, json);
   devtoolsSlots.recordProps(el.id, props as Record<string, unknown>);
   scheduleFlush();
 }

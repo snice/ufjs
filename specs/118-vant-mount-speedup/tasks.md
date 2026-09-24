@@ -39,17 +39,17 @@
 
 ## 文档
 
-- [ ] T040 `docs/ui-api.md`：内置组件表加 `defer` 一行（行为、`placeholder-height`、两端时机）
-- [ ] T041 `docs/miniprogram.md`：映射表加 `defer → block`，差异表登记占位高度被丢弃
-- [ ] T042 `docs/vant-mount-perf.md`：追加「specs/118」实测表（改前 / 改后、含与不含 `<defer>`）
-- [ ] T043 `docs/performance.md`：元素层单价一节（原型化、ASCII 直写、事件类型索引的前后单价）
-- [ ] T044 `docs/roadmap.md`：有对应条目则打勾，没有则不加
+- [x] T040 `docs/ui-api.md`：内置组件表加 `defer` 一行（行为、`placeholder-height`、两端时机）
+- [x] T041 `docs/miniprogram.md`：映射表加 `defer → block`，差异表登记占位高度被丢弃
+- [x] T042 `docs/vant-mount-perf.md`：追加「specs/118」实测表（改前 / 改后、含与不含 `<defer>`）
+- [x] T043 `docs/performance.md`：元素层单价一节（原型化、ASCII 直写、事件类型索引的前后单价）
+- [x] T044 `docs/roadmap.md`：有对应条目则打勾，没有则不加
 
 ## 验收
 
-- [ ] T050 `pnpm run typecheck`
-- [ ] T051 `pnpm test`
-- [ ] T052 spec.md 第 6 节逐条核对：
+- [x] T050 `pnpm run typecheck`
+- [x] T051 `pnpm test`
+- [x] T052 spec.md 第 6 节逐条核对：
   1. typecheck / test 通过
   2. `pnpm --filter demo run bench:mount` 可用
   3. 同机 A/B（交替 3 轮 min，不含 `<defer>`）：元素层 ≥ −40%、markMs ≥ −50%、卸载 ≤ 10 ms、五页 match miss 不变
@@ -57,3 +57,18 @@
   5. 模拟器 `[nav] mounted` —— 交用户复核（spec Q4）
   6. `build:release` / `build:pages` / `build:web` 成功
   7. `examples/bench` 样式用例 ±5%
+
+## 验收记录（2026-09-24，Linux 容器 · PrimJS Release · fjsrun）
+
+| spec §6 | 结果 |
+|---|---|
+| 1 typecheck / test | ✅ `pnpm run typecheck` exit 0（hello-fjs 需先 `fjs types` 生成被 gitignore 的组件类型；基线提交上同样的 3 个错误，与本 spec 无关）。`pnpm test`：runtime 726 / cli 379 / webview 36 / webgl 30 全绿 |
+| 2 bench:mount | ✅ `pnpm --filter demo run bench:mount` 可用：两个入口各跑一个全新 VM（eager / 页面原样） |
+| 3 A/B（热态 min，整页进首帧） | ✅ vant-form 元素层 32.5 → 16.9 ms（−48%）；markMs 5.7 → 1.4（−75%）；卸载 28.5 → 6.5 ms；match miss 五页 146/41/267/268/179 逐页相等。vant-more −43%、vant-basic −43%、vant-feedback −40%，vant-nav 元素层本来只有 ~10 ms，降得少 |
+| 4 含 `<defer>` 首开同步段 | ✅ vant-form 冷 204–214 → 37–38 ms（≈ 18%，目标 ≤ 40%），热 100 → 20 ms |
+| 5 模拟器 `[nav] mounted` | ⏳ 本容器无 Flutter，交用户复核（spec Q4） |
+| 6 构建 | ✅ `build:pages`、`build:web` 成功。⚠️ `build:release` 的 JS 部分（分包 + 字节码）成功，随后 `fjs: flutter create failed`——容器没有 Flutter SDK，环境限制 |
+| 7 examples/bench | ✅ 无回退且更快（帧字节逐字节相同）：style-mount-1000-rows 246 → 120 ms、theme-switch-vars 38.5 → 34.1 ms |
+
+对拍：80 次挂载/卸载的 op 流，去掉 `role`/`tabindex`/`aria-*`/`data-*` 的 SetProps 后与改前逐行相同。
+Web 端用 Chromium 实跑：进入 vant-form 首帧只有首屏（Radio 有、Stepper 无），转场结束后补齐，无页面错误。

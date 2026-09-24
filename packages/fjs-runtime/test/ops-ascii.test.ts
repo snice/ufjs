@@ -57,6 +57,13 @@ describe('OpWriter string encoding (specs/118)', () => {
     );
   });
 
+  it('setPropsEncoded (pre-encoded constant props) writes the same frame', () => {
+    const props = { style: { display: 'none' } };
+    expect(frame((w) => w.setPropsEncoded(3, utf8Encode(JSON.stringify(props))))).toEqual(
+      frame((w) => w.setProps(3, props)),
+    );
+  });
+
   it('create writes the same bytes on a cached tag as on the first use', () => {
     const w = new OpWriter();
     w.create(1, 'view');

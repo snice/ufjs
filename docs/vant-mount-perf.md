@@ -408,6 +408,90 @@ renderer ops **51 → 34 ms（−33%）**，整页热态 106 → 98.5 ms。
 
 以上每一条落地前按规矩先 `/spec`；原型 diff 没有提交。
 
+## 元素层削分配 + 首屏优先 `<defer>`（specs/118）
+
+上一节的三分账落地成两件事：**把每节点单价削下来**（元素层、标脏、卸载），
+以及**让首帧少挂节点**（`<defer>`）。数字全部来自入库的离线基准：
+
+```bash
+pnpm --filter demo run bench:mount     # 需先编好 native 的 fjsrun
+```
+
+`demo/bench/mount-eager.ts`（`<defer>` 当场渲染 = 整页进首帧）与
+`demo/bench/mount.ts`（页面原样）各跑一个**全新 VM**——冷数字只在没挂过这页
+的 VM 里才是冷的。列的含义见 `demo/bench/mount-core.ts` 顶部注释。以下为
+Linux 容器 CPU、PrimJS Release，**约为模拟器 2 倍慢**；改前 / 改后交替跑、取 min。
+
+### 单价：元素层、标脏、卸载（整页进首帧，热态）
+
+| vant-form（348 元素） | 改前 | 改后 |
+|---|---:|---:|
+| 同步挂载合计 | 100.2 ms | **78.5 ms** |
+| CSS 重算（flushMs） | 28.8 | 27.3 |
+| 标脏（markMs） | 5.7 | **1.4** |
+| 元素层（合计 − CSS − 标脏 − 空渲染器 Vue 32.8） | 32.5 | **16.9（−48%）** |
+| 卸载 | 28.5 | **6.5** |
+| match miss（语义哨） | 267 | 267 |
+
+元素层 vant-more −43%、vant-basic −43%、vant-feedback −40%；vant-nav 本来就薄
+（~10 ms，大头在 Vue 与 CSS），降得少。五页卸载都 ≤ 7 ms。
+
+做了什么（都在 Flutter 路径，web 走 DOM 不经过这些层）：
+
+1. **Element 挪到共享原型**（`ui/element.ts`）：每节点 9 个闭包 + 2 次
+   `defineProperty` 没了。`create()` 12.1 → 2.7 µs。
+2. **OpWriter**（`ui/ops.ts`）：标签字节缓存；ASCII 字符串直接写进帧缓冲，
+   不经临时 `Uint8Array`（非 ASCII 回落 `utf8Encode`，字节逐一相同）。
+3. **常量 props 只序列化一次**（`setConstProps`）：v-if 锚点、`htmlBlock`、
+   `multiline`，缓存的是编码好的字节。锚点一次 19.6 → 3.2 µs。
+4. **`forgetHandlers` 只删节点注册过的事件类型**：原来每个被删节点都拼
+   33 × 2 个字符串键——卸载 29 ms 的主体。
+5. **惰性 HTML 属性不过桥**：`role` / `tabindex` / `aria-*` / `data-*` 占 vant
+   普通 prop 写入的 60%，Dart 与 CSS 引擎都不读，现在只记进 DevTools。
+6. **子树标脏去重**（`css/style.ts`）：同一待算批次里已整棵标过的子树不再
+   下探。Vue 自底向上挂载，原来 N 层深的节点被走 N 次。
+7. **空 class/scope 集共享、class 串解析缓存**：`ensure()` 不再给每个元素
+   新建两个 `Set`。
+
+对拍：整套基准 80 次挂载 / 卸载的 op 流，1–4、6、7 **逐字节相同**；加上 5 之后，
+去掉那几类属性的 SetProps 后逐字节相同（帧里少 20% 的 SetProps）。
+
+### 首屏优先：`<defer>`（页面原样，冷 = 首开）
+
+vant-form / vant-more / vant-nav / vant-basic 把首屏以下的分组包进 `<defer>`
+（用法见 [ui-api.md](ui-api.md#首屏优先defer)）。navMount 里用户等的只剩首屏
+那一段：
+
+| 同步段（navMount 里） | 改前 冷 | 改后 冷 | 改前 热 | 改后 热 |
+|---|---:|---:|---:|---:|
+| vant-form | 204–214 ms | **37–38 ms** | 100 ms | **20 ms** |
+| vant-more | 110–116 | **38–41** | 63 | **19** |
+| vant-nav | 80 | **44–45** | 58 | **27** |
+| vant-basic | 80–82 | **50–55** | 44 | **20** |
+
+模拟器约为这里的一半：vant-form 首开同步段 ~20 ms 量级（spec 目标 ~35 ms）。
+**模拟器 / 真机的 `[nav] mounted` 未在本轮复测**（容器里没有 Flutter），按附录
+流程复核。
+
+补挂那一段在转场结束后执行，不在 navMount 里，但它是真实的一帧：vant-form 冷
+~115 ms / 热 ~62 ms（容器口径）。它落在页面已停稳、用户还没开始滑动的时候；
+要再压，压的是冷态 CSS（下一条）。
+
+### 冷态数字里有一次 GC，归属会漂
+
+改后 eager 模式下 vant-more 的冷态 CSS 读到 114–173 ms（改前 61–65 ms），
+像是退化。**不是**：分配是确定性的，全堆回收每次落在同一点；bundle 大了 31 KB
+（基准多引了 `fjs/app`），那一点就从别处挪进了 vant-more 的冷挂载。在每页冷
+挂载前手动 `gc()`（诊断用，量完撤回）后 vant-more 冷态 CSS 回到 60 ms，那 ~50 ms
+挪到了 vant-form 身上。所以：**单页冷数字对比要看量级、看多页合计，不要逐页
+抠**；引擎收益以热态为准。
+
+### 还没做的
+
+- **冷态 CSS**：首开比重开多出的 match / compute miss（vant-form 冷 ~80 ms，
+  热 ~28 ms，容器口径）。样式匹配结果落盘或构建期预热，另立 spec。
+- IFR / 构建期首帧快照：不做（spec 118 Non-goals）。
+
 ## 附录：怎么复现与怎么量
 
 ```bash

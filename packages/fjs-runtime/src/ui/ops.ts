@@ -356,6 +356,13 @@ export class OpWriter {
     this.u8(UiOp.ResetStyles);
   }
 
+  /** SetProps from JSON already encoded as UTF-8 — for props written the
+   * same way on many nodes (element.ts setConstProps): one buffer copy
+   * instead of re-walking the string per node. */
+  setPropsEncoded(id: number, json: Uint8Array): this {
+    return this.writeProps(id, json);
+  }
+
   private writeProps(id: number, json: Uint8Array): this {
     this.u8(UiOp.SetProps);
     this.u32(id);

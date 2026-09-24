@@ -92,6 +92,28 @@ jsi-and-native-modules.md)。
 数字随机器和版本变化。改过渲染管线（op 编码、镜像树、样式引擎）后请重新实测
 再更新上表，不要沿用旧值。
 
+## 元素层单价（2026-09，specs/118）
+
+挂载一个节点，除了 Vue 与 cascade，还要付元素层的钱：建 `Element`、编码 op、
+登记事件。解释器下这些全是分配的价格。PrimJS Release、Linux 容器（约为模拟器
+2 倍慢），2000 次取 min：
+
+| 操作 | 之前 | 之后 | 省在哪 |
+|---|---:|---:|---|
+| `create("view")` | 12.1 µs | **2.7 µs** | Element 方法 / getter 挪到共享原型；标签字节缓存 |
+| `setText("hello")` | 6.3 µs | **4.7 µs** | ASCII 直写帧缓冲，不经临时 `Uint8Array` |
+| `setProps({htmlBlock: true})` | 14.3 µs | 9.7 µs | 同上 + `for...in` 代替 `Object.entries` |
+| v-if 锚点的常量 props | 19.6 µs | **3.2 µs** | `setConstProps`：同一对象的编码字节只算一次 |
+
+页面级：vant-form 挂载的元素层 32.5 → 16.9 ms（−48%），卸载 28.5 → 6.5 ms。
+另外两处不在单价里、但在页面上更大：`role`/`tabindex`/`aria-*`/`data-*` 不再
+过桥（vant 普通 prop 写入的 60%），以及 Vue 自底向上挂载时的重复标脏。整本账和
+对拍方法见 [vant-mount-perf.md](vant-mount-perf.md) 的 specs/118 一节。
+
+读这张表的方式：**解释器里「逐字符走一遍字符串」和「新建一个对象」都是微秒级
+的**。`JSON.stringify` 一个小对象 1.3 µs，而把同样 30 个 ASCII 字符逐个写进缓冲区
+也要几微秒——所以常量 props 缓存的是编码好的字节（一次 `set()` 拷贝），不是 JSON 串。
+
 ## 样式驻留带来的变化（2026-09）
 
 把 style 从「每节点一份内联 JSON」改成「一次 DEFINE_STYLE + 每节点 13 字节
