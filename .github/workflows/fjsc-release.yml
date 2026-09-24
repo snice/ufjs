@@ -1,5 +1,7 @@
 # Builds the prebuilt `fjsc` binaries that cannot be produced on a macOS dev
-# machine, and bundles them for dropping into packages/fjsc/prebuilt/.
+# machine, and bundles them for dropping into packages/fjsc/prebuilt/. Each
+# target yields two binaries, one per engine flavor (spec 114): fjsc (primjs)
+# and fjsc-quickjs.
 #
 # This workflow does NOT publish. npm requires an OTP for write actions on this
 # account, and trusted publishing (OIDC) is configured per package on npmjs.com,
@@ -43,15 +45,24 @@ jobs:
       - name: Build fjsc
         run: node packages/fjsc/build.mjs ${{ matrix.target }}
 
+      # both flavors (spec 114): each must compile and report its own engine —
+      # 0.1.4 shipped a quickjs-ng build as bin/fjsc because nothing checked
       - name: Smoke test
         shell: bash
         run: |
           set -e
-          BIN=packages/fjsc/npm/fjsc-${{ matrix.target }}/bin/fjsc
-          [ "${{ matrix.target }}" = "win32-x64" ] && BIN="$BIN.exe"
+          DIR=packages/fjsc/npm/fjsc-${{ matrix.target }}/bin
+          EXT=""
+          [ "${{ matrix.target }}" = "win32-x64" ] && EXT=".exe"
           echo 'console.log(1 + 1)' > smoke.js
-          "$BIN" smoke.js smoke.fjsbundle
-          test -s smoke.fjsbundle
+          for pair in fjsc:primjs-4.1.1 fjsc-quickjs:quickjs-ng-0.9.0; do
+            BIN="$DIR/${pair%%:*}$EXT"
+            ID="${pair#*:}"
+            "$BIN" smoke.js smoke.fjsbundle | tee smoke.out
+            test -s smoke.fjsbundle
+            grep -q "engine $ID)" smoke.out || { echo "$BIN is not $ID"; exit 1; }
+            rm smoke.fjsbundle
+          done
 
       # laid out so the artifact unzips straight into packages/fjsc/
       - name: Stage

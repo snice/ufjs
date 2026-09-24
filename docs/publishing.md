@@ -78,7 +78,7 @@ npx fjs build --pages && npx vue-tsc --noEmit && npx vite build
 
 ## fjsc 二进制
 
-`fjs build --bytecode` / `--release` 要用 `fjsc` 把 JS 编成 QuickJS 字节码。它
+`fjs build --bytecode` / `--release` 要用 `fjsc` 把 JS 编成引擎字节码。它
 是**宿主工具**，不随 `flutter_fjs` 发布——按平台预编译成 5 个 npm 包，由
 `@ufjs/cli` 用 `optionalDependencies` 声明，靠各自 manifest 里的 `os`/`cpu`
 让 npm 只装匹配的那一个（esbuild 的做法）：
@@ -89,7 +89,21 @@ npx fjs build --pages && npx vue-tsc --noEmit && npx vite build
 @ufjs/fjsc-win32-x64
 ```
 
-`findFjsc()` 的解析顺序是 `FJSC_PATH` → **仓库里的 cmake 产物** → 这个包。
+引擎链接在二进制里，所以**每个包放两个二进制**（spec 114）：
+
+| 文件 | 引擎 |
+|---|---|
+| `bin/fjsc`（Windows 为 `fjsc.exe`） | `primjs-4.1.1`，默认 |
+| `bin/fjsc-quickjs`（`fjsc-quickjs.exe`） | `quickjs-ng-0.9.0` |
+
+`build.mjs` 对每个 flavor 各用一棵 cmake 树（`build/<target>-<flavor>`），显式传
+`-DFJS_JS_ENGINE=<flavor> -DFJS_DEBUGGER=OFF`；目标是本机平台时把两个二进制各跑
+一次，核对自报的引擎 id，不符就中止——0.1.4 就是因为没传 flavor、也没核对，把
+quickjs-ng 当 `bin/fjsc` 发了出去。包里带 `LICENSE-primjs`（Apache-2.0）和
+`LICENSE-quickjs-ng`，`license` 字段是 `MIT AND Apache-2.0`。
+
+`locateFjsc()` 的解析顺序是 `FJSC_PATH` → **仓库里的 cmake 产物** → 这个包，
+每一步都只接受自报引擎与目标一致的二进制（详见 `docs/toolchain.md`「fjsc 的查找顺序」）。
 
 仓库优先是刻意的：`optionalDependencies` 会让 workspace 装上一份已发布的 fjsc，
 如果 npm 包赢，那么在仓库里改了 `packages/flutter_fjs/native/` 的人就会继续用
@@ -113,13 +127,28 @@ trusted publisher 的，包得先存在**，覆盖不了首次发布。
 那些二进制是发布的输入，不是源码，发完就可以删；要复现某个版本重跑 workflow
 即可。
 
-`build.mjs` 对每个 target 的规则是：`prebuilt/<target>/` 有就用它，没有就现编，
-两者都不行就报错并指向上面的 workflow。所以第 3 步在任何机器上都产出同样的
-五个包。输出会标明每个包的来源（`compiled` 还是 `prebuilt/<target>`）。
+`build.mjs` 对每个 target 的每个二进制的规则是：`prebuilt/<target>/fjsc` 或
+`prebuilt/<target>/fjsc-quickjs` 有就用它，没有就现编，两者都不行就报错并指向上面的
+workflow。所以第 3 步在任何机器上都产出同样的五个包。输出会标明每个二进制的来源
+（`compiled` 还是 `prebuilt/<target>`）和核对结果（`engine <id>`；非本机平台的目标
+跑不起来，标 `not verified on this machine`——它们在 CI 的冒烟测试里核对过）。
 
 ```bash
 node packages/fjsc/build.mjs --all-darwin   # 只出 macOS 两个
 node packages/fjsc/build.mjs --all          # 五个（需要 prebuilt/ 里有 CI 产物）
+```
+
+### 废弃 0.1.4
+
+`@ufjs/fjsc-*@0.1.4` 的 `bin/fjsc` 实际是 quickjs-ng。配 0.1.4 及更早的 CLI 时，
+默认 primjs 的 release 构建会编出 App 拒绝加载的 bundle。新版发布之后执行（带 OTP）：
+
+```bash
+for t in darwin-arm64 darwin-x64 linux-x64 linux-arm64 win32-x64; do
+  npm deprecate "@ufjs/fjsc-$t@0.1.4" \
+    "bin/fjsc is a quickjs-ng build; primjs (default) bundles fail to load. Upgrade @ufjs/cli." \
+    --otp=<code>
+done
 ```
 
 等 5 个包都存在于 registry 之后，后续版本就可以在 npm 上给它们配 trusted

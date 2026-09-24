@@ -37,9 +37,10 @@ npx @ufjs/cli create my-app && cd my-app && npm install
 - `flutter_fjs` 由 `fjs run` 生成的 Flutter 宿主从 pub.dev 拉，里面带了预编译的
   `libfjs.so` 和 `fjs.xcframework`
 - 字节码编译器 `fjsc` 是 `@ufjs/cli` 的可选依赖 `@ufjs/fjsc-<平台>`，按 `os`/`cpu`
-  自动装匹配的那个
+  自动装匹配的那个。包里有两个二进制：`bin/fjsc`（primjs，默认）和
+  `bin/fjsc-quickjs`（`--js-engine quickjs`），见下文「fjsc 的查找顺序」
 
-装完发现 `--bytecode` 报「fjsc not found」，多半是发布窗口期的 npm 缓存问题——
+装完发现 `--bytecode` 报「no primjs fjsc found」且没列出任何候选，多半是发布窗口期的 npm 缓存问题——
 optional 依赖解析失败是静默的。`npm cache clean --force` 后重装。
 
 ### B. 在本仓库开发
@@ -51,7 +52,8 @@ pnpm install
 workspace 会把 `demo`、`examples/*` 链到 `packages/fjs` 和 `packages/fjs-runtime`
 的源码；Flutter 侧走 `packages/flutter_fjs` 的 path 依赖。
 
-`fjsc` 自己编一次，它必须和 Flutter 插件内嵌的 QuickJS-ng 来自同一份源码：
+`fjsc` 自己编一次，它必须和 Flutter 插件内嵌的引擎来自同一份源码（默认 primjs；
+quickjs flavor 的构建目录见下文「JS 引擎切换」）：
 
 ```bash
 cd packages/flutter_fjs/native
@@ -62,15 +64,27 @@ cmake --build build-native -j
 
 ### fjsc 的查找顺序
 
-`fjs build --bytecode` 按这个顺序找：
+引擎静态链接在 `fjsc` 里，**一个 flavor 就是一个二进制**；编出的 bundle 头里带
+引擎 id，App 加载时 id 不符会直接拒绝。所以 `fjs build --bytecode` / `--release`
+不看路径、不看文件名，而是把每个候选不带参数跑一次，读它自报的
+`engine: <id>`，只用 id 等于目标引擎（`--js-engine` / `FJS_JS_ENGINE`，默认
+primjs）的那个（spec 114）。候选顺序：
 
-1. 环境变量 `FJSC_PATH`
-2. 仓库内 `packages/flutter_fjs/native/build-native/fjsc`
-3. npm 包 `@ufjs/fjsc-<平台>`
+1. 环境变量 `FJSC_PATH`——**引擎不符直接报错，不往下找**：显式设的值错了要让人知道
+2. 仓库内 `packages/flutter_fjs/native/build-native/fjsc` 与
+   `build-native-quickjs/fjsc`，两个都探测，目录名只决定先看哪个
+3. npm 包 `@ufjs/fjsc-<平台>` 的 `bin/fjsc` 与 `bin/fjsc-quickjs`
+
+都不符时报错并列出每个候选和它的引擎。编完后还会从 fjsc 的输出行
+`(N bytes, engine <id>)` 再核对一次，不符就删掉产物。
 
 **仓库自编排在 npm 包前面**是刻意的：`pnpm install` 也会把 npm 包拉进 workspace，
 如果它赢了，改完 `native/` 的人就会继续用已发布的旧引擎编字节码。第 2 条路径从
 `node_modules` 里匹配不到，所以装到用户项目里仍然走第 3 条。
+
+**别靠文件名**：已发布的 `@ufjs/fjsc-*@0.1.4` 只有一个 `bin/fjsc`，实际是
+quickjs-ng。新 CLI 用它编 quickjs 没问题，编 primjs（默认）会在构建阶段报错——
+升级 `@ufjs/cli` 让它带上新版 fjsc 包，或者用 `FJSC_PATH` 指向一个 primjs 的 fjsc。
 
 ## 创建项目
 
@@ -792,7 +806,8 @@ fjs doctor
 ```
 
 依次检查 Node 版本、是不是 fjs 项目、入口与 `src/pages`、`@ufjs/cli` 与
-`@ufjs/runtime` 是否同一 minor、fjsc 从哪来（`FJSC_PATH` / npm / 本地构建）、
+`@ufjs/runtime` 是否同一 minor、两个引擎的 fjsc 各从哪来（`FJSC_PATH` / npm /
+本地构建；当前引擎的缺失算 problem，另一个只算 warning）、
 `flutter`、`adb`、`xcodebuild`、可用的 android/ios 设备，以及 `.fjs/flutter`
 宿主的 `flutter_fjs` 是 path 依赖还是 pub.dev。只影响部分目标的问题算 warning，
 真正会挡住构建的算 problem 并让退出码为 1。
@@ -1344,12 +1359,12 @@ dart-define 却没重新 pod install。
 
 三件事要配对：
 
-- **字节码跟引擎走**。`fjs build --js-engine quickjs` 会找 quickjs flavor
-  的 `fjsc`（仓库内 `native/build-native-quickjs/fjsc`；不在仓库里时按
-  报错信息构建并设 `FJSC_PATH`）。npm 预编译的 `@ufjs/fjsc-*` 只有
-  primjs 份，quickjs 请求不会悄悄回落到它——那会产出引擎 id 错误的
-  bundle。纯 Flutter 宿主没有 CLI 字节码步骤，`fjs build` 照常产出
-  对应引擎的 bundle 即可。
+- **字节码跟引擎走**。`fjs build --js-engine quickjs` 只接受自报
+  `quickjs-ng-0.9.0` 的 `fjsc`：仓库内 `native/build-native-quickjs/fjsc`，
+  或 npm 包的 `bin/fjsc-quickjs`；默认 primjs 同理（仓库 `build-native/fjsc`、
+  npm `bin/fjsc`）。引擎不符的候选会被跳过，不会产出引擎 id 错误的 bundle，
+  见上文「fjsc 的查找顺序」。纯 Flutter 宿主没有 CLI 字节码步骤，`fjs build`
+  照常产出对应引擎的 bundle 即可。
 - **重编引擎**（改了 `native/` 之后）每个 flavor 一个 build 目录，互不
   污染：
 
@@ -1394,9 +1409,13 @@ dart-define 却没重新 pod install。
 还没安装工作区依赖。先在仓库根执行 `pnpm install`。项目外要全局使用，可以在
 `packages/fjs` 执行 `pnpm link --global`。
 
-**`fjsc compiler not found`**
+**`no primjs fjsc found` / `no quickjs fjsc found`**
 
-先构建 `packages/flutter_fjs/native/build-native/fjsc`，或设置 `FJSC_PATH`。
+报错会列出看过的每个候选和它自报的引擎。缺哪个 flavor 就构建哪个
+（`native/build-native` 是 primjs，`native/build-native-quickjs` 是 quickjs，
+命令见「JS 引擎切换」），或设置 `FJSC_PATH` 指向对应 flavor 的 fjsc。
+只装了 npm 包、默认 primjs 却只看到 `quickjs-ng-0.9.0`：那是 0.1.4 的旧包，
+升级 `@ufjs/cli`。
 
 **Flutter SDK cache lockfile 权限错误**
 
