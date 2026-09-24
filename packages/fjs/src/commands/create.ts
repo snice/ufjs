@@ -64,8 +64,8 @@ const templates: Template[] = [
           },
           devDependencies: {
             '@vitejs/plugin-vue': '^6.0.3',
-            '@ufjs/cli': '^0.1.6',
-            '@ufjs/runtime': '^0.1.6',
+            '@ufjs/cli': '^0.1.7',
+            '@ufjs/runtime': '^0.1.7',
             typescript: '^5.9.3',
             vite: '^8.2.2',
             'vue-tsc': '^3.3.11',
@@ -265,8 +265,8 @@ npm run build:apk -- --debug
             typecheck: 'tsc --noEmit',
           },
           devDependencies: {
-            '@ufjs/cli': '^0.1.6',
-            '@ufjs/runtime': '^0.1.6',
+            '@ufjs/cli': '^0.1.7',
+            '@ufjs/runtime': '^0.1.7',
             typescript: '^5.9.3',
           },
         }),

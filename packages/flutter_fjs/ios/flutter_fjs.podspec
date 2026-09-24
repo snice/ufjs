@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'flutter_fjs'
-  s.version          = '0.1.6'
+  s.version          = '0.1.7'
   s.summary          = 'JS/TS runtime for Flutter (QuickJS-ng embedded, JSI-style bridge).'
   s.description      = 'Embeds QuickJS-ng in the Flutter app; JS runs against native C functions directly and renders HTML-like tags as Flutter widgets.'
   s.homepage         = 'https://github.com/snice/ufjs'

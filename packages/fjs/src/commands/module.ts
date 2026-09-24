@@ -350,7 +350,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_fjs: ^0.1.6
+  flutter_fjs: ^0.1.7
 `;
 }
 
