@@ -2,11 +2,16 @@
 //
 //   pnpm --filter demo run bench:mount
 //
-// Two entries share this module, one mode each, and each runs in a FRESH
-// VM: mount.ts (pages as shipped, with <defer>) and mount-eager.ts (<defer>
-// renders its slot straight away — the page as it was before specs/118).
-// A cold number is only cold in a VM that has never mounted the page, so
-// the two modes cannot share one.
+// Three entries share this module, one mode each, and each runs in a FRESH
+// VM: mount.ts (pages as shipped, with <defer>), mount-eager.ts (<defer>
+// renders its slot straight away — the page as it was before specs/118) and
+// mount-prewarm.ts (as shipped, plus the build-time style snapshot of
+// specs/119 imported before each page's first mount). A cold number is only
+// cold in a VM that has never mounted the page, so modes cannot share one.
+//
+// The prewarm snapshots come from `fjs build` itself: it runs this bundle in
+// Node with the capture hook set, and this module then mounts each page the
+// same way it will under fjsrun and hands the caches back (captureForBuild).
 //
 // Runs under fjsrun — no Flutter — so it measures the JS half only: Vue,
 // the fjs renderer / element API / op encoding, and the style engine. That
@@ -185,28 +190,68 @@ const fmt = (r: Run) =>
   ` defer${ms(r.deferred)} (css${ms(r.deferCss)}) unmount${ms(r.unmount)}`;
 const best = (runs: Run[]) => runs.slice().sort((a, b) => a.sync - b.sync)[0];
 
-async function suite(label: string, defer: Component): Promise<void> {
+async function suite(label: string, defer: Component, prewarm = false): Promise<void> {
   console.log(`== ${label}`);
+  const snapshots = (globalThis as { __fjsStyleSnapshots?: Record<string, string> }).__fjsStyleSnapshots;
+  if (prewarm && !snapshots) console.log('(no style snapshots in this bundle: build it with `fjs build`)');
   for (const [name, page] of PAGES) {
+    let imported = '';
+    if (prewarm && snapshots?.[name]) {
+      const t = nowMs();
+      const ok = styleEngine.importSnapshot(snapshots[name]);
+      imported = ` import ${ok ? (nowMs() - t).toFixed(1) + 'ms' : 'REFUSED'}`;
+    }
     const cold = await fjsMount(page, defer);
     const warm: Run[] = [];
     for (let i = 0; i < WARM_RUNS; i++) warm.push(await fjsMount(page, defer));
     const w = best(warm);
     const unmount = Math.min(...warm.map((r) => r.unmount));
     console.log(
-      `${name.padEnd(13)} cold ${fmt(cold)} miss ${cold.miss} el ${cold.elements} ${(cold.bytes / 1024).toFixed(0)}KB` +
+      `${name.padEnd(13)} cold ${fmt(cold)} miss ${cold.miss} el ${cold.elements} ${(cold.bytes / 1024).toFixed(0)}KB${imported}` +
         ` | warm ${fmt({ ...w, unmount })}`,
     );
   }
 }
 
-/** Runs the whole report for one mode; `deferred` = pages as shipped. */
-export async function runMountBench(deferred: boolean): Promise<void> {
+type CaptureHook = ((r: unknown) => void) & { started?: boolean };
+
+/** Under `fjs build`'s Node capture: mount each page as the suite will and
+ * return its style caches, keyed by the page name the suite looks up. */
+async function captureForBuild(hook: CaptureHook): Promise<void> {
+  hook.started = true;
+  const out: Record<string, unknown> = {};
+  for (const [name, page] of PAGES) {
+    const root = flutterRoot('view');
+    const app = createApp(page);
+    app.component('defer', FjsDefer);
+    for (const plugin of plugins) plugin(app as never);
+    app.mount(root);
+    await tick();
+    flushNow();
+    out[name] = styleEngine.exportSnapshot();
+    app.unmount();
+    flushNow();
+  }
+  hook(out);
+}
+
+/** Runs the whole report for one mode. */
+export async function runMountBench(mode: 'eager' | 'defer' | 'prewarm'): Promise<void> {
+  const hook = (globalThis as { __fjsCaptureStyles?: CaptureHook }).__fjsCaptureStyles;
+  if (typeof hook === 'function') {
+    // running inside `fjs build`: only the prewarm entry has anything to give
+    if (mode === 'prewarm') await captureForBuild(hook);
+    return;
+  }
+  const deferred = mode !== 'eager';
   await suite(
-    deferred
-      ? 'with <defer> (sync = first frame; the rest mounts after settle)'
-      : 'eager (<defer> renders at once: the whole page in the first frame)',
+    mode === 'prewarm'
+      ? 'with <defer> + build-time style snapshot (import time on the cold line)'
+      : deferred
+        ? 'with <defer> (sync = first frame; the rest mounts after settle)'
+        : 'eager (<defer> renders at once: the whole page in the first frame)',
     deferred ? FjsDefer : EagerDefer,
+    mode === 'prewarm',
   );
   if (deferred) return;
   console.log('== Vue alone (null renderer, whole page), min of 8');

@@ -488,9 +488,99 @@ vant-form / vant-more / vant-nav / vant-basic 把首屏以下的分组包进 `<d
 
 ### 还没做的
 
-- **冷态 CSS**：首开比重开多出的 match / compute miss（vant-form 冷 ~80 ms，
-  热 ~28 ms，容器口径）。样式匹配结果落盘或构建期预热，另立 spec。
+- ~~**冷态 CSS**：首开比重开多出的 match / compute miss（vant-form 冷 ~80 ms，
+  热 ~28 ms，容器口径）。~~ → 构建期预热已落地，见下一节（specs/119）。
 - IFR / 构建期首帧快照：不做（spec 118 Non-goals）。
+
+## 构建期样式预热（specs/119）
+
+118 之后首开剩下的差距几乎全在 CSS 引擎的空缓存上（容器口径，vant-form 整页）：
+
+| | 冷 | 热 | 差 |
+|---|---:|---:|---:|
+| 规则匹配 | 12 ms | 0 | 12 |
+| 样式计算（不含匹配） | 40 | 15 | 25 |
+| 计算之外（比较、编码） | 28 | 14 | 14 |
+
+匹配与计算都是「元素树 + 样式表」的纯函数，构建期就能算好。`fjs build` 在 Node 里把
+app bundle 跑一遍、逐页挂载，导出缓存快照写进页面 chunk；路由挂载前导入。用法与开关见
+[toolchain.md](toolchain.md#构建期样式预热fjsstylesnapshot)。
+
+### 实测（`bench:mount`，三种模式各一个全新 VM，冷 = 首开）
+
+| vant-form | `<defer>` | `<defer>` + 预热 |
+|---|---:|---:|
+| navMount 同步段 | 37.6–41.3 ms | **24.5–24.9 ms** |
+| 其中 CSS | 21.6–25.1 | **7.6–7.9** |
+| 转场后补挂段 | 114–116 | **65–69** |
+| 其中 CSS | 56–57 | **26.6** |
+| match miss | 270 | **1** |
+| 导入快照 | — | 3.7–3.8 |
+
+vant-basic 同步段 49 → 26 ms、vant-more 39 → 24 ms。vant-nav 同步段 CSS 27 → 14 ms，
+但补挂段只降到 ~76%，预热后仍有 20 次 miss——Tabs / Swipe 的一部分状态在运行时才
+定型，构建期抓不到；它们照常现算，结果正确。
+
+模拟器约为这里的一半：vant-form 首开 navMount 同步段 ~12 ms 量级。**未在模拟器复测**
+（容器无 Flutter）；复测要用 `fjs run ios --profile` 或 `fjs build`，debug 的 dev server
+不做预热。
+
+代价：demo 构建 +0.5 s；页面 chunk 共 80 → 465 KB（字节码 155 → 499 KB），vant 页每页
+50–75 KB JSON。
+
+### 对拍
+
+- 不预热时的 op 流与改前逐字节相同（`rawText` 命中检查、defaults 按内容取号都不改变
+  输出）。
+- 预热与不预热：把 SetStyle 引用的样式 id 换成 DefineStyle 的内容后**逐行相同**（5 万行）。
+  原始字节不同：快照按内容去重对象，内容相同的计算样式共用一个对象，DefineStyle 少发
+  （vant-form 冷态帧 78 → 59 KB）。
+
+### 踩到的坑：PrimJS 的 `JSON.parse` 读不了 NUL
+
+第一版对拍不一致：vant 图标的 `font-family` / `line-height` 变成空值，字形伪元素也没建。
+`font` 简写的待展开标记是 `\0font\0`，而 **PrimJS 的 `JSON.parse` 把含 `\u0000` 的字符串
+读成空串**（fjsrun 实测 `JSON.parse('"\\u0000x"').length === 0`；Node 正常；其余 31 个控制
+字符都能往返）。标记改成 `\u0006font\u0006`；CLI 抓取时快照里若再出现 `\u0000` 就不带
+这页并告警。
+
+### 顺手修掉的一处缓存错配
+
+计算结果与 `rawText`（Vue 合成的裸文本 vs 显式 `<text>`）有关——`text-decoration` /
+`text-overflow` 只传给合成的文本 run——但链签名里没有它，计算缓存的命中检查也只比
+`defaultsId`。原来是「谁先算谁进缓存」，同一父节点下两种文本可能拿到对方的样式；
+预热会改变「谁先」。命中检查现在也比 `rawText`。
+
+### 分包构建的快照在真机上全被拒（specs/121）
+
+用户 2026-09-24 Android 真机（分包构建）：vant-basic 首开 93 ms、再开 39 ms，logcat
+有一行 `style snapshot skipped: sheets registered in a different order`——预热没生效。
+
+119 的分包构建是在一份**临时单包**上抓快照的。单包里 `main.ts` 先
+`import 'fjs/pages'`，所有页面的 scoped 表先注册，`fjs/plugins`（vant 样式）后注册；
+真机上 vant 样式在 shared.js 里先注册，页面表在 chunk 打开时后注册。两边层叠顺序相反，
+校验拒绝是对的。`bench:mount` 也是单包，所以没测出来；`warnOnce` 去重又让后面每个
+被拒的页面都不再打印。
+
+改为在分包产物本身上抓：每页一个全新 VM，shared.js → bundle.js → 该页 chunk，与真机
+同序；全新 VM 也让快照不依赖其他页面的 chunk（真机上它们未必打开过）。告警带页面
+路径，每页各一行。按真机顺序（shared → index → 该页）在 Node 里回放 `build:pages`
+产物，快照全部被接受：
+
+| 首开 match miss | 不带快照 | 带快照 |
+|---|---:|---:|
+| vant-basic | 157 | 1 |
+| vant-form | 278 | 1 |
+| vant-more | 279 | 1 |
+| vant-nav | 178 | 19 |
+| vant-feedback | 49 | 0 |
+
+顺带统一了三种构建的注册顺序。demo 里单包是「页面表 → Shell → vant」（`fjs/pages`
+静态 import 所有页面，排在 `fjs/plugins` 前），分包是「vant → Shell → 页面表」（shared
+入口是固定的 import 清单，`fjs/plugins` 在 Shell 前），web 是「Shell → vant → 页面表」。
+同优先级的覆盖在不同构建里结果可能相反。现在单包的页面在首次打开时才执行
+（`definePageLoader` + `require()`，esbuild 把它包成惰性初始化），shared 入口先按
+`main.ts` 的 import 顺序导入一遍，三者都是「Shell → vant → 页面表」。
 
 ## 真机复核与分包模式的冷缓存（specs/120）
 
@@ -504,7 +594,7 @@ vant-form / vant-more / vant-nav / vant-basic 把首屏以下的分组包进 `<d
 | vant-more | 37 | 69 |
 | vant-nav | 51 | 81 |
 
-profile 反而慢，两笔账：
+profile 反而慢，有三笔账：
 
 1. **分包模式下计时窗口里有 chunk 的读取与执行**（`_mountWhenReady` 从 `_ensureChunk`
    开始计时）：日志里同一页前一行的 `fetch 0–3ms, eval 12–16ms`。dev 单包没有这笔。
@@ -515,11 +605,13 @@ profile 反而慢，两笔账：
    match miss 86 → 234。现在注册一张**从未有元素用过的作用域**的表（且不含 `:root` /
    `@keyframes`、不改引擎开关）直接跳过失效——scoped 规则只命中带该作用域的元素，
    不可能改变任何已有答案。修复后同一场景 match miss 86、同步段 45 ms，与不注册一致。
+3. **那次 profile 构建没有带上 119 的快照**：日志里的 chunk 大小（vant-form 22565 B）
+   与不带快照的字节码一致（带快照约 100 KB）。构建输出里应当有一行
+   `style prewarm: N pages captured …`；没有这行，多半是本地 `@ufjs/cli` 的 dist 没有
+   重新构建（`pnpm --filter @ufjs/cli run build`，AGENTS.md §4.6）。
 
-复核时 `[nav] mounted` 要减去前一行 chunk 的 fetch + eval，才是 navMount 本身。
-
-构建期样式预热（冷态 CSS 那一段）试过一版，真机复核没有体感收益，已撤回；首开的冷态
-CSS 仍按上文「还没做的」处理。
+复核时按这三点对照：看构建日志的 `style prewarm` 行，看 `[nav] chunk … eval` 那一行，
+`[nav] mounted` 减去 chunk 的 fetch + eval 才是 navMount 本身。
 
 ## 附录：怎么复现与怎么量
 

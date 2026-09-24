@@ -3,4 +3,4 @@
 // See mount-core.ts for what the columns mean.
 import { runMountBench } from './mount-core';
 
-runMountBench(false).catch((e) => console.error(String(e?.stack ?? e)));
+runMountBench('eager').catch((e) => console.error(String(e?.stack ?? e)));

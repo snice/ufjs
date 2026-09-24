@@ -8,7 +8,7 @@
 
 ## 实现
 
-- [x] T010 `seenScopes`：`addScope` 写入：`packages/fjs-runtime/src/css/style.ts`
+- [x] T010 `seenScopes`：`addScope` 写入；`importSnapshot` 从链签名解析作用域写入：`packages/fjs-runtime/src/css/style.ts`
 - [x] T011 `register()` 快路径（四个条件），注释写明成立理由：`packages/fjs-runtime/src/css/style.ts`
 
 ## 两端对齐
@@ -36,7 +36,7 @@
 
 | spec §6 | 结果 |
 |---|---|
-| 1 typecheck / test + 新单测 | ✅ 见提交前的验收命令输出。`css-scoped-register.test.ts` 7 条（快路径与整体失效逐元素相同含 `:deep`；已用作用域、`:root`、`@keyframes`、首条 structural、首条 `@media`、全局表 → 仍整体失效）。去掉 `seenScopes` 检查后 1 条失败（测试有效） |
+| 1 typecheck / test + 新单测 | ✅ typecheck exit 0；runtime 748 / cli 391 / webview 36 / webgl 30。`css-scoped-register.test.ts` 8 条（快路径与整体失效逐元素相同含 `:deep`；已用作用域、`:root`、`@keyframes`、首条 structural、首条 `@media`、全局表、快照里出现过的作用域 → 仍整体失效）。去掉 `seenScopes` 检查 2 条失败（测试有效） |
 | 2 离线复现 | ✅ 注册新作用域表后 vant-form match miss 86（修复前 234），同步段 45–50 ms 对不注册 45–56 ms |
-| 3 对拍 | ✅ 不注册时 op 流与改前逐字节相同；注册 / 不注册逐节点解析后样式相同 |
-| 4 真机复核 | ⏳ 交用户（`fjs run ios --profile`） |
+| 3 对拍 | ✅ 不注册时 op 流与基线逐字节相同（bad788ae…）；注册 / 不注册逐节点解析后样式相同 |
+| 4 真机复核 | ⏳ 交用户（`fjs run ios --profile`；先 `pnpm --filter @ufjs/cli run build`，构建输出应有 `style prewarm` 行） |

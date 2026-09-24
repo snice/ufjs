@@ -58,14 +58,15 @@ const PAGE_SHEET = '.card { border-radius: 4px } .t { color: #f00 } :deep(.inner
  * front — the order a single bundle uses). */
 async function run(fast: boolean) {
   const h = harness();
-  h.engine.register(null, BASE);
-  if (!fast) h.engine.register('data-v-new', PAGE_SHEET);
+  h.engine.register(null, BASE, 'base');
+  if (!fast) h.engine.register('data-v-new', PAGE_SHEET, 'new');
   h.page(1);
   await styleTick();
+  const epoch = h.engine.snapshotEpoch;
   const matchCache = h.engine.cacheStatsForTest().matchCache;
   h.engine.resetStats();
-  if (fast) h.engine.register('data-v-new', PAGE_SHEET);
-  const kept = matchCache > 0 && h.engine.cacheStatsForTest().matchCache === matchCache;
+  if (fast) h.engine.register('data-v-new', PAGE_SHEET, 'new');
+  const kept = h.engine.snapshotEpoch === epoch && h.engine.cacheStatsForTest().matchCache === matchCache;
   await styleTick();
   const recomputedHome = h.engine.stats.recompute;
   h.page(10, 'data-v-new');
@@ -98,13 +99,34 @@ describe('register of a scoped sheet for an unseen scope (specs/120)', () => {
   for (const [why, setup, css, scope] of mustClear) {
     it(`still clears everything when ${why}`, async () => {
       const h = harness();
-      h.engine.register(null, BASE);
+      h.engine.register(null, BASE, 'base');
       h.page(1);
       setup(h);
       await styleTick();
-      expect(h.engine.cacheStatsForTest().matchCache).toBeGreaterThan(0);
-      h.engine.register(scope, css);
-      expect(h.engine.cacheStatsForTest().matchCache).toBe(0);
+      const epoch = h.engine.snapshotEpoch;
+      h.engine.register(scope, css, 'x');
+      expect(h.engine.snapshotEpoch).not.toBe(epoch);
     });
   }
+
+  it('treats scopes named by an imported snapshot as seen', async () => {
+    const g = globalThis as { __fjsCaptureStyles?: unknown };
+    g.__fjsCaptureStyles = () => {};
+    const a = harness();
+    delete g.__fjsCaptureStyles;
+    a.engine.register(null, BASE, 'base');
+    a.engine.register('data-v-snap', '.t { color: #0a0 }', 'snap');
+    a.page(1, 'data-v-snap');
+    await styleTick();
+    const snap = a.engine.exportSnapshot();
+
+    const b = harness();
+    b.engine.register(null, BASE, 'base');
+    b.engine.register('data-v-snap', '.t { color: #0a0 }', 'snap');
+    expect(b.engine.importSnapshot(snap)).toBe(true);
+    const epoch = b.engine.snapshotEpoch;
+    // a dev reload registering that scope again must not keep the imported answers
+    b.engine.register('data-v-snap', '.t { color: #00f }', 'snap2');
+    expect(b.engine.snapshotEpoch).not.toBe(epoch);
+  });
 });

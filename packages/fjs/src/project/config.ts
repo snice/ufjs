@@ -87,6 +87,10 @@ export interface MpPreloadRule {
 export interface FjsConfig {
   /** Flutter host project directory, relative to the project root. */
   flutterDir?: string;
+  /** Build-time style prewarm (specs/119): `fjs build` / `fjs run` mount
+   * every static route in Node and ship each page's style caches with it.
+   * Set false to skip the step. Default true; `fjs dev` never runs it. */
+  styleSnapshot?: boolean;
   /** Build-time performance budgets. */
   performance?: {
     /** Warn when a page's statically estimated first frame renders more nodes. */

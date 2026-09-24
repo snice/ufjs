@@ -19,6 +19,7 @@ import {
   flutterDir as configuredFlutterDir,
   isEjected,
   readAppConfig,
+  readConfig,
   type AppConfig,
   type AppOrientation,
   type PlistValue,
@@ -83,6 +84,9 @@ export async function runCommand(argv: string[]): Promise<void> {
       jsEngine: opts.jsEngine,
       flutterDir: opts.flutterDir,
       flutterArgs: [],
+      // same as `fjs build`: the release/profile host ships prewarmed pages
+      // (specs/119); the debug path below runs the dev server, which never does
+      styleSnapshot: readConfig().styleSnapshot !== false,
     };
     const res = await buildBundle(buildOpts);
     releaseBuild(buildOpts, res);

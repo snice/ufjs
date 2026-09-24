@@ -331,6 +331,9 @@ interface MatchResult {
   afterDecls?: Record<string, unknown>;
   placeholderDecls?: Record<string, unknown>;
   id: number; // identity token for the compute cache key
+  /** Hashes of the sheets whose rules this match drew on — recorded only
+   * during a build-time capture (StyleEngine.trackSheets, specs/119). */
+  sheets?: string[];
   /** Computed styles for this rule set, keyed by the PARENT's computed-style
    * id. That one number is a complete key: a parent's computed style and its
    * custom properties are minted together, and the tag (hence its default
@@ -355,6 +358,13 @@ interface ComputeResult {
   styleId: number;
   customId: number;
   defaultsId: number;
+  /** The computed style depends on rawText (text-decoration / text-overflow
+   * reach a synthesized text run, see compute) but the chain key does not
+   * carry it, so a hit is checked against it like defaultsId. Before
+   * specs/119 whichever of the two computed first won the cache entry; a
+   * prewarmed cache changes which one is first, so the check makes the
+   * result independent of that order. */
+  rawText: boolean;
 }
 
 /** What one flush did. Cache hit rates are the thing to look at: the engine
@@ -393,6 +403,38 @@ export interface StyleEngineStats {
  * keeping them: navigating BACK to a page hits the retained matches instead
  * of re-paying the full mount (specs/076). */
 const RETIRED_CHAIN_LIMIT = 512;
+
+/** Bump when the snapshot layout or the meaning of any cached field changes:
+ * an older snapshot is then refused instead of misread. */
+export const STYLE_SNAPSHOT_VERSION = 1;
+
+/** A compute entry's custom slot meaning "the table inherited from the
+ * parent entry (the :root table for a root)" — see exportSnapshot. */
+const CUSTOM_INHERITED = -2;
+
+/** A page's style caches, built by `fjs build` in Node (specs/119). Object
+ * slots are indices into `objs` (-1 = none); chains and computes are trees
+ * (a parent entry index, -1 for none) because the runtime keys embed ids
+ * that only exist once the parent is replayed — see importSnapshot. */
+export interface StyleSnapshot {
+  v: number;
+  /** hasStructural, hasSiblingRules, hasPseudo at capture. */
+  flags: [boolean, boolean, boolean];
+  /** Each distinct @media condition (as JSON) and whether it held. */
+  media: Array<[string, boolean]>;
+  /** Hashes of the sheets the cached answers depend on, registration order. */
+  sheets: string[];
+  /** Every global (unscoped) sheet registered at capture. */
+  globals: string[];
+  objs: unknown[];
+  /** [parent chain, key after the parent id, match]. */
+  chains: Array<[number, string, number]>;
+  /** [decls, custom, active, hover, before, after, placeholder]. */
+  matches: Array<[number, number, number, number, number, number, number]>;
+  /** [chain, parent compute, style, active, hover, custom, pseudo,
+   *  defaults JSON ('' = none), rawText 0/1]. */
+  computes: Array<[number, number, number, number, number, number, number, string, number]>;
+}
 
 /**
  * Candidate buckets for one rule set (plain rules and `::before`/`::after`
@@ -537,10 +579,26 @@ export class StyleEngine {
    * the lookup allocation-free. */
   private nextObjId = 1;
   private defaultsIds = new WeakMap<object, number>();
-  /** Every scope an element has carried. Only grows. A scoped sheet whose
-   * scope is NOT in here cannot change any cached answer — see the fast
-   * path in register() (specs/120). */
+  /** Defaults ids by CONTENT, so the same tag defaults get the same id in a
+   * build-time capture and on the device, whatever order the tags first
+   * appear in (a snapshot names defaults by their JSON, specs/119). */
+  private defaultsIdByJson = new Map<string, number>();
+  /** Every registered sheet in order: its build-time hash ('' if none) and
+   * whether it is scoped. What a style snapshot is checked against. */
+  private sheetLog: { hash: string; scoped: boolean }[] = [];
+  /** Sheets that are inputs to styles without a selector matching through
+   * them — `:root` tokens and `@keyframes`. Always part of a snapshot's
+   * dependencies. */
+  private inputSheets = new Set<string>();
+  /** Every scope an element has carried, or that an imported snapshot's
+   * chains mention. Only grows. A scoped sheet whose scope is NOT in here
+   * cannot change any cached answer — see the fast path in register(). */
   private seenScopes = new Set<string>();
+  /** Record which sheets each match drew on (MatchResult.sheets). Only the
+   * build-time capture needs it, and it is decided before the first match
+   * so no cached result lacks the list (specs/119). */
+  private readonly trackSheets =
+    typeof (globalThis as { __fjsCaptureStyles?: unknown }).__fjsCaptureStyles === 'function';
   /** Reused by markDirty so a walk allocates nothing. */
   private walkStack: number[] = [];
   private counters = { recompute: 0, computeHit: 0, computeMiss: 0, matchHit: 0, matchMiss: 0, applied: 0, flushMs: 0, flushes: 0, markMs: 0, markCalls: 0, markVisited: 0 };
@@ -578,7 +636,9 @@ export class StyleEngine {
   ) {}
 
   /** Registers a <style> block. scope=null means global (non-scoped). */
-  register(scope: string | null, cssText: string): void {
+  register(scope: string | null, cssText: string, hash = ''): void {
+    // every sheet, in order, for the style snapshot check (specs/119)
+    this.sheetLog.push({ hash, scoped: scope !== null });
     const flagsBefore = this.shapeFlags();
     let touchesRoot = false;
     const fontFaces: FontFaceDecl[] = [];
@@ -589,7 +649,11 @@ export class StyleEngine {
       this.keyframes.set(k.name, k);
       this.keyframesStatic.delete(k.name);
     }
+    // keyframes feed computed `animation` styles without any rule matching
+    // through them, so a snapshot depends on the sheet all the same
+    if (keyframes.length > 0) this.inputSheets.add(hash);
     if (all.length === 0) return;
+    for (const r of all) r.sheet = hash;
     this.nextOrder = all[all.length - 1].order + 1;
     const parsed: CssRule[] = [];
     for (const r of all) {
@@ -605,6 +669,8 @@ export class StyleEngine {
         }
         continue;
       }
+      // :root tokens are an input to every computed style on the page
+      this.inputSheets.add(hash);
       touchesRoot = true;
       for (const [k, v] of Object.entries(r.decls)) {
         if (k.startsWith('--')) (this.rootCustom ??= {})[normalizeVarKey(k)] = String(v);
@@ -644,12 +710,12 @@ export class StyleEngine {
     // than the dev server's single bundle. A scoped rule only matches an
     // element carrying its scope (or, for :deep, an ancestor that does), and
     // chain keys carry every scope of the element and its ancestors: while no
-    // element has ever carried this scope, no answer in the caches and no
-    // live element can change. The other conditions cover what reaches
-    // beyond the scope: :root tokens and @keyframes are global, and the shape
-    // flags decide the key format and match layout. Anything else (a global
-    // sheet, a dev re-registration) still clears it all: narrower
-    // invalidation was judged not worth its risk (specs/120 plan §3).
+    // element — and no cached chain — has ever carried this scope, no answer
+    // in the caches and no live element can change. The other conditions
+    // cover what reaches beyond the scope: :root tokens and @keyframes are
+    // global, and the shape flags decide the key format and match layout.
+    // Anything else (a global sheet, a dev re-registration) still clears it
+    // all: narrower invalidation was judged not worth its risk (plan §3).
     if (
       scope !== null &&
       !this.seenScopes.has(scope) &&
@@ -671,6 +737,17 @@ export class StyleEngine {
     this.scheduleFlush();
   }
 
+  /** The id of the tag defaults with this JSON content — one stringify per
+   * distinct defaults object, the WeakMap above caches the object. */
+  private defaultsIdForJson(json: string): number {
+    let id = this.defaultsIdByJson.get(json);
+    if (id === undefined) {
+      id = this.nextObjId++;
+      this.defaultsIdByJson.set(json, id);
+    }
+    return id;
+  }
+
   /** Registers an element created by the renderer. `tag` is the ORIGINAL
    * tag the user wrote (div, span, ...) so CSS selectors match it. `rawText`
    * marks a text element the renderer synthesized for bare string content
@@ -684,7 +761,7 @@ export class StyleEngine {
     if (defaults) {
       defaultsId = this.defaultsIds.get(defaults) ?? 0;
       if (defaultsId === 0) {
-        defaultsId = this.nextObjId++;
+        defaultsId = this.defaultsIdForJson(JSON.stringify(defaults));
         this.defaultsIds.set(defaults, defaultsId);
       }
     }
@@ -744,10 +821,292 @@ export class StyleEngine {
     this.scheduleFlush();
   }
 
+  // ---- build-time style snapshot (specs/119) ---------------------------------
+  //
+  // A page's match and compute caches are a pure function of its element tree
+  // and the registered sheets, so `fjs build` fills them in Node and ships the
+  // result; the router imports it before the page mounts and a first open
+  // runs as warm as a reopen. Two runtime counters make the caches
+  // unportable as they stand — chain keys embed the PARENT's chain id, and
+  // compute results are keyed by the parent's computed-style id — so the
+  // snapshot stores both as trees (parent entry index + own part) and the
+  // import replays them, minting the ids the device would have minted.
+  //
+  // Inputs that decide a cached answer but are NOT in its key, each checked
+  // before import (snapshotMismatch) — add to this list if the engine grows
+  // another one, or a stale snapshot will be applied silently:
+  //   the registered sheets (and their order), the viewport's @media
+  //   outcomes, the engine flags that shape signatures and match results
+  //   (structural / sibling / pseudo rules), :root tokens and @keyframes
+  //   (inputSheets), tag defaults (by content) and rawText (in the entry).
+
   /** The flags that decide signature format and match-result shape, as one
    * comparable value (register's fast path compares before / after). */
   private shapeFlags(): number {
     return (this.hasMedia ? 1 : 0) | (this.hasStructural ? 2 : 0) | (this.hasSiblingRules ? 4 : 0) | (this.hasPseudo ? 8 : 0);
+  }
+
+  /** Changes whenever cached matches are invalidated; the router imports a
+   * page's snapshot again only after it moved. */
+  get snapshotEpoch(): number {
+    return this.matchEpoch;
+  }
+
+  /** The caches behind every live element, as a snapshot. Call after the
+   * page mounted and flushed; meant for the build-time capture, whose engine
+   * records each match's sheets (trackSheets). */
+  exportSnapshot(): StyleSnapshot {
+    const objs: unknown[] = [];
+    const objIndex = new Map<string, number>();
+    const ref = (o: unknown): number => {
+      if (o === undefined || o === null) return -1;
+      const json = JSON.stringify(o);
+      let i = objIndex.get(json);
+      if (i === undefined) {
+        i = objs.length;
+        objs.push(o);
+        objIndex.set(json, i);
+      }
+      return i;
+    };
+    const sheets = new Set<string>(this.inputSheets);
+    const chains: StyleSnapshot['chains'] = [];
+    const matches: StyleSnapshot['matches'] = [];
+    const computes: StyleSnapshot['computes'] = [];
+    const chainIndex = new Map<string, number>();
+    const matchIndex = new Map<MatchResult, number>();
+    const computeIndex = new Map<string, number>();
+
+    // parents before children: walk from the elements whose parent has no
+    // engine state (page roots, hoisted overlays), not by id — a hoisted
+    // element can be older than the overlay host it now lives in
+    const roots: number[] = [];
+    for (const id of this.states.keys()) {
+      const pid = this.parentOf.get(id);
+      if (pid == null || !this.states.has(pid)) roots.push(id);
+    }
+    roots.sort((a, b) => a - b);
+    const stack: Array<[number, number, number, Record<string, string> | undefined]> = [];
+    for (let r = roots.length - 1; r >= 0; r--) stack.push([roots[r], -1, -1, this.rootCustom]);
+    while (stack.length > 0) {
+      const [id, parentChain, parentCompute, inheritedCustom] = stack.pop()!;
+      const s = this.states.get(id)!;
+      const key = s.chainKey;
+      const matched = s.matched;
+      // an element never matched (or whose parent's chain is not in the
+      // snapshot) cannot be keyed; its subtree is left to compute cold
+      if (key === undefined || matched === undefined) continue;
+      let chain = chainIndex.get(key);
+      if (chain === undefined) {
+        let match = matchIndex.get(matched);
+        if (match === undefined) {
+          match = matches.length;
+          matchIndex.set(matched, match);
+          matches.push([
+            ref(matched.decls), ref(matched.custom), ref(matched.activeDecls), ref(matched.hoverDecls),
+            ref(matched.beforeDecls), ref(matched.afterDecls), ref(matched.placeholderDecls),
+          ]);
+          for (const h of matched.sheets ?? []) sheets.add(h);
+        }
+        chain = chains.length;
+        chainIndex.set(key, chain);
+        chains.push([parentChain, key.slice(key.indexOf('\u0003') + 1), match]);
+      }
+      let compute = -1;
+      const memoizable = s.inline === undefined && s.inlineCustom === undefined;
+      const parentStateless = parentChain < 0;
+      if (memoizable && s.computed !== undefined && s.computedId !== undefined && (parentStateless || parentCompute >= 0)) {
+        const rawText = s.rawText === true ? 1 : 0;
+        const ckey = `${chain}:${parentCompute}`;
+        const seen = computeIndex.get(ckey);
+        if (seen !== undefined) {
+          compute = seen;
+        } else {
+          compute = computes.length;
+          computeIndex.set(ckey, compute);
+          // The custom-property table is usually the very object inherited
+          // from the parent (or the :root one) — vant's is ~500 tokens, so
+          // spelling it out per entry made a snapshot mostly copies of it.
+          // Stored as a reference instead; the import resolves it the same
+          // way compute() shares it.
+          const custom =
+            s.custom === undefined ? -1
+              : s.custom === inheritedCustom ? CUSTOM_INHERITED
+                : ref(s.custom);
+          computes.push([
+            chain, parentCompute, ref(s.computed), ref(s.activeComputed), ref(s.hoverComputed),
+            custom, ref(s.pseudo), s.defaults ? JSON.stringify(s.defaults) : '', rawText,
+          ]);
+        }
+      }
+      const kids = this.childrenOf.get(id);
+      if (kids !== undefined) {
+        for (let i = kids.length - 1; i >= 0; i--) {
+          if (this.states.has(kids[i])) stack.push([kids[i], chain, compute, s.custom]);
+        }
+      }
+    }
+    const media: Array<[string, boolean]> = [];
+    const seenMedia = new Set<string>();
+    for (const rule of [...this.rules, ...(this.pseudoRules ?? [])]) {
+      if (rule.media === undefined) continue;
+      const json = JSON.stringify(rule.media);
+      if (seenMedia.has(json)) continue;
+      seenMedia.add(json);
+      media.push([json, mediaMatches(rule.media, this.viewport.width, this.viewport.height)]);
+    }
+    const order = new Map<string, number>();
+    this.sheetLog.forEach((e, i) => {
+      if (!order.has(e.hash)) order.set(e.hash, i);
+    });
+    return {
+      v: STYLE_SNAPSHOT_VERSION,
+      flags: [this.hasStructural, this.hasSiblingRules, this.hasPseudo],
+      media,
+      sheets: [...sheets].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0)),
+      globals: this.sheetLog.filter((e) => !e.scoped).map((e) => e.hash),
+      objs,
+      chains,
+      matches,
+      computes,
+    };
+  }
+
+  /** Why `snap` does not describe this engine's current state, or null when
+   * it does. See the input list above the section. */
+  snapshotMismatch(snap: StyleSnapshot): string | null {
+    if (snap.v !== STYLE_SNAPSHOT_VERSION) return `version ${String(snap.v)}`;
+    const [structural, sibling, pseudo] = snap.flags;
+    if (structural !== this.hasStructural || sibling !== this.hasSiblingRules || pseudo !== this.hasPseudo) {
+      return 'engine flags differ (structural / sibling / pseudo rules)';
+    }
+    for (const [json, matched] of snap.media) {
+      if (mediaMatches(JSON.parse(json), this.viewport.width, this.viewport.height) !== matched) {
+        return `@media outcome differs (${this.viewport.width}x${this.viewport.height})`;
+      }
+    }
+    const position = new Map<string, number>();
+    this.sheetLog.forEach((e, i) => {
+      if (!position.has(e.hash)) position.set(e.hash, i);
+    });
+    let last = -1;
+    for (const h of snap.sheets) {
+      const at = position.get(h);
+      if (at === undefined) return `sheet ${h || '(unhashed)'} is not registered`;
+      if (at < last) return 'sheets registered in a different order';
+      last = at;
+    }
+    const globals = new Set(snap.globals);
+    for (const e of this.sheetLog) {
+      if (e.scoped) continue;
+      if (e.hash === '') return 'a global sheet without a build hash is registered';
+      if (!globals.has(e.hash)) return `global sheet ${e.hash} was not there at build time`;
+    }
+    return null;
+  }
+
+  /** Fills the caches from a snapshot (object or its JSON). All-or-nothing:
+   * returns false, touching nothing, when the snapshot does not match the
+   * registered sheets / viewport / engine (snapshotMismatch). */
+  importSnapshot(input: StyleSnapshot | string, label = ''): boolean {
+    // the label (the page's path) keeps one page's refusal from swallowing
+    // the next one's in warnOnce
+    const of = label ? ` for ${label}` : '';
+    let snap: StyleSnapshot;
+    try {
+      snap = typeof input === 'string' ? (JSON.parse(input) as StyleSnapshot) : input;
+    } catch {
+      warnOnce(`style snapshot${of}: unreadable JSON, skipped`);
+      return false;
+    }
+    const why = this.snapshotMismatch(snap);
+    if (why !== null) {
+      warnOnce(`style snapshot${of} skipped: ${why}; styles are computed at runtime instead`);
+      return false;
+    }
+    const objs = snap.objs;
+    const obj = <T>(i: number): T | undefined => (i < 0 ? undefined : (objs[i] as T));
+    const results: MatchResult[] = [];
+    const chainIdOf: number[] = [];
+    for (let i = 0; i < snap.chains.length; i++) {
+      const [parent, suffix, m] = snap.chains[i];
+      // the scopes these cached answers were matched under count as seen:
+      // a later sheet for one of them must invalidate (register fast path).
+      // Suffix = tag \u0001 classes \u0001 scopes [\u0004 bits] [\u0005 prev].
+      const scopes = suffix.split('\u0001')[2]?.split(/[\u0004\u0005]/)[0];
+      if (scopes) for (const sc of scopes.split('\u0002')) this.seenScopes.add(sc);
+      const key = `${parent < 0 ? 0 : chainIdOf[parent]}\u0003${suffix}`;
+      let chainId = this.chainIds.get(key);
+      if (chainId === undefined) {
+        chainId = this.nextChainId++;
+        this.chainIds.set(key, chainId);
+      }
+      chainIdOf[i] = chainId;
+      let result = this.matchCache.get(key);
+      if (result === undefined) {
+        const [decls, custom, active, hover, before, after, placeholder] = snap.matches[m];
+        result = {
+          decls: obj<Record<string, unknown>>(decls) ?? {},
+          custom: obj<Record<string, string>>(custom) ?? {},
+          activeDecls: obj(active),
+          hoverDecls: obj(hover),
+          beforeDecls: obj(before),
+          afterDecls: obj(after),
+          placeholderDecls: obj(placeholder),
+          id: this.nextObjId++,
+          byParent: new Map(),
+        };
+        this.matchCache.set(key, result);
+        // unreferenced until an element takes it: same standing as a chain
+        // a closed page left behind, same bounded retention
+        if (!this.chainRefs.has(key) && !this.retiredSet.has(key)) {
+          this.retiredSet.add(key);
+          this.retiredChains.push(key);
+        }
+      }
+      results[i] = result;
+    }
+    const styleIdOf: number[] = [];
+    const customOf: Array<Record<string, string> | undefined> = [];
+    for (let j = 0; j < snap.computes.length; j++) {
+      const [chain, parentCompute, style, active, hover, custom, pseudo, defaultsJson, rawText] = snap.computes[j];
+      if (parentCompute >= 0 && styleIdOf[parentCompute] === undefined) continue;
+      const parentStyleId = parentCompute < 0 ? 0 : styleIdOf[parentCompute];
+      const matched = results[chain];
+      const existing = matched.byParent.get(parentStyleId);
+      if (existing !== undefined) {
+        styleIdOf[j] = existing.styleId;
+        customOf[j] = existing.custom;
+        continue;
+      }
+      const computed = obj<Record<string, unknown>>(style) ?? {};
+      const activeStyle = obj<Record<string, unknown>>(active);
+      const hoverStyle = obj<Record<string, unknown>>(hover);
+      const customMap =
+        custom === CUSTOM_INHERITED
+          ? parentCompute < 0 ? this.rootCustom : customOf[parentCompute]
+          : obj<Record<string, string>>(custom);
+      const result: ComputeResult = {
+        style: computed,
+        keys: Object.keys(computed),
+        activeStyle,
+        activeKeys: activeStyle ? Object.keys(activeStyle) : undefined,
+        hoverStyle,
+        hoverKeys: hoverStyle ? Object.keys(hoverStyle) : undefined,
+        custom: customMap,
+        pseudo: obj<PseudoStyles>(pseudo),
+        styleId: this.nextObjId++,
+        customId: customMap ? this.nextObjId++ : 0,
+        defaultsId: defaultsJson === '' ? 0 : this.defaultsIdForJson(defaultsJson),
+        rawText: rawText === 1,
+      };
+      if (matched.byParent.size > 64) matched.byParent.clear();
+      matched.byParent.set(parentStyleId, result);
+      styleIdOf[j] = result.styleId;
+      customOf[j] = customMap;
+    }
+    if (this.retiredChains.length - this.retiredHead > RETIRED_CHAIN_LIMIT) this.trimRetiredChains();
+    return true;
   }
 
   /** @internal Test/diagnostic view of cache sizes. */
@@ -1230,7 +1589,7 @@ export class StyleEngine {
       const hit = matched.byParent.get(parentStyleId);
       // defaultsId is fixed for a given match (the chain key includes the
       // tag), but a mismatch would be silent corruption, so it is checked
-      if (hit && hit.defaultsId === (s.defaultsId ?? 0)) {
+      if (hit && hit.defaultsId === (s.defaultsId ?? 0) && hit.rawText === (s.rawText === true)) {
         this.counters.computeHit++;
         s.custom = hit.custom;
         s.computedId = hit.styleId;
@@ -1434,6 +1793,7 @@ export class StyleEngine {
         custom,
         pseudo: s.pseudo,
         styleId: s.computedId,
+        rawText: s.rawText === true,
         customId: s.customId,
         defaultsId: s.defaultsId ?? 0,
       });
@@ -1659,7 +2019,15 @@ export class StyleEngine {
       a: { rule: CssRule; spec: number },
       b: { rule: CssRule; spec: number },
     ) => a.spec - b.spec || a.rule.order - b.rule.order;
-    plain.sort(byCascade);    const decls: Record<string, unknown> = {};
+    plain.sort(byCascade);
+    // build-time capture only: which sheets this answer depends on
+    const sheetSet = this.trackSheets ? new Set<string>() : undefined;
+    if (sheetSet) {
+      for (const m of plain) sheetSet.add(m.rule.sheet ?? '');
+      for (const m of active) sheetSet.add(m.rule.sheet ?? '');
+      for (const m of hover) sheetSet.add(m.rule.sheet ?? '');
+    }
+    const decls: Record<string, unknown> = {};
     const custom: Record<string, string> = {};
     for (const m of plain) {
       // for-in, not Object.entries: this runs per match-cache miss and the
@@ -1728,6 +2096,11 @@ export class StyleEngine {
         }
         return out;
       };
+      if (sheetSet) {
+        for (const m of before) sheetSet.add(m.rule.sheet ?? '');
+        for (const m of after) sheetSet.add(m.rule.sheet ?? '');
+        for (const m of placeholder) sheetSet.add(m.rule.sheet ?? '');
+      }
       beforeDecls = fold(before);
       afterDecls = fold(after);
       placeholderDecls = fold(placeholder);
@@ -1742,6 +2115,7 @@ export class StyleEngine {
       placeholderDecls,
       id: this.nextObjId++,
       byParent: new Map(),
+      sheets: sheetSet ? [...sheetSet] : undefined,
     };
     this.matchCache.set(key, result);
     return remember(result);

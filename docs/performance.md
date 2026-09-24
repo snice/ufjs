@@ -114,6 +114,14 @@ jsi-and-native-modules.md)。
 的**。`JSON.stringify` 一个小对象 1.3 µs，而把同样 30 个 ASCII 字符逐个写进缓冲区
 也要几微秒——所以常量 props 缓存的是编码好的字节（一次 `set()` 拷贝），不是 JSON 串。
 
+## 首开的冷缓存：构建期预热（2026-09，specs/119）
+
+页面第一次打开时 CSS 引擎的匹配 / 计算缓存是空的，vant-form 为此多付 ~50 ms（容器
+口径）。`fjs build` 现在在 Node 里把每个静态路由挂一遍，把缓存以快照的形式带进包里，
+路由挂载前导入：vant-form 首开 navMount 同步段的 CSS 22 → 8 ms，match miss 270 → 1，
+导入本身 ~4 ms。快照与运行时的样式表 / 视口 / 引擎开关不一致就整份放弃。细节、代价
+（包体积）与对拍见 [vant-mount-perf.md](vant-mount-perf.md) 的 specs/119 一节。
+
 分包构建（`--pages` / `fjs run --profile|--release`）里，页面 chunk 注册自己的 scoped
 样式表时以前会清空整个样式缓存，每个新页面都从全冷开始；specs/120 之后，新作用域的表
 不再触发失效。见 [vant-mount-perf.md](vant-mount-perf.md) 的「真机复核」一节。

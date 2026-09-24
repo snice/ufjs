@@ -19,7 +19,7 @@
 
 | 层 | 文件 | 改什么 |
 |----|------|--------|
-| JS runtime · CSS | `packages/fjs-runtime/src/css/style.ts` | `seenScopes`（`addScope` 写入）；`register()` 末尾判定快路径：跳过 epoch++ / 清缓存 / 标脏 |
+| JS runtime · CSS | `packages/fjs-runtime/src/css/style.ts` | `seenScopes`（`addScope` 与 `importSnapshot` 写入）；`register()` 末尾判定快路径：跳过 epoch++ / 清缓存 / 标脏 |
 | 测试 | `packages/fjs-runtime/test/css-scoped-register.test.ts`（新） | 见 spec §6.1 |
 | 文档 | `docs/vant-mount-perf.md`、`docs/performance.md` | |
 
@@ -29,7 +29,7 @@
 全部满足才直接返回：
 
 1. `scope !== null`（全局表可能命中任何元素）；
-2. 这个作用域**从未出现过**：没有元素 `addScope` 过它
+2. 这个作用域**从未出现过**：没有元素 `addScope` 过它，也不在任何导入过的快照链签名里
    （`seenScopes`，只增不减——保守）；
 3. 表里没有 `:root` 规则（改 `rootCustom`，影响所有计算样式）、没有 `@keyframes`
    （按名全局登记，任何元素的 `animation` 都可能引用）；

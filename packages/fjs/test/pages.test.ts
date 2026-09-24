@@ -81,11 +81,14 @@ describe('scanPages', () => {
 });
 
 describe('routeTableSource', () => {
-  it('inlines every page for a single Flutter bundle', () => {
+  it('bundles every page for a single Flutter bundle, run on first open', () => {
     page('index.vue');
     const source = routeTableSource(scanPages(root), 'app', true);
-    expect(source).toContain("import { definePage } from 'fjs/router'");
-    expect(source).toContain('definePage("/", __p0)');
+    expect(source).toContain("import { definePageLoader } from 'fjs/router'");
+    // require(), not a static import: the page must not run before the
+    // app's plugins do (specs/121)
+    expect(source).toMatch(/definePageLoader\("\/", \(\) => require\(".*index\.vue"\)\.default\)/);
+    expect(source).not.toMatch(/^import .*index\.vue/m);
   });
 
   it('names chunks for a split build and imports lazily on web', () => {
