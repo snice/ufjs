@@ -37,6 +37,18 @@ dependencies:
   # toolchain without forcing one here
   cached_network_image: ">=3.4.1 <5.0.0"
   ffi: ^2.2.0
+  # spec 117: not used directly — cached_network_image reaches it through
+  # flutter_cache_manager -> path_provider. 2.6.0 re-released the FFI
+  # implementation, whose objective_c native-asset framework Flutter builds
+  # intermittently leave out of Runner.app: the first network <image> then
+  # dies with "Couldn't resolve native function 'DOBJC_initializeApi'"
+  # (flutter/flutter#178915, dart-lang/native#3281). 2.5.1 is upstream's own
+  # revert to the plugin-based implementation (2.5.0, the first FFI release,
+  # is retracted), so the cap lands there. A direct constraint rather than
+  # host dependency_overrides: it reaches every host, and a dependency that
+  # needs >=2.6.0 fails `pub get` loudly instead of crashing at runtime.
+  # Lift it once the native-assets embedding fix ships in stable Flutter.
+  path_provider_foundation: ">=2.3.2 <2.6.0"
   # NOTE: WebGL lives in the fjs-webgl module (spec 022), which owns the
   # flutter_angle dependency. The core has no GL dependency of its own.
   # Matrix4, for the CSS `transform` parser (style_parse.dart stays

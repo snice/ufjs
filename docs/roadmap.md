@@ -152,6 +152,11 @@ uni-app 那张表：
   逐字符相同，同一轮加载互斥且只派一次，换 `src` 丢弃旧结果
 - ✅ Flutter 网络图改用 `cached_network_image`（内存 + 磁盘缓存），asset 仍走
   `AssetImage`，空 `src` 不发请求
+- ✅ iOS/macOS 网络图崩溃（`specs/117-pin-path-provider-foundation`，2026-09）：
+  `flutter_fjs` 把间接依赖 `path_provider_foundation` 限制在 `<2.6.0`，实际解析到
+  2.5.1（插件实现）。2.6.0 的 FFI 实现依赖 `objective_c` native assets，构建时偶尔
+  漏打包，首张网络图报 `DOBJC_initializeApi` 崩溃。**放开条件**：Flutter stable 修好
+  native assets 嵌入（flutter/flutter#178915、dart-lang/native#3281）
 - ✅ 与微信小程序对齐（`specs/102-image-mode-wechat-parity`，2026-09）：
   九个位置类 mode 改成**不缩放**的 1:1 开窗（`object-fit: none` /
   `BoxFit.none`，原来按 `cover` + 对齐实现，与 `dist/mp` 实拍 MAD 47–71）；

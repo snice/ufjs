@@ -338,7 +338,10 @@ iOS 上会带系统触感反馈；web 没有触感，这是 picker 系列目前�
   （44px 行高、5 行、居中一条 1px 选中框、上下 88px 渐隐）。
 - **图片缓存**：Flutter 走 `cached_network_image`（内存 + 磁盘，进程内命中不再发
   请求），web 走浏览器 HTTP 缓存。命中缓存时两端都仍然只派一次 `@load`，但「什么
-  时候算命中」由各自的实现决定，页面别拿它做逻辑。
+  时候算命中」由各自的实现决定，页面别拿它做逻辑。Flutter 的磁盘缓存目录经
+  `path_provider` 取得，iOS/macOS 上 `flutter_fjs` 把 `path_provider_foundation`
+  限制在 `<2.6.0`（spec 117）：2.6.0 的 FFI 实现在构建时偶尔漏打包 `objective_c`，
+  首张网络图就崩。宿主里有依赖要求 `>=2.6.0` 时 `pub get` 会报冲突，这是有意的。
 - **`<textarea>` 的 resize 手柄**：浏览器默认能拖右下角改高，Flutter 不能，所以
   fjs 关掉了它。要可调高度就自己做，不要指望浏览器默认值。
 - **`<rich-text>` 的 margin 折叠只做了一半**：浏览器里相邻块的上下 margin 会折叠，

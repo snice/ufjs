@@ -1,3 +1,13 @@
+## Unreleased
+
+- **iOS / macOS 加载网络图偶发崩溃（spec 117）**：`<image src="https://…">` 经
+  `cached_network_image` → `path_provider` 解析到 `path_provider_foundation` 2.6.0，
+  它的 FFI 实现依赖 `objective_c` native assets，Flutter 构建偶尔漏把
+  `objective_c.framework` 打进 Runner.app，首张网络图就抛
+  `Couldn't resolve native function 'DOBJC_initializeApi'`。现在把它限制在
+  `>=2.3.2 <2.6.0`（解析到上游回滚出来的插件实现 2.5.1）。宿主里有依赖要求 `>=2.6.0`
+  时 `pub get` 会报冲突；已经遇到崩溃的宿主升级后先执行一次 `flutter clean`。
+
 ## 0.1.7
 
 - **release / profile 包不再带调试器模块（spec 115）**：0.1.6 的 Android release APK
