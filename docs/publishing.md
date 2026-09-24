@@ -16,7 +16,7 @@ paths 加打包器 alias，**不是 npm 包名**。改 npm 包名不会影响用
 
 ## 改版本号
 
-版本号散在 9 个地方，发布前一次性改完。漏掉 podspec 或 CMakeLists 不会让构建
+版本号散在 10 个地方，发布前一次性改完。漏掉 podspec 或 CMakeLists 不会让构建
 失败，只会让产物里的版本对不上：
 
 ```
@@ -24,6 +24,7 @@ packages/fjs/package.json                       version + optionalDependencies �
 packages/fjs-runtime/package.json               version
 packages/fjs/src/commands/create.ts             两处模板的 @ufjs/cli + @ufjs/runtime（^x.y.z，共 4 行）
 packages/fjs/src/commands/run.ts                生成宿主 pubspec 里的 flutter_fjs: ^x.y.z
+packages/fjs/src/commands/module.ts             `fjs create module` 模板 pubspec 里的 flutter_fjs: ^x.y.z
 packages/flutter_fjs/pubspec.yaml               version
 packages/flutter_fjs/ios/flutter_fjs.podspec    s.version
 packages/flutter_fjs/macos/flutter_fjs.podspec  s.version
