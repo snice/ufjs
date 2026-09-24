@@ -41,3 +41,8 @@
 - [x] T052 逐条核对 spec.md 第 6 节：第 1、7 条由上面的任务覆盖；第 2–6 条在 `examples/hello-fjs` 上对着鸿蒙模拟器跑 plan §5 的实机步骤（先 `pnpm --filter @ufjs/cli run build`）
   - 2026-09-24 模拟器 127.0.0.1:5557 实测：第 2 条（无存档：在 flutter 之前退出，exit 1）、第 3 条（DevEco 签名后 `signing saved`，存档 0600）、第 4 条（清空后 `signing restored (expires 2027-09-24)`，写回结果与 DevEco 原文逐字节相同，App 装上并起来）、第 5 条（p12 路径改坏：报出原因，不写回）均通过
   - **未实测**：第 6 条 `fjs build --hap`（接入点与 run 相同，未跑完整 release 构建）；TTY 下自动打开 DevEco（验证时的 shell 不是 TTY，只覆盖了单测）
+  - 2026-09-24 补测第 6 条：`rm -rf .fjs/flutter/ohos` 后 `fjs build --pages --release --hap` 暴露一个缺口——宿主已存在时
+    `ensureFlutterHost` 不补建缺失的平台目录，flutter 报「don't have a entry module」。已修（`commands/run.ts`：托管宿主缺
+    平台目录时 `flutter create --platforms=<缺的>` 补回，已有文件不动）。修后：补建 ohos → `signing restored` → 签名 HAP
+    装到模拟器 127.0.0.1:5557 渲染正常（HAP 内无 `libfjs_debugger.so`）；无存档 + 空签名时在 `start hap build` 之前退出、打印首次提示。
+    仍未实测：TTY 下自动打开 DevEco

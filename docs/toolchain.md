@@ -936,6 +936,10 @@ eject 宿主里用户的改动）逐字节不变，非空的宿主配置永远�
 密码只能在本机解开，换机器要重新点一次。仓库里提交的 `examples/fjs-go/ohos`
 不经过 `.fjs`，不受这套流程管，见其 README。
 
+想让鸿蒙这一侧从头来过，直接 `rm -rf .fjs/flutter/ohos`：下一次 `fjs run ohos` /
+`fjs build --hap` 发现托管宿主缺了平台目录，会用 `flutter create --platforms=ohos`
+补回来（已有文件不动），签名随后按上表从存档写回。
+
 引擎侧的 `libfjs.so`（arm64-v8a）是预编译入库的，重编 native 后跑
 `packages/flutter_fjs/tool/build-ohos.sh`（用 DevEco 自带的 llvm 交叉编译）。
 
