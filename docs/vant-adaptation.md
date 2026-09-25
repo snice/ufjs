@@ -19,7 +19,7 @@
 | vue-shim 补齐导出 | 5 个：`Transition` / `vShow` / `withKeys` / `createApp`（068）+ `measureTextBlock`（128） |
 | 元素上补齐的 DOM 形状 API | 约 20 个成员（明细见下表） |
 | 新增宿主模块 | `fjs.font.load`（071）、`fjs.control.focus/blur`（077）、`fjs.ui.measureText`（128）、document 级 pointer-down 流（073） |
-| demo 源码补丁 | 16 条（vite 插件锚点替换，见下表） |
+| demo 源码补丁 | 19 条（vite 插件锚点替换，见下表） |
 | 回归网规模（时点数） | specs/069：JS 811 + flutter 364；specs/071：runtime 523 + flutter 378；specs/120：runtime 748 + cli 391；specs/132：flutter 515 通过。含专门以 vant 命名或由 vant 场景钉住的测试（`vant_layout_test`、`icon_line_height_test` 等，另带真实字体 `fixtures/vant-icon.ttf`） |
 
 ## 现状结论
@@ -38,7 +38,7 @@
 | `demo/src/plugins/vant.ts` | 164 | 46 个组件 `app.use` 全局注册 + 按需样式 import（一份清单喂两端）。**无平台后缀**；第一个 import 是 dom-env |
 | `demo/src/plugins/vant/dom-env.ts` | 459 | 为 vant 一个库 opt-in 的最小 `window` / `document` 侧影：rAF、读 fjs 样式引擎的 `getComputedStyle`（transform 转 `matrix(...)`、line-height 折 px、scroll-view 两轴答 scroll）、document pointer-down 流（NumberKeyboard 点外关闭）、首见型 `IntersectionObserver`、`Element` / `HTMLElement` 的 `instanceof` 垫、测量盒（`document.createElement`）、resize 监听、rootElement（吸收 lock-scroll 类写入）。**只在 App 构建运行** |
 | `demo/src/plugins/vant/VanWatermark.vue` | 248 | **本地复刻的 Watermark**（spec 135）：vant 的 SVG→Blob→位图背景平铺管线 App 端三处不可用（无 innerHTML 读、无 Blob/URL、CSS 无位图背景），改用 absolute 格子 + `transform: rotate` 重建，props / `#content` 插槽与 vant 对齐，两端同一份实现。格数按根节点 rect 实测（rAF 采样到 rect 连续两帧不变才收敛，转场中途的“非零但偏小”rect 不能采信；上限 64×64 并告警一次） |
-| `demo/vite/vant.ts` | 268 | 带 `fjs.app` 钩子的本地 vite 插件，16 条字面量锚点补丁（见下表）；锚点失效告警一次并写明哪个功能失效 |
+| `demo/vite/vant.ts` | 313 | 带 `fjs.app` 钩子的本地 vite 插件，19 条字面量锚点补丁（见下表）；锚点失效告警一次并写明哪个功能失效 |
 | `demo/src/plugins/vant-touch.web.ts` | 13 | 只 web：引 `@vant/touch-emulator`，桌面浏览器鼠标转 touch（specs/123） |
 | `demo/vite.config.ts` | +1 行 | `plugins: [fjs(), vant(), vue()]` |
 
@@ -180,7 +180,7 @@ vant 的 Watermark 把旋转内容渲染成 SVG → 读 `innerHTML` 序列化 �
 → ~20 ms（118 defer，模拟器）→ ~12 ms（119 预热，模拟器）**；真机
 iPhone（分包 + 字节码）五页 59–81 ms（specs/120 复核口径）。
 
-## demo 源码补丁清单（`demo/vite/vant.ts`，16 条）
+## demo 源码补丁清单（`demo/vite/vant.ts`，19 条）
 
 | # | 目标文件 | 补丁 | 保护的 feature |
 |---|---|---|---|
@@ -196,6 +196,7 @@ iPhone（分包 + 字节码）五页 59–81 ms（specs/120 复核口径）。
 | 12 | Field | `onInput` 载荷容忍（值或事件对象都接） | Field 输入（v-model，specs/103） |
 | 13–14 | Stepper | `onInput` / `onBlur` 载荷容忍 | Stepper 输入 / 失焦格式化 |
 | 15–16 | utils/mount-component | `createApp` 改从 `fjs/vue` 导入；容器从 `document.createElement` 换成 `createDetachedRoot()`，卸载 `releaseDetachedRoot()` | showToast / showDialog / showNotify / showImagePreview（specs/137） |
+| 17–19 | toast/lock-click | `forbidClick` 锁点击：`document.body` 的 `van-toast--unclickable` 类换成游离根里的全屏透明拦截层（进 app 级宿主，盖住所有页面），解锁时卸载 | showToast `forbidClick`（specs/137 追加） |
 
 补丁纪律：字面量锚点、替换后逐字可读、锚点失效只告警不阻断（显式降级）。
 

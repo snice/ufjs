@@ -49,3 +49,18 @@
     （Toast、Dialog 用过之后单例处于隐藏状态时返回是否放行，这一轮因模拟器被并发操作没有测成）
   - 6 ✅ web（vite 5199，375 宽）四个调用正常；差异：文字 Toast 宽度（plan §6.6，已登记）
   - 7 ✅ 文档四处 + roadmap
+
+## 追加：forbidClick 锁点击（用户对拍发现，2026-09-25）
+
+现象：`showLoadingToast({ forbidClick: true })` 期间，web 上 Toast 外部点不动，App 上
+点击透传到页面。原因：vant `toast/lock-click.mjs` 给 `document.body` 加
+`van-toast--unclickable` 类，靠 `.van-toast--unclickable * { pointer-events: none }`
+锁住整页；App 端 dom-env 的 `body.classList` 吞掉写入，锁不存在。
+
+- [x] T060 `lock-click.mjs` 补丁：锁定时在游离根里挂一个全屏 fixed、带空点击处理的透明
+  拦截层（经 hoist 进 app 级宿主，盖住所有页面），解锁时卸载 —— `demo/vite/vant.ts`
+- [x] T061 设备验证：loading Toast 期间点页面按钮不响应，Toast 关闭后恢复；普通 showToast
+  不锁（与 web 一致）；web 行为不变（补丁只挂 `fjs.app` hook）
+  - Android：loading Toast 期间点 showNotify 无反应；关闭后点即弹出；普通 Toast 期间点即弹出
+- [x] T062 文档：`docs/vant-adaptation.md` 补丁清单 +1 条
+

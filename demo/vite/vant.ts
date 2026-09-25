@@ -34,6 +34,7 @@ const DOM_UTILS = /\/vant\/es\/utils\/dom\.mjs$/;
 const TABS = /\/vant\/es\/tabs\/Tabs\.mjs$/;
 const STEPPER = /\/vant\/es\/stepper\/Stepper\.mjs$/;
 const MOUNT_COMPONENT = /\/vant\/es\/utils\/mount-component\.mjs$/;
+const LOCK_CLICK = /\/vant\/es\/toast\/lock-click\.mjs$/;
 
 export const PATCHES: Patch[] = [
   {
@@ -237,6 +238,50 @@ export const PATCHES: Patch[] = [
       '    }\n' +
       '  };',
     feature: 'showToast / showDialog / showNotify / showImagePreview',
+  },
+  {
+    // `forbidClick` Toasts lock the page by putting `van-toast--unclickable`
+    // on <body> — `.van-toast--unclickable * { pointer-events: none }`. The
+    // app has no body for a class to land on (dom-env's classList swallows
+    // it), so taps went through to the page. The app's lock is a transparent
+    // full-screen box with a tap handler, mounted like the Toast itself: a
+    // detached root, hoisted into the app overlay host above every page,
+    // where it takes the hit before the Navigator does (specs/137).
+    file: LOCK_CLICK,
+    find: 'let lockCount = 0;',
+    replace:
+      'import { h } from "vue";\n' +
+      'import { createApp, createDetachedRoot, releaseDetachedRoot } from "fjs/vue";\n' +
+      'let fjsLock = null;\n' +
+      'function fjsLockClick(on) {\n' +
+      '  if (on && !fjsLock) {\n' +
+      '    const root = createDetachedRoot();\n' +
+      '    const app = createApp({ render: () => h("view", {\n' +
+      '      style: { position: "fixed", left: 0, top: 0, right: 0, bottom: 0 },\n' +
+      '      onClick: () => {},\n' +
+      '    }) });\n' +
+      '    app.mount(root);\n' +
+      '    fjsLock = { app, root };\n' +
+      '  } else if (!on && fjsLock) {\n' +
+      '    fjsLock.app.unmount();\n' +
+      '    releaseDetachedRoot(fjsLock.root);\n' +
+      '    fjsLock = null;\n' +
+      '  }\n' +
+      '}\n' +
+      'let lockCount = 0;',
+    feature: 'showToast forbidClick（锁点击）',
+  },
+  {
+    file: LOCK_CLICK,
+    find: '      document.body.classList.add("van-toast--unclickable");',
+    replace: '      fjsLockClick(true);',
+    feature: 'showToast forbidClick（锁点击）',
+  },
+  {
+    file: LOCK_CLICK,
+    find: '      document.body.classList.remove("van-toast--unclickable");',
+    replace: '      fjsLockClick(false);',
+    feature: 'showToast forbidClick（锁点击）',
   },
 ];
 
