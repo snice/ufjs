@@ -17,7 +17,11 @@ import 'gesture.dart' show hasTapEvent;
 import 'overflow_hit.dart';
 import 'touch.dart' show needsTouchNode;
 import 'decoration.dart'
-    show FjsClipScope, FjsUncappedHeightScope, resolveEdgeLengths;
+    show
+        FjsClipScope,
+        FjsPercentBase,
+        FjsUncappedHeightScope,
+        resolveEdgeLengths;
 import 'length.dart';
 import 'stretch_flex.dart';
 import 'style.dart';
@@ -374,6 +378,7 @@ Widget _wrapChildMain({
   if (childNode == null) return child;
   final s = FjsStyle.of(childNode);
   if (isOutOfFlowPosition(s.position)) return child;
+  if (horizontal) child = _percentBase(s, mainAxisMax, child);
   final basis =
       _basisSize(s, horizontal, mainAxisMax) ??
       _growingShare(s, horizontal, mainAxisMax);
@@ -550,7 +555,7 @@ Widget _flexChild({
   }
   // absolutely-positioned children are out of flow; never expand them
   if (isOutOfFlowPosition(s.position)) return child;
-  Widget out = child;
+  Widget out = horizontal ? _percentBase(s, mainAxisMax, child) : child;
   // An inline-level box (`display: inline-block/inline`, e.g. van-stepper in
   // a cell's value div) never stretches in BLOCK flow: CSS gives it a
   // shrink-to-fit size. The same Align treatment an explicit cross size
@@ -855,6 +860,15 @@ Widget stackOutOfFlow(
   );
 }
 
+/// Hands a row item with a % padding its container's width to resolve it
+/// against — the item's own basis/width would otherwise be the reference
+/// (see [FjsPercentBase]). A column item keeps the incoming max width, which
+/// is the column's width already.
+Widget _percentBase(FjsStyle s, double width, Widget child) {
+  if (!width.isFinite || s.paddingLengths?.hasRelative != true) return child;
+  return FjsPercentBase(width: width, child: child);
+}
+
 /// A border-box never shrinks past its own padding and border (the
 /// content clamps at 0) — decoration.dart does the same for in-flow boxes.
 /// Out-of-flow boxes size through the Positioned slot instead, so the
@@ -973,9 +987,19 @@ Widget positionedChild(
       child: _animateAbsGeometry(
         style: s,
         geometry: geometry,
-        build: (g) => CustomSingleChildLayout(
-          delegate: _AbsLayoutDelegate(g),
-          child: child,
+        // a % padding of the containing block was resolved by its box
+        // against the right width (FjsPercentBase); the content width the
+        // delegate sees is only the fallback
+        build: (g) => Builder(
+          builder: (context) => CustomSingleChildLayout(
+            delegate: _AbsLayoutDelegate(
+              g,
+              g.padding?.lengths?.hasRelative == true
+                  ? FjsPercentBase.maybeOf(context)?.padding
+                  : null,
+            ),
+            child: child,
+          ),
         ),
       ),
     );
@@ -1164,9 +1188,10 @@ class _AbsGeometry {
 /// Places one absolute child inside a Positioned.fill slot — the Stack's
 /// content box — using CSS's rules against the PADDING box around it.
 class _AbsLayoutDelegate extends SingleChildLayoutDelegate {
-  _AbsLayoutDelegate(this.g);
+  _AbsLayoutDelegate(this.g, [this.padding]);
 
   final _AbsGeometry g;
+  final EdgeInsets? padding;
 
   // resolved per layout; getPositionForChild runs right after
   // getConstraintsForChild for the same size
@@ -1175,7 +1200,7 @@ class _AbsLayoutDelegate extends SingleChildLayoutDelegate {
   double? _l, _t, _r, _b, _w, _h;
 
   void _resolve(Size content) {
-    _pad = _resolvePadding(g.padding, content.width);
+    _pad = padding ?? _resolvePadding(g.padding, content.width);
     _boxW = content.width + _pad.horizontal;
     _boxH = content.height + _pad.vertical;
     double? px(FjsLength? v, double ref) =>
@@ -1241,7 +1266,8 @@ class _AbsLayoutDelegate extends SingleChildLayoutDelegate {
   }
 
   @override
-  bool shouldRelayout(_AbsLayoutDelegate oldDelegate) => oldDelegate.g != g;
+  bool shouldRelayout(_AbsLayoutDelegate oldDelegate) =>
+      oldDelegate.g != g || oldDelegate.padding != padding;
 }
 
 /// A length tween over the px+percent pair: both components move together,

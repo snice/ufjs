@@ -109,8 +109,6 @@ const nextPlacement = () => {
           </template>
         </van-popover>
         <van-popover v-model:show="showCustom" placement="top-end">
-          <!-- vant 文档用 square；App 上 square 格子（padding-top 百分比撑高）高度为 0，
-               另案处理，这里先不用 -->
           <van-grid clickable :border="false" column-num="3" class="custom-grid">
             <van-grid-item v-for="i in 6" :key="i" icon="photo-o" text="选项" @click="showCustom = false" />
           </van-grid>

@@ -75,7 +75,7 @@ CSS 文本里用 kebab-case（`font-size: 16px`），内联对象用 camelCase
 | `overflow: ellipsis` | ⚠️ | fjs 扩展，text 节点上是截断省略 |
 | `pointer-events: none` | ⚠️ | 节点照画但不接命中，点击落到下面的节点（specs/069：vant 步进器 +/- 的伪元素线条盖在按钮上）。子树里用 `pointer-events: auto` 重新打开**不支持** |
 | **百分比尺寸**（spec 036）| ✅ | `%`/`calc()` 参照父盒内容宽高；参照无界（列表、scroll-view 纵向）退化为 auto，与 web 同规则；详见下方「单位」。全是 px 的 `calc()`（含乘除一个数，`calc(var(--x) * -1)`）由引擎折成一个长度下发（specs/129） |
-| **百分比间距与偏移**（spec 044）| ✅ | `padding` / `margin`（简写与长手）四边参照**父盒宽**（上下边也是，CSS 语义）；`top`/`bottom` 参照父盒高、`left`/`right` 参照父盒宽；row flex 子项由父把容器宽上界传下去（同 `width: 50%` 的机制）。**不生效的少数消费点**：`input` 的 `contentPadding`、text 节点路径上的 margin/padding——布局前就要数的场景只认绝对值（与 `<swiper>` 高度同款登记） |
+| **百分比间距与偏移**（spec 044）| ✅ | `padding` / `margin`（简写与长手）四边参照**父盒宽**（上下边也是，CSS 语义）；`top`/`bottom` 参照父盒高、`left`/`right` 参照父盒宽；row flex 子项由父把容器宽上界传下去（同 `width: 50%` 的机制）。row flex 子项自己有 `flex-basis` / 宽度时，% padding 仍按**容器**宽算（不是子项自身宽），且 border-box 的 `height: 0` 会被解析后的 padding 撑开，绝对定位子盒的包含块用同一份 padding——vant Grid `square`（`flex-basis: 25%; height: 0; padding-top: 25%`）两端同为正方形（specs/130）。**不生效的少数消费点**：`input` 的 `contentPadding`、text 节点路径上的 margin/padding——布局前就要数的场景只认绝对值（与 `<swiper>` 高度同款登记） |
 | `box-sizing` | ⚠️ | 默认 `border-box`（web 侧基础样式表钉死 fjs 标签）。border-box 盒子不会小于自身 padding + border（内容区收到 0 为止，同 CSS），所以 `width: 0; height: 0` 加边框的 CSS 三角形两端同尺寸（specs/129，vant Popover 箭头）。页面/组件库写 `content-box` 时，显式 width/height 作为内容区尺寸、另加 padding 与 border，超出父级时保持自身尺寸并溢出（vant tabs 的 nav，specs/073）；% padding 不计入 |
 
 ### 边框与圆角
