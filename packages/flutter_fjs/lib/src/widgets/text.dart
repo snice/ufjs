@@ -254,10 +254,13 @@ Widget buildText(
     });
   }
 
+  final placeholdersOnly = _placeholdersOnly(node, childNodes);
   final spans = <InlineSpan>[
     if (node.text != null && node.text!.isNotEmpty)
       TextSpan(text: _transformed(style, node.text!)),
     for (final kid in childNodes) _span(tree, kid, style, buildNode, dispatch),
+    // see [_placeholdersOnly]
+    if (placeholdersOnly) const TextSpan(text: '\u2060', style: _noMetrics),
   ];
   // Paragraph-level properties (align, line clamp, nowrap) come from this
   // node only: a span has no box to align or clamp.
@@ -265,6 +268,9 @@ Widget buildText(
     final paragraphStyle = fjsTextStyle(style, color: color);
     return Text.rich(
       TextSpan(style: paragraphStyle, children: spans),
+      strutStyle: placeholdersOnly
+          ? StrutStyle.fromTextStyle(paragraphStyle)
+          : null,
       // the paragraph's own style too, not only the root span's: Flutter takes
       // the line metrics of a line with no glyph of its own (an icon font's
       // `::before` box alone in its <i>) from the WIDGET style, which was the
@@ -276,6 +282,38 @@ Widget buildText(
       overflow: overflow,
     );
   });
+}
+
+/// A near-zero font: runs in it contribute no line metrics of their own.
+const _noMetrics = TextStyle(fontSize: 0.01);
+
+/// No glyph of the paragraph's own, only inline boxes (Vue's empty text
+/// anchors do not count) — an icon font's `::before` box alone in its <i>.
+///
+/// CSS gives every line a strut: the paragraph's first available font at
+/// its line-height, the inline boxes aligned to its baseline. Flutter's line
+/// of placeholders only has no such run and took metrics that are not the
+/// CSS ones: default metrics with proportional leading, plus the enclosing
+/// font's line gap on every placeholder run. vant-icon has a 92/1024 line
+/// gap, and its 28px icon stood 30 tall (specs/131). So such a paragraph
+/// gets:
+/// - a StrutStyle from its own style (non-forced: a taller box still grows
+///   the line, as on web). It resolves the family itself, so an icon font
+///   that lacks a glyph still gives its own metrics;
+/// - placeholder runs in [_noMetrics], so they add only the box;
+/// - a word joiner in [_noMetrics], which keeps the default metrics out of
+///   the line. It has no width and no break opportunity.
+bool _placeholdersOnly(MirrorNode node, List<MirrorNode> childNodes) {
+  if (node.text?.isNotEmpty == true) return false;
+  var box = false;
+  for (final k in childNodes) {
+    if (k.tag != 'text') {
+      box = true;
+    } else if (k.text?.isNotEmpty == true || k.children.isNotEmpty) {
+      return false;
+    }
+  }
+  return box;
 }
 
 String _transformed(FjsStyle style, String data) => style.textTransform != null
@@ -327,6 +365,9 @@ InlineSpan _span(
     return WidgetSpan(
       alignment: PlaceholderAlignment.baseline,
       baseline: TextBaseline.alphabetic,
+      // the box alone sizes its slot, not the enclosing font's line gap
+      // (see _placeholdersOnly)
+      style: _noMetrics,
       child: buildNode?.call(kid) ?? const SizedBox.shrink(),
     );
   }
