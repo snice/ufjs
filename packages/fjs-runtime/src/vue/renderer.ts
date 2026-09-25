@@ -150,11 +150,52 @@ function ensureOverlayHost(pageRoot: HostNode): HostNode {
   return host;
 }
 
+// ---- host level (specs/136) ------------------------------------------------
+//
+// The page-level host dies with its page. Some floats want to outlive the
+// page they were opened from — a global watermark, a cross-page loading veil
+// — so `overlay="app"` opts an element into the APP host: a persistent root
+// (FjsToastHost's layer) that a pushed page does not cover. Ownership never
+// moves: the element's logical parent is still the page that rendered it,
+// and when that page unmounts, Vue removes the element from the app host.
+
+let appOverlayRoot: HostNode | null = null;
+
+/** Elements opted into the app host via `overlay="app"`; absence means the
+ * default page level. Only the 'app' side is recorded — the set answers
+ * "is this element app-level", never "which level exactly". */
+const appOverlayElements = new Set<number>();
+
+function ensureAppOverlayHost(): HostNode {
+  if (appOverlayRoot) return appOverlayRoot;
+  // a dedicated PARENTLESS root: page hosts live inside a page tree (and are
+  // covered when a page pushes); this one is rendered by FjsApp above the
+  // Navigator, so it must not hang off a page that can pop
+  const root = createRoot('fjs-app-overlay-host');
+  // same bookkeeping flutterRoot does for a page root, minus pageRoots —
+  // this root is not a page and never releases with one
+  childrenOf.set(root.id, []);
+  parentOf.set(root.id, null);
+  setProps(root, { __appOverlay: true });
+  devtoolsStructuralVersion.value++;
+  appOverlayRoot = root;
+  return root;
+}
+
+/** The host an element hoists into: the app root when `overlay="app"`, the
+ * owning page's host otherwise. */
+function hostForLevel(el: Element): HostNode | null {
+  if (!appOverlayElements.has(el.id)) {
+    const pageRoot = pageRootOf(el.id);
+    return pageRoot ? ensureOverlayHost(pageRoot) : null;
+  }
+  return ensureAppOverlayHost();
+}
+
 function hoistIfNeeded(el: Element, style: Record<string, unknown>): void {
   if (style.position !== 'fixed' || hoistedFrom.has(el.id)) return;
-  const pageRoot = pageRootOf(el.id);
-  if (!pageRoot) return; // no page root mounted yet — nothing to hoist into
-  const host = ensureOverlayHost(pageRoot);
+  const host = hostForLevel(el);
+  if (!host) return; // no page root mounted yet — nothing to hoist into
   const logical = parentOf.get(el.id) ?? null;
   hoistedFrom.set(el.id, logical === host.id ? null : logical);
   if (logical === host.id) return;
@@ -204,6 +245,9 @@ function isFullLength(v: unknown, unit: 'vw' | 'vh'): boolean {
 export function isModalMask(style: Record<string, unknown>): boolean {
   if (style.position !== 'fixed') return false;
   if (style.display === 'none' || style.visibility === 'hidden') return false;
+  // touches pass straight through it (vant's full-page Watermark): the page
+  // stays usable underneath, so holding the back press would strand the user
+  if (style.pointerEvents === 'none') return false;
   const { left, top, right, bottom, width, height } = style;
   if (!isZeroLength(left) || !isZeroLength(top)) return false;
   const spansX = isZeroLength(right) || isFullLength(width, 'vw');
@@ -263,6 +307,28 @@ function unhoistIfNeeded(el: Element): void {
   insert(parent, el, index + beforeBoxes);
   trackInsert(parent, el, index);
   styleEngine.recomputeSubtree(el.id);
+}
+
+/** Moves an already-hoisted element between the page host and the app host
+ * after its `overlay` prop flipped (specs/136). Ownership bookkeeping
+ * (hoistedFrom / hoistedBefore) is level-independent and stays untouched. */
+function migrateHostLevel(el: Element): void {
+  const logical = hoistedFrom.get(el.id);
+  if (logical == null) return;
+  const to = hostForLevel(el);
+  if (!to || parentOf.get(el.id) === to.id) return;
+  const from = parentOf.get(el.id);
+  trackDetach(el);
+  const at = childrenOf.get(to.id)?.length ?? 0;
+  insert(to, el, at);
+  trackInsert(to, el, at);
+  styleEngine.recomputeSubtree(el.id);
+  // a mask that left a page host must stop holding that page's back press
+  // (and one that arrived must start); the app host has no modal of its own
+  if (!modalMasks.has(el.id)) return;
+  for (const host of overlayHosts.values()) {
+    if (host.id === from || host.id === to.id) syncHostModal(host);
+  }
 }
 
 // ---- pseudo-element decoration boxes (::before / ::after) ----
@@ -721,6 +787,7 @@ function forgetSubtree(id: number) {
     }
     elementsById.delete(current);
     hadActiveStyle.delete(current);
+    appOverlayElements.delete(current);
     htmlDefaults.delete(current);
     textValues.delete(current);
     placeholderStyled.delete(current);
@@ -1091,16 +1158,15 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
   },
 
   // Only the document's own boxes: `<Teleport to="body">` — vant's Popover,
-  // and any Popup given `teleport="body"` — lands in the page's overlay
-  // host, where `position: fixed` elements already go: above the page, in
-  // window coordinates, gone with the page. Other selectors have no DOM to
-  // search (specs/129). Vue resolves the target while the teleport mounts,
-  // so the most recently mounted page root is the one being built.
+  // and any Popup given `teleport="body"` — lands in the APP overlay host
+  // (specs/136): the body is above every page, and on web the teleported DOM
+  // lives under <body> until its component tree removes it — the same
+  // semantics. Other selectors have no DOM to search (specs/129). Vue
+  // resolves the target while the teleport mounts, so the most recently
+  // mounted page root is the one being built.
   querySelector: (selector) => {
     if (selector !== 'body' && selector !== 'html') return null;
-    let last: HostNode | undefined;
-    for (const root of pageRoots.values()) last = root;
-    return last ? ensureOverlayHost(last) : null;
+    return ensureAppOverlayHost();
   },
 
   // scoped CSS: Vue calls this for every element inside a component whose
@@ -1355,6 +1421,20 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
   }
   if (prop === 'src' || prop === 'value' || prop === 'placeholder') {
     setProps(el, { [prop]: nextValue });
+    return;
+  }
+  if (prop === 'overlay') {
+    // host level (specs/136): 'app' floats the element above every page; the
+    // default (page) is the absence of the prop. A flip on an already-hoisted
+    // element migrates it between hosts — ownership bookkeeping is
+    // level-independent. Not sent over the bridge: the routing decision is
+    // taken (and acted on) right here.
+    const app = nextValue === 'app';
+    const was = appOverlayElements.has(el.id);
+    if (app === was) return;
+    if (app) appOverlayElements.add(el.id);
+    else appOverlayElements.delete(el.id);
+    if (hoistedFrom.has(el.id)) migrateHostLevel(el);
     return;
   }
   if (prop.startsWith('on')) {

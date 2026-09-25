@@ -63,6 +63,7 @@ const builtInNodeAdapters = <FjsNodeAdapter>[
   _StickyHeaderNodeAdapter(),
   _StickySectionNodeAdapter(),
   OverlayHostNodeAdapter(),
+  AppOverlayHostNodeAdapter(),
 ];
 
 final builtInNodeAdapterByTag = Map<String, FjsNodeAdapter>.unmodifiable({

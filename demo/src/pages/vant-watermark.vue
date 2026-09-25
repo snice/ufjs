@@ -3,13 +3,22 @@
 </route>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
+import { useRouter } from 'fjs/router';
 
 // 全页水印默认开着：进页即可对拍平铺效果；下面的按钮同时是点穿验证——
 // 水印层 pointer-events: none，开着也必须能点。
 const showFull = ref(true);
 // 全页水印的文字 / 图片两种来源切换
 const fullImage = ref(false);
+// 宿主级别（specs/136）：page 随页面被盖住，app 跨页存活、pop 即销毁。
+// overlay 是 fallthrough attr，不是 vant 的 prop —— 用 v-bind 挂，绕开
+// GlobalComponents 的属性名检查（Record<string, unknown> 无法枚举键名）。
+const fullLevel = ref<'page' | 'app'>('page');
+const overlayProps = computed<Record<string, unknown>>(() =>
+  fullLevel.value === 'app' ? { overlay: 'app' } : {},
+);
+const router = useRouter();
 const taps = ref(0);
 const showPopup = ref(false);
 const logo = 'https://fastly.jsdelivr.net/npm/@vant/assets/logo.png';
@@ -83,6 +92,10 @@ const vantMark = 'https://fastly.jsdelivr.net/npm/@vant/assets/vant-watermark.pn
         <van-button size="small" :type="fullImage ? 'primary' : 'default'" @click="fullImage = true">
           图片
         </van-button>
+        <van-button size="small" :type="fullLevel === 'app' ? 'primary' : 'default'" @click="fullLevel = fullLevel === 'app' ? 'page' : 'app'">
+          宿主：{{ fullLevel === 'app' ? 'app 级' : '页面级' }}
+        </van-button>
+        <van-button size="small" @click="router.push('/about')">去 /about 验证跨页</van-button>
         <van-button size="small" @click="showPopup = true">弹层压在水印上</van-button>
       </view>
       <text class="echo">
@@ -98,7 +111,8 @@ const vantMark = 'https://fastly.jsdelivr.net/npm/@vant/assets/vant-watermark.pn
          （specs/133：宿主贴本页 entry、随页面销毁离开，不是 app 级），点穿靠
          vant 水印 CSS 的 pointer-events: none。图片原始 606×194，tile 按
          原始比例给 125×40，否则 <image> 会被拉扁。 -->
-    <van-watermark v-if="showFull" :content="fullImage ? undefined : 'fjs · Vue3 + Flutter'"
+    <van-watermark v-if="showFull" v-bind="overlayProps"
+      :content="fullImage ? undefined : 'fjs · Vue3 + Flutter'"
       :image="fullImage ? vantMark : undefined" :width="125" :height="40" :opacity="0.5" />
 
     <van-popup v-model:show="showPopup" round :style="{ padding: '32px 24px' }">
