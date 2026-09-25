@@ -190,7 +190,9 @@ class MirrorTree {
   void _touch(int? id) {
     if (id == null) return;
     _dirty.add(id);
-    _markParent(_parentOf[id]);
+    final parent = _parentOf[id];
+    _markParent(parent);
+    _markButtonLabel(parent);
   }
 
   /// Marks [parent] dirty — and, when it is a span (a `text` inside a
@@ -216,6 +218,25 @@ class MirrorTree {
       }
       if (upNode?.tag != 'text') return;
       id = up;
+    }
+  }
+
+  /// A `button` renders its whole subtree's text as ONE label on itself
+  /// (widgets/button.dart `_buttonLabel`) instead of building the inner
+  /// wrappers as widgets — van-button is
+  /// `button > div.content > span.text > label`, so the paragraph roots
+  /// [_markParent] marks have no mounted views to signal, and a reactive
+  /// `{{ }}` inside the button left the old label up until the next press
+  /// or restyle rebuilt it (specs/132). Mark every button ancestor: the
+  /// label descent walks through all tags, nested buttons included, so each
+  /// of them re-reads the changed text. Nothing in between is marked — a
+  /// text edit outside a button pays only the read-only walk.
+  void _markButtonLabel(int? id) {
+    while (id != null && id != 0) {
+      final node = _nodes[id];
+      if (node == null) return;
+      if (node.tag == 'button') _dirty.add(id);
+      id = _parentOf[id];
     }
   }
 
