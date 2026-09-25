@@ -80,6 +80,10 @@ function fakeSubmit(): void {
           <van-grid-item icon="search" text="搜索" />
           <van-grid-item icon="setting-o" text="设置" />
         </van-grid>
+        <text class="block-sub">正方形格子（square，padding-top 百分比撑高）</text>
+        <van-grid square :column-num="4" class="square-grid">
+          <van-grid-item v-for="i in 8" :key="i" icon="photo-o" text="文字" />
+        </van-grid>
       </view>
 
       <view class="block">
@@ -127,6 +131,11 @@ function fakeSubmit(): void {
   font-weight: 600;
   color: #646566;
   margin-bottom: 8px;
+}
+.block-sub {
+  font-size: 12px;
+  color: #969799;
+  margin: 12px 0 8px;
 }
 .row {
   flex-direction: row;

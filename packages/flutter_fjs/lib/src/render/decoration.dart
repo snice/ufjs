@@ -55,6 +55,35 @@ FjsTransitionTrack? _liveTrack(FjsStyle style, String name) {
   return track != null && track.duration > Duration.zero ? track : null;
 }
 
+/// What a percentage padding resolves against. CSS says the containing
+/// block's width, and the incoming max width is that only while the box has
+/// no width of its own: a flex item's basis/width tightens the constraint to
+/// the ITEM's width first. vant's square grid item is `flex-basis: 25%;
+/// padding-top: 25%` — resolved against its own 86px it came out a quarter
+/// too short (specs/130). The flex container therefore hands its content
+/// width down with the item, and the item's box re-scopes its own content:
+/// [width] null for the in-flow children (their reference is this box's
+/// content width again), [padding] the box's resolved padding for its
+/// absolute children, whose containing block is the padding box.
+class FjsPercentBase extends InheritedWidget {
+  const FjsPercentBase({
+    super.key,
+    this.width,
+    this.padding,
+    required super.child,
+  });
+
+  final double? width;
+  final EdgeInsets? padding;
+
+  static FjsPercentBase? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<FjsPercentBase>();
+
+  @override
+  bool updateShouldNotify(FjsPercentBase oldWidget) =>
+      width != oldWidget.width || padding != oldWidget.padding;
+}
+
 /// Applies [style]'s box properties to [content].
 Widget decorateNode(
   FjsStyle style,
@@ -88,16 +117,19 @@ Widget decorateNode(
     // _flexChild passed its bound down, and unbounded inside a scroller —
     // where CSS resolves the percentage to 0 and so does resolveOrNull.
     w = LayoutBuilder(
-      builder: (context, constraints) => _animatedEdges(
-        padTrack,
-        resolveEdgeLengths(
+      builder: (context, constraints) {
+        final pad = resolveEdgeLengths(
           padLengths,
           style.padding,
           defaultPadding,
-          constraints.maxWidth,
-        ),
-        child: content,
-      ),
+          FjsPercentBase.maybeOf(context)?.width ?? constraints.maxWidth,
+        );
+        return _animatedEdges(
+          padTrack,
+          pad,
+          child: FjsPercentBase(padding: pad, child: content),
+        );
+      },
     );
   } else {
     final padding = style.padding ?? defaultPadding;
@@ -216,21 +248,45 @@ Widget decorateNode(
   // the box adds its padding and border on top. fjs boxes are border-box
   // otherwise (css-compat.md). A % padding is left out of the sum.
   final contentBox = style.style['boxSizing'] == 'content-box';
-  final EdgeInsets paddingAndBorder =
-      (style.padding ?? defaultPadding ?? EdgeInsets.zero) +
-      EdgeInsets.only(
-        top: side?.top?.width ?? 0,
-        right: side?.right?.width ?? 0,
-        bottom: side?.bottom?.width ?? 0,
-        left: side?.left?.width ?? 0,
-      );
-  final EdgeInsets boxExtra = contentBox ? paddingAndBorder : EdgeInsets.zero;
+  final EdgeInsets borderEdges = EdgeInsets.only(
+    top: side?.top?.width ?? 0,
+    right: side?.right?.width ?? 0,
+    bottom: side?.bottom?.width ?? 0,
+    left: side?.left?.width ?? 0,
+  );
+  final EdgeInsets paddingAndBorderAbs =
+      (style.padding ?? defaultPadding ?? EdgeInsets.zero) + borderEdges;
+  // A % padding only becomes pixels against the containing block's width
+  // (see FjsPercentBase); the border-box floor below needs those pixels —
+  // vant's square grid item is `height: 0; padding-top: 25%`.
+  final relativePadding = padLengths != null && padLengths.hasRelative;
+  // Without a flex container's width the inner padding resolves against
+  // the box's own width when it declares one (its constraint is tight by
+  // then), so the floor takes the same reference — a different one would
+  // grow the box and, through it, the padding again.
+  EdgeInsets floorIn(
+    BuildContext context,
+    BoxConstraints constraints,
+    double? width,
+  ) =>
+      resolveEdgeLengths(
+        padLengths!,
+        style.padding,
+        defaultPadding,
+        FjsPercentBase.maybeOf(context)?.width ?? width ?? constraints.maxWidth,
+      ) +
+      borderEdges;
+  final EdgeInsets boxExtra = contentBox
+      ? paddingAndBorderAbs
+      : EdgeInsets.zero;
   Widget sizedBox(
     Widget child,
     double? width,
     double? height, [
     BorderRadius? fractionRadius,
+    EdgeInsets? floor,
   ]) {
+    final paddingAndBorder = floor ?? paddingAndBorderAbs;
     if (contentBox) {
       if (width != null) width += boxExtra.horizontal;
       if (height != null) height += boxExtra.vertical;
@@ -376,8 +432,9 @@ Widget decorateNode(
     double? width,
     double? height, [
     BorderRadius? fractionRadius,
+    EdgeInsets? floor,
   ]) {
-    final out = sizedBox(child, width, height, fractionRadius);
+    final out = sizedBox(child, width, height, fractionRadius, floor);
     if (!contentBox) return out;
     final looseWidth = width != null && boxExtra.horizontal > 0;
     final looseHeight = height != null && boxExtra.vertical > 0;
@@ -411,6 +468,7 @@ Widget decorateNode(
           layoutRadius && width != null && height != null
               ? _fractionRadiusIn(style, width, height)
               : null,
+          relativePadding ? floorIn(context, constraints, width) : null,
         );
       },
     );
@@ -420,7 +478,21 @@ Widget decorateNode(
     // `--van-switch-width: calc(1.8em + 4px)` (em already rewritten by the
     // engine). style.width's parseLength would drop the calc silently and
     // the box collapsed to auto.
-    w = box(w, widthLength?.px, heightLength?.px);
+    final width = widthLength?.px, height = heightLength?.px;
+    if (relativePadding && !contentBox && (width != null || height != null)) {
+      final inner = w;
+      w = LayoutBuilder(
+        builder: (context, constraints) => box(
+          inner,
+          width,
+          height,
+          null,
+          floorIn(context, constraints, width),
+        ),
+      );
+    } else {
+      w = box(w, width, height);
+    }
   }
   if (paintedOver) {
     // `transition: border-color` (or `all`, spec 078): the uniform solid
