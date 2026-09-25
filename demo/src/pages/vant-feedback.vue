@@ -17,6 +17,9 @@ import {
 // ---- component-form overlays -----------------------------------------------
 
 const showPopup = ref(false);
+// center Popup with short content: `.van-popup--center { width: fit-content }`
+// shrinks it to the text on both ends (specs/138)
+const showCenter = ref(false);
 const showSheet = ref(false);
 const showDialog = ref(false);
 const sheetPicked = ref('');
@@ -119,6 +122,7 @@ function probeDialog() {
         <van-button type="primary" @click="showPopup = true">Popup</van-button>
         <van-button type="primary" @click="showSheet = true">ActionSheet</van-button>
         <van-button type="primary" @click="showDialog = true">Dialog</van-button>
+        <van-button type="primary" @click="showCenter = true">居中 Popup</van-button>
       </view>
       <text v-if="sheetPicked" class="echo">action-sheet：{{ sheetPicked }}</text>
       <text v-if="dialogResult" class="echo">dialog：{{ dialogResult }}</text>
@@ -127,6 +131,10 @@ function probeDialog() {
     <van-popup v-model:show="showPopup" position="bottom" round :style="{ padding: '24px' }">
       <text class="popup-text">底部弹层内容</text>
       <van-button block type="primary" @click="showPopup = false">关闭</van-button>
+    </van-popup>
+
+    <van-popup v-model:show="showCenter" round :style="{ padding: '16px 20px' }">
+      <text class="popup-text">收缩到内容宽</text>
     </van-popup>
 
     <van-action-sheet

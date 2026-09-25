@@ -29,6 +29,7 @@ import {
   SUPPORTED_PSEUDO_ELEMENTS,
   TRANSITIONABLE_ON_APP,
   UNSUPPORTED_DISPLAY_VALUES,
+  UNSUPPORTED_SIZE_KEYWORDS,
   UNSUPPORTED_UNITS,
   VERTICAL_ALIGN_VALUES,
 } from '../src/css/support';
@@ -159,6 +160,9 @@ describe('support table: entries the JS side cannot observe', () => {
     for (const unit of UNSUPPORTED_UNITS) expect(unit).toMatch(/^v[wh]?(min|max)?$/);
     expect(VERTICAL_ALIGN_VALUES.has('middle')).toBe(false);
     expect(VERTICAL_ALIGN_VALUES.has('sub')).toBe(true);
+    // fit-content is supported (specs/138); only its siblings are dropped
+    expect(UNSUPPORTED_SIZE_KEYWORDS.has('fit-content')).toBe(false);
+    expect([...UNSUPPORTED_SIZE_KEYWORDS].sort()).toEqual(['max-content', 'min-content']);
   });
 
   it('animation sets cover the css-compat named properties', () => {

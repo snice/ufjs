@@ -42,6 +42,13 @@ export const DROPPED_PROPERTIES: Record<string, string> = {
  * declaration is skipped). */
 export const UNSUPPORTED_DISPLAY_VALUES = new Set(['grid', 'inline-grid']);
 
+/** Size keywords the App lays out as auto (specs/138): the Dart side warns
+ * once per value, and lint reports them. `fit-content` is supported on
+ * `width` only (positioned boxes and column children); `fit-content()` is
+ * the grid-track function. */
+export const UNSUPPORTED_SIZE_KEYWORDS = new Set(['min-content', 'max-content']);
+export const SIZE_PROPERTIES = new Set(['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height']);
+
 /** Length units nothing resolves — the declaration is skipped wherever
  * they appear. `em`/`rem` are NOT here: the engine resolves em against
  * the computed font size and the build rewrites both, so they work. */

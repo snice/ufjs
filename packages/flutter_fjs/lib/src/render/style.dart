@@ -332,6 +332,44 @@ class FjsStyle {
     return _widthLength = parseLengthValue(_v('width'));
   }
 
+  /// `width: fit-content` (specs/138): shrink-to-fit — the content's width,
+  /// capped at what the containing block leaves. [widthLength] reads it as
+  /// absent (it is no length); the layout paths in flex.dart act on this.
+  bool get widthFitContent => _isFitContent(_v('width'));
+
+  static bool _isFitContent(Object? v) =>
+      v is String &&
+      (v.trim() == 'fit-content' || v.trim() == '-webkit-fit-content');
+
+  /// A size declaration the App does not lay out, as `property: value`, or
+  /// null. `min-content` / `max-content` anywhere, `fit-content()` (the
+  /// grid-track function) anywhere, and `fit-content` on min-/max- sizes;
+  /// `height: fit-content` is the auto height the App already gives. These
+  /// used to fall through to auto without a word (constitution V).
+  String? get unsupportedSizeKeyword {
+    const keys = {
+      'width': 'width',
+      'height': 'height',
+      'minWidth': 'min-width',
+      'maxWidth': 'max-width',
+      'minHeight': 'min-height',
+      'maxHeight': 'max-height',
+    };
+    for (final MapEntry(:key, value: css) in keys.entries) {
+      final v = _v(key);
+      if (v is! String) continue;
+      final t = v.trim();
+      final bare = t.startsWith('-webkit-') ? t.substring(8) : t;
+      if (bare == 'min-content' ||
+          bare == 'max-content' ||
+          bare.startsWith('fit-content(') ||
+          (bare == 'fit-content' && key != 'width' && key != 'height')) {
+        return '$css: $t';
+      }
+    }
+    return null;
+  }
+
   FjsLength? get heightLength {
     if (_heightLengthReady) return _heightLength;
     _heightLengthReady = true;
@@ -1082,6 +1120,21 @@ class FjsStyle {
 
   FjsLength? _lengthOf(String key) => parseLengthValue(_v(key));
 
+  /// What `box-sizing: content-box` adds around a declared size: the
+  /// absolute padding plus the border widths. Null for border-box (fjs's
+  /// default, css-compat.md).
+  EdgeInsets? get contentBoxExtra {
+    if (_v('boxSizing') != 'content-box') return null;
+    final b = boxBorders();
+    return (padding ?? EdgeInsets.zero) +
+        EdgeInsets.only(
+          top: b?.top?.width ?? 0,
+          right: b?.right?.width ?? 0,
+          bottom: b?.bottom?.width ?? 0,
+          left: b?.left?.width ?? 0,
+        );
+  }
+
   /// `flex-basis` as declared (a percentage stays relative to the flex
   /// container's main size); null for `auto`/`content` or when absent.
   FjsLength? get flexBasisLength => parseLengthValue(_v('flexBasis'));
@@ -1100,15 +1153,27 @@ class FjsStyle {
 
     final width = outer?.maxWidth ?? double.infinity;
     final height = outer?.maxHeight ?? double.infinity;
-    final minWidth = side('minWidth', width);
-    final minHeight = side('minHeight', height);
-    final maxWidth = side('maxWidth', width);
-    final maxHeight = side('maxHeight', height);
+    var minWidth = side('minWidth', width);
+    var minHeight = side('minHeight', height);
+    var maxWidth = side('maxWidth', width);
+    var maxHeight = side('maxHeight', height);
     if (minWidth == null &&
         minHeight == null &&
         maxWidth == null &&
         maxHeight == null) {
       return null;
+    }
+    // The ConstrainedBox these feed wraps the BORDER box (decoration.dart).
+    // Under `box-sizing: content-box` the declared min/max size the content,
+    // so the box's own padding and border go on top — vant's loading Toast
+    // is `min-height: 88px; padding: 16px` content-box, 120 tall on the web
+    // and 88 here before (a % padding is left out, as for width/height).
+    final extra = contentBoxExtra;
+    if (extra != null) {
+      if (minWidth != null) minWidth += extra.horizontal;
+      if (maxWidth != null) maxWidth += extra.horizontal;
+      if (minHeight != null) minHeight += extra.vertical;
+      if (maxHeight != null) maxHeight += extra.vertical;
     }
     return BoxConstraints(
       minWidth: minWidth ?? 0,

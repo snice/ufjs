@@ -29,7 +29,9 @@ import {
   SUPPORTED_PSEUDO_CLASSES,
   SUPPORTED_PSEUDO_ELEMENTS,
   TRANSITIONABLE_ON_APP,
+  SIZE_PROPERTIES,
   UNSUPPORTED_DISPLAY_VALUES,
+  UNSUPPORTED_SIZE_KEYWORDS,
   UNSUPPORTED_UNITS,
   VERTICAL_ALIGN_VALUES,
   type LintLevel,
@@ -502,6 +504,17 @@ function lintDeclaration(prop: string, value: string, at: At, report: Reporter):
   if (key === 'display' && UNSUPPORTED_DISPLAY_VALUES.has(value.toLowerCase())) {
     report(at, 'drop', `${prop}: ${value}`, `display: ${value.toLowerCase()} is not supported — the declaration is skipped`);
     return;
+  }
+  if (SIZE_PROPERTIES.has(key)) {
+    const v = value.trim().toLowerCase().replace(/^-webkit-/, '');
+    const keyword =
+      UNSUPPORTED_SIZE_KEYWORDS.has(v) ||
+      v.startsWith('fit-content(') ||
+      (v === 'fit-content' && key !== 'width' && key !== 'height');
+    if (keyword) {
+      report(at, 'drop', `${prop}: ${value}`, `${key}: ${v} is laid out as auto on the App — only width: fit-content is supported`);
+      return;
+    }
   }
   for (const m of value.matchAll(/-?\d*\.?\d+(vmin|vmax|vw|vh)\b/g)) {
     report(at, 'drop', `${prop}: ${value}`, `the ${m[1]} unit is not supported — the declaration is skipped`);

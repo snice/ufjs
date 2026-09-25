@@ -209,9 +209,6 @@ iPhone（分包 + 字节码）五页 59–81 ms（specs/120 复核口径）。
   `showNotify` / `showImagePreview` 的第二个 Vue app 挂进游离根，内容经
   Teleport / hoist 落到 app 级 overlay 宿主（画在所有页面之上，同 web 的 body）。
   可见期间系统返回被拦（specs/136），web 浏览器后退不拦
-- **文字 Toast 铺满整行**：vant `.van-toast--text { width: fit-content }`，App 端
-  CSS 不支持 `fit-content`，定位盒按 `left: 0; right: 0` 撑开；web 是收缩宽度。
-  loading / success 等带图标的 Toast 用固定宽 88px，两端一致
 - **没有深层 target / 事件委托**：`target` 是被点中的有监听的最内层节点；
   Checker `label-disabled` 时点图标不切换（specs/072）
 - **`position: fixed` 走 overlay 宿主**、`<Teleport to="body">` 落同一宿主：

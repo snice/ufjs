@@ -47,6 +47,8 @@ input::placeholder { color: red; }
 .t { backdrop-filter: blur(1px); }
 .t { display: grid; }
 .t { margin-left: 10vw; }
+.t { width: max-content; }
+.t { max-width: fit-content; }
 @import './other.css';
 @supports (display: grid) { .x { color: red; } }
 </style>`,
@@ -69,6 +71,8 @@ input::placeholder { color: red; }
     expect(hasDecl('backdrop-filter')).toBe(true);
     expect(msgs.join('\n')).toContain('display: grid');
     expect(msgs.join('\n')).toContain('vw unit');
+    expect(msgs.join('\n')).toContain('width: max-content');
+    expect(msgs.join('\n')).toContain('max-width: fit-content');
     expect(codes.some((c) => c.startsWith('@import'))).toBe(true);
     expect(codes.some((c) => c.startsWith('@supports'))).toBe(true);
     // every finding above is a drop, no warns invented
@@ -200,6 +204,11 @@ describe('clean files and command semantics', () => {
   padding: 8 16;
   width: 50%;
   gap: 4px;
+  height: fit-content;
+}
+.fit {
+  width: fit-content;
+  width: -webkit-fit-content;
   border-bottom: 1px solid #eee;
 }
 .c:active { opacity: 0.6; }
