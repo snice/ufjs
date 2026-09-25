@@ -365,6 +365,9 @@ iOS 上会带系统触感反馈；web 没有触感，这是 picker 系列目前�
   `hovered` / `tapped` / `focused` / `visible` 变体在 App 端不生效——它们要
   DOM 事件监听与 IntersectionObserver。`initial` / `enter` / 命名变体 /
   spring 过渡两端一致（Anime.js 走对象通道是另一种接法，见 spec 031）。
+- **模态弹层开着时的后退**（specs/133）：App 端页面的 overlay 宿主里有全屏遮罩时，
+  iOS 侧滑、Android 物理返回都被拦截，必须先关弹层；浏览器后退**不拦截**，直接离开页面
+  （要拦只能靠 pushState 垫一条历史，没做）。见 [overlay-host.md](overlay-host.md)。
 - **页面组件要有单一根节点**：页面转场用 `<Transition>` 包着，多根节点会退化。
 - **`getBoundingClientRect` / `offset*` 在 App 的 navMount 窗口内不强制重排**
   （specs/086）：刚 push 进来的节点第一拍可能量到 0，下一 Flutter 帧才

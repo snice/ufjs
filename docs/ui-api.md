@@ -51,7 +51,7 @@ fjs 用 HTML 风格的语义标签构建 UI，由 Dart 侧映射为 Flutter Widg
 | `picker-view` | ListWheelScrollView 行 | 内嵌滚轮；`value` 是每列选中下标数组；`item-height` 默认 44；`indicator-style` 覆盖选中框；`onValueChanged` 载荷是下标数组 JSON 串 |
 | `picker-view-column` | picker-view 的一列 | 只在 `picker-view` 内有滚轮语义；子节点即选项 |
 | `modal` | BottomSheet | `visible` 驱动：true 打开、置回 false 关闭；原生手势关闭回派 `onModalClosed`；打开期间内容保持响应式更新（事件仍回派）|
-| `fjs-overlay-host` | **运行时保留，页面不要手写**：`OverlayPortal`，子树渲染在根 Overlay 上（specs/069 contract.md）| 由 renderer 在第一次遇到 `position: fixed` 元素时惰性创建（页面根下的全屏盒），fixed 元素整体挪进来：全屏、不随页面滚动、盖在宿主 chrome 之上，子节点按插入顺序叠放。没有 op 变更——旧宿主不认识这个标签时按普通 `view` 兜底，退化成页面内的全屏盒。误写也只是得到一个空盒 |
+| `fjs-overlay-host` | **运行时保留，页面不要手写**：`OverlayPortal`，子树画在 Navigator 的 Overlay、紧贴本页之上（specs/069 contract.md）| renderer 第一次遇到 `position: fixed` 元素时惰性创建，fixed 元素整体挪进来：不随页面滚动、随页面转场（specs/133）、按 `z-index` 叠放。宿主里有全屏遮罩时页面的系统返回被拦截（`modal` 属性，由运行时写）。谁会进来、模态判定、写法约束见 **[overlay-host.md](overlay-host.md)**。旧宿主不认识这个标签时按普通 `view` 兜底 |
 | `page-container` | 原生标签：route 级透明路由（遮罩 + 面板），返回手势关闭的是容器 | `show` / `duration`(300) / `z-index`(100) / `overlay`(true) / `position`(bottom/top/right/center) / `round` / `close-on-slide-down`；生命周期 `@before-enter` → `@enter` → `@after-enter`，离场链 `@before-leave` → `@leave` → `@after-leave`（**所有**关闭路径都走完），点遮罩派 `@clickoverlay`（不自动关）。详见下表 |
 | 自定义标签 | `engine.registerComponent` 注册的 Dart 组件（platform view 也经此接入）| 任意 props；未注册回落 `view` |
 

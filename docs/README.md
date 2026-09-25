@@ -57,6 +57,7 @@ QuickJS 上实现的是一套**框架无关的命令式 element API**，前端�
 | 6 | [UI API 参考](ui-api.md) | 标签全集、事件表、样式键清单、触摸事件 |
 | 7 | [Web CSS 兼容清单](css-compat.md) | **选择器 / 属性支持矩阵**，加新 CSS 能力先改这张表 |
 | 8 | [Web 平台适配](web.md) | 一份源码怎么同时跑浏览器；已知差异 |
+| 8.5 | [overlay 宿主](overlay-host.md) | `position: fixed` 在 App 端去了哪里：谁会进宿主、随页面转场、模态遮罩拦截返回 |
 | 9 | [Vue 3 集成](vue3.md) | SFC、scoped style、CSS 变量、编辑器提示、第三方组件库兼容（DOM 模拟，vant 落法） |
 | 9.5 | [小程序编译](miniprogram.md) | `fjs build --mp`：Skyline + glass-easel，模板编译为 WXML，不引入 Vue 运行时 |
 

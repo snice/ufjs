@@ -57,7 +57,8 @@ const nextPlacement = () => {
     <text class="page-note">
       Sticky 靠滚动容器的 scroll 事件 + getBoundingClientRect 判断是否吸顶，再用
       position: fixed 固定；Popover 由 popperjs 按参照元素的位置算浮层坐标。
-      往下滚动看吸顶。
+      往下滚动看吸顶。App 端吸顶的按钮在页面的 overlay 宿主里，返回时随页面一起滑走
+      （specs/133，docs/overlay-host.md）。
     </text>
 
     <view class="block">

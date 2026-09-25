@@ -7,6 +7,7 @@ import 'engine.dart';
 import 'fjs_view.dart';
 import 'transitions.dart';
 import 'widgets/perf_overlay.dart';
+import 'widgets/route_anchor.dart';
 
 /// A [Navigator] driven by the JS router: one native route per JS route.
 ///
@@ -137,7 +138,10 @@ class _FjsAppState extends State<FjsApp> {
           // this Navigator is usually nested (under a host's Scaffold), and
           // a nested one does not see the system back button on its own
           enabled: _stack.isNotEmpty,
-          onPopWithResult: (_) => _navigator.currentState?.pop(),
+          // maybePop, not pop: pop() ignores PopScope, which is how the
+          // Android back button used to leave a page under an open modal
+          // popup that the iOS gesture could not (specs/133)
+          onPopWithResult: (_) => _navigator.currentState?.maybePop(),
           child: Navigator(
             key: _navigator,
             observers: widget.observers,
@@ -184,12 +188,17 @@ class _FjsAppState extends State<FjsApp> {
     // routes paint no background of their own; without this the previous
     // page shows through wherever the JS tree is transparent (the safe
     // area strips, and the whole page while its chunk loads)
-    final child = Material(
-      color: Theme.of(context).scaffoldBackgroundColor,
-      child: FjsView(
-        engine: widget.engine,
-        navKey: navKey,
-        placeholder: widget.placeholder,
+    //
+    // the anchor is what the page's overlay host follows through the route
+    // transition (specs/133, widgets/route_anchor.dart)
+    final child = FjsRouteAnchor(
+      child: Material(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: FjsView(
+          engine: widget.engine,
+          navKey: navKey,
+          placeholder: widget.placeholder,
+        ),
       ),
     );
     final key = ValueKey('$_keyPrefix$navKey');
