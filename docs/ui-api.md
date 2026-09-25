@@ -520,6 +520,9 @@ element API、render 函数或 slot 塞进来的非 `swiper-item` 子节点编�
 理由见 `specs/008-picker/spec.md` §2。
 
 `toast` 不是标签，是全局函数：`import { toast } from 'fjs'; toast('msg')`。
+App 端整个 App 只有一个 toast 宿主，挂在 `FjsApp` 的 Navigator 之上，toast 跨页面
+显示满 2 秒，与 web 挂在 `document.body` 一致；宿主直接嵌 `FjsView`（不用 `FjsApp`）时
+由 `FjsView` 兜底挂一个（specs/134）。
 
 ## 组件：picker
 
