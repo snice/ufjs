@@ -30,6 +30,13 @@ import 'dispatch.dart';
 const _defaultLineHeight = 1.4;
 const _defaultFontSize = 14.0;
 
+/// What `font-size: 0` becomes. CSS allows it — vant's `.van-loading` sets it
+/// to swallow inline whitespace between the spinner and its text — and the
+/// glyphs and line collapse to nothing. Flutter's StrutStyle asserts a
+/// positive size (the loading Toast painted a red error box), so the one
+/// exit every text style goes through clamps to a size nothing can see.
+const _zeroFontSize = 0.001;
+
 /// The TextStyle of one text node. [span] adds what only an inline box
 /// paints with its text (a background behind the glyphs); a paragraph's own
 /// background is its box decoration, drawn by decorateNode. [color] is the
@@ -50,7 +57,11 @@ TextStyle fjsTextStyle(FjsStyle style, {bool span = false, Color? color}) {
     // resolve (including a color inherited from an ancestor, which the JS
     // style engine folds into this node's own style) still wins.
     color: color ?? style.color ?? const Color(0xFF333333),
-    fontSize: style.fontSize ?? _defaultFontSize,
+    fontSize: switch (style.fontSize) {
+      null => _defaultFontSize,
+      final fs when fs <= 0 => _zeroFontSize,
+      final fs => fs,
+    },
     fontWeight: style.fontWeight,
     fontStyle: style.fontStyle,
     fontFamily: style.fontFamily,

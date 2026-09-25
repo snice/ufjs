@@ -291,7 +291,7 @@ shim 逐个补上，语义按 fjs 的现实重述：
 | `vShow` | 只碰内联 `display` 一项（隐藏写 `none`、显示恢复原值），元素其余规则不动——以前整张替换计算样式，vant 步进器第一次改值就把输入框和加号的样式丢光（specs/069） |
 | `withKeys` | 直通。fjs 事件不带键码，守卫没有东西可测——处理器在每个事件上照跑，而不是永不触发 |
 | `<TransitionGroup>` | 纯透传（vant 弹层不用） |
-| `createApp` | 指名抛错。挂第二个 Vue 根需要真实 DOM 容器，App 端没有；vant 的命令式 API（`showToast()` 等内部 `document.createElement` + `createApp`）因此 App 端不可用，页面改用组件式（`<van-dialog v-model:show>`） |
+| `createApp` | 指名抛错。挂第二个 Vue 根需要容器，App 端没有 DOM；要挂的库由它的适配补丁改从 `fjs/vue` 取 `createApp` + `createDetachedRoot()`（游离根，相当于 body 上的 `<div>`），内容经 Teleport / hoist 落到 app 级 overlay 宿主。vant 的 `showToast()` / `showDialog()` / `showNotify()` / `showImagePreview()` 就是这样打通的（specs/137，demo/vite/vant.ts） |
 | `measureTextBlock` | 经 `__FJS_SHARED` 暴露给库的侧影：库的测高逻辑用宿主排版（vant TextEllipsis 的二分截断靠它，specs/128） |
 
 静态提升同样挂在 DOM 语义上：`createStaticVNode` 的挂载走
@@ -353,9 +353,9 @@ vnode 会得到指名报错。
 
 ### 已知差异（登记过的）
 
-- 命令式 Toast / Dialog（`showToast()` / `showDialog()`）App 端不可用，见
-  `createApp` 一条；组件式（`<van-popup>` / `<van-dialog v-model:show>`）
-  两端一致
+- 命令式弹层（`showToast()` 等）两端可用，App 端挂在 app 级宿主上、可见期间
+  拦系统返回（specs/136/137）；文字 Toast 在 App 端铺满整行（`width: fit-content`
+  未支持），见 [vant-adaptation.md](vant-adaptation.md) 已知差异
 - 没有深层 target / 事件委托：`target` 是被点中的**有监听的**最内层节点，
   不会是它里面没挂监听的子节点。vant Checker 设 `label-disabled` 时，App 端
   点图标也不切换（specs/072）。tap / click 会冒泡到有监听的祖先，

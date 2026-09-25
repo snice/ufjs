@@ -71,6 +71,30 @@ MirrorTree _twoNodes() {
   return tree;
 }
 
+/// Node 2 nested inside node 1, both listening: vant ImagePreview's Swipe
+/// track around an image item.
+MirrorTree _nestedNodes() {
+  final w = _W();
+  for (final id in [1, 2]) {
+    w.u8(UiOpCode.create);
+    w.u32(id);
+    w.u16(4);
+    w.str('view');
+    w.u8(UiOpCode.setProps);
+    w.u32(id);
+    final json = utf8.encode('{$_box,$_listens}');
+    w.u32(json.length);
+    w.raw(json);
+    w.u8(UiOpCode.insert);
+    w.u32(id - 1);
+    w.u32(id);
+    w.u32(0);
+  }
+  final tree = MirrorTree();
+  tree.applyFrame(Uint8List.fromList(w.b));
+  return tree;
+}
+
 /// A positioned parent with two absolute children, matching dnd.vue.
 MirrorTree _twoAbsoluteNodes() {
   final w = _W();
@@ -296,6 +320,36 @@ void main() {
     await tester.pump();
     expect(log.map((e) => e.type), [FjsEvent.touchMove]);
     await finger.up();
+  });
+
+  // The last move is flushed at the up. With nested listeners the first
+  // node to see the up used to drop the finger for everyone: the other
+  // node's flushed move went out with `touches: []` and vant's
+  // `touches[0].clientX` threw (ImagePreview's swipe stuck mid-slide).
+  testWidgets('nested listeners all keep the finger until the last one ends', (
+    tester,
+  ) async {
+    final log = <_Event>[];
+    await tester.pumpWidget(_render(_nestedNodes(), log));
+    final start = tester.getCenter(find.byType(Container).last);
+
+    final finger = await tester.startGesture(start);
+    await finger.moveBy(const Offset(-30, 0));
+    // no pump: both nodes still hold the move when the finger lifts
+    await finger.up();
+    await tester.pump();
+
+    final moves = log.where((e) => e.type == FjsEvent.touchMove).toList();
+    final ends = log.where((e) => e.type == FjsEvent.touchEnd).toList();
+    expect(moves, hasLength(2));
+    for (final move in moves) {
+      expect(move.touches.single.sublist(1), [start.dx - 30, start.dy]);
+    }
+    expect(ends, hasLength(2));
+    for (final end in ends) {
+      expect(end.touches, isEmpty);
+      expect(end.changedTouches.single.sublist(1), [start.dx - 30, start.dy]);
+    }
   });
 
   testWidgets('the payload carries the node origin, so JS can offset', (
