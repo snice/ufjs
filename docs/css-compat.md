@@ -133,7 +133,7 @@ CSS 文本里用 kebab-case（`font-size: 16px`），内联对象用 camelCase
 | `font-style` | ✅ | |
 | `font-family` | ✅ | 按 CSS 读字体栈（specs/071）：去引号、逗号分隔，首项为主字体、其余为 Flutter `fontFamilyFallback`；栈在第一个系统/通用族名处截止（`-apple-system`、`system-ui`、`sans-serif`、`serif` 等 = 平台默认字体，所以 vant 的 `-apple-system-font, helvetica neue, …` 仍是系统字体，同 Safari）。`monospace` 映射成平台等宽字体（iOS / macOS `Menlo`、Windows `Courier New`、其余 `monospace`）。**行为变化**：以前整串（含引号）当一个字体名，带引号的名字从未生效 |
 | `font`（简写） | ✅ | specs/071：`[style] [variant] [weight] [stretch] size[/line-height] family` 在解析期展开为 `font-style` / `font-weight` / `font-size` / `line-height` / `font-family`（省略项重置为 `normal`），同一条规则里后写的单项照常覆盖；值含 `var()` 时替换后再拆；`inherit` / `unset` / `initial` 按 CSS 处理。系统字体关键字（`caption`、`menu` 等）告警跳过。**行为变化**：以前 App 端整条 `font:` 被忽略。内联 `:style` 对象里的 `font` 不展开 |
-| `line-height` | ⚠️ | 数字 = 倍数，`24px` = 绝对值。**默认 1.4**（两端钉死同一个值，CSS 的 `normal` 和 Flutter 字体度量对不上）|
+| `line-height` | ⚠️ | 数字 = 倍数，`24px` = 绝对值。**默认 1.4**（两端钉死同一个值，CSS 的 `normal` 和 Flutter 字体度量对不上）。段落里只有行内盒、没有自身字形时（图标字体的 `<i>` 只含 `::before` 盒），行高按 CSS 的 strut 算：段落字体在其 line-height 下的度量，行内盒按基线对齐，不再混入 Flutter 默认度量和字体 lineGap——vant 图标 `font: 28px/1 vant-icon` 两端同为 28 高（specs/131）|
 | `letter-spacing` | ✅ | |
 | `text-align` | ✅ | |
 | `text-decoration` | ✅ | underline / line-through / overline |
