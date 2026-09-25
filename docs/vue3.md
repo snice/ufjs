@@ -354,8 +354,7 @@ vnode 会得到指名报错。
 ### 已知差异（登记过的）
 
 - 命令式弹层（`showToast()` 等）两端可用，App 端挂在 app 级宿主上、可见期间
-  拦系统返回（specs/136/137）；文字 Toast 在 App 端铺满整行（`width: fit-content`
-  未支持），见 [vant-adaptation.md](vant-adaptation.md) 已知差异
+  拦系统返回（specs/136/137）
 - 没有深层 target / 事件委托：`target` 是被点中的**有监听的**最内层节点，
   不会是它里面没挂监听的子节点。vant Checker 设 `label-disabled` 时，App 端
   点图标也不切换（specs/072）。tap / click 会冒泡到有监听的祖先，

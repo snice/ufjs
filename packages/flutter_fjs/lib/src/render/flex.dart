@@ -555,6 +555,19 @@ Widget _flexChild({
   }
   // absolutely-positioned children are out of flow; never expand them
   if (isOutOfFlowPosition(s.position)) return child;
+  _warnSizeKeyword(childNode, s);
+  // `width: fit-content` on a row item is a flex-basis question (content
+  // size vs the line), which the Flex already answers its own way — say so
+  // rather than pretend (specs/138)
+  final fitContent = s.widthFitContent && s.widthLength == null;
+  if (fitContent && horizontal) {
+    fjsWarnOnce(
+      'fit-content-row:${childNode.id}',
+      'width: fit-content on node ${childNode.id} is laid out as auto: '
+          'the App supports it on column children and positioned boxes, '
+          'not on row flex items (docs/css-compat.md).',
+    );
+  }
   Widget out = horizontal ? _percentBase(s, mainAxisMax, child) : child;
   // An inline-level box (`display: inline-block/inline`, e.g. van-stepper in
   // a cell's value div) never stretches in BLOCK flow: CSS gives it a
@@ -564,11 +577,16 @@ Widget _flexChild({
   // CHILDREN lay out horizontally — see css/style.ts.) As a flex item its
   // display is blockified and align-items stretches it — vant's
   // inline-block button fills a <view> column on the web.
+  // `width: fit-content` in a column is the same shrink-to-fit box, flex
+  // item or not: CSS only stretches an item whose cross size is auto, and
+  // fit-content is not auto (specs/138). `margin: 0 auto` still centres it
+  // through the crossAuto branch below.
   final shrinkBox =
-      blockFlow &&
-      (s.display == 'inline-block' ||
-          s.display == 'inline' ||
-          s.display == 'inline-flex');
+      (blockFlow &&
+          (s.display == 'inline-block' ||
+              s.display == 'inline' ||
+              s.display == 'inline-flex')) ||
+      (fitContent && !horizontal);
   // CSS `align-items: stretch` only stretches items that have no size of
   // their own on the cross axis, but Flutter's CrossAxisAlignment.stretch
   // passes a tight cross constraint to every child. An Align absorbs that
@@ -874,14 +892,23 @@ Widget _percentBase(FjsStyle s, double width, Widget child) {
 /// Out-of-flow boxes size through the Positioned slot instead, so the
 /// declared px width/height is raised here. vant's Popover arrow is the CSS
 /// triangle `width: 0; height: 0; border-width: 6px`: a 0×0 slot flattened
-/// it to a sliver (specs/129). Percentages and content-box keep their path.
+/// it to a sliver (specs/129). Percentages keep their path. A content-box
+/// px size is the CONTENT's: the slot is that plus padding and border, the
+/// box decoration.dart builds (vant's loading Toast, `width: 88px;
+/// padding: 16px` content-box — the 88 slot squeezed a 120 box and centred
+/// it wrong).
 FjsLength? _atLeastEdges(
   FjsStyle s,
   FjsLength? length, {
   required bool horizontal,
 }) {
   if (length == null || length.isRelative) return length;
-  if (s.style['boxSizing'] == 'content-box') return length;
+  final extra = s.contentBoxExtra;
+  if (extra != null) {
+    return FjsLength.px(
+      length.px + (horizontal ? extra.horizontal : extra.vertical),
+    );
+  }
   final b = s.boxBorders();
   final pad = s.padding ?? EdgeInsets.zero;
   final min = horizontal
@@ -932,9 +959,10 @@ Widget positionedChild(
 }) {
   final s = childNode != null ? FjsStyle.of(childNode) : null;
   if (s == null || !isOutOfFlowPosition(s.position)) return child;
+  _warnSizeKeyword(childNode!, s);
   // an interactive box may hang outside its parents and still take the
   // pointer there, as on the web (vant's Slider knob on a 2px bar)
-  if (hasTapEvent(childNode!) || needsTouchNode(childNode, s)) {
+  if (hasTapEvent(childNode) || needsTouchNode(childNode, s)) {
     child = FjsOverflowHitTarget(child: child);
   }
   // Shrink-to-fit (CSS 10.3.7) is min(max(min-content, available),
@@ -954,6 +982,18 @@ Widget positionedChild(
       child: FjsShrinkCross(child: child),
     );
   }
+  // `width: fit-content` (specs/138): shrink-to-fit is min(max-content,
+  // available). Loose constraints capped at the available width give
+  // exactly that — text wraps only at the cap — provided the box does not
+  // stretch itself to the cap: an fjs view is a stretching column, so it
+  // is marked shrink-to-fit, the same two-pass sizing the nowrap branch
+  // above relies on. Measuring intrinsic widths instead is not an option:
+  // the node tree has LayoutBuilders (percentages, flex wrappers), and
+  // Flutter asserts on intrinsic queries through them.
+  final fitContent = s.widthFitContent && s.widthLength == null;
+  if (fitContent && child is! _UncappedWidth) {
+    child = FjsShrinkCross(child: child);
+  }
   final key = ValueKey<int>(childNode.id);
   final auto = s.marginAuto;
   final m = s.margin ?? EdgeInsets.zero;
@@ -972,6 +1012,7 @@ Widget positionedChild(
     height: _atLeastEdges(s, s.heightLength, horizontal: false),
     autoX: auto.horizontal,
     autoY: auto.vertical,
+    fitX: fitContent,
     padding: padding,
   );
   // A percentage (spec 044's `top: 50%`, vant's `inset: -50%` hairline box,
@@ -1118,11 +1159,16 @@ class _AbsGeometry {
     this.height,
     this.autoX = false,
     this.autoY = false,
+    this.fitX = false,
     this.padding,
   });
 
   final FjsLength? left, top, right, bottom, width, height;
   final bool autoX, autoY;
+
+  /// `width: fit-content` between two insets (specs/138): the box takes
+  /// its content's width up to what the insets leave, instead of all of it.
+  final bool fitX;
   final FjsPaddingSpec? padding;
 
   /// A copy with one declared length replaced — the animated value while a
@@ -1143,6 +1189,7 @@ class _AbsGeometry {
     height: height ?? this.height,
     autoX: autoX,
     autoY: autoY,
+    fitX: fitX,
     padding: padding,
   );
 
@@ -1156,7 +1203,9 @@ class _AbsGeometry {
       padding?.lengths?.hasRelative == true ||
       // centring via auto margins needs the box too
       (autoX && left != null && right != null && width != null) ||
-      (autoY && top != null && bottom != null && height != null);
+      (autoY && top != null && bottom != null && height != null) ||
+      // the room between the insets is the fit-content cap
+      (fitX && left != null && right != null);
 
   @override
   bool operator ==(Object other) =>
@@ -1169,6 +1218,7 @@ class _AbsGeometry {
       other.height == height &&
       other.autoX == autoX &&
       other.autoY == autoY &&
+      other.fitX == fitX &&
       other.padding == padding;
 
   @override
@@ -1181,6 +1231,7 @@ class _AbsGeometry {
     height,
     autoX,
     autoY,
+    fitX,
     padding,
   );
 }
@@ -1227,6 +1278,16 @@ class _AbsLayoutDelegate extends SingleChildLayoutDelegate {
 
     final w = span(_l, _r, _w, _boxW);
     final h = span(_t, _b, _h, _boxH);
+    // fit-content: the span between the insets is the CAP, not the size —
+    // the child (marked shrink-to-fit) takes its content width under it,
+    // and getPositionForChild centres it when both margins are auto
+    if (g.fitX && _w == null && w != null) {
+      return BoxConstraints(
+        maxWidth: w,
+        minHeight: h ?? 0,
+        maxHeight: h ?? double.infinity,
+      );
+    }
     // an auto size shrink-wraps, as RenderStack does for a one-edged child
     return BoxConstraints(
       minWidth: w ?? 0,
@@ -1530,4 +1591,17 @@ class RenderFjsUncappedCross extends RenderShiftedBox {
       // the child overflows this box by design; its part past the edge is
       // still hittable, as on the web
       hitTestChildren(result, position: position);
+}
+
+/// Size keywords the App does not lay out fall back to auto — loudly
+/// (constitution V, specs/138). Every node passes through [_flexChild] or
+/// [positionedChild], so these two call sites cover the tree.
+void _warnSizeKeyword(MirrorNode node, FjsStyle s) {
+  final bad = s.unsupportedSizeKeyword;
+  if (bad == null) return;
+  fjsWarnOnce(
+    'size-keyword:$bad',
+    '$bad is not supported on the App and is laid out as auto '
+        '(only width: fit-content is; docs/css-compat.md).',
+  );
 }
