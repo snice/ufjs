@@ -613,3 +613,83 @@ describe('text-control events', () => {
   });
 });
 
+
+// specs/133: the host tells Dart whether a modal mask is up, so the back
+// gesture / Android back button can be held while a popup blocks the page
+describe('overlay host modal flag', () => {
+  beforeEach(() => setOpSink((bytes) => sink(bytes)));
+  afterEach(() => setOpSink(null));
+
+  const hostId = () => [...f.tag].find(([, tag]) => tag === 'fjs-overlay-host')?.[0];
+  const modalOf = () => {
+    const host = hostId();
+    return host == null ? undefined : f.props.get(host)?.modal;
+  };
+
+  it('is set by a full-viewport mask and cleared by v-show and unmount', async () => {
+    f = freshFrames();
+    const open = ref(false);
+    const mounted = ref(true);
+    const { app } = mount(
+      () =>
+        h('view', { class: 'page' }, [
+          mounted.value
+            ? withDirectives(h('view', { class: 'van-overlay' }, '遮罩'), [[vShow, open.value]])
+            : null,
+          h('view', { class: 'toast' }, '提示'),
+        ]),
+      `.van-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 2000 }
+       .toast { position: fixed; top: 50%; left: 0; width: 88px }`,
+    );
+    await settle();
+    await settle();
+    // the Toast alone hoists but is not modal
+    expect(hostId()).toBeDefined();
+    expect(modalOf() ?? false).toBe(false);
+
+    open.value = true;
+    await settle();
+    await settle();
+    expect(modalOf()).toBe(true);
+
+    // vant hides a closed overlay with v-show
+    open.value = false;
+    await settle();
+    await settle();
+    expect(modalOf()).toBe(false);
+
+    open.value = true;
+    await settle();
+    await settle();
+    expect(modalOf()).toBe(true);
+    mounted.value = false;
+    await settle();
+    await settle();
+    expect(modalOf()).toBe(false);
+    app.unmount();
+  });
+
+  it('treats a stuck Sticky and a fixed NavBar as non-modal, inset 0 as modal', async () => {
+    f = freshFrames();
+    const mask = ref(false);
+    const { app } = mount(
+      () =>
+        h('view', { class: 'page' }, [
+          h('view', { class: 'sticky' }, '吸顶'),
+          h('view', { class: 'nav' }, '顶栏'),
+          mask.value ? h('view', { class: 'mask' }, '手写遮罩') : null,
+        ]),
+      `.sticky { position: fixed; top: 0; left: 28px; width: 100px }
+       .nav { position: fixed; top: 0; left: 0; width: 100%; height: 46px }
+       .mask { position: fixed; left: 0; top: 0; right: 0; bottom: 0 }`,
+    );
+    await settle();
+    await settle();
+    expect(modalOf() ?? false).toBe(false);
+    mask.value = true;
+    await settle();
+    await settle();
+    expect(modalOf()).toBe(true);
+    app.unmount();
+  });
+});

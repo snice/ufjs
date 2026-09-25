@@ -172,6 +172,70 @@ function hoistIfNeeded(el: Element, style: Record<string, unknown>): void {
   styleEngine.recomputeSubtree(el.id);
 }
 
+// ---- modal masks (specs/133) ----------------------------------------------
+//
+// The overlay host holds three kinds of things — modal popups behind a mask,
+// non-modal floats (Toast, Popover), and page-level fixed boxes (a stuck
+// Sticky, a fixed NavBar) — and only the first should keep the user from
+// going back. The Dart side cannot tell them apart without re-resolving
+// styles, so the verdict is taken here, where the resolved style already
+// is, and crosses as one boolean prop on the host (`modal`, read by
+// overlay_host_adapter.dart): no op change, no round trip on a back press.
+//
+// A mask is recognised by SHAPE, not by class: a visible fixed box that
+// covers the whole viewport. vant's `.van-overlay` (0/0, 100%×100%) is
+// exactly that, and so is any mask a page writes by hand — an explicit
+// opt-in marker would need every third-party popup wrapped to carry it.
+
+/** Hoisted-or-teleported element ids whose last resolved style is a mask. */
+const modalMasks = new Set<number>();
+/** Overlay host id → the `modal` value last written to it. */
+const hostModal = new Map<number, boolean>();
+
+function isZeroLength(v: unknown): boolean {
+  return v === 0 || (typeof v === 'string' && /^\s*0(px|%|vw|vh)?\s*$/.test(v));
+}
+
+function isFullLength(v: unknown, unit: 'vw' | 'vh'): boolean {
+  return typeof v === 'string' && (v.trim() === '100%' || v.trim() === `100${unit}`);
+}
+
+/** A visible `position: fixed` box covering the viewport (specs/133). */
+export function isModalMask(style: Record<string, unknown>): boolean {
+  if (style.position !== 'fixed') return false;
+  if (style.display === 'none' || style.visibility === 'hidden') return false;
+  const { left, top, right, bottom, width, height } = style;
+  if (!isZeroLength(left) || !isZeroLength(top)) return false;
+  const spansX = isZeroLength(right) || isFullLength(width, 'vw');
+  const spansY = isZeroLength(bottom) || isFullLength(height, 'vh');
+  return spansX && spansY;
+}
+
+/** Re-derives one host's `modal` prop from the masks among its children;
+ * writes only when the verdict flips. */
+function syncHostModal(host: HostNode): void {
+  const modal = (childrenOf.get(host.id) ?? []).some((id) => modalMasks.has(id));
+  if ((hostModal.get(host.id) ?? false) === modal) return;
+  hostModal.set(host.id, modal);
+  setProps(host, { modal });
+}
+
+function syncAllHostModals(): void {
+  for (const host of overlayHosts.values()) syncHostModal(host);
+}
+
+/** Style-callback hook: keeps [modalMasks] current for [el] and refreshes
+ * its page's host. Runs after hoist/unhoist, so membership is settled. */
+function noteModalShape(el: Element, style: Record<string, unknown>): void {
+  const now = isModalMask(style);
+  if (now === modalMasks.has(el.id)) return;
+  if (now) modalMasks.add(el.id);
+  else modalMasks.delete(el.id);
+  const pageRoot = pageRootOf(el.id);
+  const host = pageRoot && overlayHosts.get(pageRoot.id);
+  if (host) syncHostModal(host);
+}
+
 /** The way back: an element that stops being `position: fixed` returns to
  * its logical parent, where its sibling was. vant's Sticky toggles its
  * inner box between fixed and static as the page scrolls; kept in the
@@ -468,6 +532,7 @@ export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, act
   }
   if (style.position === 'fixed') hoistIfNeeded(el, style);
   else if (hoistedFrom.has(el.id)) unhoistIfNeeded(el);
+  noteModalShape(el, style);
 });
 
 // Styles go out with the ops that create their elements: the host flush
@@ -814,6 +879,7 @@ function dropElement(child: HostNode): void {
   const stack = [child.id];
   while (stack.length) {
     const current = stack.pop()!;
+    modalMasks.delete(current);
     const boxes = pseudoBoxes.get(current);
     if (boxes) {
       if (boxes.before) {
@@ -986,6 +1052,8 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     // the child also landed between siblings: first/last positions may have
     // flipped for the neighbors it displaced (structural pseudos)
     styleEngine.noteStructureChange(target.id);
+    // a mask styled before it landed (teleported content) joins its host now
+    if (modalMasks.has(child.id)) syncAllHostModals();
   },
 
   remove: (child) => {
@@ -996,6 +1064,8 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
       if (el) dropElement(el);
     }
     dropElement(child);
+    // a closed popup's mask may have just left: let the back gesture through
+    syncAllHostModals();
   },
 
   parentNode: (node) => {
@@ -1417,7 +1487,9 @@ export function releaseRoot(root: HostNode): void {
     for (const id of childrenOf.get(host.id) ?? []) {
       hoistedFrom.delete(id);
       hoistedBefore.delete(id);
+      modalMasks.delete(id);
     }
+    hostModal.delete(host.id);
     forgetSubtree(host.id);
     overlayHosts.delete(root.id);
   }

@@ -163,20 +163,21 @@ cd packages/flutter_fjs && flutter test        # 需要先编好 native，否则
 7. [Web CSS 兼容清单](docs/css-compat.md)
 8. [Web 平台适配](docs/web.md)
 9. [小程序编译：Skyline + glass-easel](docs/miniprogram.md)
-10. [Vue 3 集成](docs/vue3.md)
+10. [overlay 宿主：position: fixed、弹层与返回](docs/overlay-host.md)
+11. [Vue 3 集成](docs/vue3.md)
 
 **第三层 · 扩展**
-11. [模块扩展：npm 包 + Flutter autolink](docs/modules.md)
-12. [路由](docs/routing.md)
-13. [分包与 release assets](docs/code-splitting.md)
+12. [模块扩展：npm 包 + Flutter autolink](docs/modules.md)
+13. [路由](docs/routing.md)
+14. [分包与 release assets](docs/code-splitting.md)
 
 **第四层 · 工程**
-14. [pnpm monorepo 规范](docs/monorepo.md)
-15. [工具链：创建/运行/测试/编译](docs/toolchain.md)
-16. [fjs go 调试客户端](docs/fjs-go.md)
-17. [发布 npm 与 pub.dev](docs/publishing.md)
-18. [性能测试](docs/performance.md)
-19. [Roadmap](docs/roadmap.md)
+15. [pnpm monorepo 规范](docs/monorepo.md)
+16. [工具链：创建/运行/测试/编译](docs/toolchain.md)
+17. [fjs go 调试客户端](docs/fjs-go.md)
+18. [发布 npm 与 pub.dev](docs/publishing.md)
+19. [性能测试](docs/performance.md)
+20. [Roadmap](docs/roadmap.md)
 
 ---
 

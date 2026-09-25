@@ -6,12 +6,14 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_fjs/src/mirror_tree.dart';
 import 'package:flutter_fjs/src/render/renderer.dart';
 import 'package:flutter_fjs/src/ui_ops.dart';
+import 'package:flutter_fjs/src/widgets/route_anchor.dart';
 
 class _W {
   final List<int> b = [];
@@ -145,4 +147,163 @@ void main() {
     expect(r.width, 400);
   });
 
+  // specs/133: the root-Overlay layer follows its page's route, and a modal
+  // mask holds the back button / gesture.
+  group('route ownership', () {
+    // page root 1 with an in-flow marker 5 (moves with the route) and the
+    // host 2 holding a stuck-sticky-like box 3; [modal] adds the prop the
+    // JS side writes while a mask is up
+    _W page({bool modal = false}) {
+      final w = _W()
+        ..node(1, 'view', {'flexGrow': 1})
+        ..node(5, 'view', {'width': 40, 'height': 40})
+        ..node(2, 'fjs-overlay-host', {
+          'position': 'absolute', 'left': 0, 'top': 0, 'right': 0, 'bottom': 0,
+        })
+        ..node(3, 'view', {
+          'position': 'fixed', 'left': 0, 'top': 0, 'width': 40, 'height': 40,
+          'backgroundColor': '#ee0a24',
+        })
+        ..insert(1, 5, 0)
+        ..insert(1, 2, 1)
+        ..insert(2, 3, 0)
+        ..insert(0, 1, 0);
+      if (modal) w.props(2, {'modal': true});
+      return w;
+    }
+
+    final nav = GlobalKey<NavigatorState>();
+    var pageTaps = 0;
+
+    Future<void> pumpWithPage(WidgetTester tester, _W w) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(400, 640);
+      addTearDown(tester.view.reset);
+      final tree = MirrorTree()..applyFrame(Uint8List.fromList(w.b));
+      // FjsApp's shape: a Navigator nested under the host's MaterialApp, so
+      // the root Overlay the host portals into is NOT the one the pages live
+      // in, and the system back button reaches the nested Navigator through
+      // a NavigatorPopHandler calling maybePop (fjs_app.dart)
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NavigatorPopHandler(
+            onPopWithResult: (_) => nav.currentState?.maybePop(),
+            child: Navigator(
+              key: nav,
+              onGenerateRoute: (_) => MaterialPageRoute<void>(
+                builder: (_) => const Scaffold(body: Text('base')),
+              ),
+            ),
+          ),
+        ),
+      );
+      // FjsApp wraps each page in FjsRouteAnchor; a GestureDetector under
+      // the page content stands in for a page that takes taps
+      nav.currentState!.push(
+        MaterialPageRoute<void>(
+          builder: (_) => FjsRouteAnchor(
+            child: Scaffold(
+              body: Stack(
+                children: [
+                  Positioned.fill(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => pageTaps++,
+                    ),
+                  ),
+                  FjsNodeRenderer(
+                    tree: tree,
+                    ids: tree.rootChildren,
+                    dispatch: (id, ev, {String? text}) {},
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('a modal host holds maybePop and the system back button',
+        (tester) async {
+      await pumpWithPage(tester, page(modal: true));
+      // maybePop reports a held pop as handled (true); what matters is that
+      // the route stays
+      await nav.currentState!.maybePop();
+      await tester.pumpAndSettle();
+      expect(find.text('base'), findsNothing);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey(3)), findsWidgets,
+          reason: 'the page and its popup are still up');
+      expect(find.text('base'), findsNothing);
+    });
+
+    testWidgets('a non-modal host lets back through and leaves nothing behind',
+        (tester) async {
+      await pumpWithPage(tester, page());
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('base'), findsOneWidget);
+      expect(find.byKey(const ValueKey(3)), findsNothing);
+    });
+
+    testWidgets('a page pushed on top hides the layer; popping it shows it again',
+        (tester) async {
+      await pumpWithPage(tester, page());
+      nav.currentState!.push(
+        MaterialPageRoute<void>(builder: (_) => const Scaffold(body: Text('top'))),
+      );
+      await tester.pumpAndSettle();
+      // Finders already skip the covered route's element subtree, portal
+      // child included — what the user sees is the root Overlay, so ask the
+      // hit test whether the box still sits on top of the new page
+      final box = tester.renderObject(
+        find.byKey(const ValueKey(3), skipOffstage: false).last,
+      );
+      final hits = tester.hitTestOnBinding(const Offset(20, 20)).path;
+      expect(hits.any((e) => identical(e.target, box)), isFalse,
+          reason: 'the covered page\'s fixed box must not sit over the new one');
+      nav.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey(3)), findsWidgets);
+    });
+
+    // a transition builder replayed on the layer (the first cut of this
+    // spec) brought CupertinoPageTransition's shadow DecoratedBox along,
+    // which hit-tested the whole screen and ate every tap on the page
+    testWidgets('the layer takes no taps outside its boxes (iOS)',
+        (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        pageTaps = 0;
+        await pumpWithPage(tester, page());
+        await tester.tapAt(const Offset(200, 400));
+        expect(pageTaps, 1);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+
+    testWidgets('during a pop the layer slides with its page (iOS)',
+        (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        await pumpWithPage(tester, page());
+        nav.currentState!.pop();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 150));
+        final marker = _paintedRect(tester, 5);
+        final fixed = _paintedRect(tester, 3);
+        expect(marker.left, greaterThan(0), reason: 'the page is mid-slide');
+        expect(fixed.left, closeTo(marker.left, 0.5),
+            reason: 'the fixed box moves with the page');
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey(3)), findsNothing);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+  });
 }

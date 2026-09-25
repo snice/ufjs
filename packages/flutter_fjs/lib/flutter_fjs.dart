@@ -27,6 +27,7 @@ export 'src/fjs_view.dart' show FjsView;
 // the dev perf monitor. FjsApp installs one; a host that places FjsView by
 // hand wraps it in this to get the same panel.
 export 'src/widgets/perf_overlay.dart' show FjsPerfOverlay;
+export 'src/widgets/route_anchor.dart' show FjsRouteAnchor;
 export 'src/log.dart' show FjsLogLevel;
 export 'src/ui_ops.dart' show UiOpCode;
 export 'src/registry/host.dart' show HostRegistry, HostResult;
