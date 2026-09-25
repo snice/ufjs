@@ -107,6 +107,8 @@ import 'vant/es/tabs/style/index.mjs';
 import 'vant/es/tag/style/index.mjs';
 import 'vant/es/text-ellipsis/style/index.mjs';
 import 'vant/es/toast/style/index.mjs';
+import 'vant/es/watermark/style/index.mjs';
+import VanWatermark from './vant/VanWatermark.vue';
 
 export default (app: App) => {
   app.use(ActionSheet);
@@ -155,4 +157,8 @@ export default (app: App) => {
   app.use(Tabs);
   app.use(Tag);
   app.use(TextEllipsis);
+  // Watermark is NOT vant's: its Blob-URL + background-image pipeline cannot
+  // run on the app side (specs/135) — the local replica keeps the props and
+  // the #content slot, both ends render the same DOM tiling.
+  app.component('van-watermark', VanWatermark);
 };
