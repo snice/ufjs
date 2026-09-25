@@ -114,7 +114,7 @@ fjs 适配。完整定义见 [ui-api.md](ui-api.md#元素上的-dom-形状-api)�
 | `vShow` | 只碰内联 `display` 一项，元素其余规则不动（整张替换计算样式会让库组件丢样式） |
 | `withKeys` | 直通——fjs 事件不带键码，处理器照跑而不是永不触发 |
 | `<TransitionGroup>` | 纯透传 |
-| `createApp` | 指名抛错——挂第二个根要真实 DOM 容器；库的命令式 API 内部 `document.createElement` + `createApp` 的（vant `showToast()`），App 端不可用，改用组件式写法 |
+| `createApp` | 指名抛错——库的命令式 API（内部 `document.createElement` + `createApp`）要由适配补丁改从 `fjs/vue` 取 `createApp` + `createDetachedRoot()`，挂进游离根，内容落到 app 级 overlay 宿主（vant 的做法见 specs/137） |
 | `measureTextBlock` | 经 `__FJS_SHARED` 暴露给侧影：让库的测高逻辑用宿主排版（vant TextEllipsis 的二分截断靠它） |
 
 另一条构建期修正：静态提升产出的 `createStaticVNode` 走
@@ -157,7 +157,7 @@ fixed 元素被 renderer hoist 进页面自己的 overlay 宿主，随路由转�
 | A | 用法越过了 runtime 已有 API 的**登记边界**（如把 `el.style` 当完整 CSSStyleDeclaration 读层叠结果） | 改调用姿势或加侧影垫层；runtime 不扩 |
 | B | 缺的能力是**通用的**（换个 DOM 式库也需要） | 走 `/spec` 补进 runtime：CSS 进 [css-compat.md 第 6 节](css-compat.md#6-加一条新的-css-支持要改哪些地方) 流程；DOM API 进 `ui/element.ts` + web 侧同源实现 |
 | C | 缺的路径是**这个库特有的**（守卫、重试、换声明） | 项目本地 vite 插件打锚点补丁；补丁要带 `feature` 说明，锚点失效能告警 |
-| D | 库的设计**依赖真 DOM 无法模拟**（命令式 `createApp` 挂载、`attr()` 伪元素 content、深层事件委托） | 不硬模拟。登记为已知差异 + 换组件式写法（`<van-dialog v-model:show>`） |
+| D | 库的设计**依赖真 DOM 无法模拟**（`attr()` 伪元素 content、深层事件委托） | 不硬模拟。登记为已知差异 + 换组件式写法。命令式 `createApp` 挂载不再属于这一级：C 级补丁接 `createDetachedRoot()` 即可（specs/137） |
 
 判成 B 但急着跑通的，可以在 C 层临时垫（注明「等 spec 上收」），垫的部分
 进 spec 的验收清单。

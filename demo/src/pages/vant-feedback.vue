@@ -4,7 +4,15 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
-import { showToast, showConfirmDialog, type ActionSheetAction } from 'vant';
+import {
+  closeToast,
+  showConfirmDialog,
+  showImagePreview,
+  showLoadingToast,
+  showNotify,
+  showToast,
+  type ActionSheetAction,
+} from 'vant';
 
 // ---- component-form overlays -----------------------------------------------
 
@@ -27,9 +35,10 @@ function onSheetSelect(_action: ActionSheetAction, index: number) {
 
 // ---- imperative calls, self-reporting --------------------------------------
 //
-// Vant's function-call overlays do `document.createElement` to mount, which
-// cannot exist on the QuickJS side — this page is the probe: each call
-// reports what actually happened instead of failing silently.
+// Vant's function-call overlays mount a second Vue app. On the app side the
+// demo's vant plugin (vite/vant.ts) mounts it in a detached root, and what it
+// renders lands in the app-level overlay host (specs/137). Each call reports
+// what actually happened instead of failing silently.
 
 interface Probe {
   name: string;
@@ -43,35 +52,52 @@ function record(name: string, ok: boolean, detail: string) {
   probes.value = [...probes.value.filter((p) => p.name !== name), { name, ok, detail }];
 }
 
-function probeToast() {
+/** A function-call API that returns its instance: no `open()` on it means
+ * vant bailed out (non-browser early return) — call succeeded, nothing shown. */
+function probeInstance(name: string, call: () => unknown) {
   try {
-    const toast = showToast('来自 showToast') as { open?: unknown } | undefined;
-    // vant 在非浏览器环境（没有 window）下直接 return {}，不抛错——调用
-    // 「成功」但什么都没发生。用返回值有没有 open() 把这件事拆穿。
-    if (typeof toast?.open !== 'function') {
-      record('showToast', false, 'vant 检测到非浏览器环境，命令式 Toast 是空操作（无 DOM 挂载点）');
+    const instance = call() as { open?: unknown } | undefined;
+    if (typeof instance?.open !== 'function') {
+      record(name, false, 'vant 返回了空实例：命令式调用是空操作');
       return;
     }
-    record('showToast', true, '调用成功（看屏幕上是否真有 Toast）');
+    record(name, true, '已弹出（看屏幕）');
   } catch (e) {
-    record('showToast', false, String(e));
+    record(name, false, String(e));
   }
 }
+
+const probeToast = () => probeInstance('showToast', () => showToast('来自 showToast'));
+const probeLoading = () =>
+  probeInstance('showLoadingToast', () => {
+    const toast = showLoadingToast({ message: '加载中…', forbidClick: true, duration: 0 });
+    setTimeout(closeToast, 1500);
+    return toast;
+  });
+const probeNotify = () =>
+  probeInstance('showNotify', () => showNotify({ type: 'success', message: '来自 showNotify' }));
+const probePreview = () =>
+  probeInstance('showImagePreview', () => showImagePreview({ images: previewImages, closeable: true }));
+
+const previewImages = [
+  'https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg',
+  'https://fastly.jsdelivr.net/npm/@vant/assets/apple-2.jpeg',
+];
 
 function probeDialog() {
   try {
     showConfirmDialog({ title: '确认', message: '命令式 Dialog' })
       .then((action) => {
-        // 非浏览器环境下 vant 返回 Promise.resolve(undefined)：没弹窗、
-        // 也没人点按钮，action 是 undefined。
+        // vant's non-browser early return resolves undefined: no dialog was
+        // shown and nobody pressed a button
         if (action === undefined) {
-          record('showConfirmDialog', false, 'vant 检测到非浏览器环境，命令式 Dialog 是空操作');
+          record('showConfirmDialog', false, 'vant 返回了空 Promise：命令式调用是空操作');
         } else {
           record('showConfirmDialog', true, '已确认');
         }
       })
       .catch((action) => {
-        record('showConfirmDialog', true, action === 'confirm' ? '已确认' : '已取消');
+        record('showConfirmDialog', true, action === 'cancel' ? '已取消' : String(action));
       });
   } catch (e) {
     record('showConfirmDialog', false, String(e));
@@ -83,8 +109,8 @@ function probeDialog() {
   <scroll-view class="page" scroll-y>
     <text class="page-title">vant · 弹层反馈</text>
     <text class="page-note">
-      命令式 Toast/Dialog 依赖 DOM，
-      预期报错并显示在页面上。
+      命令式调用（showToast 等）App 端挂在 app 级浮层宿主上，
+      盖住所有页面；弹出期间物理返回被拦。
     </text>
 
     <view class="block">
@@ -123,7 +149,10 @@ function probeDialog() {
       <text class="block-title">命令式调用（结果自证）</text>
       <view class="row">
         <van-button type="warning" @click="probeToast">showToast</van-button>
+        <van-button type="warning" @click="probeLoading">showLoadingToast</van-button>
         <van-button type="warning" @click="probeDialog">showConfirmDialog</van-button>
+        <van-button type="warning" @click="probeNotify">showNotify</van-button>
+        <van-button type="warning" @click="probePreview">showImagePreview</van-button>
       </view>
       <view v-for="p in probes" :key="p.name" class="probe">
         <text class="probe-line" :class="p.ok ? 'probe-ok' : 'probe-fail'">

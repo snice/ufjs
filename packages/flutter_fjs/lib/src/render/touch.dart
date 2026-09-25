@@ -96,11 +96,35 @@ class _TouchPoint {
 /// pointer id, in the order the fingers landed.
 final Map<int, _TouchPoint> _activeTouches = <int, _TouchPoint>{};
 
+/// How many touch nodes own each pointer. Nested listeners (vant's
+/// ImagePreview: the Swipe track and the image item) each own the same
+/// finger; the first to see the up used to drop it from [_activeTouches],
+/// and the next one's flushed last touchmove went out with `touches: []` —
+/// vant read `touches[0].clientX` and threw, leaving the swipe stuck
+/// between slides. A pointer leaves `touches` when its last owner lets go.
+final Map<int, int> _pointerOwners = <int, int>{};
+
+void _retainPointer(int pointer) =>
+    _pointerOwners[pointer] = (_pointerOwners[pointer] ?? 0) + 1;
+
+void _releasePointer(int pointer) {
+  final left = (_pointerOwners[pointer] ?? 1) - 1;
+  if (left > 0) {
+    _pointerOwners[pointer] = left;
+    return;
+  }
+  _pointerOwners.remove(pointer);
+  _activeTouches.remove(pointer);
+}
+
 /// Drops every pointer the app thinks is down. Tests only: a widget test
 /// can abandon a finger mid-gesture, and the next test would see it in
 /// `touches`.
 @visibleForTesting
-void debugResetTouches() => _activeTouches.clear();
+void debugResetTouches() {
+  _activeTouches.clear();
+  _pointerOwners.clear();
+}
 
 /// Whether the node needs the touch listener: it listens for touch events,
 /// or it declares a `touch-action` (worth honouring even with no listener —
@@ -173,7 +197,7 @@ class _FjsTouchNodeState extends State<FjsTouchNode> {
       _flushMoves();
       _dispatch(FjsEvent.touchCancel, _own.toList(), removing: true);
       for (final pointer in _own) {
-        _activeTouches.remove(pointer);
+        _releasePointer(pointer);
       }
       _own.clear();
     }
@@ -186,8 +210,12 @@ class _FjsTouchNodeState extends State<FjsTouchNode> {
   void _onDown(PointerDownEvent event) {
     _captureOrigin();
     _flushMoves();
-    _activeTouches[event.pointer] = _TouchPoint(event.pointer, event.position);
-    _own.add(event.pointer);
+    // the same finger reaches every nested node: one point, shared
+    _activeTouches.putIfAbsent(
+      event.pointer,
+      () => _TouchPoint(event.pointer, event.position),
+    );
+    if (_own.add(event.pointer)) _retainPointer(event.pointer);
     // in the arena even with `touch-action: auto`: it never claims then,
     // but losing to a scroller is how touchcancel is noticed
     _recognizer.action = widget.action;
@@ -239,8 +267,7 @@ class _FjsTouchNodeState extends State<FjsTouchNode> {
     if (listens) {
       _dispatch(type, [event.pointer], stamp: _ms(event), removing: true);
     }
-    _activeTouches.remove(event.pointer);
-    _own.remove(event.pointer);
+    if (_own.remove(event.pointer)) _releasePointer(event.pointer);
   }
 
   /// The arena took the gesture away from this node — the web's touchcancel.
@@ -250,8 +277,7 @@ class _FjsTouchNodeState extends State<FjsTouchNode> {
     if (_listens('onTouchcancel')) {
       _dispatch(FjsEvent.touchCancel, [pointer], removing: true);
     }
-    _activeTouches.remove(pointer);
-    _own.remove(pointer);
+    if (_own.remove(pointer)) _releasePointer(pointer);
   }
 
   double _ms(PointerEvent event) => event.timeStamp.inMicroseconds / 1000.0;

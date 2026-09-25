@@ -679,7 +679,7 @@ web（`fjs dev --web`）收到任何变更仍是整页刷新。行为见
   `contains` / `offset*` / `value` / `addEventListener`，vue-shim 的
   `<Transition>` / `vShow` / `withKeys`，`hoistStatic: false`，项目级最小
   window/document 侧影（demo 的 dom-env）。剩余差异
-  （命令式 Toast / Dialog、深层 target、`getComputedStyle`）登记在
+  （深层 target、`getComputedStyle`；命令式 Toast / Dialog 已在 specs/137 打通）登记在
   [vue3.md](vue3.md#第三方组件库兼容vant)
 
 ## CSS 收尾：transition 与百分比（已完成 2026-09）

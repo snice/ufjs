@@ -3,6 +3,9 @@ import '../raf';
 export {
   createApp,
   flutterRoot,
+  // a second app's container that belongs to no page (specs/137)
+  createDetachedRoot,
+  releaseDetachedRoot,
   render,
   patchProp,
   registerStyles,

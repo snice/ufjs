@@ -10,16 +10,16 @@
 
 | 维度 | 数字 |
 |---|---|
-| 直接由 vant 驱动的 spec | **30 个**（068–073、075–077、084、086、100、103、118–126、128–135；另有 078/104/106/127 等相邻 spec） |
+| 直接由 vant 驱动的 spec | **31 个**（068–073、075–077、084、086、100、103、118–126、128–135、137；另有 078/104/106/127 等相邻 spec） |
 | 相关非 merge 提交 | 41 个，变更 479 个文件、约 3.2 万行（含 runtime / Dart / CLI / 测试 / 文档） |
 | demo 项目本地适配代码 | **1112 行**（5 个文件，见下「接入面」；另 bench/wm-smoke.ts 34 行离线冒烟入口） |
-| 全局注册的 vant 组件 | 46 个 + 1 个本地复刻（`van-watermark`，spec 135）+ toast 样式（命令式 Toast/Dialog App 端不可用，见已知差异） |
+| 全局注册的 vant 组件 | 46 个 + 1 个本地复刻（`van-watermark`，spec 135）+ toast / notify / image-preview 样式（命令式 `showToast` / `showDialog` / `showNotify` / `showImagePreview` 两端可用，specs/137） |
 | 对拍页面 | 7 个：`vant-basic` / `vant-form` / `vant-feedback` / `vant-more` / `vant-nav` / `vant-float` / `vant-watermark` |
 | 注册进 CSS 引擎的样式 | vant 源 CSS 1056 个选择器 → 639 条规则、约 80 KB；`--van-*` 主题 token 494 个键 |
 | vue-shim 补齐导出 | 5 个：`Transition` / `vShow` / `withKeys` / `createApp`（068）+ `measureTextBlock`（128） |
 | 元素上补齐的 DOM 形状 API | 约 20 个成员（明细见下表） |
 | 新增宿主模块 | `fjs.font.load`（071）、`fjs.control.focus/blur`（077）、`fjs.ui.measureText`（128）、document 级 pointer-down 流（073） |
-| demo 源码补丁 | 14 条（vite 插件锚点替换，见下表） |
+| demo 源码补丁 | 16 条（vite 插件锚点替换，见下表） |
 | 回归网规模（时点数） | specs/069：JS 811 + flutter 364；specs/071：runtime 523 + flutter 378；specs/120：runtime 748 + cli 391；specs/132：flutter 515 通过。含专门以 vant 命名或由 vant 场景钉住的测试（`vant_layout_test`、`icon_line_height_test` 等，另带真实字体 `fixtures/vant-icon.ttf`） |
 
 ## 现状结论
@@ -38,7 +38,7 @@
 | `demo/src/plugins/vant.ts` | 164 | 46 个组件 `app.use` 全局注册 + 按需样式 import（一份清单喂两端）。**无平台后缀**；第一个 import 是 dom-env |
 | `demo/src/plugins/vant/dom-env.ts` | 459 | 为 vant 一个库 opt-in 的最小 `window` / `document` 侧影：rAF、读 fjs 样式引擎的 `getComputedStyle`（transform 转 `matrix(...)`、line-height 折 px、scroll-view 两轴答 scroll）、document pointer-down 流（NumberKeyboard 点外关闭）、首见型 `IntersectionObserver`、`Element` / `HTMLElement` 的 `instanceof` 垫、测量盒（`document.createElement`）、resize 监听、rootElement（吸收 lock-scroll 类写入）。**只在 App 构建运行** |
 | `demo/src/plugins/vant/VanWatermark.vue` | 248 | **本地复刻的 Watermark**（spec 135）：vant 的 SVG→Blob→位图背景平铺管线 App 端三处不可用（无 innerHTML 读、无 Blob/URL、CSS 无位图背景），改用 absolute 格子 + `transform: rotate` 重建，props / `#content` 插槽与 vant 对齐，两端同一份实现。格数按根节点 rect 实测（rAF 采样到 rect 连续两帧不变才收敛，转场中途的“非零但偏小”rect 不能采信；上限 64×64 并告警一次） |
-| `demo/vite/vant.ts` | 228 | 带 `fjs.app` 钩子的本地 vite 插件，14 条字面量锚点补丁（见下表）；锚点失效告警一次并写明哪个功能失效 |
+| `demo/vite/vant.ts` | 268 | 带 `fjs.app` 钩子的本地 vite 插件，16 条字面量锚点补丁（见下表）；锚点失效告警一次并写明哪个功能失效 |
 | `demo/src/plugins/vant-touch.web.ts` | 13 | 只 web：引 `@vant/touch-emulator`，桌面浏览器鼠标转 touch（specs/123） |
 | `demo/vite.config.ts` | +1 行 | `plugins: [fjs(), vant(), vue()]` |
 
@@ -55,7 +55,8 @@ vant barrel 无条件从 `'vue'` 导入四个只在 runtime-dom 存在的名字�
 `Transition`（fjs 版，animation 型规则由 keyframes 引擎原生播放）、
 `vShow`（只碰内联 `display`，整张替换计算样式会让组件丢样式——specs/069
 步进器改值后输入框与加号样式丢光的根因）、`withKeys`（直通）、
-`createApp`（指名抛错，命令式 Toast/Dialog 因此走组件式）。specs/070 另
+`createApp`（指名抛错；vant 的命令式 API 由补丁改从 `fjs/vue` 取 `createApp` +
+游离根，specs/137）。specs/070 另
 以 `hoistStatic: false` 编译 SFC（`createStaticVNode` 需要本 renderer 没有
 的 `insertStaticContent`）。
 
@@ -179,7 +180,7 @@ vant 的 Watermark 把旋转内容渲染成 SVG → 读 `innerHTML` 序列化 �
 → ~20 ms（118 defer，模拟器）→ ~12 ms（119 预热，模拟器）**；真机
 iPhone（分包 + 字节码）五页 59–81 ms（specs/120 复核口径）。
 
-## demo 源码补丁清单（`demo/vite/vant.ts`，14 条）
+## demo 源码补丁清单（`demo/vite/vant.ts`，16 条）
 
 | # | 目标文件 | 补丁 | 保护的 feature |
 |---|---|---|---|
@@ -194,6 +195,7 @@ iPhone（分包 + 字节码）五页 59–81 ms（specs/120 复核口径）。
 | 11 | Tabs | 下划线 0 尺寸时 rAF 重试至多 10 帧 | 首帧下划线位置 |
 | 12 | Field | `onInput` 载荷容忍（值或事件对象都接） | Field 输入（v-model，specs/103） |
 | 13–14 | Stepper | `onInput` / `onBlur` 载荷容忍 | Stepper 输入 / 失焦格式化 |
+| 15–16 | utils/mount-component | `createApp` 改从 `fjs/vue` 导入；容器从 `document.createElement` 换成 `createDetachedRoot()`，卸载 `releaseDetachedRoot()` | showToast / showDialog / showNotify / showImagePreview（specs/137） |
 
 补丁纪律：字面量锚点、替换后逐字可读、锚点失效只告警不阻断（显式降级）。
 
@@ -203,9 +205,13 @@ iPhone（分包 + 字节码）五页 59–81 ms（specs/120 复核口径）。
   而非 CSS 位图平铺，视觉等效、不是同一份光栅；水印文字默认字号 pin
   14px/20px（vant 的 span 继承文档字号，两端 text 默认字号不一致）；
   超大容器格数封顶 64×64。API（props / `#content` 插槽）与 vant 对齐
-- **命令式 Toast / Dialog（`showToast()` / `showDialog()`）App 端不可用**：
-  内部 `document.createElement` + `createApp`；组件式（`<van-popup>` /
-  `<van-dialog v-model:show>`）两端一致
+- **命令式弹层挂在 app 级宿主**（specs/137）：`showToast` / `showDialog` /
+  `showNotify` / `showImagePreview` 的第二个 Vue app 挂进游离根，内容经
+  Teleport / hoist 落到 app 级 overlay 宿主（画在所有页面之上，同 web 的 body）。
+  可见期间系统返回被拦（specs/136），web 浏览器后退不拦
+- **文字 Toast 铺满整行**：vant `.van-toast--text { width: fit-content }`，App 端
+  CSS 不支持 `fit-content`，定位盒按 `left: 0; right: 0` 撑开；web 是收缩宽度。
+  loading / success 等带图标的 Toast 用固定宽 88px，两端一致
 - **没有深层 target / 事件委托**：`target` 是被点中的有监听的最内层节点；
   Checker `label-disabled` 时点图标不切换（specs/072）
 - **`position: fixed` 走 overlay 宿主**、`<Teleport to="body">` 落同一宿主：

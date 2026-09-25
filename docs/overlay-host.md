@@ -104,6 +104,20 @@ fixed 元素默认进本页的**页面级**宿主（上面几节说的都是它�
   ——根页面不会被返回弹出，也就不存在拦返回的问题。子页面里开 app 级元素，等于
   "这一页在栈里时画在最上面、并且锁住系统返回"。
 
+### 游离根：不属于任何页面的第二个 app（specs/137）
+
+组件库的命令式弹层（vant `showToast()` 等）要挂第二个 Vue app。`fjs/vue` 的
+`createDetachedRoot()` 给它一个**不插入任何父节点**的容器（相当于 web 上 body 下的
+`<div>`；Dart 侧是孤儿节点，不渲染），app 卸载后 `releaseDetachedRoot(root)` 释放。
+容器里的内容这样上屏：
+
+- `<Teleport to="body">`（Toast / Dialog / ImagePreview 默认）→ app 级宿主；
+- 不 teleport 的 `position: fixed` 元素（Notify）→ 逻辑父链上没有页面，也进 app 级宿主。
+
+判定"不属于页面"沿**逻辑**父链（hoist 过的元素走 `hoistedFrom`）找 app 宿主根或游离根，
+先于页面宿主的查找——后者找不到页面时会回退到栈顶页面，弹层会被那一页盖住、随它销毁。
+app 宿主里的元素 `isConnected` 为 true（body 语义）。
+
 ## 5. 页面代码怎么写
 
 - **想要"盖住页面、钉在屏幕上"才用 `position: fixed`**。只是想让元素叠在某个容器里，
@@ -131,7 +145,7 @@ fixed 元素默认进本页的**页面级**宿主（上面几节说的都是它�
 
 | 文件 | 作用 |
 |------|------|
-| `packages/fjs-runtime/src/vue/renderer.ts` | hoist / unhoist、`querySelector('body')`、`isModalMask`、宿主 `modal` 属性、`overlay` 分流与迁移 |
+| `packages/fjs-runtime/src/vue/renderer.ts` | hoist / unhoist、`querySelector('body')`、`isModalMask`、宿主 `modal` 属性、`overlay` 分流与迁移、游离根 |
 | `packages/flutter_fjs/lib/src/widgets/app_overlay_host.dart` | app 级宿主渲染、`FjsAppOverlayBackGuard` 返回拦截 |
 | `packages/flutter_fjs/lib/src/node/overlay_host_adapter.dart` | `OverlayPortal`、`PopScope`、`_FollowRoute`（跟随锚点）、`z-index` 排序 |
 | `packages/flutter_fjs/lib/src/widgets/route_anchor.dart` | `FjsRouteAnchor`：页面锚点（`LayerLink`） |

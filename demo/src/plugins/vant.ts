@@ -78,8 +78,11 @@ import 'vant/es/empty/style/index.mjs';
 import 'vant/es/field/style/index.mjs';
 import 'vant/es/grid-item/style/index.mjs';
 import 'vant/es/grid/style/index.mjs';
+// imperative-only overlays (specs/137): showImagePreview / showNotify
+import 'vant/es/image-preview/style/index.mjs';
 import 'vant/es/nav-bar/style/index.mjs';
 import 'vant/es/notice-bar/style/index.mjs';
+import 'vant/es/notify/style/index.mjs';
 import 'vant/es/number-keyboard/style/index.mjs';
 import 'vant/es/picker/style/index.mjs';
 import 'vant/es/popover/style/index.mjs';

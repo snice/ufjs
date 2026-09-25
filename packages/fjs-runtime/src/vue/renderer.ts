@@ -182,10 +182,76 @@ function ensureAppOverlayHost(): HostNode {
   return root;
 }
 
-/** The host an element hoists into: the app root when `overlay="app"`, the
+// ---- detached roots (specs/137) --------------------------------------------
+//
+// A second Vue app needs a container of its own: the browser answer is
+// `document.createElement('div')` appended to <body> — what component
+// libraries' imperative overlays do (vant showToast/showDialog). Here the
+// container is a real node that is never inserted anywhere. Not createRoot:
+// that hangs it off the implicit container, where the base page (navKey
+// fallback 0) would paint it as page content and pageRootOf would take it
+// for a page. Not the app host root itself: Vue records `_vnode` on the
+// container, so two apps mounted there patch each other away, and the
+// leftover anchors would count as a visible app-level child and hold back
+// forever (specs/136). What the app renders reaches the screen through the
+// app host: `Teleport to="body"` lands there already, and fixed elements
+// under a detached root hoist there (hostForLevel).
+
+const detachedRoots = new Set<number>();
+
+/** A container for a second Vue app that belongs to no page — the fjs
+ * counterpart of a `<div>` appended to `<body>`. Pair every call with
+ * [releaseDetachedRoot] after the app unmounts. */
+export function createDetachedRoot(): HostNode {
+  const root = create('view');
+  childrenOf.set(root.id, []);
+  parentOf.set(root.id, null);
+  detachedRoots.add(root.id);
+  devtoolsStructuralVersion.value++;
+  return root;
+}
+
+/** Drops a detached root after the app mounted in it unmounted. */
+export function releaseDetachedRoot(root: HostNode): void {
+  if (!detachedRoots.has(root.id)) return;
+  // a Fragment root is removed by walking the container's own children, so
+  // anything hoisted out of it (a fixed Notify) is not among them — drop
+  // those here, as nodeOps.remove does for a removed subtree
+  for (const id of hoistedUnder(root.id)) {
+    const el = elementsById.get(id);
+    if (el) dropElement(el);
+  }
+  detachedRoots.delete(root.id);
+  forgetSubtree(root.id);
+  parentOf.delete(root.id);
+  childrenOf.delete(root.id);
+  remove(root);
+  devtoolsStructuralVersion.value++;
+}
+
+/** Whether the element's LOGICAL ancestry reaches no page: a detached
+ * root, or the app host root itself (content teleported to body). Walks
+ * hoistedFrom where there is one — a hoisted element's physical parent is
+ * its host, not where it came from. */
+function belongsToNoPage(id: number): boolean {
+  const appRoot = appOverlayRoot?.id;
+  if (!detachedRoots.size && appRoot == null) return false;
+  let cur: number | null | undefined = id;
+  while (cur != null) {
+    if (cur === appRoot || detachedRoots.has(cur)) return true;
+    const from: number | null | undefined = hoistedFrom.get(cur);
+    cur = from ?? parentOf.get(cur);
+  }
+  return false;
+}
+
+/** The host an element hoists into: the app root when `overlay="app"` or
+ * when it belongs to no page (checked BEFORE pageRootOf, whose last-page
+ * fallback would put it in whatever page is on top and let that page cover
+ * and take it down — a fixed Popup teleported to body, a vant Notify), the
  * owning page's host otherwise. */
 function hostForLevel(el: Element): HostNode | null {
-  if (!appOverlayElements.has(el.id)) {
+  if (!appOverlayElements.has(el.id) && !belongsToNoPage(el.id)) {
     const pageRoot = pageRootOf(el.id);
     return pageRoot ? ensureOverlayHost(pageRoot) : null;
   }
@@ -720,7 +786,9 @@ const POSITIONED = new Set(['relative', 'absolute', 'fixed', 'sticky']);
 // of the page root, so the same walk covers them
 setConnectedResolver((id) => {
   for (let cur: number | null | undefined = id; cur != null; cur = parentOf.get(cur)) {
-    if (pageRoots.has(cur)) return true;
+    // the app host root is <body>'s stand-in (specs/136/137): what sits in
+    // it is on screen, as teleported DOM under <body> is connected
+    if (pageRoots.has(cur) || cur === appOverlayRoot?.id) return true;
   }
   return false;
 });
@@ -1096,11 +1164,11 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     // symmetric with remove() (see the hoisting block above).
     let target = parent;
     if (hoistedFrom.has(child.id)) {
-      // Vue moved it: it now belongs to `parent`, and lives in the overlay
-      // host of whatever page that parent is on
+      // Vue moved it: it now belongs to `parent`, and lives in the host
+      // that parent's level says (its page's, or the app host — specs/136)
       hoistedFrom.set(child.id, parent.id);
-      const pageRoot = pageRootOf(parent.id);
-      if (pageRoot) target = ensureOverlayHost(pageRoot);
+      const host = hostForLevel(child);
+      if (host) target = host;
     }
     const siblings = childrenOf.get(target.id) ?? [];
     let index = siblings.length;

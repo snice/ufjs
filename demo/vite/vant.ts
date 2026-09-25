@@ -33,6 +33,7 @@ const FIELD = /\/vant\/es\/field\/Field\.mjs$/;
 const DOM_UTILS = /\/vant\/es\/utils\/dom\.mjs$/;
 const TABS = /\/vant\/es\/tabs\/Tabs\.mjs$/;
 const STEPPER = /\/vant\/es\/stepper\/Stepper\.mjs$/;
+const MOUNT_COMPONENT = /\/vant\/es\/utils\/mount-component\.mjs$/;
 
 export const PATCHES: Patch[] = [
   {
@@ -197,6 +198,45 @@ export const PATCHES: Patch[] = [
       '      const input = typeof event === "object" && event !== null ? event.target : { value: String(event) };\n' +
       '      const value = format(input.value, props.autoFixed);',
     feature: 'Stepper 失焦格式化',
+  },
+  {
+    // Imperative overlays (showToast / showDialog / showNotify /
+    // showImagePreview) mount a second Vue app. The 'vue' shim's createApp
+    // throws on purpose (specs/137 Q1): the real one comes from fjs/vue,
+    // together with the container that stands in for a <div> on <body>.
+    file: MOUNT_COMPONENT,
+    find: 'import { createApp, reactive } from "vue";',
+    replace:
+      'import { reactive } from "vue";\n' +
+      'import { createApp, createDetachedRoot, releaseDetachedRoot } from "fjs/vue";',
+    feature: 'showToast / showDialog / showNotify / showImagePreview',
+  },
+  {
+    // The container: dom-env's document.createElement answers a MeasureBox
+    // and body.appendChild is a no-op. A detached root belongs to no page;
+    // what the app renders reaches the app-level overlay host — Teleport to
+    // body lands there, a fixed Notify hoists there (specs/137).
+    file: MOUNT_COMPONENT,
+    find:
+      '  const root = document.createElement("div");\n' +
+      '  document.body.appendChild(root);\n' +
+      '  return {\n' +
+      '    instance: app.mount(root),\n' +
+      '    unmount() {\n' +
+      '      app.unmount();\n' +
+      '      document.body.removeChild(root);\n' +
+      '    }\n' +
+      '  };',
+    replace:
+      '  const root = createDetachedRoot();\n' +
+      '  return {\n' +
+      '    instance: app.mount(root),\n' +
+      '    unmount() {\n' +
+      '      app.unmount();\n' +
+      '      releaseDetachedRoot(root);\n' +
+      '    }\n' +
+      '  };',
+    feature: 'showToast / showDialog / showNotify / showImagePreview',
   },
 ];
 

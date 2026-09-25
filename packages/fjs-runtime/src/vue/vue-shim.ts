@@ -421,12 +421,14 @@ export function withKeys<T extends (event: unknown) => void>(fn: T): T {
 
 /** A second Vue root (`createApp().mount(el)`) needs a real container node
  * to mount into — vant's imperative overlays do `document.createElement`
- * before ever reaching this name. Nothing on the app side can supply that
- * (no DOM), so fail loudly instead of leaving a half-wired app behind. */
+ * before ever reaching this name. Kept failing loudly (specs/137 Q1): a
+ * library is enabled by its own adapter importing `createApp` and
+ * `createDetachedRoot` from 'fjs/vue' (demo/vite/vant.ts does it for vant),
+ * so every other library still says plainly that it is not wired up. */
 export function createApp(): never {
   throw new Error(
-    'vue createApp is not available in the fjs app runtime: ' +
-      'there is no DOM to mount a second app root into ' +
-      '(imperative component-library APIs such as showToast()/showDialog() are web-only).',
+    "vue createApp is not available in the fjs app runtime: there is no DOM to mount a second app root into. " +
+      "Adapt the library to mount with createApp + createDetachedRoot from 'fjs/vue' " +
+      '(demo/vite/vant.ts does this for vant showToast()/showDialog()).',
   );
 }

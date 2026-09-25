@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { h, ref, Teleport } from '@vue/runtime-core';
 import { vShow } from '../src/vue/vue-shim';
 import { setOpSink } from '../src/host';
-import { createApp, flutterRoot, registerStyles } from '../src/vue';
+import { createApp, createDetachedRoot, flutterRoot, registerStyles, releaseDetachedRoot } from '../src/vue';
 import { UiOp as Op } from '../src/ui/ops';
 
 (globalThis as { __fjsHost?: { uiOpsVersion: number } }).__fjsHost = {
@@ -419,6 +419,68 @@ describe('overlay host levels (specs/136)', () => {
     await step();
     const live = [...f.parentOf].filter(([id, p]) => p === root && !f.removed.has(id));
     expect(live).toEqual([]);
+  });
+
+  // specs/137: a component library's imperative overlay (vant showToast)
+  // mounts a SECOND app into a detached root — a <div> on <body> on web.
+  // What it renders must reach the app host, never the page on top: the
+  // page-host lookup falls back to the last page root when the parent chain
+  // has none, which would let that page cover and take down the overlay.
+  it('routes a detached second app into the app host', async () => {
+    f = freshFrames();
+    const { app: page } = mount(
+      () => h('view', { class: 'page' }, [h('text', null, '页面')]),
+      `.page { flex-grow: 1 }
+       .notify { position: fixed; left: 0; top: 0; right: 0 }
+       .toast { position: fixed; top: 50%; left: 0 }`,
+    );
+    await settle();
+    const container = createDetachedRoot();
+    const second = createApp({
+      render: () => [
+        h(Teleport, { to: 'body' }, [h('view', { class: 'toast' }, '命令式提示')]),
+        h('view', { class: 'notify' }, '命令式通知'),
+      ],
+    });
+    second.mount(container);
+    await settle();
+    await settle();
+
+    const appRoot = appRootId();
+    const toast = textIdOf('命令式提示');
+    const notify = textIdOf('命令式通知');
+    expect(f.parentOf.get(toast)).toBe(appRoot);
+    expect(f.parentOf.get(notify)).toBe(appRoot);
+    // no page host was created for either of them
+    expect([...f.tag.values()].includes('fjs-overlay-host')).toBe(false);
+    // the detached root itself never reaches the tree
+    expect(f.parentOf.has(container.id)).toBe(false);
+
+    second.unmount();
+    releaseDetachedRoot(container);
+    await settle();
+    expect(f.removed.has(toast)).toBe(true);
+    expect(f.removed.has(notify)).toBe(true);
+    expect(f.removed.has(container.id)).toBe(true);
+    page.unmount();
+  });
+
+  it('reports elements in the app host as connected', async () => {
+    f = freshFrames();
+    const container = createDetachedRoot();
+    let el: { isConnected: boolean } | null = null;
+    const second = createApp({
+      render: () =>
+        h(Teleport, { to: 'body' }, [
+          h('view', { ref: (r: unknown) => (el = r as { isConnected: boolean } | null) }, '连接'),
+        ]),
+    });
+    second.mount(container);
+    await settle();
+    expect(el).not.toBeNull();
+    expect(el!.isConnected).toBe(true);
+    second.unmount();
+    releaseDetachedRoot(container);
   });
 });
 
