@@ -156,13 +156,15 @@ const mutedColor = computed(() => (dark.value ? '#999999' : '#666666'));
 
 ## 可用能力（已验证）
 
-- `ref` / `computed` / `reactive`
-- `v-for`（含 :key diff 增量更新）
-- `v-if`（锚点实现为空文本节点，不渲染可见内容）
-- 事件：`@tap` / `@text-changed` / `@submit`（或 `:on-tap="fn"`）
-- 动态 style 对象（`:style="{ ... }"`）与 `class` / `:class`
-- `<style>` / `<style scoped>`（见上节）
-- 模板插值 `{{ }}`、TS 类型检查
+| 能力 | 说明 |
+|---|---|
+| `ref` / `computed` / `reactive` | 组合式 API 照常从 `vue` 导入 |
+| `v-for` | 含 `:key` diff 增量更新 |
+| `v-if` | 锚点实现为空文本节点，不渲染可见内容 |
+| 事件 | `@tap` / `@text-changed` / `@submit`（或 `:on-tap="fn"`） |
+| 动态 style / class | `:style="{ ... }"` 与 `class` / `:class` |
+| `<style>` / `<style scoped>` | 见上节，完整支持（v1.1 起） |
+| 模板插值 / TS | `{{ }}`、TS 类型检查 |
 
 ## 编辑器提示（VS Code + Vue - Official）
 
@@ -247,20 +249,33 @@ Vue 生态的移动端组件库是按真浏览器写的：伪元素发丝线、�
    自己 opt-in 一个最小侧影（demo 的 `dom-env.ts`，见「vant 的接入」）。
 
 vant 4 是这条路线的完整检验：demo 的 `vant: basic` / `vant: form` /
-`vant: feedback` / `vant: more` / `vant: nav` 五个页面两端（web 浏览器 ↔
-iOS/Android）对拍，specs/068–073。20+ 组件达到结构、位置、交互一致；剩余
+`vant: feedback` / `vant: more` / `vant: nav` / `vant: float` 六个页面两端
+（web 浏览器 ↔ iOS/Android）对拍，specs/068–073 起共 29 个 spec。46 个
+组件达到结构、位置、交互一致；完整落账（补了哪些 Vue API / DOM API /
+CSS、性能演进）见 [vant-adaptation.md](vant-adaptation.md)，换一个库的
+打法规范见 [third-party-components.md](third-party-components.md)；剩余
 差异登记在下方「已知差异」。
 
 ### 元素上的 DOM 形状 API
 
-`el.style`（内联层写入，与 `:style` 绑定共用同一份记录）、
-`el.getBoundingClientRect()` / `offset*`（App 上 navMount 当次不强制重排，
-未布局全零；页面挂上之后同一 tick 改树再读会重排，见
-[ui-api.md](ui-api.md#元素上的-dom-形状-api)）、
-`el.addEventListener/removeEventListener`
-（事件名同 `on<Name>` prop，`passive/capture` 选项忽略）、`el.contains(other)`
-（vant Checker 判断是否点在图标上）、`input` / `textarea` 元素的 DOM 式
-`value`。完整定义见 [ui-api.md](ui-api.md#元素上的-dom-形状-api)。
+任何元素（经 `ref` 拿到的、或作为事件 `target` 的）都带一小组 DOM 形状的
+成员，按 DOM 写法的组件库（vant）不需要 fjs 适配就能操作：
+
+| 成员 | 说明 |
+|---|---|
+| `el.style` | 内联层写入，与 `:style` 绑定共用同一份记录 |
+| `el.getBoundingClientRect()` / `offset*` | App 上 navMount 当次不强制重排，未布局全零；页面挂上之后同一 tick 改树再读会重排 |
+| `el.addEventListener` / `removeEventListener` | 事件名同 `on<Name>` prop，`passive` / `capture` 选项忽略 |
+| `el.contains(other)` | 后代判断（vant Checker 判断是否点在图标上） |
+| `el.isConnected` / `parentNode` / `nodeType` / `tagName` | 影子树的逻辑父链；`tagName` 是 fjs 标签大写（specs/129） |
+| `el.setAttribute` / `removeAttribute` | 与模板里写同名属性等价（popperjs 写 `data-*` 靠它，specs/129） |
+| `el.scrollTop` / `scrollLeft` / `clientTop` / `clientLeft` | 读最近一次 scroll 事件报告的偏移；可写不真滚（specs/129） |
+| `input` / `textarea` 的 `value` | DOM 式读写，库按 `event.target.value` 实现的 v-model 两端可用（specs/070） |
+| `input` / `textarea` 的 `focus()` / `blur()` | DOM 式控件焦点，经 `fjs.control.*` 宿主模块路由（specs/077） |
+| click 事件的 `clientX` / `clientY` | 按需读取（specs/073） |
+
+完整定义与边界（伪元素盒上的 target 映射、`::before` 语义等）见
+[ui-api.md](ui-api.md#元素上的-dom-形状-api)。
 
 ### vue-shim：补上 runtime-dom 才有的名字
 
@@ -270,23 +285,14 @@ App 构建里 `vue` 被 alias 到 `@vue/runtime-core` + fjs 的 shim
 ——这些名字只存在于 runtime-dom（真浏览器运行时），缺一个整个构建就失败。
 shim 逐个补上，语义按 fjs 的现实重述：
 
-- **`<Transition>`**：fjs 版（BaseTransition + 样式引擎翻类）。enter/leave 的
-  `-from/-active/-to` 类照常落地：animation 型规则（vant 的
-  `van-fade-enter-active { animation: … }`）由 keyframes 引擎原生播放，
-  transition 型类切换由 App 端按 transition 的支持范围补间。结束时机取计算
-  样式里 animation 与 transition 的「时长 + 延迟」较长者——本端没有
-  transitionend / animationend 可听。`v-show` 在 `<Transition>` 内走钩子，
-  离场动画放完才 `display: none`
-- **`vShow`**：只碰内联 `display` 一项（隐藏写 `none`、显示恢复原值），元素
-  其余规则不动——以前整张替换计算样式，vant 步进器第一次改值就把输入框和
-  加号的样式丢光（specs/069）
-- **`withKeys`**：直通。fjs 事件不带键码，守卫没有东西可测——处理器在每个
-  事件上照跑，而不是永不触发
-- **`<TransitionGroup>`**：纯透传（vant 弹层不用）
-- **`createApp`**：指名抛错。挂第二个 Vue 根需要真实 DOM 容器，App 端没有；
-  vant 的命令式 API（`showToast()` 等内部 `document.createElement` +
-  `createApp`）因此 App 端不可用，页面改用组件式
-  （`<van-dialog v-model:show>`）
+| 导出 | 语义 |
+|---|---|
+| `<Transition>` | fjs 版（BaseTransition + 样式引擎翻类）。enter/leave 的 `-from/-active/-to` 类照常落地：animation 型规则（vant 的 `van-fade-enter-active { animation: … }`）由 keyframes 引擎原生播放，transition 型类切换由 App 端按 transition 的支持范围补间。结束时机取计算样式里 animation 与 transition 的「时长 + 延迟」较长者——本端没有 transitionend / animationend 可听。`v-show` 在 `<Transition>` 内走钩子，离场动画放完才 `display: none` |
+| `vShow` | 只碰内联 `display` 一项（隐藏写 `none`、显示恢复原值），元素其余规则不动——以前整张替换计算样式，vant 步进器第一次改值就把输入框和加号的样式丢光（specs/069） |
+| `withKeys` | 直通。fjs 事件不带键码，守卫没有东西可测——处理器在每个事件上照跑，而不是永不触发 |
+| `<TransitionGroup>` | 纯透传（vant 弹层不用） |
+| `createApp` | 指名抛错。挂第二个 Vue 根需要真实 DOM 容器，App 端没有；vant 的命令式 API（`showToast()` 等内部 `document.createElement` + `createApp`）因此 App 端不可用，页面改用组件式（`<van-dialog v-model:show>`） |
+| `measureTextBlock` | 经 `__FJS_SHARED` 暴露给库的侧影：库的测高逻辑用宿主排版（vant TextEllipsis 的二分截断靠它，specs/128） |
 
 静态提升同样挂在 DOM 语义上：`createStaticVNode` 的挂载走
 `insertStaticContent`（innerHTML 语义），本 renderer 没有这个函数。App 构建
@@ -318,9 +324,10 @@ vnode 会得到指名报错。
    0，观察者逐帧等布局出来再报一次可见——Tabs 下划线重测靠它）；吸收
    lock-scroll 类写入的 documentElement/body。web 构建里 `window` 本来就
    存在，这些全都不运行
-3. **`src/vant-components.d.ts`**：手写 `GlobalComponents` 声明（vant 不
-   自带），与注册列表保持同步——插件管运行时，这个文件管 vue-tsc
-   strictTemplates
+3. **类型**：demo 早期手写过 `src/vant-components.d.ts`（`GlobalComponents`
+   增强），vant 4.10 起自带这份声明，文件已删——自带 `GlobalComponents`
+   的库什么都不用做，不带的才手写并和注册列表保持同步（插件管运行时，
+   这个文件管 vue-tsc strictTemplates）
 4. **`vite/vant.ts`**：带 `fjs.app` 钩子的本地 vite 插件，对 vant 源码做
    **字面量锚点替换**，补丁分三类：
    - `window` / `document` 守卫：`isWindow`（Rate 点击 / Slider 点按时
@@ -366,25 +373,14 @@ vnode 会得到指名报错。
 
 ## 不可用 / 注意
 
-- `v-model`：其指令助手面向 DOM（el.addEventListener），不可用。替代：
-  `:value="draft" @text-changed="t => draft = t"`
-- pinia：可用，已在 QuickJS 上验证。用 `fjs add pinia` 装，它会把实例写在
-  `src/plugins/pinia.ts` 的模块作用域里 —— Flutter 上每个页面是独立的 Vue app，
-  实例建在函数里会让每页各拿一套 store。见
-  [toolchain.md 的「添加三方库」](toolchain.md#添加三方库)
-- vue-router：不可用，路由走 `fjs/router`（web 构建内部才用 vue-router）
-- `vue` 包被 alias 到 `@vue/runtime-core`，避免拉入 DOM 运行时
-- 元素上有一小组 DOM 形状的 API，供组件库直接调用（vant 依赖它们）：
-  `el.style`、`el.getBoundingClientRect()`、`offset*` 几何、
-  `el.addEventListener/removeEventListener`、`contains()`；`vue` 侧还有
-  vue-shim 补的 `<Transition>` / `vShow` 等导出。完整清单与已知差异见上文
-  [「第三方组件库兼容（vant）」](#第三方组件库兼容vant)。click 事件带
-  `clientX/clientY`（按需读取）。`@x.passive/.capture/.once` 修饰符按 Vue
-  的规则处理，`.once` 生效
-- App 端**没有** `window` / `document` 全局，runtime 也不模拟：组件库里不带浏览器
-  判断直接用它们的地方，由该库的 vite 插件打补丁处理（vant 的在
-  `demo/vite/vant.ts`，分哪几类补丁见上文），机制见
-  [toolchain.md](toolchain.md#ui-组件库适配vite-插件的-fjsapp-钩子)
+| 项 | 状态 | 说明 |
+|---|---|---|
+| `v-model` | ❌ 不可用 | 指令助手面向 DOM（el.addEventListener）。替代：`:value="draft" @text-changed="t => draft = t"` |
+| vue-router | ❌ 不可用 | 路由走 `fjs/router`（web 构建内部才用 vue-router） |
+| pinia | ✅ 可用 | 已在 QuickJS 上验证。用 `fjs add pinia` 装，它会把实例写在 `src/plugins/pinia.ts` 的模块作用域里——Flutter 上每个页面是独立的 Vue app，实例建在函数里会让每页各拿一套 store。见 [toolchain.md 的「添加三方库」](toolchain.md#添加三方库) |
+| `vue` 包 | ⚠️ 被别名 | alias 到 `@vue/runtime-core`，避免拉入 DOM 运行时；runtime-dom 才有的名字由 vue-shim 补（见上节） |
+| 元素上的 DOM 形状 API | ✅ 可用 | 一小组 DOM 形状的成员，供组件库直接调用（vant 依赖它们），清单见上文表格；`@x.passive/.capture/.once` 修饰符按 Vue 的规则处理，`.once` 生效 |
+| `window` / `document` | ❌ 无全局 | App 端没有，runtime 也不模拟：组件库里不带浏览器判断直接用它们的地方，由该库的 vite 插件打补丁处理（vant 的在 `demo/vite/vant.ts`，分哪几类补丁见上文），机制见 [toolchain.md](toolchain.md#ui-组件库适配vite-插件的-fjsapp-钩子) |
 
 ## 性能：长列表要放进自己的组件
 

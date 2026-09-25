@@ -60,6 +60,7 @@ QuickJS 上实现的是一套**框架无关的命令式 element API**，前端�
 | 8.5 | [overlay 宿主](overlay-host.md) | `position: fixed` 在 App 端去了哪里：谁会进宿主、随页面转场、模态遮罩拦截返回 |
 | 9 | [Vue 3 集成](vue3.md) | SFC、scoped style、CSS 变量、编辑器提示、第三方组件库兼容（DOM 模拟，vant 落法） |
 | 9.5 | [小程序编译](miniprogram.md) | `fjs build --mp`：Skyline + glass-easel，模板编译为 WXML，不引入 Vue 运行时 |
+| 9.6 | [三方组件库适配规范](third-party-components.md) | 接第三方 Vue 组件库的分层打法：runtime 通用面清单、项目本地补丁、最小全局侧影、缺口分级 |
 
 ---
 
@@ -87,6 +88,7 @@ QuickJS 上实现的是一套**框架无关的命令式 element API**，前端�
 | 15 | [发布 npm 与 pub.dev](publishing.md) | 三个包版本咬合、预编译产物 |
 | 16 | [性能测试](performance.md) | 基准方法、实测数据、热点 |
 | 16.5 | [引擎性能对比](engine-perf.md) | PrimJS 4.1.1 vs quickjs-ng 0.9.0：各快在哪、内存与体积、差距的机制 |
+| 16.7 | [vant 适配记录](vant-adaptation.md) | vant 4 两端跑通的完整账：补了哪些 Vue API / DOM API / CSS、14 条补丁、性能演进、已知差异 |
 | 17 | [Roadmap](roadmap.md) | 已交付 / 近期 / 中期 / 远期 |
 
 ---
@@ -107,6 +109,7 @@ QuickJS 上实现的是一套**框架无关的命令式 element API**，前端�
 | 在 demo/example 里用仓库内的包 | [monorepo.md 第 3 节](monorepo.md#3-在-workspace-里装一个本地包) |
 | 卡帧 / 列表慢 | [threading-model.md](threading-model.md) + [performance.md](performance.md) |
 | 改调试器 / 加一个 DevTools 面板能力 | [debugger.md](debugger.md)（用法在 [toolchain.md](toolchain.md#断点调试fjs-debug)） |
+| 接第三方组件库（vant…） | [third-party-components.md](third-party-components.md) + [vant-adaptation.md](vant-adaptation.md) |
 | 页面打开慢（vant / 第三方组件库） | [vant-mount-perf.md](vant-mount-perf.md) |
 | 拆 `[nav] mounted` 临时打点 | [navmount-probe.md](navmount-probe.md) |
 
