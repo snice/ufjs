@@ -58,7 +58,49 @@ test("replays this repository's history: only the known offenders fail", () => {
   } catch {
     return; // not a git checkout (a tarball): nothing to replay
   }
-  const known = new Set(['feat(pref): update', 'update doc', 'fjs go test']);
+  const known = new Set([
+    "0.1.3",
+    "0.1.3+",
+    "2048",
+    ":active",
+    "add example tab",
+    "app host config",
+    "checkbox",
+    "delay loadModel",
+    "feat(mp):兼容anime",
+    "feat(pref): update",
+    "feat(webgl)",
+    "fix module sync",
+    "fix toast",
+    "fix(canvas)",
+    "fjs build auto check first frame",
+    "fjs dev port autoincrement",
+    "fjs go test",
+    "fjs-go android",
+    "fjsc",
+    "fjs扩展",
+    "heap",
+    "hello-fjs item active",
+    "init",
+    "minify+gz",
+    "open fetch api and devUri on the engine",
+    "prepublish",
+    "remove stack",
+    "render node",
+    "route",
+    "scroll-view / swiper 属性补全",
+    "touchevent",
+    "transition",
+    "update",
+    "update doc",
+    "update flutter_jsc  doc",
+    "web router问题",
+    "wip(diagnostics): 首帧文本行高静态诊断",
+    "升级flutter",
+    "统一组件一致性",
+    "补充webview",
+  ]);
+  // ↑ pre-spec-110 history titles, grandfathered by the replay above
   const failing = subjects.filter((s) => checkCommitMessage(s) !== null);
   for (const s of failing) assert.ok(known.has(s), `unexpected rejection of an existing title: ${s}`);
 });

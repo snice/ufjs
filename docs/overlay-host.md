@@ -1,6 +1,6 @@
 # overlay 宿主：`position: fixed` 在 App 端去了哪里
 
-> 专题文档（specs/069 → 070 → 129 → 133）。改 `position: fixed` 的 hoist、
+> 专题文档（specs/069 → 070 → 129 → 133 → 136）。改 `position: fixed` 的 hoist、
 > `fjs-overlay-host` 的 Dart 适配、页面返回语义之前先读这一篇。
 
 ## 1. 它是什么
@@ -27,7 +27,8 @@ Navigator 的 Overlay，**紧贴本页的路由 entry 之上**：
   `LayerLink` 跟随页面实际被画出的位置——返回时和页面一起滑走 / 缩放，不会停在上一页上面。
   非 Cupertino 式的转场（fade、zoom、Android 默认）另按路由动画淡入淡出。
 
-`<Teleport to="body">`（vant Popover、`teleport="body"` 的 Popup）落在同一个宿主里。
+`<Teleport to="body">`（vant Popover、`teleport="body"` 的 Popup）**不**进页面宿主，
+进 app 级宿主（specs/136，见第 4 节）：web 上 teleport 到 body 的 DOM 本来就在页面之外。
 
 `fjs` 的 `toast()` **不走**这个宿主：它不是 fixed 元素，App 端由 `FjsApp` 上唯一的
 toast 宿主显示，跨页面（specs/134，见 [ui-api.md](ui-api.md)）。vant 的 `showToast()`
@@ -51,6 +52,7 @@ Web 端没有这层：原生 CSS 的 `fixed` 本来就在页面 DOM 里，跟着
 宿主里只要有一个这样的元素，就算模态：
 
 - `position: fixed`，`display` 不是 `none`，`visibility` 不是 `hidden`；
+- `pointer-events` 不是 `none`：触摸点穿的全屏层（vant 全页 Watermark）不挡页面，也不拦返回；
 - `left` 和 `top` 为 0；
 - 横向铺满：`right: 0` 或 `width: 100%` / `100vw`；纵向同理（`bottom: 0` 或 `height: 100%` / `100vh`）。
 
@@ -75,7 +77,34 @@ debug 构建里被拦下会打印 `fjs: back held — a modal mask is open in th
 - `showToast({ forbidClick: true })` 会铺一层透明全屏遮罩，Toast 显示期间返回被拦。
   这与"遮罩挡住页面交互"的语义一致。
 
-## 4. 页面代码怎么写
+## 4. 宿主级别：页面级 / app 级（specs/136）
+
+fixed 元素默认进本页的**页面级**宿主（上面几节说的都是它）。加元素属性 `overlay="app"`
+改进 **app 级**宿主：
+
+```html
+<van-watermark overlay="app" content="内测环境" />
+```
+
+| | 页面级（默认） | app 级（`overlay="app"`） |
+|---|---|---|
+| Dart 挂载 | `OverlayPortal`，贴本页路由 entry | `FjsAppOverlayHost`，FjsApp 里 Navigator 之上、toast 宿主之下 |
+| push 新页面 | 被盖住 | **不被盖**，画在所有页面之上 |
+| 发起页面离场 | 随页面销毁 | 同样随页面（Vue 卸载）移除——所有权不变，宿主只是"画的地方" |
+| 系统返回 | 有模态遮罩才拦 | **只要有可见元素就拦**（见下） |
+
+- app 宿主根是保留标签 `fjs-app-overlay-host` 的无父根（`__appOverlay` 标记），JS 侧
+  惰性创建、每个 VM 一个；op 协议无改动，`overlay` 属性不过桥。
+- `overlay` 值变化时元素在两个宿主间**迁移**，两边页面宿主的 `modal` 随之重新推导。
+- **返回拦截**：app 宿主里只要有 `display` 不是 `none` 的子元素，iOS 侧滑、Android
+  物理返回（包括根页面上的"退出 App"）都被拦下，debug 打印
+  `fjs: back held — an overlay="app" element is up`。`router.back()` 照常返回。
+  隐藏的不算：关掉的 Popover 靠 `v-show` 留在宿主里，不能让它一直拦返回。
+- **放在哪一层**：要跨页常驻的浮层（全局水印）放在根页面 / Shell 上再加 `overlay="app"`
+  ——根页面不会被返回弹出，也就不存在拦返回的问题。子页面里开 app 级元素，等于
+  "这一页在栈里时画在最上面、并且锁住系统返回"。
+
+## 5. 页面代码怎么写
 
 - **想要"盖住页面、钉在屏幕上"才用 `position: fixed`**。只是想让元素叠在某个容器里，
   用 `absolute`：它留在页面里，没有宿主这一层。
@@ -87,7 +116,7 @@ debug 构建里被拦下会打印 `fjs: back held — a modal mask is open in th
 - 不经 safe-area 包裹：`top: 0` 会顶进状态栏区域。
 - `position` 不再是 `fixed` 时元素回到原父节点的原位置（specs/129）。
 
-## 5. 已知差异
+## 6. 已知差异
 
 | | App | Web |
 |---|---|---|
@@ -95,14 +124,19 @@ debug 构建里被拦下会打印 `fjs: back held — a modal mask is open in th
 | 转场 | 跟随页面的平移 / 缩放；透明度只按路由动画整体淡出，不逐像素复刻 builder 的效果 | 原生随页面 |
 | 自建路由 | 宿主 App 自己用路由包 `FjsView` 时，要自己包 `FjsRouteAnchor`，否则宿主内容不随转场（退回旧行为） | — |
 | 覆盖范围 | Navigator 区域；宿主 App 在 FjsApp 之外的 chrome 不被覆盖 | 视口 |
+| `overlay="app"` | 进 app 级宿主：push 不盖、有可见元素时拦系统返回 | **无效果**：原生 fixed 跟页面 DOM 走，KeepAlive 把页面 detach 后元素也不见；浏览器后退不拦（specs/136，宪法 I 登记） |
+| `<Teleport to="body">` | app 级宿主（同样拦返回） | 真 body，不拦后退 |
 
-## 6. 相关文件
+## 7. 相关文件
 
 | 文件 | 作用 |
 |------|------|
-| `packages/fjs-runtime/src/vue/renderer.ts` | hoist / unhoist、`querySelector('body')`、`isModalMask`、宿主 `modal` 属性 |
+| `packages/fjs-runtime/src/vue/renderer.ts` | hoist / unhoist、`querySelector('body')`、`isModalMask`、宿主 `modal` 属性、`overlay` 分流与迁移 |
+| `packages/flutter_fjs/lib/src/widgets/app_overlay_host.dart` | app 级宿主渲染、`FjsAppOverlayBackGuard` 返回拦截 |
 | `packages/flutter_fjs/lib/src/node/overlay_host_adapter.dart` | `OverlayPortal`、`PopScope`、`_FollowRoute`（跟随锚点）、`z-index` 排序 |
 | `packages/flutter_fjs/lib/src/widgets/route_anchor.dart` | `FjsRouteAnchor`：页面锚点（`LayerLink`） |
-| `packages/flutter_fjs/lib/src/fjs_app.dart` | 每页包锚点；系统返回键 → `maybePop` |
+| `packages/flutter_fjs/lib/src/fjs_app.dart` | 每页包锚点与 app 级返回守卫；系统返回键 → `maybePop` |
+| `packages/fjs-runtime/test/vue_overlay_level.test.ts` | 级别分流、迁移、Teleport、卸载清理 |
+| `packages/flutter_fjs/test/app_overlay_host_test.dart` | app 宿主不被盖、只画一次、返回拦截 |
 | `packages/fjs-runtime/test/vue_overlay_pseudo.test.ts` | hoist 与模态判定测试 |
 | `packages/flutter_fjs/test/overlay_host_test.dart` | 锚定、转场跟随、返回拦截测试 |

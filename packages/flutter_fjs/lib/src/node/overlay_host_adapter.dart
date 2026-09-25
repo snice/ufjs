@@ -207,3 +207,44 @@ class OverlayHostNodeAdapter extends FjsNodeAdapter {
     return content;
   }
 }
+
+/// Mounts the `fjs-app-overlay-host` reserved root (specs/136).
+///
+/// Unlike the page host this subtree is rendered by `FjsAppOverlayHost`
+/// ABOVE the Navigator — no OverlayPortal (theatre entries from a page
+/// subtree would be covered by a pushed page, the exact problem this
+/// exists to solve), no PopScope (an app-level float does not hold the
+/// route back — registered behaviour), no `FjsRouteAnchor` (it follows no
+/// route). Children are the `overlay="app"` fixed elements: full-screen
+/// container, z-index ordered like the page host.
+class AppOverlayHostNodeAdapter extends FjsNodeAdapter {
+  const AppOverlayHostNodeAdapter();
+
+  @override
+  String get tag => 'fjs-app-overlay-host';
+
+  @override
+  Widget build(FjsNodeAdapterContext context) {
+    return FjsOverflowHitScope(
+      child: FjsBlankTapBlur(
+        opaque: false,
+        child: SizedBox.expand(
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              for (final n in _paintOrder(context.childNodes))
+                positionedChild(n, context.buildNode(context.flutterContext, n)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget decorate(FjsNodeAdapterContext context, Widget content) {
+    // no box decoration of its own: the host is invisible, its children
+    // carry their own backgrounds and borders
+    return content;
+  }
+}

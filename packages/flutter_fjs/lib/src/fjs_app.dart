@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'engine.dart';
 import 'fjs_view.dart';
 import 'transitions.dart';
+import 'widgets/app_overlay_host.dart';
 import 'widgets/perf_overlay.dart';
 import 'widgets/route_anchor.dart';
 import 'widgets/toast_host.dart';
@@ -139,25 +140,39 @@ class _FjsAppState extends State<FjsApp> {
         // global, so it outlives the page that raised it (specs/134)
         child: FjsToastHost(
           engine: widget.engine,
-          child: NavigatorPopHandler(
-            // this Navigator is usually nested (under a host's Scaffold), and
-            // a nested one does not see the system back button on its own
-            enabled: _stack.isNotEmpty,
-            // maybePop, not pop: pop() ignores PopScope, which is how the
-            // Android back button used to leave a page under an open modal
-            // popup that the iOS gesture could not (specs/133)
-            onPopWithResult: (_) => _navigator.currentState?.maybePop(),
-            child: Navigator(
-              key: _navigator,
-              observers: widget.observers,
-              pages: _pages,
-              onDidRemovePage: (page) {
-                final key = page.key;
-                if (key is! ValueKey<String>) return;
-                final id = int.tryParse(key.value.substring(_keyPrefix.length));
-                // the base page is the host's, not the router's
-                if (id != null && id != 0) widget.engine.onRouteRemoved(id);
-              },
+          // the app-level overlay host sits between the Navigator and the
+          // toast host (specs/136): above every page, below the toasts
+          child: FjsAppOverlayHost(
+            engine: widget.engine,
+            // on the host's route: with only the base page left, back
+            // would otherwise leave the app under an app-level float
+            child: FjsAppOverlayBackGuard(
+              engine: widget.engine,
+              logHeld: true,
+              child: NavigatorPopHandler(
+                // this Navigator is usually nested (under a host's Scaffold),
+                // and a nested one does not see the system back button on its
+                // own
+                enabled: _stack.isNotEmpty,
+                // maybePop, not pop: pop() ignores PopScope, which is how the
+                // Android back button used to leave a page under an open modal
+                // popup that the iOS gesture could not (specs/133)
+                onPopWithResult: (_) => _navigator.currentState?.maybePop(),
+                child: Navigator(
+                  key: _navigator,
+                  observers: widget.observers,
+                  pages: _pages,
+                  onDidRemovePage: (page) {
+                    final key = page.key;
+                    if (key is! ValueKey<String>) return;
+                    final id = int.tryParse(
+                      key.value.substring(_keyPrefix.length),
+                    );
+                    // the base page is the host's, not the router's
+                    if (id != null && id != 0) widget.engine.onRouteRemoved(id);
+                  },
+                ),
+              ),
             ),
           ),
         ),
@@ -196,14 +211,19 @@ class _FjsAppState extends State<FjsApp> {
     // area strips, and the whole page while its chunk loads)
     //
     // the anchor is what the page's overlay host follows through the route
-    // transition (specs/133, widgets/route_anchor.dart)
-    final child = FjsRouteAnchor(
-      child: Material(
-        color: Theme.of(context).scaffoldBackgroundColor,
-        child: FjsView(
-          engine: widget.engine,
-          navKey: navKey,
-          placeholder: widget.placeholder,
+    // transition (specs/133, widgets/route_anchor.dart); the guard holds
+    // this route's back (Android maybePop, iOS swipe) under an app-level
+    // float (specs/136)
+    final child = FjsAppOverlayBackGuard(
+      engine: widget.engine,
+      child: FjsRouteAnchor(
+        child: Material(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          child: FjsView(
+            engine: widget.engine,
+            navKey: navKey,
+            placeholder: widget.placeholder,
+          ),
         ),
       ),
     );

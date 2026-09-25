@@ -6,15 +6,15 @@
 > 与打点附录在 [vant-mount-perf.md](vant-mount-perf.md)。本篇是**记录**，
 > 每一条都带 spec 编号可回查。
 
-## 总账（截至 2026-09-25，spec 134）
+## 总账（截至 2026-09-25，spec 135）
 
 | 维度 | 数字 |
 |---|---|
-| 直接由 vant 驱动的 spec | **29 个**（068–073、075–077、084、086、100、103、118–126、128–134；另有 078/104/106/127 等相邻 spec） |
+| 直接由 vant 驱动的 spec | **30 个**（068–073、075–077、084、086、100、103、118–126、128–135；另有 078/104/106/127 等相邻 spec） |
 | 相关非 merge 提交 | 41 个，变更 479 个文件、约 3.2 万行（含 runtime / Dart / CLI / 测试 / 文档） |
-| demo 项目本地适配代码 | **858 行**（4 个文件，见下「接入面」） |
-| 全局注册的 vant 组件 | 46 个 + toast 样式（命令式 Toast/Dialog App 端不可用，见已知差异） |
-| 对拍页面 | 6 个：`vant-basic` / `vant-form` / `vant-feedback` / `vant-more` / `vant-nav` / `vant-float` |
+| demo 项目本地适配代码 | **1112 行**（5 个文件，见下「接入面」；另 bench/wm-smoke.ts 34 行离线冒烟入口） |
+| 全局注册的 vant 组件 | 46 个 + 1 个本地复刻（`van-watermark`，spec 135）+ toast 样式（命令式 Toast/Dialog App 端不可用，见已知差异） |
+| 对拍页面 | 7 个：`vant-basic` / `vant-form` / `vant-feedback` / `vant-more` / `vant-nav` / `vant-float` / `vant-watermark` |
 | 注册进 CSS 引擎的样式 | vant 源 CSS 1056 个选择器 → 639 条规则、约 80 KB；`--van-*` 主题 token 494 个键 |
 | vue-shim 补齐导出 | 5 个：`Transition` / `vShow` / `withKeys` / `createApp`（068）+ `measureTextBlock`（128） |
 | 元素上补齐的 DOM 形状 API | 约 20 个成员（明细见下表） |
@@ -35,8 +35,9 @@
 
 | 文件 | 行数 | 职责 |
 |---|---:|---|
-| `demo/src/plugins/vant.ts` | 158 | 46 个组件 `app.use` 全局注册 + 按需样式 import（一份清单喂两端）。**无平台后缀**；第一个 import 是 dom-env |
+| `demo/src/plugins/vant.ts` | 164 | 46 个组件 `app.use` 全局注册 + 按需样式 import（一份清单喂两端）。**无平台后缀**；第一个 import 是 dom-env |
 | `demo/src/plugins/vant/dom-env.ts` | 459 | 为 vant 一个库 opt-in 的最小 `window` / `document` 侧影：rAF、读 fjs 样式引擎的 `getComputedStyle`（transform 转 `matrix(...)`、line-height 折 px、scroll-view 两轴答 scroll）、document pointer-down 流（NumberKeyboard 点外关闭）、首见型 `IntersectionObserver`、`Element` / `HTMLElement` 的 `instanceof` 垫、测量盒（`document.createElement`）、resize 监听、rootElement（吸收 lock-scroll 类写入）。**只在 App 构建运行** |
+| `demo/src/plugins/vant/VanWatermark.vue` | 248 | **本地复刻的 Watermark**（spec 135）：vant 的 SVG→Blob→位图背景平铺管线 App 端三处不可用（无 innerHTML 读、无 Blob/URL、CSS 无位图背景），改用 absolute 格子 + `transform: rotate` 重建，props / `#content` 插槽与 vant 对齐，两端同一份实现。格数按根节点 rect 实测（rAF 采样到 rect 连续两帧不变才收敛，转场中途的“非零但偏小”rect 不能采信；上限 64×64 并告警一次） |
 | `demo/vite/vant.ts` | 228 | 带 `fjs.app` 钩子的本地 vite 插件，14 条字面量锚点补丁（见下表）；锚点失效告警一次并写明哪个功能失效 |
 | `demo/src/plugins/vant-touch.web.ts` | 13 | 只 web：引 `@vant/touch-emulator`，桌面浏览器鼠标转 touch（specs/123） |
 | `demo/vite.config.ts` | +1 行 | `plugins: [fjs(), vant(), vue()]` |
@@ -138,6 +139,25 @@ toast 宿主提升为每 app 一个（`FjsApp` 挂载），页面乱序销毁不
 - **specs/132**：`<van-button>{{ text }}` 文本不即时更新——mirror tree
   对 button 标签快路径补 `_markButtonLabel` 上溯标脏
 
+## 唯一的本地复刻：Watermark（spec 135）
+
+vant 的 Watermark 把旋转内容渲染成 SVG → 读 `innerHTML` 序列化 → `Blob` +
+`URL.createObjectURL` → 根节点 `background-image: url(blob)` 平铺。App 端
+三处都不存在：fjs 元素读不到 `innerHTML`、QuickJS 没有 Blob/URL、CSS 引擎
+不支持位图背景（只支持渐变）。机制层判 D（不硬模拟），但视觉效果用已有面
+完整复刻：`demo/src/plugins/vant/VanWatermark.vue` 以 `van-watermark` 名注册
+（vant 自带的不注册），props / `#content` 插槽对齐，两端同一份 DOM 平铺。
+
+- 几何对齐 vant：内容贴格左上（foreignObject `x=0,y=0`）、绕内容盒中心旋转
+  （两端 transform origin 默认同为盒中心）、格盒 `overflow: hidden` 出裁
+  （vant 是 SVG 视口裁剪）；点穿靠 vant 水印 CSS 的 `pointer-events: none`
+- 格数测量：挂载后 rAF 采样，**rect 连续两帧不变才收敛**——页面转场滑入
+  途中量到的 rect 非零但偏小，首帧采信会让旋转示例只剩一格（specs/135
+  实测踩坑）；硬上限 30 帧、格数封顶 64×64（超出告警一次）
+- 图片模式直接 `<image :src>`，不做 vant 的 canvas→base64 转码（那是为绕
+  canvas 跨域污染，这里不存在）；tile 尺寸需按图片原始比例给（如
+  vant-watermark.png 606×194 → 125×40），否则拉伸
+
 ## 首开性能（specs/075/076/084/086/118/119/120/121）
 
 慢的原因链与打点方法见 [vant-mount-perf.md](vant-mount-perf.md)：CSS
@@ -179,6 +199,10 @@ iPhone（分包 + 字节码）五页 59–81 ms（specs/120 复核口径）。
 
 ## 已知差异（登记在案的）
 
+- **Watermark 是本地复刻而非 vant 原件**（specs/135）：机制是 DOM 格子平铺
+  而非 CSS 位图平铺，视觉等效、不是同一份光栅；水印文字默认字号 pin
+  14px/20px（vant 的 span 继承文档字号，两端 text 默认字号不一致）；
+  超大容器格数封顶 64×64。API（props / `#content` 插槽）与 vant 对齐
 - **命令式 Toast / Dialog（`showToast()` / `showDialog()`）App 端不可用**：
   内部 `document.createElement` + `createApp`；组件式（`<van-popup>` /
   `<van-dialog v-model:show>`）两端一致

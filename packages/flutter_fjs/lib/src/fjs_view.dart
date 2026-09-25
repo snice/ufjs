@@ -41,6 +41,11 @@ class FjsView extends StatefulWidget {
   }
 
   /// A page the router parked: mounted, but not the one on screen.
+  /// The app-level overlay host root (specs/136): rendered above the
+  /// Navigator by FjsApp, never as page content.
+  static bool rootIsAppOverlay(MirrorNode node) =>
+      node.props['__appOverlay'] == true;
+
   static bool rootParked(MirrorNode node) {
     final value = node.props['__navHidden'];
     return value == true || value == 'true';
@@ -111,6 +116,10 @@ class _FjsViewState extends State<FjsView> with WidgetsBindingObserver {
           final node = tree.node(id);
           if (node == null || FjsView.rootNavKey(node) != widget.navKey)
             continue;
+          // the app overlay root (specs/136) is painted by FjsApp above the
+          // Navigator, never inside a page — the base page would double-
+          // paint it (its navKey is the fallback 0)
+          if (FjsView.rootIsAppOverlay(node)) continue;
           (FjsView.rootParked(node) ? parked : ids).add(id);
         }
         _rootKeys.removeWhere(
