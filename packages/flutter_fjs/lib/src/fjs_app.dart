@@ -8,6 +8,7 @@ import 'fjs_view.dart';
 import 'transitions.dart';
 import 'widgets/perf_overlay.dart';
 import 'widgets/route_anchor.dart';
+import 'widgets/toast_host.dart';
 
 /// A [Navigator] driven by the JS router: one native route per JS route.
 ///
@@ -134,25 +135,30 @@ class _FjsAppState extends State<FjsApp> {
       value: _systemBarsStyle(MediaQuery.platformBrightnessOf(context)),
       child: FjsPerfOverlay(
         engine: widget.engine,
-        child: NavigatorPopHandler(
-          // this Navigator is usually nested (under a host's Scaffold), and
-          // a nested one does not see the system back button on its own
-          enabled: _stack.isNotEmpty,
-          // maybePop, not pop: pop() ignores PopScope, which is how the
-          // Android back button used to leave a page under an open modal
-          // popup that the iOS gesture could not (specs/133)
-          onPopWithResult: (_) => _navigator.currentState?.maybePop(),
-          child: Navigator(
-            key: _navigator,
-            observers: widget.observers,
-            pages: _pages,
-            onDidRemovePage: (page) {
-              final key = page.key;
-              if (key is! ValueKey<String>) return;
-              final id = int.tryParse(key.value.substring(_keyPrefix.length));
-              // the base page is the host's, not the router's
-              if (id != null && id != 0) widget.engine.onRouteRemoved(id);
-            },
+        // one toast host for the whole app, above the routes: a toast is
+        // global, so it outlives the page that raised it (specs/134)
+        child: FjsToastHost(
+          engine: widget.engine,
+          child: NavigatorPopHandler(
+            // this Navigator is usually nested (under a host's Scaffold), and
+            // a nested one does not see the system back button on its own
+            enabled: _stack.isNotEmpty,
+            // maybePop, not pop: pop() ignores PopScope, which is how the
+            // Android back button used to leave a page under an open modal
+            // popup that the iOS gesture could not (specs/133)
+            onPopWithResult: (_) => _navigator.currentState?.maybePop(),
+            child: Navigator(
+              key: _navigator,
+              observers: widget.observers,
+              pages: _pages,
+              onDidRemovePage: (page) {
+                final key = page.key;
+                if (key is! ValueKey<String>) return;
+                final id = int.tryParse(key.value.substring(_keyPrefix.length));
+                // the base page is the host's, not the router's
+                if (id != null && id != 0) widget.engine.onRouteRemoved(id);
+              },
+            ),
           ),
         ),
       ),

@@ -29,6 +29,10 @@ Navigator 的 Overlay，**紧贴本页的路由 entry 之上**：
 
 `<Teleport to="body">`（vant Popover、`teleport="body"` 的 Popup）落在同一个宿主里。
 
+`fjs` 的 `toast()` **不走**这个宿主：它不是 fixed 元素，App 端由 `FjsApp` 上唯一的
+toast 宿主显示，跨页面（specs/134，见 [ui-api.md](ui-api.md)）。vant 的 `showToast()`
+是 fixed 元素，照常进本页的 overlay 宿主、随页面离场。
+
 Web 端没有这层：原生 CSS 的 `fixed` 本来就在页面 DOM 里，跟着路由一起走。
 
 ## 2. 谁会进宿主

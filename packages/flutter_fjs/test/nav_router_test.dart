@@ -13,6 +13,7 @@ import 'dart:typed_data';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_fjs/flutter_fjs.dart';
+import 'package:flutter_fjs/src/widgets/toast_host.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Tiny op-frame writer + a stand-in for fjs/router's flutter driver.
@@ -498,5 +499,91 @@ void main() {
     await tester.pumpAndSettle();
     expect(engine.navStack, isEmpty);
     expect(find.text('home'), findsOneWidget);
+  });
+
+  // specs/134: toast() is global, so FjsApp owns the one toast host
+  group('toast host', () {
+    testWidgets('FjsApp mounts one host, pages do not take onToast', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+      final show = engine.onToast;
+      expect(show, isNotNull);
+
+      engine.runSource('push(1)');
+      await tester.pumpAndSettle();
+      engine.runSource('push(2)');
+      await tester.pumpAndSettle();
+      expect(find.byType(FjsToastHost, skipOffstage: false), findsOneWidget);
+      expect(engine.onToast, show);
+
+      engine.runSource('popTop()');
+      await tester.pumpAndSettle();
+      expect(engine.onToast, show);
+    });
+
+    testWidgets('a toast outlives the page that raised it', (tester) async {
+      await pumpApp(tester);
+      engine.runSource('push(1)');
+      await tester.pumpAndSettle();
+
+      engine.onToast!('saved');
+      await tester.pump();
+      engine.runSource('popTop()');
+      await tester.pumpAndSettle();
+
+      expect(find.text('page-1'), findsNothing);
+      expect(find.text('saved'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.text('saved'), findsNothing);
+    });
+
+    testWidgets('a FjsView embedded without FjsApp has its own host', (
+      tester,
+    ) async {
+      await tester.pumpWidget(MaterialApp(home: FjsView(engine: engine)));
+      await tester.pump();
+      expect(find.byType(FjsToastHost), findsOneWidget);
+
+      engine.onToast!('standalone');
+      await tester.pump();
+      expect(find.text('standalone'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+    });
+
+    testWidgets('hosts disposed out of order leave a live one', (tester) async {
+      final received = <String>[];
+      void mine(String message) => received.add(message);
+      engine.onToast = mine;
+
+      Widget views(List<Key> keys) => MaterialApp(
+        home: Column(
+          children: [
+            for (final key in keys)
+              Expanded(
+                child: FjsView(key: key, engine: engine),
+              ),
+          ],
+        ),
+      );
+      const a = ValueKey('a'), b = ValueKey('b');
+      await tester.pumpWidget(views(const [a, b]));
+      await tester.pump();
+
+      // the first host goes first — the old predecessor chain handed
+      // onToast back to it once b went too
+      await tester.pumpWidget(views(const [b]));
+      await tester.pump();
+      engine.onToast!('still here');
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(find.text('still here'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+
+      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+      expect(engine.onToast, mine);
+      engine.onToast!('embedder');
+      expect(received, ['embedder']);
+    });
   });
 }

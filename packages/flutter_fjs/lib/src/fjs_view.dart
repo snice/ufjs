@@ -149,6 +149,12 @@ class _FjsViewState extends State<FjsView> with WidgetsBindingObserver {
             ],
           );
         }
+        content = FjsBlankTapBlur(child: content);
+        // FjsApp (or the embedder) already shows this engine's toasts from
+        // above; a view embedded on its own still needs a host (specs/134)
+        if (!FjsToastHost.covers(context, engine)) {
+          content = FjsToastHost(engine: engine, child: content);
+        }
         return FjsAssetScope(
           devUri: engine.devUri,
           generation: tree.generation,
@@ -159,10 +165,7 @@ class _FjsViewState extends State<FjsView> with WidgetsBindingObserver {
             // inputs and switches don't inherit state from the previous load
             child: KeyedSubtree(
               key: ValueKey('fjs-tree-${tree.generation}'),
-              child: FjsToastHost(
-                engine: engine,
-                child: FjsBlankTapBlur(child: content),
-              ),
+              child: content,
             ),
           ),
         );
