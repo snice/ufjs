@@ -1,5 +1,5 @@
 <route>
-{"title": "about"}
+{"title": "about", "group": "基础能力", "desc": "pinia store 跨页面共享"}
 </route>
 
 <script setup lang="ts">

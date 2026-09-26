@@ -1,5 +1,5 @@
 <route>
-{"title": "vant: float"}
+{"title": "vant: float", "group": "Vant", "desc": "Sticky / Popover / Grid"}
 </route>
 
 <script setup lang="ts">

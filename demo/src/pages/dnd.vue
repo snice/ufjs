@@ -1,5 +1,5 @@
 <route>
-{"title": "拖拽排序"}
+{"title": "拖拽排序", "group": "交互演示", "desc": "网格与竖列表的拖动重排"}
 </route>
 
 <script setup lang="ts">

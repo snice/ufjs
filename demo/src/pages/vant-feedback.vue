@@ -1,5 +1,5 @@
 <route>
-{"title": "vant: feedback"}
+{"title": "vant: feedback", "group": "Vant", "desc": "Popup / ActionSheet / Dialog / Toast"}
 </route>
 
 <script setup lang="ts">

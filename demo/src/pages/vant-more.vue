@@ -1,5 +1,5 @@
 <route>
-{"title": "vant: more"}
+{"title": "vant: more", "group": "Vant", "desc": "Card / Circle / Collapse / Steps / Progress / Skeleton …"}
 </route>
 
 <script setup lang="ts">

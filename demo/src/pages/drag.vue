@@ -1,5 +1,5 @@
 <route>
-{"title": "块拖拽"}
+{"title": "块拖拽", "group": "交互演示", "desc": "多指同时拖，位置只写在 transform 上"}
 </route>
 
 <script setup lang="ts">

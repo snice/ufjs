@@ -1,5 +1,5 @@
 <route>
-{"title": "vant: basic"}
+{"title": "vant: basic", "group": "Vant", "desc": "Button / Tag / Cell / Divider / Grid / Badge"}
 </route>
 
 <script setup lang="ts">

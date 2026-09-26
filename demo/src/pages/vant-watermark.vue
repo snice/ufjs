@@ -1,5 +1,5 @@
 <route>
-{"title": "vant: watermark"}
+{"title": "vant: watermark", "group": "Vant", "desc": "Watermark"}
 </route>
 
 <script setup lang="ts">

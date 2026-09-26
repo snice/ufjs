@@ -18,6 +18,8 @@
     "bench:mount": "fjs build bench/mount-eager.ts --out dist/bench-eager && fjs build bench/mount.ts --out dist/bench && fjs build bench/mount-prewarm.ts --out dist/bench-prewarm && ../packages/flutter_fjs/native/build-native/fjsrun --pump 50 dist/bench-eager/app/bundle.js && ../packages/flutter_fjs/native/build-native/fjsrun --pump 50 dist/bench/app/bundle.js && ../packages/flutter_fjs/native/build-native/fjsrun --pump 50 dist/bench-prewarm/app/bundle.js"
   },
   "dependencies": {
+    "@nutui/icons-vue": "^0.1.1",
+    "@nutui/nutui": "^4.3.14",
     "@ufjs/iconmind": "workspace:*",
     "@vant/touch-emulator": "^1.5.0",
     "pinia": "^3.0.3",
