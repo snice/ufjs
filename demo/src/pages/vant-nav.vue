@@ -1,5 +1,5 @@
 <route>
-{"title": "vant: nav"}
+{"title": "vant: nav", "group": "Vant", "desc": "NavBar / Tabs / Tabbar / Sidebar / Search / Swipe / Picker"}
 </route>
 
 <script setup lang="ts">

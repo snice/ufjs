@@ -1,5 +1,5 @@
 <route>
-{"title": "vant: form"}
+{"title": "vant: form", "group": "Vant", "desc": "Field / Switch / Checkbox / Radio / Stepper / Rate / Slider"}
 </route>
 
 <script setup lang="ts">

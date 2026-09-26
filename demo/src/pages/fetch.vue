@@ -1,5 +1,5 @@
 <route>
-{"title": "fetch"}
+{"title": "fetch", "group": "基础能力", "desc": "真实网络请求自检"}
 </route>
 
 <script setup lang="ts">

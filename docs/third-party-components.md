@@ -113,6 +113,7 @@ fjs 适配。完整定义见 [ui-api.md](ui-api.md#元素上的-dom-形状-api)�
 | `<Transition>` | fjs 版（BaseTransition + 样式引擎翻类）：animation 型 enter/leave 规则由 keyframes 引擎原生播放，transition 型由 App 端补间；结束时机取计算样式里 animation/transition 的「时长+延迟」较长者（没有 transitionend 可听） |
 | `vShow` | 只碰内联 `display` 一项，元素其余规则不动（整张替换计算样式会让库组件丢样式） |
 | `withKeys` | 直通——fjs 事件不带键码，处理器照跑而不是永不触发 |
+| `withModifiers` | 照 runtime-dom 如实实现（`.stop` / `.prevent` / `.self` / 系统键 / 鼠标键 / `.exact`）：App 端 tap 事件有能用的 `stopPropagation()` 与 `target` / `currentTarget`，直通会让 `.stop` 失效；包装函数缓存在处理器上，重渲染不抖 prop（NutUI Tag 关闭图标，specs/139） |
 | `<TransitionGroup>` | 纯透传 |
 | `createApp` | 指名抛错——库的命令式 API（内部 `document.createElement` + `createApp`）要由适配补丁改从 `fjs/vue` 取 `createApp` + `createDetachedRoot()`，挂进游离根，内容落到 app 级 overlay 宿主（vant 的做法见 specs/137） |
 | `measureTextBlock` | 经 `__FJS_SHARED` 暴露给侧影：让库的测高逻辑用宿主排版（vant TextEllipsis 的二分截断靠它） |

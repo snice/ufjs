@@ -1,6 +1,16 @@
 # demo
 
-Vue 3 + Vite fjs app. 首页位于 `src/pages/index.vue`，默认文本是 `hello-fjs`。
+Vue 3 + Vite fjs app。首页 `src/pages/index.vue` 是分类手风琴（同 examples/hello-fjs）：
+条目由 `src/catalog.ts` 从路由表收集，每个页面在自己的 `<route>` 块里声明
+`group`（基础能力 / 交互演示 / Vant / NutUI）和一句 `desc`，新增页面不用改首页；
+没写 `group` 的页面不进目录。
+
+两套第三方组件库并存，都是全局注册、两端同一份插件：
+- **Vant 4**：`src/plugins/vant.ts` + App 端源码补丁 `vite/vant.ts`（specs/068 起）。
+- **NutUI 4**（`@nutui/nutui@^4.3.14`）：`src/plugins/nutui.ts`，走逐组件入口
+  `dist/packages/<comp>/index.mjs` 与 `style/css.mjs`，不走整包 barrel；类型见
+  `src/nutui-components.d.ts` / `src/nutui-modules.d.ts`。首批 Button、Cell、
+  CellGroup、Tag、Divider 和 `@nutui/icons-vue` 图标（specs/139）。
 
 `@ufjs/iconmind`（源码在 `packages/fjs-iconmind`）是一个完整的 fjs 模块示例：
 [IconMind](https://iconmind.dev) 图标包成一个 `<icon-mind />` 标签，App 上 Flutter

@@ -1,5 +1,5 @@
 <route>
-{"title": "图标"}
+{"title": "图标", "group": "基础能力", "desc": "@ufjs/iconmind 模块扩展"}
 </route>
 
 <script setup lang="ts">

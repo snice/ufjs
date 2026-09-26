@@ -290,6 +290,7 @@ shim 逐个补上，语义按 fjs 的现实重述：
 | `<Transition>` | fjs 版（BaseTransition + 样式引擎翻类）。enter/leave 的 `-from/-active/-to` 类照常落地：animation 型规则（vant 的 `van-fade-enter-active { animation: … }`）由 keyframes 引擎原生播放，transition 型类切换由 App 端按 transition 的支持范围补间。结束时机取计算样式里 animation 与 transition 的「时长 + 延迟」较长者——本端没有 transitionend / animationend 可听。`v-show` 在 `<Transition>` 内走钩子，离场动画放完才 `display: none` |
 | `vShow` | 只碰内联 `display` 一项（隐藏写 `none`、显示恢复原值），元素其余规则不动——以前整张替换计算样式，vant 步进器第一次改值就把输入框和加号的样式丢光（specs/069） |
 | `withKeys` | 直通。fjs 事件不带键码，守卫没有东西可测——处理器在每个事件上照跑，而不是永不触发 |
+| `withModifiers` | 照 runtime-dom 的 modifierGuards 如实实现：`.stop` 调 `stopPropagation()`（App 端 tap 会冒泡，specs/129）、`.prevent` 调 `preventDefault()`、`.self` 比 `target` / `currentTarget`；系统键 / 鼠标键字段 App 端不存在，按「没按」读。不能像 `withKeys` 那样直通——那样 `.stop` 失效、父级 click 误触发。包装函数缓存在处理器上（同 runtime-dom），重渲染时 prop 不变。NutUI 预编译的 Tag 关闭图标要它（specs/139） |
 | `<TransitionGroup>` | 纯透传（vant 弹层不用） |
 | `createApp` | 指名抛错。挂第二个 Vue 根需要容器，App 端没有 DOM；要挂的库由它的适配补丁改从 `fjs/vue` 取 `createApp` + `createDetachedRoot()`（游离根，相当于 body 上的 `<div>`），内容经 Teleport / hoist 落到 app 级 overlay 宿主。vant 的 `showToast()` / `showDialog()` / `showNotify()` / `showImagePreview()` 就是这样打通的（specs/137，demo/vite/vant.ts） |
 | `measureTextBlock` | 经 `__FJS_SHARED` 暴露给库的侧影：库的测高逻辑用宿主排版（vant TextEllipsis 的二分截断靠它，specs/128） |
