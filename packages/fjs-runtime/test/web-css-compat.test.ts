@@ -5,7 +5,8 @@
 // 高度曾被当成「Dart 侧多了默认高度」。补 px 在构建期做，dev（vite
 // transform）与 build（injectStyle）共用这一份。
 import { describe, expect, it } from 'vitest';
-import { rewriteFjsCss } from '../src/web/css-compat';
+import { expandFlexDefault, rewriteFjsCss } from '../src/web/css-compat';
+import { BASE_CSS } from '../src/web/base-css';
 
 describe('unitless lengths get px (web == app layout)', () => {
   it('suffixes multi-value padding / margin / border-radius', () => {
@@ -81,5 +82,77 @@ describe('@media blocks survive the rewrite', () => {
     // 补上 px 后条件变合法，与 App 端引擎对无单位值的读法一致
     expect(rewriteFjsCss('@media (min-width: 600) { .a { color: red } }'))
       .toBe('@media (min-width: 600px) { .a { color: red } }');
+  });
+});
+
+// specs/140：display:flex 不写方向，App 端引擎补 row + stretch（层叠级判定）；
+// web 把补值放进 @layer fjs-flex，输给任何未分层的作者声明。
+describe('flex-direction default (web == engine)', () => {
+  const ORDER = '@layer fjs-base, fjs-flex;';
+  const FILL = 'flex-direction:row;align-items:stretch';
+
+  it('adds a layered row after a rule that sets display:flex only', () => {
+    expect(expandFlexDefault('.a { display: flex; color: red }'))
+      .toBe(`${ORDER}.a { display: flex; color: red }@layer fjs-flex{.a{${FILL}}}`);
+  });
+
+  it('covers inline-flex, -webkit-flex and !important', () => {
+    for (const d of ['inline-flex', '-webkit-flex', 'flex !important']) {
+      expect(expandFlexDefault(`.a{display:${d}}`)).toContain(`@layer fjs-flex{.a{${FILL}}}`);
+    }
+  });
+
+  it('leaves rules that name a direction, or no flex display, alone', () => {
+    for (const css of [
+      '.a{display:flex;flex-direction:column}',
+      '.a{display:flex;flex-flow:column wrap}',
+      '.a{display:flex;-webkit-flex-direction:column}',
+      '.a{display:block}',
+      '.a{display:flexbox-ish}',
+      '.a{justify-content:flex-start}',
+    ]) {
+      expect(expandFlexDefault(css)).toBe(css);
+    }
+  });
+
+  it('keeps the fill inside @media / @supports, skips @keyframes', () => {
+    expect(expandFlexDefault('@media (min-width: 1px) { .a, .b { display: flex } }'))
+      .toBe(`${ORDER}@media (min-width: 1px) { .a, .b { display: flex }@layer fjs-flex{.a, .b{${FILL}}} }`);
+    expect(expandFlexDefault('@supports (display: flex) { .a { display: flex } }'))
+      .toContain(`@layer fjs-flex{.a{${FILL}}}`);
+    const kf = '@keyframes k { from { display: flex } }';
+    expect(expandFlexDefault(kf)).toBe(kf);
+  });
+
+  it('is not fooled by comments or strings', () => {
+    expect(expandFlexDefault('/* .x { */ .a { /* display: flex */ display: block }')).not.toContain('@layer');
+    expect(expandFlexDefault('.a { content: "}"; display: flex }'))
+      .toContain(`@layer fjs-flex{.a{${FILL}}}`);
+    expect(expandFlexDefault('/* note */\n.a { display: flex }'))
+      .toContain(`@layer fjs-flex{.a{${FILL}}}`);
+  });
+
+  it('states the layer order first, after @charset', () => {
+    expect(expandFlexDefault('@charset "utf-8";.a{display:flex}'))
+      .toBe(`@charset "utf-8";${ORDER}.a{display:flex}@layer fjs-flex{.a{${FILL}}}`);
+  });
+
+  it('is idempotent, and part of rewriteFjsCss unless turned off', () => {
+    const once = rewriteFjsCss('.a { display: flex; padding: 4 }');
+    expect(once).toContain(`@layer fjs-flex{.a{${FILL}}}`);
+    expect(rewriteFjsCss(once)).toBe(once);
+    expect(rewriteFjsCss('.a { display: flex }', { flexDefault: false })).toBe('.a { display: flex }');
+  });
+
+  it('base-css layers the fjs tags\' column under fjs-flex', () => {
+    const css = BASE_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(css).toContain(ORDER);
+    const base = /@layer fjs-base \{([\s\S]*?)\n\}/.exec(css)?.[1] ?? '';
+    expect(base).toMatch(/\bview\b[\s\S]*flex-direction: column/);
+    // the unlayered tag rule must not name a direction, or it would beat fjs-flex
+    const tagRule = /\nview, scroll-view[^{]*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(tagRule).toContain('display: flex');
+    expect(tagRule).not.toContain('flex-direction');
+    expect(css).toMatch(/@layer fjs-flex \{[\s\S]*\[style\*="display: flex"\][\s\S]*flex-direction: row/);
   });
 });

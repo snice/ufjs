@@ -97,7 +97,7 @@ CSS 文本里用 kebab-case（`font-size: 16px`），内联对象用 camelCase
 
 | 属性 | 支持 | 说明 |
 |---|---|---|
-| `flex-direction` | ✅ | `row` / `column`（默认 column，**和 CSS 的 row 不同**）|
+| `flex-direction` | ✅ | `row` / `column`。没有任何规则写 `display` 的 fjs 标签（`view` 等）默认 column（fjs 约定，**和 CSS 的 row 不同**）；规则写了 `display: flex` / `inline-flex` 而层叠结果里**没有**方向时按 CSS 初始值取 `row`——两端同一规则（App 端引擎补值，web 端用 `@layer fjs-flex` 补、输给任何作者声明，specs/140）。库 `.css`（NutUI 的 `<view>`）同样适用 |
 | `flex-wrap` | ⚠️ | 映射 `Wrap`，此时 `flex-grow` 失效。**例外**（specs/070）：横向 wrap 里有 `flex-grow` 子项、且没有子项声明 `width: 100%` 时按单行 Flex 排（CSS 按基准尺寸 0 断行，vant Field 的 label + `flex: 1` 值区留在同一行）；真的一行放不下时不会换行（需要测量式布局） |
 | `justify-content` | ✅ | start / end / center / space-between / space-around / space-evenly |
 | `align-items` | ⚠️ | CSS 初始值是 `stretch`、Flutter 是 `center`。`display: flex` 且**没写** `flex-direction` 时引擎补齐 CSS 默认（`row` + `stretch`，vant Cell 的值/箭头因此不再掉行）；显式写了 `flex-direction` 后 `align-items` 仍不补——在乎就显式写 |

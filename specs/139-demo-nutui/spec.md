@@ -162,7 +162,7 @@
    - Web 端 `base-css.ts` 给 `view` 钉了 `flex-direction: column`，作者规则不写方向
      就沿用 column → Cell 标题/描述竖排、带文字的图标按钮里 svg 高度被压成 0。
    这是 fjs 自身既有的两端分歧（任何页面给 view 写 display:flex 不写方向都中招），
-   按用户决定**另开 spec 修 web 端**，本 spec 不处理。
+   按用户决定**另开 spec 修 web 端**，本 spec 不处理——已在 specs/140-web-flex-default-row 修复。
 
 ## 9. 验收结果
 

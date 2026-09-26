@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'esbuild';
 import { parse, compileScript, compileTemplate, compileStyle } from '@vue/compiler-sfc';
 import { inlineFontFaces } from './font-face';
+import { expandFlexDefault } from '../../../fjs-runtime/src/web/css-compat.js';
 import { isHTMLTag, isSVGTag, isMathMLTag } from '@vue/shared';
 import { routeTableSource, type PageRoute, type Platform } from '../project/pages.js';
 import { pluginTableSource, type AppPlugin } from '../project/plugins.js';
@@ -170,6 +171,14 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
             loader: 'js',
           };
         });
+      } else {
+        // the web build keeps real CSS, plus the flex-direction default the
+        // engine applies to every sheet (specs/140, see vite.ts transform)
+        build.onLoad({ filter: /\.css$/, namespace: 'file' }, (args) => ({
+          contents: expandFlexDefault(fs.readFileSync(args.path, 'utf8')),
+          resolveDir: path.dirname(args.path),
+          loader: 'css',
+        }));
       }
       build.onLoad({ filter: /\.vue$/, namespace: 'file' }, async (args) => {
         const source = fs.readFileSync(args.path, 'utf8');

@@ -42,11 +42,36 @@ fjs-page-entry {
   flex-direction: column;
 }
 
+/* The tags' column is layered (specs/140): a page or library rule that says
+   "display: flex" and no direction gets a ROW from its "fjs-flex" layer rule
+   (css-compat expandFlexDefault) — what the App engine does — and ANY
+   unlayered rule that names a direction beats both layers, the engine's
+   "an author direction wins" test. The order statement is repeated in every
+   rewritten sheet: whichever reaches the document first fixes it. */
+@layer fjs-base, fjs-flex;
+@layer fjs-base {
+  view, scroll-view, list-view, safe-area, refresh, swiper-item,
+  fjs-modal-sheet, switch, checkbox, progress-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+/* Inline "style="display: flex"" with no direction: the engine fills a row
+   for inline styles too, and no stylesheet rewrite sees them. Vue writes the
+   style attribute as "display: flex;", so match on the attribute text. A
+   runtime component that sets an inline flex display and relies on the
+   column must say "flex-direction" inline. */
+@layer fjs-flex {
+  :is(view, scroll-view, list-view, safe-area, refresh, swiper-item,
+  fjs-modal-sheet, switch, checkbox, progress-bar):is([style*="display: flex"], [style*="display: inline-flex"], [style*="display:flex"], [style*="display:inline-flex"]):not([style*="flex-direction"]):not([style*="flex-flow"]) {
+    flex-direction: row;
+    align-items: stretch;
+  }
+}
+
 view, scroll-view, list-view, safe-area, refresh, swiper-item,
 fjs-modal-sheet, switch, checkbox, progress-bar {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
   min-width: 0;
   min-height: 0;
   /* A Flutter Column/Row child keeps its natural size and overflows; CSS

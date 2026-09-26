@@ -301,6 +301,20 @@ iOS 上会带系统触感反馈；web 没有触感，这是 picker 系列目前�
   工程（`dev:web`）则是 vite 原生的组件级 HMR。
 - **`flex-direction: row` 的交叉轴默认值**：Flutter 是 `center`，CSS 是
   `stretch`。在乎的地方显式写 `align-items`。
+- **`display: flex` 不写方向**（specs/140）：两端都按 CSS 初始值横排
+  （`row` + `stretch`），只要层叠里任何一条作者规则写了 `flex-direction` /
+  `flex-flow` 就用那条——这是 App 引擎的层叠级判定。web 端的做法：
+  `base-css` 把 fjs 标签的 column 放进 `@layer fjs-base`；构建期
+  （Vite 插件的 SFC 块与**所有 `.css` 导入**、`fjs build --web` 的
+  `injectStyle` 与 `.css` onLoad）给每条「写了 flex display、同块没写方向」的
+  规则追加一条同选择器的 `@layer fjs-flex { … row; stretch }`，每份产物开头
+  声明 `@layer fjs-base, fjs-flex;` 固定层序。剩余差异：
+  ① `lang="scss"` 等预处理块不做（原始 scss 的嵌套会骗过规则扫描），App 端
+  仍补 row——在乎就显式写方向；② inline `style` 靠属性选择器
+  `[style*="display: flex"]` 兜底，只认浏览器/Vue 序列化出的写法；运行时组件
+  设 inline flex 又依赖 column 时必须 inline 写方向；③ `inline-flex` 不补
+  App 端那条 `flex-wrap: wrap`（web 上是真行内盒）；④ 需要支持 `@layer` 的
+  浏览器（Chrome 99 / Safari 15.4 / Firefox 97 起）。
 - **页面状态**：web 默认 `<KeepAlive>`，按历史栈条目各挂一份外壳（各自的
   `<scroll-view>`）。新 `push` 从 `(0, 0)` 起，返回还原离开时那一页。**只缓存
   还在栈上的页**：pop 掉的那一页连同它的状态一起销毁，和 Flutter 出栈即 dispose
