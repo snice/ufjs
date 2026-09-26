@@ -7,7 +7,7 @@ import { defineComponent, h } from '@vue/runtime-core';
 import { setOpSink } from '../src/host';
 import { registerStyles } from '../src/vue/renderer';
 import { createRouter, definePage, definePageLoader, pageComponent } from '../src/router/flutter';
-import type { StyleSnapshot } from '../src/css/style';
+import { STYLE_SNAPSHOT_VERSION, type StyleSnapshot } from '../src/css/style';
 
 describe('router.captureStyles', () => {
   it('snapshots each static route and skips parameterized ones', async () => {
@@ -22,7 +22,7 @@ describe('router.captureStyles', () => {
     const out = await router.captureStyles();
     expect(Object.keys(out)).toEqual(['/one', '/two']);
     const one = out['/one'] as StyleSnapshot;
-    expect(one.v).toBe(1);
+    expect(one.v).toBe(STYLE_SNAPSHOT_VERSION);
     // page root view > .box > .label (plus the text run inside it)
     expect(one.chains.length).toBeGreaterThanOrEqual(2);
     expect(one.globals).toContain('capture0000a');
@@ -44,7 +44,7 @@ describe('router.captureStyles', () => {
     });
     expect(loaded).toEqual(['five']);
     expect(Object.keys(out)).toEqual(['/five']);
-    expect((out['/five'] as StyleSnapshot).v).toBe(1);
+    expect((out['/five'] as StyleSnapshot).v).toBe(STYLE_SNAPSHOT_VERSION);
   });
 
   it('runs a single bundle\'s page loader once, on first open (specs/121)', () => {

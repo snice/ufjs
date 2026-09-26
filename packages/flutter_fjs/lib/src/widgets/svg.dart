@@ -261,11 +261,20 @@ class _SvgPainter extends CustomPainter {
     if (style['visibility']?.toString() == 'hidden') return;
     final animations = FjsAnimations.of(style);
     final animated = animations == null
-        ? const <String, Object?>{}
+        ? <String, Object?>{}
         : animations.sample(
             elapsedFor(node, animations),
             (p) => style[p] ?? node.props[p],
           );
+    // The root <svg> is a box: its animated transform/opacity already run on
+    // the node wrapper (keyframeNode, rotating about the box centre). Applied
+    // here too, NutUI's spinning Loading icon turned twice — once about the
+    // canvas origin, which swung it out of its button.
+    if (isRoot && animated.isNotEmpty) {
+      animated
+        ..remove('transform')
+        ..remove('opacity');
+    }
     // CSS beats the presentation attribute; a running animation beats both.
     // Attributes may arrive in either spelling (templates write kebab-case
     // `stroke-width`, render functions camelCase) — the fallback covers the

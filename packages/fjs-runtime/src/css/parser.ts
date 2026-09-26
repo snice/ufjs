@@ -571,6 +571,17 @@ export function parseSelector(raw: string): Selector | null {
   let active = false;
   let hover = false;
   let text = unwrapped.trim();
+  // `.x:active::before` — the pressed variant of a decoration box (NutUI and
+  // vant's button overlay: `:active::before { opacity: .1 }`). The state
+  // sits before the pseudo-element in the source, so the pseudo-element is
+  // peeled first. Only :active: a hover variant of a box has no consumer.
+  const statePseudo = /:active::?(before|after)$/.exec(text);
+  let pseudoState: PseudoKind | undefined;
+  if (statePseudo) {
+    pseudoState = statePseudo[1] as PseudoKind;
+    active = true;
+    text = text.slice(0, -statePseudo[0].length).trim();
+  }
   for (;;) {
     if (/:active$/.test(text)) {
       active = true;
@@ -581,6 +592,10 @@ export function parseSelector(raw: string): Selector | null {
     } else {
       break;
     }
+  }
+  if (pseudoState && hover) {
+    warnOnce(`selector "${raw.trim()}" combines :hover with a pseudo-element, skipped`);
+    return null
   }
   if (/:active/.test(text)) {
     warnOnce(`selector "${raw.trim()}" puts :active on something other than its last compound, skipped`);
@@ -594,8 +609,8 @@ export function parseSelector(raw: string): Selector | null {
   // ::placeholder makes this selector style that pseudo instead of the
   // element itself. CSS allows them only on the subject; anything earlier
   // falls through to the unsupported-syntax check below.
-  let pseudo: PseudoKind | undefined;
-  const pm = /::?(before|after|placeholder)$/.exec(text);
+  let pseudo: PseudoKind | undefined = pseudoState;
+  const pm = pseudoState ? null : /::?(before|after|placeholder)$/.exec(text);
   if (pm) {
     pseudo = pm[1] as PseudoKind;
     text = text.slice(0, -pm[0].length).trim();

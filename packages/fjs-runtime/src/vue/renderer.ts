@@ -420,7 +420,14 @@ const pseudoBoxes = new Map<number, { before?: Element; after?: Element }>();
  * the popover the same press then reopened (specs/129). */
 const pseudoOwner = new Map<number, number>();
 
+/** Pseudo boxes holding a pressed variant (`:active::before`). Marked with
+ * [PRESS_WITH_OWNER_PROPS] once, so the peer drives their :active state from
+ * the originating element rather than from a press on the box. */
+const pseudoPressed = new Set<number>();
+const PRESS_WITH_OWNER_PROPS = Object.freeze({ pressWithOwner: true });
+
 function forgetPseudoBox(box: Element): void {
+  pseudoPressed.delete(box.id);
   pseudoOwner.delete(box.id);
   const text = pseudoTexts.get(box.id);
   if (text) pseudoOwner.delete(text.id);
@@ -560,19 +567,35 @@ function syncPseudoBoxes(el: Element, styles: PseudoStyles | null): void {
     }
     const style = { ...decls };
     delete style.content;
+    // `.x:active::before`: the box's pressed look, switched by the ORIGINATING
+    // element's press on the native side (the box itself is rarely the hit
+    // target — the button's label sits on top of it)
+    const activeDecls = styles[kind === 'before' ? 'activeBefore' : 'activeAfter'];
+    let active: Record<string, unknown> | null = null;
+    if (activeDecls) {
+      active = { ...activeDecls };
+      delete active.content;
+    }
+    const box = existing ?? create('view');
+    if (active) {
+      if (!pseudoPressed.has(box.id)) {
+        pseudoPressed.add(box.id);
+        setProps(box, PRESS_WITH_OWNER_PROPS);
+      }
+      setStyle(box, style, active);
+    } else if (pseudoPressed.delete(box.id)) {
+      setStyle(box, style, null);
+    } else {
+      setStyle(box, style);
+    }
+    syncPseudoText(box, content ?? '', style);
     if (!existing) {
-      const box = create('view');
       elementsById.set(box.id, box);
       pseudoOwner.set(box.id, el.id);
-      setStyle(box, style);
-      syncPseudoText(box, content ?? '', style);
       // ::before leads the Dart child list (real children shift by one —
       // nodeOps.insert corrects), ::after trails it (append)
       insert(el, box, kind === 'before' ? 0 : undefined);
       entry[kind] = box;
-    } else {
-      setStyle(existing, style);
-      syncPseudoText(existing, content ?? '', style);
     }
   }
 }

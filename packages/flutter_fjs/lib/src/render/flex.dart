@@ -110,6 +110,7 @@ Widget buildFlex(
                 horizontal: horizontal,
                 mainAxisMax: mainAxisMax,
                 crossAxisMax: crossAxisMax,
+                crossDefinite: horizontal && style.heightLength != null,
               ),
           ],
         );
@@ -352,6 +353,7 @@ Widget _wrapChild({
   required bool horizontal,
   required double mainAxisMax,
   required double crossAxisMax,
+  bool crossDefinite = false,
 }) {
   final bounded = _wrapChildMain(
     child: child,
@@ -359,10 +361,25 @@ Widget _wrapChild({
     horizontal: horizontal,
     mainAxisMax: mainAxisMax,
   );
+  if (!crossAxisMax.isFinite) return bounded;
+  // A row wrap hands its items an unbounded height, so `height: 100%` had
+  // nothing to resolve against. CSS resolves it when the container's height
+  // is definite — an inline-block NutUI button (height 38px) whose
+  // `__wrap` is `height: 100%` and centres the icon inside it.
+  if (horizontal) {
+    if (!crossDefinite ||
+        childNode == null ||
+        FjsStyle.of(childNode).heightLength?.isRelative != true) {
+      return bounded;
+    }
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: crossAxisMax),
+      child: bounded,
+    );
+  }
   // A row wrap's items may overflow a fixed-height box in CSS rather than
   // shrink, so only the column case — the one Wrap leaves infinite — is
   // capped.
-  if (horizontal || !crossAxisMax.isFinite) return bounded;
   return ConstrainedBox(
     constraints: BoxConstraints(maxWidth: crossAxisMax),
     child: bounded,
