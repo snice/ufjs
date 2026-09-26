@@ -272,7 +272,14 @@ class _FjsNodeView extends StatelessWidget {
     }
 
     Widget built;
-    if (tracksPress && tracksHover) {
+    if (tracksPress && _pressesWithOwner(node)) {
+      // a `:active::before` box: pressed while its originating element is,
+      // whatever the finger actually landed on (see [_OwnerPressScope])
+      built = Builder(
+        builder: (context) =>
+            buildWithState(_OwnerPressScope.pressedOf(context), false),
+      );
+    } else if (tracksPress && tracksHover) {
       // hover wraps press: entering/leaving rebuilds the subtree under the
       // region, press stays a per-node Listener inside
       built = _HoverNode(
@@ -300,8 +307,27 @@ class _FjsNodeView extends StatelessWidget {
     return built;
   }
 
-  static bool _tracksPress(MirrorNode node) =>
-      node.tag == 'button' || FjsStyle.nodeHasPressedStyle(node);
+  bool _tracksPress(MirrorNode node) =>
+      node.tag == 'button' ||
+      FjsStyle.nodeHasPressedStyle(node) ||
+      _ownsPressedPseudo(node);
+
+  static bool _pressesWithOwner(MirrorNode node) =>
+      node.props['pressWithOwner'] == true;
+
+  /// Whether a pseudo box of this node (the renderer puts ::before first and
+  /// ::after last) switches with this node's press — then the node tracks
+  /// its press even without an `:active` rule of its own.
+  bool _ownsPressedPseudo(MirrorNode node) {
+    final kids = node.children;
+    if (kids.isEmpty) return false;
+    bool marks(int id) {
+      final n = tree.node(id);
+      return n != null && _pressesWithOwner(n);
+    }
+
+    return marks(kids.first) || (kids.length > 1 && marks(kids.last));
+  }
 
   Widget _buildStyledNode(
     BuildContext context,
@@ -443,9 +469,31 @@ class _PressedNodeState extends State<_PressedNode> {
       onPointerMove: _onMove,
       onPointerUp: _onEnd,
       onPointerCancel: _onEnd,
-      child: widget.builder(_pressed),
+      child: _OwnerPressScope(
+        pressed: _pressed,
+        child: widget.builder(_pressed),
+      ),
     );
   }
+}
+
+/// The nearest pressed-tracking node's state, for its `:active::before` /
+/// `::after` boxes (`pressWithOwner`). In CSS the pseudo-element's :active
+/// is its originating element's: pressing a NutUI button's label must show
+/// the `::before` overlay underneath it. Only direct pseudo children read
+/// it, and their owner always tracks press ([_ownsPressedPseudo]), so the
+/// nearest scope is the owner's.
+class _OwnerPressScope extends InheritedWidget {
+  const _OwnerPressScope({required this.pressed, required super.child});
+
+  final bool pressed;
+
+  static bool pressedOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_OwnerPressScope>()?.pressed ??
+      false;
+
+  @override
+  bool updateShouldNotify(_OwnerPressScope old) => old.pressed != pressed;
 }
 
 /// Desktop-mouse `:hover` for a node that matched a hover rule (op 12).

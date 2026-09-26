@@ -37,7 +37,7 @@
 | `:nth-child` / `:not()` / 其他伪类 | ❌ | roadmap 之外的按需补充 |
 | 相邻兄弟组合器 `+` | ✅ | 匹配**紧邻的前一个参与兄弟**（跳过裸文字，与结构伪类同规则）；`a + b + c` 链与 `>` 混用可正常回溯。层叠权重与后代/子代组合器相同（组合器本身不计分）。缓存正确性：存在 `+` 规则时前兄弟的签名进 chainKey——前者类名/scope 切换、兄弟插入删除都会即时重算后者（vant 的 `.van-button__loading + .van-button__text { margin-left: 4px }` 图标间距靠它）；没有 `+` 规则的页面零额外开销 |
 | 后续兄弟组合器 `~` | ❌ | |
-| 伪元素 `::before` / `::after` | ⚠️ | **装饰型**（specs/069）：只能在最后一个复合选择器上；`content` 只认 `''`/引号字符串（`none`/`normal` 不生成盒子），`attr()`/`counter()` 不支持（告警、不生成）；码点全在私有区的 iconfont 字形：盒子的字体栈命中某个 `@font-face` 声明的字体时正常渲染（specs/071），否则不渲染文字、只留装饰盒（同 web 字体缺失时的空盒）；盒内文字带上伪元素的可继承文字属性，`content` 随 class 切换同步更新。引擎按同一条层叠算样式（继承、`var()`、`em`、`inherit`），renderer 合成为真实子节点——`::before` 在最前、`::after` 在最后，布局/绘制/命中复用既有管道。不支持 `:active::before` 这类状态 + 伪元素组合。`content` 为**纯空白**（`" "`）时生成不带文字的空盒——vant 发丝线的惯用写法，真实空格子曾让 `scaleY(.5)` 的线浮起约 6px |
+| 伪元素 `::before` / `::after` | ⚠️ | **装饰型**（specs/069）：只能在最后一个复合选择器上；`content` 只认 `''`/引号字符串（`none`/`normal` 不生成盒子），`attr()`/`counter()` 不支持（告警、不生成）；码点全在私有区的 iconfont 字形：盒子的字体栈命中某个 `@font-face` 声明的字体时正常渲染（specs/071），否则不渲染文字、只留装饰盒（同 web 字体缺失时的空盒）；盒内文字带上伪元素的可继承文字属性，`content` 随 class 切换同步更新。引擎按同一条层叠算样式（继承、`var()`、`em`、`inherit`），renderer 合成为真实子节点——`::before` 在最前、`::after` 在最后，布局/绘制/命中复用既有管道。`:active::before` / `:active::after` 支持：引擎另算一份按压样式随盒子的 `activeStyle` 下发，盒子的按压态跟随**宿主元素**（按在按钮文字上也会显示 `::before` 遮罩，NutUI / vant 按钮的按下反馈）；`:hover::before` 仍不支持（跳过并告警）。`content` 为**纯空白**（`" "`）时生成不带文字的空盒——vant 发丝线的惯用写法，真实空格子曾让 `scaleY(.5)` 的线浮起约 6px |
 | 伪元素 `::placeholder` | ✅ | 只作用于 input / textarea 的占位文字，**不生成盒子**（specs/100）。声明按同一条层叠算出来（`var()` / `em` / `inherit` / `currentColor` 取宿主元素的颜色），落成元素的 `placeholderStyle` prop——就是 `placeholder-style` 属性那四个键（color / font-size / font-weight / line-height），`input.dart` 的 hint TextStyle 消费。**不继承元素的文字色**：规则没写 `color` 时占位保持两端钉死的灰（对齐浏览器 UA 占位默认灰，而不是跟随输入文字）。`line-height` 是绝对值（`24px`）时按占位字号换算成倍率传给对端（Flutter 的 `TextStyle.height` 是倍率）。web 端原生 CSS，不经引擎；`::-webkit-input-placeholder` 旧式变体不解析（标准 `::placeholder` 已覆盖，web 也只用标准写法） |
 | `@media` | ✅ | 见下方「@media 媒体查询」小节 |
 | `@font-face` | ⚠️ | specs/071。App 端：构建期把 `src` 里的 WOFF2 / WOFF（`data:` 内联或相对路径文件）统一转成 TrueType 并内联为 `data:font/ttf`，运行时经宿主方法 `fjs.font.load` 注册进 Flutter 字体表，加载完成后文字自动重排（首帧可能先空）。**不支持**：远程 `http(s)` / `//host` 源（跳过；没有其他可用源时 warnOnce 指名 family）、`local()`、`unicode-range`（告警后整字体生效）、可变字体轴、`font-display`、`document.fonts`。字体按内联计入 JS 包（TTF 约为 WOFF2 的 2–3 倍，>1 MB 构建期告警；大字体走资源文件是后续项）。Web 端浏览器原生 |
@@ -84,13 +84,13 @@ CSS 文本里用 kebab-case（`font-size: 16px`），内联对象用 camelCase
 | 属性 | 支持 | 说明 |
 |---|---|---|
 | `border`（简写）| ✅ | `1px dashed #ccc` |
-| `border-width` / `border-color` / `border-style` | ✅ | 覆盖简写的对应分量；1~4 值按边展开（`border-width: 1px 0 0` 只画上边，vant 分割线；specs/069）。简写不写颜色时取 `currentColor`（元素的文字色），同 CSS。单边只写颜色 / 样式（`border-bottom-color`）时宽度沿用 `border-width`；连 `border-width` 都没写才是默认 1px 细线（specs/129） |
+| `border-width` / `border-color` / `border-style` | ✅ | 覆盖简写的对应分量；1~4 值按边展开（`border-width: 1px 0 0` 只画上边，vant 分割线；specs/069）。简写不写颜色时取 `currentColor`（元素的文字色），同 CSS。单边只写颜色 / 样式（`border-bottom-color`）时宽度沿用 `border-width`；连 `border-width` 都没写时，只写样式是默认 1px 细线（specs/129），**只写颜色不画边框**（`border-style` 初始值是 none，同 web；NutUI 分割线的内联 `border-color`） |
 | `border-style` 值 | ⚠️ | `solid` / `dashed` / `dotted` 真画；`double` / `groove` 等按 solid |
 | `border-radius` | ✅ | `12` \| `'8px'` \| `'8px 16px'` \| `'1px 2px 3px 4px'` |
 | `border-radius: %` | ⚠️ | 横向依宽、纵向依高解成椭圆角（specs/069：van-radio 圆点、van-switch 圆钮）。确定 px 盒直接解析；**相对尺寸**（`width: 50%` 等，spec 079）在尺寸 LayoutBuilder 里按解析后的盒尺寸解析，圆角跟着真实盒子走。内容自适应的盒子写百分比圆角保持方角（参照是画出来的尺寸，布局前不可知，约束参照会把 `10%` 放大成 pill；50% 圆不受影响——RRect 会把超限圆角钳回半盒）。自绘/覆盖路径（dashed/分边 painter、foregroundDecoration）上的 % 圆角保持方角并告警一次。`a / b` 椭圆写法不支持（整条丢弃并告警） |
-| 单边边框（`border-top` 等，spec 041）| ✅ | 简写与 `-width`/`-color`/`-style` 长手都可；每边级联：单边长手 > 单边简写 > 全局长手 > 全局简写（合并 map 定优先级，**不还原源顺序**——`border-bottom: none` 之后再写 `border: 1px red`，web 上 bottom 会被简写重置回来，App 上仍无）；仅声明 `-color`/`-style` 按 CSS 语义推出 1px。**非一致边 + `border-radius`** 由自绘 painter 按边描画（角弧归相邻边各半），角部衔接与浏览器有亚像素差；`button` 的默认 hairline 只补页面没声明的边 |
+| 单边边框（`border-top` 等，spec 041）| ✅ | 简写与 `-width`/`-color`/`-style` 长手都可；每边级联：单边长手 > 单边简写 > 全局长手 > 全局简写（合并 map 定优先级，**不还原源顺序**——`border-bottom: none` 之后再写 `border: 1px red`，web 上 bottom 会被简写重置回来，App 上仍无）；仅声明 `-style` 推出 1px，仅声明 `-color` 不画（同 web）。**非一致边 + `border-radius`** 由自绘 painter 按边描画（角弧归相邻边各半），角部衔接与浏览器有亚像素差；`button` 的默认 hairline 只补页面没声明的边 |
 
-`border-color` 单独出现时按 CSS 语义算 1px 边框；`none` 和 0 宽度就是没边框
+`border-color` 单独出现时不画边框（`border-style` 初始值 none，与 web 一致；控件自带的默认描边——`button` / `input`——只换色）；`none` 和 0 宽度就是没边框
 （`button` 自带的那道 hairline 也是这么关的）。
 
 ### Flex 布局
@@ -110,7 +110,7 @@ CSS 文本里用 kebab-case（`font-size: 16px`），内联对象用 camelCase
 | `align-self` | ✅ | `auto` / `flex-start` / `center` / `flex-end` / `stretch`（`start` / `end` / `self-start` / `self-end` 同义）。App 端：容器里有子项写了它，整个容器按 stretch 布局，其余子项各按 `align-items` 在自己那一行里对齐；容器原本不拉伸（或交叉轴无上限，如纵向滚动里的 row）时先按内容量出交叉轴尺寸再定死（两遍布局），容器自身尺寸与不写时一致。没写的容器零开销。wrap 容器里不生效 |
 | `justify-self` | — | flex 布局里本来就无效（web 同样忽略，只对 grid 生效），两端一致；grid 不支持 |
 | `display: none` | ✅ | |
-| `display: inline-block` / `inline` / `inline-flex` | ⚠️ | 没有行内格式化上下文（行盒、基线对齐、文字绕排都不做）。`inline-block`/`inline` 映射成**横排可换行的收缩盒**：子元素横排（`flex-direction: row; flex-wrap: wrap`，不覆盖显式声明的方向），自身在交叉轴上不被 stretch 拉伸（specs/069：vant 步进器 −/输入/+ 横排）。**行为变化**：以前这两个值无效、表现为块级竖排，老页面会看到它们变横排——这是对齐 web |
+| `display: inline-block` / `inline` / `inline-flex` | ⚠️ | 没有行内格式化上下文（行盒、基线对齐、文字绕排都不做）。`inline-block`/`inline` 映射成**横排可换行的收缩盒**：子元素横排（`flex-direction: row; flex-wrap: wrap`，不覆盖显式声明的方向），自身在交叉轴上不被 stretch 拉伸（specs/069：vant 步进器 −/输入/+ 横排）。行内内容在行上的位置由 `text-align` 决定：`center` / `right` / `end` 转成对应的 `justify-content`（页面显式写了 `justify-content` 时不动；NutUI Cell 的描述文字 `inline-block; text-align: right`）。容器声明了高度时，子项的 `height: 100%` 按它解析（NutUI 按钮的 `__wrap` 靠它让图标垂直居中）。**行为变化**：以前这两个值无效、表现为块级竖排，老页面会看到它们变横排——这是对齐 web |
 | HTML 块级盒里的行内文字 | ⚠️ | 渲染函数/模板里的 HTML 块级标签（`div`、`p`…）**只含行内文字**（`span` 与裸文字，未设 display）时合成一段文字排版，同浏览器（vant 字数统计 `<div><span>0</span>/50</div>` 一行）。混有其他盒子（view、图片、块级/定位的文字）时仍按纵向 flex 排；fjs 自己的 `view` 不受影响，照旧竖排子节点 |
 | `display: grid` | ❌ | |
 
@@ -140,6 +140,7 @@ CSS 文本里用 kebab-case（`font-size: 16px`），内联对象用 camelCase
 | `text-decoration` | ✅ | underline / line-through / overline |
 | `text-transform` | ✅ | uppercase / lowercase / capitalize |
 | `white-space: nowrap` | ✅ | 单行 |
+| 行首 / 行尾空格 | ✅ | 按 CSS 折叠掉（web 的 text 是 `pre-line`）：Vue 编译后插槽文本常带首尾各一个空格（`<template #icon>…</template> 收藏`），App 端单段文本同样去掉；`white-space: pre` / `pre-wrap` / `break-spaces` 保留。多段富文本段间的空格是真的词间距，不动 |
 | `text-shadow` | ✅ | |
 | `max-lines` | ⚠️ | fjs 扩展，配 `overflow: ellipsis` |
 | `word-break` / `text-overflow` | ❌ | 用 `max-lines` + `overflow: ellipsis` |
@@ -158,7 +159,7 @@ width / height——Flutter 的 `TextSpan` 没有盒子，web 侧用 `!important
 | 属性 | 支持 | 说明 |
 |---|---|---|
 | `box-shadow` | ✅ | 字符串或数组 |
-| `background` / `background-image` | ⚠️ | 仅 `linear-gradient` / `radial-gradient`；不支持位图 url（用 `<image>` 标签）|
+| `background` / `background-image` | ⚠️ | 仅 `linear-gradient` / `radial-gradient`；不支持位图 url（用 `<image>` 标签）。`background` 简写里的其它分量（`border-box` 等）会被跳过，只取颜色 / 渐变（NutUI 按钮 `color` 属性写的 `background: border-box #7232dd`）|
 | `transform` | ✅ | translate / translateX / translateY / translate3d / scale / scaleX / scaleY / rotate(deg\|rad\|turn\|grad) / matrix(a,b,c,d,e,f)，从左到右复合 |
 | `transition` | ⚠️ | `transform` / `opacity` / `background-color`（实色，无背景 ↔ 有背景按透明渐入渐出）/ `border-color`（统一实线与分边、虚线都渐变）/ `color`（段落自身颜色；嵌套片段自带 color 仍瞬时）/ `width` / `height` / `padding` / `margin` 两端渐变（spec 045/073/078；简写与长手、duration/curve 同一套解析），以及绝对/固定定位盒的 `left` / `top` / `right` / `bottom`（spec 073——vant Progress 的 portion `width` 与 pivot `left` 都靠它；`FjsLength` 是 px+百分比线性对，两端插值等价于 calc() 插值，被 delegate 解析的百分比因此逐帧跟随盒子）。`color` / `border-color` 只插颜色本身，宽度 / 样式 / 分边出现与消失取终态；`padding` / `margin` 是布局属性：逐帧重排，与 web 成本一致，别在大子树上用。**App 端差异**：`transition-delay` 对 color / border-color / background-color / 尺寸 / inset / padding / margin 不生效（transform/opacity 有）；gradient 背景跳变不动画；inset 与 padding/margin 的 transitionend 不派发（width/height 照旧，由尺寸动画派发）；嵌套 text 片段自带 `color` 的过渡瞬时，web 原生渐变。页面转场用 `<Transition>`，见 [routing.md](routing.md) |
 | `<Transition>`（组件） | ⚠️ | vue-shim 里的 fjs 版（BaseTransition + 引擎类操作）：enter/leave 的 `-from/-active/-to` 类照常落地，组件库里 animation 型的 enter/leave 规则（vant 的 `van-fade-enter-active { animation: … }`）由 keyframes 引擎原生播放；transition 型的类切换（vant 弹层滑入滑出、Dialog 缩放）由 App 端按上表 `transition` 的支持范围补间。类移除时机取元素计算样式里 animation 与 transition 的「时长 + 延迟」较长者（本端没有 DOM end 事件）；`transition-*` 长写覆盖在简写之上。`v-show` 在 `<Transition>` 内走钩子（离场动画放完才 `display: none`）。**App 端差异**：`<TransitionGroup>` 是纯透传（vant 弹层不用） |
@@ -326,7 +327,7 @@ App 端按压**不画** 10% 黑色遮罩，与 web 上遮罩伪元素被藏掉�
 | 继承 | ⚠️ **不向子节点传递** | 会传递 |
 | 位置 | ⚠️ 只能写在最后一个复合选择器上 | 任意 |
 
-所以按压反馈优先用**自身属性**：`background-color` / `opacity` / 边框。
+所以按压反馈优先用**自身属性**：`background-color` / `opacity` / 边框，或自身的 `::before` / `::after`（`.x:active::before`，见伪元素一行）。
 `.row:active .title { ... }` 会被跳过并告警。
 
 ### 悬停态 `:hover`

@@ -44,6 +44,13 @@ export const INHERITABLE = new Set<string>(INHERITABLE_KEYS);
 /** Displays that make an element a flex container (the -webkit- prefix on
  * the VALUE, unlike property names, is not stripped by camelize). */
 const FLEX_DISPLAYS = new Set(['flex', 'inline-flex', '-webkit-flex']);
+/** text-align → justify-content for an inline-level box mapped to a
+ * wrapping row (see compute): left/start is the row's default already. */
+const INLINE_TEXT_ALIGN_JUSTIFY: Record<string, string> = {
+  center: 'center',
+  right: 'flex-end',
+  end: 'flex-end',
+};
 /** CSS initial font-size; em lengths chain up to this through inheritance. */
 const INITIAL_FONT_PX = 16;
 /** Pseudo-style comparison for the notification decision: all kinds
@@ -59,7 +66,9 @@ function pseudoChanged(next: PseudoStyles, prev: PseudoStyles | null | undefined
   return (
     kind(next.before, prev?.before) ||
     kind(next.after, prev?.after) ||
-    kind(next.placeholder, prev?.placeholder)
+    kind(next.placeholder, prev?.placeholder) ||
+    kind(next.activeBefore, prev?.activeBefore) ||
+    kind(next.activeAfter, prev?.activeAfter)
   );
 }
 
@@ -370,6 +379,10 @@ export interface PseudoStyles {
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;
   placeholder?: Record<string, unknown>;
+  /** The box's whole style while its originating element is pressed
+   * (`.x:active::before`), present only when such a rule matched. */
+  activeBefore?: Record<string, unknown>;
+  activeAfter?: Record<string, unknown>;
 }
 
 interface MatchResult {
@@ -383,11 +396,14 @@ interface MatchResult {
   /** Cascaded `::before` / `::after` / `::placeholder` declarations, present
    * only when the stylesheet set contains pseudo-element rules at all (the
    * common page pays nothing). Matched by the same selectors; the
-   * declarations style that pseudo, never the element itself. State variants
-   * (`:active::before`) stay out — the plain variant is the supported
-   * subset, registered in css-compat.md. */
+   * declarations style that pseudo, never the element itself. */
   beforeDecls?: Record<string, unknown>;
   afterDecls?: Record<string, unknown>;
+  /** The pseudo cascade with `:active::before` / `:active::after` rules
+   * folded in, present only when one actually matched. :hover variants of
+   * a box are not supported (parser skips them). */
+  activeBeforeDecls?: Record<string, unknown>;
+  activeAfterDecls?: Record<string, unknown>;
   placeholderDecls?: Record<string, unknown>;
   id: number; // identity token for the compute cache key
   /** Hashes of the sheets whose rules this match drew on — recorded only
@@ -465,7 +481,7 @@ const RETIRED_CHAIN_LIMIT = 512;
 
 /** Bump when the snapshot layout or the meaning of any cached field changes:
  * an older snapshot is then refused instead of misread. */
-export const STYLE_SNAPSHOT_VERSION = 1;
+export const STYLE_SNAPSHOT_VERSION = 2;
 
 /** A compute entry's custom slot meaning "the table inherited from the
  * parent entry (the :root table for a root)" — see exportSnapshot. */
@@ -488,8 +504,9 @@ export interface StyleSnapshot {
   objs: unknown[];
   /** [parent chain, key after the parent id, match]. */
   chains: Array<[number, string, number]>;
-  /** [decls, custom, active, hover, before, after, placeholder]. */
-  matches: Array<[number, number, number, number, number, number, number]>;
+  /** [decls, custom, active, hover, before, after, placeholder,
+   *  activeBefore, activeAfter]. */
+  matches: Array<[number, number, number, number, number, number, number, number, number]>;
   /** [chain, parent compute, style, active, hover, custom, pseudo,
    *  defaults JSON ('' = none), rawText 0/1]. */
   computes: Array<[number, number, number, number, number, number, number, string, number]>;
@@ -987,6 +1004,7 @@ export class StyleEngine {
           matches.push([
             ref(matched.decls), ref(matched.custom), ref(matched.activeDecls), ref(matched.hoverDecls),
             ref(matched.beforeDecls), ref(matched.afterDecls), ref(matched.placeholderDecls),
+            ref(matched.activeBeforeDecls), ref(matched.activeAfterDecls),
           ]);
           for (const h of matched.sheets ?? []) sheets.add(h);
         }
@@ -1126,7 +1144,7 @@ export class StyleEngine {
       chainIdOf[i] = chainId;
       let result = this.matchCache.get(key);
       if (result === undefined) {
-        const [decls, custom, active, hover, before, after, placeholder] = snap.matches[m];
+        const [decls, custom, active, hover, before, after, placeholder, activeBefore, activeAfter] = snap.matches[m];
         result = {
           decls: obj<Record<string, unknown>>(decls) ?? {},
           custom: obj<Record<string, string>>(custom) ?? {},
@@ -1135,6 +1153,8 @@ export class StyleEngine {
           beforeDecls: obj(before),
           afterDecls: obj(after),
           placeholderDecls: obj(placeholder),
+          activeBeforeDecls: obj(activeBefore),
+          activeAfterDecls: obj(activeAfter),
           id: this.nextObjId++,
           byParent: new Map(),
         };
@@ -1809,6 +1829,13 @@ export class StyleEngine {
     ) {
       merged.flexDirection = 'row';
       merged.flexWrap = 'wrap';
+      // In that inline flow, text-align is what places the runs along the
+      // line — NutUI's cell value is `inline-block; text-align: right;
+      // flex: 1` and its text sat at the start of the stretched box.
+      if (merged.justifyContent === undefined) {
+        const j = INLINE_TEXT_ALIGN_JUSTIFY[merged.textAlign as string];
+        if (j) merged.justifyContent = j;
+      }
     }
     resolveInheritKeyword(merged, parentComputed);
     const parentFontPx = fontSizePx(parentComputed?.fontSize, INITIAL_FONT_PX);
@@ -1862,6 +1889,13 @@ export class StyleEngine {
       pseudo = {};
       if (matched.beforeDecls !== undefined) pseudo.before = build(matched.beforeDecls);
       if (matched.afterDecls !== undefined) pseudo.after = build(matched.afterDecls);
+      // a pressed variant only restyles a box the plain cascade created
+      if (pseudo.before && matched.activeBeforeDecls !== undefined) {
+        pseudo.activeBefore = build(matched.activeBeforeDecls);
+      }
+      if (pseudo.after && matched.activeAfterDecls !== undefined) {
+        pseudo.activeAfter = build(matched.activeAfterDecls);
+      }
     }
     if (matched.placeholderDecls !== undefined) {
       // `::placeholder` starts from its matched declarations ALONE (see
@@ -2181,20 +2215,26 @@ export class StyleEngine {
       }
     }
     // Pseudo-element cascade: pseudo rules matched by the same selectors,
-    // cascaded per pseudo kind in source order. State variants stay out
-    // (`:active::before` is not the supported subset — see MatchResult).
+    // cascaded per pseudo kind in source order. `:active::before` rules
+    // cascade into a separate pressed variant, like activeDecls.
     let beforeDecls: Record<string, unknown> | undefined;
     let afterDecls: Record<string, unknown> | undefined;
     let placeholderDecls: Record<string, unknown> | undefined;
+    let activeBeforeDecls: Record<string, unknown> | undefined;
+    let activeAfterDecls: Record<string, unknown> | undefined;
     if (this.hasPseudo) {
       const before: Array<{ rule: CssRule; spec: number }> = [];
       const after: Array<{ rule: CssRule; spec: number }> = [];
       const placeholder: Array<{ rule: CssRule; spec: number }> = [];
+      // `state`: reached through an :active selector (see scanPseudoBucket)
+      const activeBefore: Array<{ rule: CssRule; spec: number; state?: boolean }> = [];
+      const activeAfter: Array<{ rule: CssRule; spec: number; state?: boolean }> = [];
+      const pseudoLists = { before, after, placeholder, activeBefore, activeAfter };
       for (const cls of s.classes) {
-        this.scanPseudoBucket(this.pseudoBuckets.byClass.get(cls), stamp, id, s, before, after, placeholder);
+        this.scanPseudoBucket(this.pseudoBuckets.byClass.get(cls), stamp, id, s, pseudoLists);
       }
-      this.scanPseudoBucket(this.pseudoBuckets.byTag.get(s.tag), stamp, id, s, before, after, placeholder);
-      this.scanPseudoBucket(this.pseudoBuckets.catchAll, stamp, id, s, before, after, placeholder);
+      this.scanPseudoBucket(this.pseudoBuckets.byTag.get(s.tag), stamp, id, s, pseudoLists);
+      this.scanPseudoBucket(this.pseudoBuckets.catchAll, stamp, id, s, pseudoLists);
       const fold = (bucket: Array<{ rule: CssRule; spec: number }>) => {
         if (bucket.length === 0) return undefined;
         bucket.sort(byCascade);
@@ -2212,10 +2252,17 @@ export class StyleEngine {
         for (const m of before) sheetSet.add(m.rule.sheet ?? '');
         for (const m of after) sheetSet.add(m.rule.sheet ?? '');
         for (const m of placeholder) sheetSet.add(m.rule.sheet ?? '');
+        for (const m of activeBefore) sheetSet.add(m.rule.sheet ?? '');
+        for (const m of activeAfter) sheetSet.add(m.rule.sheet ?? '');
       }
       beforeDecls = fold(before);
       afterDecls = fold(after);
       placeholderDecls = fold(placeholder);
+      // only a variant that some :active selector reached is worth a slot:
+      // the lists also carry every plain rule (the full pressed cascade)
+      const hasState = (list: Array<{ state?: boolean }>) => list.some((m) => m.state === true);
+      if (hasState(activeBefore)) activeBeforeDecls = fold(activeBefore);
+      if (hasState(activeAfter)) activeAfterDecls = fold(activeAfter);
     }
     const result: MatchResult = {
       decls,
@@ -2225,6 +2272,8 @@ export class StyleEngine {
       beforeDecls,
       afterDecls,
       placeholderDecls,
+      activeBeforeDecls,
+      activeAfterDecls,
       id: this.nextObjId++,
       byParent: new Map(),
       sheets: sheetSet ? [...sheetSet] : undefined,
@@ -2291,9 +2340,10 @@ export class StyleEngine {
     stamp: number,
     id: number,
     s: ElementState,
-    before: Array<{ rule: CssRule; spec: number }>,
-    after: Array<{ rule: CssRule; spec: number }>,
-    placeholder: Array<{ rule: CssRule; spec: number }>,
+    lists: Record<
+      'before' | 'after' | 'placeholder' | 'activeBefore' | 'activeAfter',
+      Array<{ rule: CssRule; spec: number; state?: boolean }>
+    >,
   ): void {
     if (bucket === undefined) return;
     for (const rule of bucket) {
@@ -2302,20 +2352,29 @@ export class StyleEngine {
       if (rule.media !== undefined && !mediaMatches(rule.media, this.viewport.width, this.viewport.height)) {
         continue;
       }
-      let best = -1;
+      let bestPlain = -1; // selectors without :active
+      let bestActive = -1; // any selector — the pressed cascade takes both
       for (const sel of rule.selectors) {
         if (rule.scope != null) {
           const has = sel.deep ? this.hasScopeUp(id, rule.scope) : s.scopes.has(rule.scope);
           if (!has) continue;
         }
         if (!this.matchSelector(sel, id)) continue;
-        best = Math.max(best, sel.specificity);
+        if (!sel.active) bestPlain = Math.max(bestPlain, sel.specificity);
+        bestActive = Math.max(bestActive, sel.specificity);
       }
-      if (best < 0) continue;
-      const spec = best + (rule.scope != null ? 10 : 0);
-      (rule.pseudo === 'before' ? before : rule.pseudo === 'placeholder' ? placeholder : after).push({
+      if (bestActive < 0) continue;
+      const bump = rule.scope != null ? 10 : 0;
+      if (rule.pseudo === 'placeholder') {
+        if (bestPlain >= 0) lists.placeholder.push({ rule, spec: bestPlain + bump });
+        continue;
+      }
+      const isBefore = rule.pseudo === 'before';
+      if (bestPlain >= 0) (isBefore ? lists.before : lists.after).push({ rule, spec: bestPlain + bump });
+      (isBefore ? lists.activeBefore : lists.activeAfter).push({
         rule,
-        spec,
+        spec: bestActive + bump,
+        state: bestActive > bestPlain,
       });
     }
   }

@@ -255,7 +255,7 @@ Widget buildText(
     return _animatedParagraphColor(style, (color) {
       final textStyle = fjsTextStyle(style, color: color);
       return Text(
-        _transformed(style, node.text ?? ''),
+        _transformed(style, _lineEdgesTrimmed(style, node.text ?? '')),
         style: textStyle,
         strutStyle: StrutStyle.fromTextStyle(textStyle, forceStrutHeight: true),
         textAlign: textAlign,
@@ -325,6 +325,23 @@ bool _placeholdersOnly(MirrorNode node, List<MirrorNode> childNodes) {
     }
   }
   return box;
+}
+
+/// CSS drops collapsible spaces at the start and end of every line (web
+/// pins `white-space: pre-line` on text). Vue's whitespace condensing keeps a
+/// single space on each side of slot text that sat on its own template line
+/// — NutUI's `<template #icon>…</template> 收藏` — and painting them pushed
+/// the label ~9px wider than on web. Only a single-run paragraph: between
+/// the runs of a rich paragraph a space is a real word gap.
+String _lineEdgesTrimmed(FjsStyle style, String data) {
+  if (data.isEmpty || style.whiteSpacePreservesSpaces) return data;
+  if (!data.startsWith(' ') &&
+      !data.endsWith(' ') &&
+      !data.contains(' \n') &&
+      !data.contains('\n ')) {
+    return data;
+  }
+  return data.split('\n').map((line) => line.trim()).join('\n');
 }
 
 String _transformed(FjsStyle style, String data) => style.textTransform != null

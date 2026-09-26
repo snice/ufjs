@@ -510,12 +510,18 @@ class FjsStyle {
         // `border-bottom-color` — taken as a 1px hairline it drew a 12x1
         // sliver instead of the triangle (specs/129)
         width = gWidth > 0 ? gWidth : 0;
-      } else if (sColor != null || sKindRaw != null) {
-        width =
-            1; // a lone color or style means the default hairline, as in CSS
+      } else if (sKindRaw != null) {
+        width = 1; // a lone style: the default hairline
       } else if (_v('border') != null) {
         width = gShort?.width ?? 0;
-      } else if (gColor != null || gKindRaw != null) {
+      } else if (gKindRaw != null) {
+        width = 1;
+      } else if (sColor != null || gColor != null) {
+        // A lone color draws nothing in CSS (border-style's initial value is
+        // none): NutUI's divider takes an inline `border-color` for its
+        // ::before/::after lines, and a hairline box appeared around it. A
+        // widget with a built-in border (input) keeps it, recolored.
+        if (defaultBorderColor == null) return null;
         width = 1;
       } else {
         // nothing declared anywhere: only here does a built-in default fill in
@@ -603,7 +609,22 @@ class FjsStyle {
     if (_backgroundColorReady) return _backgroundColor;
     _backgroundColorReady = true;
     return _backgroundColor =
-        _color('backgroundColor') ?? _color('background');
+        _color('backgroundColor') ?? parseColor(_backgroundPaint);
+  }
+
+  /// The color or gradient component of the `background` shorthand. The
+  /// shorthand may carry other layers' keywords around it — NutUI's
+  /// `color` prop writes `background: border-box #7232dd` inline — and
+  /// parsing the whole string as one color/gradient dropped the paint.
+  Object? get _backgroundPaint {
+    final v = _v('background');
+    if (v is! String) return v;
+    final parts = splitOutsideParens(v);
+    if (parts.length < 2) return v;
+    for (final p in parts) {
+      if (parseGradient(p) != null || parseColor(p) != null) return p;
+    }
+    return v;
   }
 
   Color? get color {
@@ -699,6 +720,12 @@ class FjsStyle {
   String? get textTransform => _v('textTransform')?.toString();
   List<BoxShadow>? get textShadows => parseBoxShadows(_v('textShadow'));
   bool get whiteSpaceNowrap => _v('whiteSpace')?.toString() == 'nowrap';
+
+  /// `pre` / `pre-wrap` / `break-spaces` keep spaces at line edges.
+  bool get whiteSpacePreservesSpaces => switch (_v('whiteSpace')?.toString()) {
+    'pre' || 'pre-wrap' || 'break-spaces' => true,
+    _ => false,
+  };
   bool get textOverflowEllipsis => _v('textOverflow')?.toString() == 'ellipsis';
 
   TextAlign? get textAlign {
@@ -879,7 +906,7 @@ class FjsStyle {
 
   Gradient? get gradient => backgroundLayers != null
       ? null
-      : parseGradient(_v('backgroundImage')) ?? parseGradient(_v('background'));
+      : parseGradient(_v('backgroundImage')) ?? parseGradient(_backgroundPaint);
 
   /// Layered background images (see [FjsBackgroundLayer]); null for the
   /// single full-box gradient [gradient] paints.

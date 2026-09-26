@@ -56,9 +56,17 @@ void main() {
       },
     );
 
-    test('a lone side color or style implies the 1px hairline', () {
-      final b = styled({'borderBottomColor': '#123456'}).boxBorders()!;
-      expect(b.bottom!.width, 1);
+    test('a lone side style implies the 1px hairline, a lone color nothing', () {
+      // border-style's initial value is none: a color alone paints nothing,
+      // as on web (NutUI's divider takes an inline border-color for its
+      // pseudo lines only)
+      expect(styled({'borderBottomColor': '#123456'}).boxBorders(), isNull);
+      expect(styled({'borderColor': '#123456'}).boxBorders(), isNull);
+      // a width from border-width makes the color draw
+      final b = styled({
+        'borderWidth': '1px',
+        'borderBottomColor': '#123456',
+      }).boxBorders()!;
       expect(b.bottom!.color, const Color(0xFF123456));
       expect(
         styled({'borderBottomStyle': 'dashed'}).boxBorders()!.bottom!.kind,
@@ -69,13 +77,14 @@ void main() {
     test('none and zero width turn the side off', () {
       expect(styled({'borderBottom': 'none'}).boxBorders(), isNull);
       expect(styled({'borderBottomWidth': 0}).boxBorders(), isNull);
-      // global none with a side color: the side longhand wins its hairline
-      final b = styled({
-        'border': 'none',
-        'borderBottomColor': '#000000',
-      }).boxBorders()!;
-      expect(b.bottom, isNotNull);
-      expect(b.top, isNull);
+      // global none with a side color: still no border (style stays none)
+      expect(
+        styled({
+          'border': 'none',
+          'borderBottomColor': '#000000',
+        }).boxBorders(),
+        isNull,
+      );
     });
 
     test('the built-in default fills only undeclared sides', () {
