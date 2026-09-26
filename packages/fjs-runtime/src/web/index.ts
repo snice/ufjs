@@ -64,4 +64,4 @@ export function showToast(message: string): void {
 
 export { fjsComponents, FJS_TAGS };
 export { BASE_CSS, installBaseCss } from './base-css';
-export { rewriteFjsCss } from './css-compat';
+export { expandFlexDefault, rewriteFjsCss } from './css-compat';

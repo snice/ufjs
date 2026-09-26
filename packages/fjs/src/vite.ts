@@ -19,7 +19,7 @@ import { isNativeTagFor, runtimeDir } from './bundler/vue-plugin.js';
 import { swiperChildrenTransform } from './template/swiper-children.js';
 import { copyLocalDir, copyModuleDataForWeb, HTML_DIR } from './bundler/build.js';
 import { moduleContentType } from './dev/server.js';
-import { rewriteFjsCss } from '../../fjs-runtime/src/web/css-compat.js';
+import { expandFlexDefault, rewriteFjsCss } from '../../fjs-runtime/src/web/css-compat.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -27,6 +27,8 @@ const VIRTUAL_PAGES = '\0fjs-pages';
 const VIRTUAL_PLUGINS = '\0fjs-plugins';
 const VUE_ROUTE_BLOCK_RE = /\.vue\?vue&type=route(?:&|$)/;
 const VUE_STYLE_BLOCK_RE = /\.vue\?vue&type=style(?:&|$)/;
+// a stylesheet import; `?raw` / `?url` ask for the file itself, not styles
+const PLAIN_CSS_RE = /\.css(?:$|\?(?!.*\b(?:raw|url)\b))/;
 
 interface ViteConfig {
   root?: string;
@@ -300,8 +302,17 @@ export function fjs(): VitePlugin {
     // the SFC <style> blocks go straight to vite:css instead, so without
     // this a page's flex-grow children keep their natural size and push the
     // tabBar off-screen. 'pre' runs this on the raw block, before scoping.
+    //
+    // Plain .css imports (a component library's dist styles, the project's
+    // own sheets) are standard CSS, not fjs dialect, so they only get the
+    // flex-direction default (specs/140) — the App engine reads every sheet
+    // with that rule, and NutUI's <view>s rely on it. A raw scss block is
+    // skipped for the same reason: its nesting would fool the rule scanner.
     transform(code, id) {
-      return VUE_STYLE_BLOCK_RE.test(id) ? rewriteFjsCss(code) : null;
+      if (VUE_STYLE_BLOCK_RE.test(id)) {
+        return rewriteFjsCss(code, { flexDefault: !/[&?]lang\.(?!css\b)/.test(id) });
+      }
+      return PLAIN_CSS_RE.test(id) ? expandFlexDefault(code) : null;
     },
     async handleHotUpdate(ctx) {
       // an edit can change what a module generates — the icons a page names,

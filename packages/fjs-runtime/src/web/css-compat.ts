@@ -130,8 +130,105 @@ export function rewriteFjsCssLengths(css: string): string {
   return restore(expandUnitlessLengths(text));
 }
 
-/** Rewrites the fjs-only style keys in one CSS source. Idempotent. */
-export function rewriteFjsCss(css: string): string {
+/** Rewrites the fjs-only style keys in one CSS source. Idempotent.
+ * `flexDefault: false` skips [expandFlexDefault] — for sources that are not
+ * plain CSS yet (a raw `lang="scss"` block), whose nesting the rule scanner
+ * would misread. */
+export function rewriteFjsCss(css: string, options: { flexDefault?: boolean } = {}): string {
   const { text, restore } = maskMediaConditions(expandUnitlessMediaConditions(css));
-  return restore(expandDirection(expandFlexGrow(expandUnitlessLengths(text))));
+  const out = restore(expandDirection(expandFlexGrow(expandUnitlessLengths(text))));
+  return options.flexDefault === false ? out : expandFlexDefault(out);
+}
+
+// `display: flex` with no direction anywhere in the cascade is a ROW on the
+// App: the style engine pins CSS's initial value there (css/style.ts, the
+// FLEX_DISPLAYS branch). On web, base-css gives the fjs tags (view, ...) a
+// column, so a rule that only says `display: flex` — NutUI's .nut-cell on
+// the <view> it renders for Taro — stayed a column (specs/140).
+//
+// The engine's test is cascade-level: ANY author declaration of a direction
+// wins, whatever its specificity or order. Appending `flex-direction: row`
+// to the rule itself would not match that — `.a{flex-direction:column}` +
+// `.a.b{display:flex}` is a column on the App and would turn into a row. So
+// the filled value goes into a cascade layer instead: base-css puts the
+// tags' column in `fjs-base`, this puts the row in `fjs-flex`, and every
+// unlayered author rule beats both. align-items: stretch is filled the same
+// way (the engine fills it when unset). On a <div> both are CSS's initial
+// values, so library CSS written for real elements is unaffected.
+const FLEX_LAYER_ORDER = '@layer fjs-base, fjs-flex;';
+const FLEX_FILL = 'flex-direction:row;align-items:stretch';
+const FLEX_DISPLAY_DECL =
+  /(?:^|[;\s])display\s*:\s*(?:flex|inline-flex|-webkit-flex)\s*(?:!important\s*)?(?:;|$)/i;
+const FLEX_DIRECTION_DECL = /(?:^|[;\s])(?:-webkit-)?flex-(?:direction|flow)\s*:/i;
+// at-rules whose blocks hold style rules; anything else (@keyframes,
+// @font-face, @page) holds declarations or keyframe selectors
+const RULE_CONTAINERS = /^@(?:media|supports|container|layer|scope|document|-moz-document|starting-style)\b/i;
+
+type Block = { kind: 'container' | 'opaque' | 'rule'; prelude: string; start: number; nested: boolean };
+
+/** Adds the `fjs-flex` layer rule after every style rule that sets a flex
+ * display without a direction (see above). A small brace scanner rather
+ * than a regex: selectors and bodies must be paired exactly, and rules nest
+ * inside @media / @supports. Idempotent: output carrying the layer order
+ * statement is returned as-is. */
+export function expandFlexDefault(css: string): string {
+  if (css.includes(FLEX_LAYER_ORDER)) return css;
+  const stack: Block[] = [];
+  const inserts: Array<[number, string]> = [];
+  let preludeStart = 0;
+  for (let i = 0; i < css.length; i++) {
+    const c = css[i];
+    if (c === '/' && css[i + 1] === '*') {
+      const end = css.indexOf('*/', i + 2);
+      i = end < 0 ? css.length : end + 1;
+    } else if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < css.length && css[j] !== c) j += css[j] === '\\' ? 2 : 1;
+      i = j;
+    } else if (c === '{') {
+      const prelude = stripComments(css.slice(preludeStart, i)).trim();
+      const parent = stack[stack.length - 1];
+      if (parent) parent.nested = true;
+      const kind = prelude.startsWith('@')
+        ? RULE_CONTAINERS.test(prelude) ? 'container' : 'opaque'
+        : 'rule';
+      stack.push({ kind, prelude, start: i + 1, nested: false });
+      preludeStart = i + 1;
+    } else if (c === '}') {
+      const block = stack.pop();
+      const parent = stack[stack.length - 1];
+      if (
+        block?.kind === 'rule' &&
+        !block.nested &&
+        (!parent || parent.kind === 'container') &&
+        block.prelude
+      ) {
+        const body = stripComments(css.slice(block.start, i));
+        if (FLEX_DISPLAY_DECL.test(body) && !FLEX_DIRECTION_DECL.test(body)) {
+          inserts.push([i + 1, `@layer fjs-flex{${block.prelude}{${FLEX_FILL}}}`]);
+        }
+      }
+      preludeStart = i + 1;
+    } else if (c === ';' && (stack.length === 0 || stack[stack.length - 1].kind === 'container')) {
+      preludeStart = i + 1; // a statement at-rule (@import, @layer a, b;)
+    }
+  }
+  if (!inserts.length) return css;
+  let out = '';
+  let last = 0;
+  for (const [pos, text] of inserts) {
+    out += css.slice(last, pos) + text;
+    last = pos;
+  }
+  out += css.slice(last);
+  // Layer order is fixed by first appearance, and base-css is injected at
+  // run time — possibly after a page's stylesheet. Every rewritten sheet
+  // states the same order, so whichever comes first gets it right.
+  const charset = /^\s*@charset\s+[^;]*;/i.exec(out);
+  const at = charset ? charset[0].length : 0;
+  return out.slice(0, at) + FLEX_LAYER_ORDER + out.slice(at);
+}
+
+function stripComments(s: string): string {
+  return s.replace(/\/\*[\s\S]*?\*\//g, '');
 }

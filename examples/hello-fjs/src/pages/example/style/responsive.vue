@@ -97,6 +97,7 @@ const marks = ref(['窄屏时只有主区', '宽屏出现侧栏', '横屏后主�
   }
   .side {
     display: flex;
+    flex-direction: column;
   }
   .main {
     flex-grow: 1;
@@ -120,6 +121,7 @@ const marks = ref(['窄屏时只有主区', '宽屏出现侧栏', '横屏后主�
 @media (min-width: 600px) and (orientation: landscape), (orientation: portrait) {
   .marks {
     display: flex;
+    flex-direction: column;
   }
 }
 </style>
