@@ -4,7 +4,7 @@
 
 <script setup lang="ts">
 // 首页：计数器 + 分类手风琴（同 examples/hello-fjs 首页）。条目来自各页面
-// <route> 里的 group，见 src/catalog.ts。计数器留在这里：它和 /about 共用
+// <route> 里的 group，见 src/catalog.ts。计数器留在这里：它和 /basic/about 共用
 // 一个 pinia store，是 pinia 在 App 端跨页面共享的回归点。
 import { ref } from 'vue';
 import { useRouter } from 'fjs/router';

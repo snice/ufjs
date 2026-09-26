@@ -12,7 +12,7 @@
 import { createApp, flutterRoot } from 'fjs/vue';
 import { flushNow, setOpSink } from 'fjs';
 import { plugins } from 'fjs/plugins';
-import VantWatermark from '../src/pages/vant-watermark.vue';
+import VantWatermark from '../src/pages/vant/watermark.vue';
 
 let frameBytes = 0;
 setOpSink((frame: Uint8Array) => {
