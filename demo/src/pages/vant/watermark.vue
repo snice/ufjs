@@ -95,7 +95,7 @@ const vantMark = 'https://fastly.jsdelivr.net/npm/@vant/assets/vant-watermark.pn
         <van-button size="small" :type="fullLevel === 'app' ? 'primary' : 'default'" @click="fullLevel = fullLevel === 'app' ? 'page' : 'app'">
           宿主：{{ fullLevel === 'app' ? 'app 级' : '页面级' }}
         </van-button>
-        <van-button size="small" @click="router.push('/about')">去 /about 验证跨页</van-button>
+        <van-button size="small" @click="router.push('/basic/about')">去 /basic/about 验证跨页</van-button>
         <van-button size="small" @click="showPopup = true">弹层压在水印上</van-button>
       </view>
       <text class="echo">

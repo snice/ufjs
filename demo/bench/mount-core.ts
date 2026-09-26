@@ -41,11 +41,11 @@ import { createApp, flutterRoot, styleEngine } from 'fjs/vue';
 import { flushNow, nowMs, setOpSink } from 'fjs';
 import { plugins } from 'fjs/plugins';
 import { FjsDefer } from 'fjs/app';
-import VantBasic from '../src/pages/vant-basic.vue';
-import VantFeedback from '../src/pages/vant-feedback.vue';
-import VantForm from '../src/pages/vant-form.vue';
-import VantMore from '../src/pages/vant-more.vue';
-import VantNav from '../src/pages/vant-nav.vue';
+import VantBasic from '../src/pages/vant/basic.vue';
+import VantFeedback from '../src/pages/vant/feedback.vue';
+import VantForm from '../src/pages/vant/form.vue';
+import VantMore from '../src/pages/vant/more.vue';
+import VantNav from '../src/pages/vant/nav.vue';
 
 const PAGES: [string, Component][] = [
   ['vant-basic', VantBasic],

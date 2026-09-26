@@ -20,7 +20,7 @@ const { count } = storeToRefs(counter);
 <template>
   <view class="page">
     <text class="title">about sees count: {{ count }}</text>
-    <button class="btn" @tap="counter.inc()">+1 from /about</button>
+    <button class="btn" @tap="counter.inc()">+1 from /basic/about</button>
   </view>
 </template>
 
