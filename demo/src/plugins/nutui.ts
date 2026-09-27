@@ -22,7 +22,6 @@ import Cell from '@nutui/nutui/dist/packages/cell/index.mjs';
 import CellGroup from '@nutui/nutui/dist/packages/cellgroup/index.mjs';
 import Divider from '@nutui/nutui/dist/packages/divider/index.mjs';
 import Tag from '@nutui/nutui/dist/packages/tag/index.mjs';
-import '@nutui/icons-vue/dist/style_icon.css';
 import '@nutui/nutui/dist/packages/button/style/css.mjs';
 import '@nutui/nutui/dist/packages/cell/style/css.mjs';
 import '@nutui/nutui/dist/packages/cellgroup/style/css.mjs';
