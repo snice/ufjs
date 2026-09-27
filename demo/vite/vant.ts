@@ -38,6 +38,9 @@ const LOCK_CLICK = /\/vant\/es\/toast\/lock-click\.mjs$/;
 const NOTIFY = /\/vant\/es\/notify\/Notify\.mjs$/;
 const IMAGE_PREVIEW = /\/vant\/es\/image-preview\/ImagePreview\.mjs$/;
 
+// The find/replace strings below keep vant's dist indentation byte for
+// byte — write them as flush-left template literals and never re-indent
+// them (the whitespace inside the backticks IS the patch).
 export const PATCHES: Patch[] = [
   {
     // useRect() runs `val === window` on every call (Rate clicks, Slider
@@ -54,8 +57,10 @@ export const PATCHES: Patch[] = [
     // the default target (window, absent here); an explicit element target
     // goes through to the element's addEventListener.
     file: VANT_USE,
-    find: 'function useEventListener(type, listener, options = {}) {\n  if (!inBrowser) {',
-    replace: 'function useEventListener(type, listener, options = {}) {\n  if (!inBrowser && !options.target) {',
+    find: `function useEventListener(type, listener, options = {}) {
+  if (!inBrowser) {`,
+    replace: `function useEventListener(type, listener, options = {}) {
+  if (!inBrowser && !options.target) {`,
     feature: 'Slider drag (useEventListener on an element target)',
   },
   {
@@ -64,14 +69,20 @@ export const PATCHES: Patch[] = [
     // mid-flight and the popup never reaches its new state. The app side
     // pins the page under an overlay by itself, so the lock is a no-op.
     file: LOCK_SCROLL,
-    find: '  const lock = () => {\n',
-    replace: '  const lock = () => {\n    if (typeof document === "undefined") return;\n',
+    find: `  const lock = () => {
+`,
+    replace: `  const lock = () => {
+    if (typeof document === "undefined") return;
+`,
     feature: 'Popup open (useLockScroll)',
   },
   {
     file: LOCK_SCROLL,
-    find: '  const unlock = () => {\n',
-    replace: '  const unlock = () => {\n    if (typeof document === "undefined") return;\n',
+    find: `  const unlock = () => {
+`,
+    replace: `  const unlock = () => {
+    if (typeof document === "undefined") return;
+`,
     feature: 'Popup close (useLockScroll)',
   },
   {
@@ -83,17 +94,22 @@ export const PATCHES: Patch[] = [
     // makes the node claim the pointer up front. The Slider button
     // preventDefault()s every move, so it claims everything.
     file: SLIDER,
-    find: '"aria-orientation": props.vertical ? "vertical" : "horizontal",\n',
-    replace:
-      '"aria-orientation": props.vertical ? "vertical" : "horizontal",\n        "style": { touchAction: "none" },\n',
+    find: `"aria-orientation": props.vertical ? "vertical" : "horizontal",
+`,
+    replace: `"aria-orientation": props.vertical ? "vertical" : "horizontal",
+        "style": { touchAction: "none" },
+`,
     feature: 'Slider drag inside a scroll-view',
   },
   {
     // Rate only preventDefault()s horizontal moves: a vertical drag across
     // the stars still scrolls the page.
     file: RATE,
-    find: '"onTouchstartPassive": onTouchStart\n    }, [list.value.map(renderStar)]);',
-    replace: '"onTouchstartPassive": onTouchStart,\n      "style": { touchAction: "pan-y" }\n    }, [list.value.map(renderStar)]);',
+    find: `"onTouchstartPassive": onTouchStart
+    }, [list.value.map(renderStar)]);`,
+    replace: `"onTouchstartPassive": onTouchStart,
+      "style": { touchAction: "pan-y" }
+    }, [list.value.map(renderStar)]);`,
     feature: 'Rate swipe inside a scroll-view',
   },
   {
@@ -108,9 +124,13 @@ export const PATCHES: Patch[] = [
   },
   {
     file: FIELD,
-    find: 'return _createVNode("textarea", _mergeProps(inputAttrs, {\n          "inputmode": props.inputmode\n        }), null);',
-    replace:
-      'return _createVNode("textarea", _mergeProps(inputAttrs, {\n          "inputmode": props.inputmode,\n          "autoHeight": !!props.autosize\n        }), null);',
+    find: `return _createVNode("textarea", _mergeProps(inputAttrs, {
+          "inputmode": props.inputmode
+        }), null);`,
+    replace: `return _createVNode("textarea", _mergeProps(inputAttrs, {
+          "inputmode": props.inputmode,
+          "autoHeight": !!props.autosize
+        }), null);`,
     feature: 'Field autosize textarea',
   },
   {
@@ -120,8 +140,11 @@ export const PATCHES: Patch[] = [
     // back to the root (undefined here), which every caller already treats
     // as "no scroller": no scrollspy, no sticky offset from the page.
     file: VANT_USE,
-    find: 'function getScrollParent(el, root = defaultRoot) {\n',
-    replace: 'function getScrollParent(el, root = defaultRoot) {\n  if (typeof window === "undefined") return root;\n',
+    find: `function getScrollParent(el, root = defaultRoot) {
+`,
+    replace: `function getScrollParent(el, root = defaultRoot) {
+  if (typeof window === "undefined") return root;
+`,
     feature: 'Tabs / Sticky mount (useScrollParent)',
   },
   {
@@ -130,9 +153,11 @@ export const PATCHES: Patch[] = [
     // side counts the element as shown — they initialise, which is what a
     // visible Tabs / Swipe needs; a hidden one re-measures once it shows.
     file: DOM_UTILS,
-    find: '  const style = window.getComputedStyle(el);\n  const hidden = style.display === "none";',
-    replace:
-      '  if (typeof window === "undefined") return false;\n  const style = window.getComputedStyle(el);\n  const hidden = style.display === "none";',
+    find: `  const style = window.getComputedStyle(el);
+  const hidden = style.display === "none";`,
+    replace: `  if (typeof window === "undefined") return false;
+  const style = window.getComputedStyle(el);
+  const hidden = style.display === "none";`,
     feature: 'Tabs / Swipe init (isHidden)',
   },
   {
@@ -143,22 +168,24 @@ export const PATCHES: Patch[] = [
     // on the next frames while the title still measures 0 (bounded: a Tabs
     // that really is hidden stops asking).
     file: TABS,
-    find: '        const title = titles[state.currentIndex].$el;\n',
-    replace:
-      '        const title = titles[state.currentIndex].$el;\n' +
-      '        if (typeof window === "undefined" && !title.offsetWidth) {\n' +
-      '          setLine.retries = (setLine.retries || 0) + 1;\n' +
-      // the retry keeps the first call's "no animation" (state.inited is
-      // true by then, and the line would slide in from the left edge)
-      '          if (setLine.retries <= 10) requestAnimationFrame(() => {\n' +
-      '            const inited = state.inited;\n' +
-      '            state.inited = shouldAnimate;\n' +
-      '            setLine();\n' +
-      '            state.inited = inited;\n' +
-      '          });\n' +
-      '          return;\n' +
-      '        }\n' +
-      '        setLine.retries = 0;\n',
+    find: `        const title = titles[state.currentIndex].$el;
+`,
+    // In the replacement: the retry keeps the first call's "no animation"
+    // (state.inited is true by then, and the line would slide in from the
+    // left edge).
+    replace: `        const title = titles[state.currentIndex].$el;
+        if (typeof window === "undefined" && !title.offsetWidth) {
+          setLine.retries = (setLine.retries || 0) + 1;
+          if (setLine.retries <= 10) requestAnimationFrame(() => {
+            const inited = state.inited;
+            state.inited = shouldAnimate;
+            setLine();
+            state.inited = inited;
+          });
+          return;
+        }
+        setLine.retries = 0;
+`,
     feature: 'Tabs underline position on first render',
   },
   {
@@ -168,17 +195,20 @@ export const PATCHES: Patch[] = [
     // every keystroke throws (specs/103, the first-argument contract). The
     // object path stays for a future where these tags go native again.
     file: FIELD,
-    find: '    const onInput = (event) => {\n      if (!event.target.composing) {\n        updateValue(event.target.value);\n      }\n    };',
-    replace:
-      '    const onInput = (event) => {\n' +
-      '      if (typeof event !== "object" || event === null) {\n' +
-      '        updateValue(event);\n' +
-      '        return;\n' +
-      '      }\n' +
-      '      if (!event.target.composing) {\n' +
-      '        updateValue(event.target.value);\n' +
-      '      }\n' +
-      '    };',
+    find: `    const onInput = (event) => {
+      if (!event.target.composing) {
+        updateValue(event.target.value);
+      }
+    };`,
+    replace: `    const onInput = (event) => {
+      if (typeof event !== "object" || event === null) {
+        updateValue(event);
+        return;
+      }
+      if (!event.target.composing) {
+        updateValue(event.target.value);
+      }
+    };`,
     feature: 'Field 输入（v-model）',
   },
   {
@@ -187,19 +217,20 @@ export const PATCHES: Patch[] = [
     // write to the shim only drops the in-place reformat — the value still
     // reaches setValue.
     file: STEPPER,
-    find: '    const onInput = (event) => {\n      const input = event.target;',
-    replace:
-      '    const onInput = (event) => {\n' +
-      '      const input = typeof event === "object" && event !== null ? event.target : { value: String(event) };',
+    find: `    const onInput = (event) => {
+      const input = event.target;`,
+    replace: `    const onInput = (event) => {
+      const input = typeof event === "object" && event !== null ? event.target : { value: String(event) };`,
     feature: 'Stepper 输入（v-model）',
   },
   {
     file: STEPPER,
-    find: '    const onBlur = (event) => {\n      const input = event.target;\n      const value = format(input.value, props.autoFixed);',
-    replace:
-      '    const onBlur = (event) => {\n' +
-      '      const input = typeof event === "object" && event !== null ? event.target : { value: String(event) };\n' +
-      '      const value = format(input.value, props.autoFixed);',
+    find: `    const onBlur = (event) => {
+      const input = event.target;
+      const value = format(input.value, props.autoFixed);`,
+    replace: `    const onBlur = (event) => {
+      const input = typeof event === "object" && event !== null ? event.target : { value: String(event) };
+      const value = format(input.value, props.autoFixed);`,
     feature: 'Stepper 失焦格式化',
   },
   {
@@ -209,9 +240,8 @@ export const PATCHES: Patch[] = [
     // together with the container that stands in for a <div> on <body>.
     file: MOUNT_COMPONENT,
     find: 'import { createApp, reactive } from "vue";',
-    replace:
-      'import { reactive } from "vue";\n' +
-      'import { createApp, createDetachedRoot, releaseDetachedRoot } from "fjs/vue";',
+    replace: `import { reactive } from "vue";
+import { createApp, createDetachedRoot, releaseDetachedRoot } from "fjs/vue";`,
     feature: 'showToast / showDialog / showNotify / showImagePreview',
   },
   {
@@ -220,25 +250,23 @@ export const PATCHES: Patch[] = [
     // what the app renders reaches the app-level overlay host — Teleport to
     // body lands there, a fixed Notify hoists there (specs/137).
     file: MOUNT_COMPONENT,
-    find:
-      '  const root = document.createElement("div");\n' +
-      '  document.body.appendChild(root);\n' +
-      '  return {\n' +
-      '    instance: app.mount(root),\n' +
-      '    unmount() {\n' +
-      '      app.unmount();\n' +
-      '      document.body.removeChild(root);\n' +
-      '    }\n' +
-      '  };',
-    replace:
-      '  const root = createDetachedRoot();\n' +
-      '  return {\n' +
-      '    instance: app.mount(root),\n' +
-      '    unmount() {\n' +
-      '      app.unmount();\n' +
-      '      releaseDetachedRoot(root);\n' +
-      '    }\n' +
-      '  };',
+    find: `  const root = document.createElement("div");
+  document.body.appendChild(root);
+  return {
+    instance: app.mount(root),
+    unmount() {
+      app.unmount();
+      document.body.removeChild(root);
+    }
+  };`,
+    replace: `  const root = createDetachedRoot();
+  return {
+    instance: app.mount(root),
+    unmount() {
+      app.unmount();
+      releaseDetachedRoot(root);
+    }
+  };`,
     feature: 'showToast / showDialog / showNotify / showImagePreview',
   },
   {
@@ -251,26 +279,25 @@ export const PATCHES: Patch[] = [
     // where it takes the hit before the Navigator does (specs/137).
     file: LOCK_CLICK,
     find: 'let lockCount = 0;',
-    replace:
-      'import { h } from "vue";\n' +
-      'import { createApp, createDetachedRoot, releaseDetachedRoot } from "fjs/vue";\n' +
-      'let fjsLock = null;\n' +
-      'function fjsLockClick(on) {\n' +
-      '  if (on && !fjsLock) {\n' +
-      '    const root = createDetachedRoot();\n' +
-      '    const app = createApp({ render: () => h("view", {\n' +
-      '      style: { position: "fixed", left: 0, top: 0, right: 0, bottom: 0 },\n' +
-      '      onClick: () => {},\n' +
-      '    }) });\n' +
-      '    app.mount(root);\n' +
-      '    fjsLock = { app, root };\n' +
-      '  } else if (!on && fjsLock) {\n' +
-      '    fjsLock.app.unmount();\n' +
-      '    releaseDetachedRoot(fjsLock.root);\n' +
-      '    fjsLock = null;\n' +
-      '  }\n' +
-      '}\n' +
-      'let lockCount = 0;',
+    replace: `import { h } from "vue";
+import { createApp, createDetachedRoot, releaseDetachedRoot } from "fjs/vue";
+let fjsLock = null;
+function fjsLockClick(on) {
+  if (on && !fjsLock) {
+    const root = createDetachedRoot();
+    const app = createApp({ render: () => h("view", {
+      style: { position: "fixed", left: 0, top: 0, right: 0, bottom: 0 },
+      onClick: () => {},
+    }) });
+    app.mount(root);
+    fjsLock = { app, root };
+  } else if (!on && fjsLock) {
+    fjsLock.app.unmount();
+    releaseDetachedRoot(fjsLock.root);
+    fjsLock = null;
+  }
+}
+let lockCount = 0;`,
     feature: 'showToast forbidClick（锁点击）',
   },
   {
@@ -312,30 +339,28 @@ export const PATCHES: Patch[] = [
     // fighting the wrapper. Only `top-right` moves — the other
     // closeIconPosition values anchor to edges the inset does not touch.
     file: IMAGE_PREVIEW,
-    find:
-      'if (props.closeable) {\n' +
-      '        return _createVNode(Icon, {\n' +
-      '          "role": "button",\n' +
-      '          "name": props.closeIcon,\n' +
-      '          "class": [bem("close-icon", props.closeIconPosition), HAPTICS_FEEDBACK],\n' +
-      '          "onClick": emitClose\n' +
-      '        }, null);\n' +
-      '      }',
-    replace:
-      'if (props.closeable) {\n' +
-      '        const icon = _createVNode(Icon, {\n' +
-      '          "role": "button",\n' +
-      '          "name": props.closeIcon,\n' +
-      '          "class": [bem("close-icon", props.closeIconPosition), HAPTICS_FEEDBACK],\n' +
-      '          "style": { position: "static" }\n' +
-      '        }, null);\n' +
-      '        if (props.closeIconPosition !== "top-right") return icon;\n' +
-      '        return _createVNode("safe-area", {\n' +
-      '          "edges": "top",\n' +
-      '          "style": { position: "absolute", top: 0, right: 0, zIndex: 1 },\n' +
-      '          "onClick": emitClose\n' +
-      '        }, [icon]);\n' +
-      '      }',
+    find: `if (props.closeable) {
+        return _createVNode(Icon, {
+          "role": "button",
+          "name": props.closeIcon,
+          "class": [bem("close-icon", props.closeIconPosition), HAPTICS_FEEDBACK],
+          "onClick": emitClose
+        }, null);
+      }`,
+    replace: `if (props.closeable) {
+        const icon = _createVNode(Icon, {
+          "role": "button",
+          "name": props.closeIcon,
+          "class": [bem("close-icon", props.closeIconPosition), HAPTICS_FEEDBACK],
+          "style": { position: "static" }
+        }, null);
+        if (props.closeIconPosition !== "top-right") return icon;
+        return _createVNode("safe-area", {
+          "edges": "top",
+          "style": { position: "absolute", top: 0, right: 0, zIndex: 1 },
+          "onClick": emitClose
+        }, [icon]);
+      }`,
     feature: 'showImagePreview close 图标让出状态栏（safe-area top）',
   },
 ];
