@@ -35,6 +35,8 @@ const TABS = /\/vant\/es\/tabs\/Tabs\.mjs$/;
 const STEPPER = /\/vant\/es\/stepper\/Stepper\.mjs$/;
 const MOUNT_COMPONENT = /\/vant\/es\/utils\/mount-component\.mjs$/;
 const LOCK_CLICK = /\/vant\/es\/toast\/lock-click\.mjs$/;
+const NOTIFY = /\/vant\/es\/notify\/Notify\.mjs$/;
+const IMAGE_PREVIEW = /\/vant\/es\/image-preview\/ImagePreview\.mjs$/;
 
 export const PATCHES: Patch[] = [
   {
@@ -282,6 +284,59 @@ export const PATCHES: Patch[] = [
     find: '      document.body.classList.remove("van-toast--unclickable");',
     replace: '      fjsLockClick(false);',
     feature: 'showToast forbidClick（锁点击）',
+  },
+  {
+    // Notify's root is `position: fixed; top: 0` (`.van-popup--top`), hoisted
+    // into the app-level overlay host — which deliberately does no safe-area
+    // handling (docs/overlay-host.md §5), so the message painted UNDER the
+    // status bar clock on the edge-to-edge app. Wrapping the slot content in
+    // `<safe-area edges="top">` keeps the bar's colour behind the status bar
+    // (immersive, like the Shell's nav strip) while the text itself drops
+    // below the inset: Flutter SafeArea on the app, `env(safe-area-inset-top)`
+    // padding on the web stylesheet (specs/142). Web builds never see this
+    // patch — there the browser chrome already owns that strip.
+    file: NOTIFY,
+    find: 'default: () => [slots.default ? slots.default() : props.message]',
+    replace:
+      'default: () => [_createVNode("safe-area", { edges: "top" }, [slots.default ? slots.default() : props.message])]',
+    feature: 'showNotify 顶部让出状态栏（safe-area top）',
+  },
+  {
+    // Same strip, same consequence: ImagePreview's close icon sits at
+    // `top: var(--van-image-preview-close-top)` ≈ the very top of the screen,
+    // inside the status-bar band where taps never reach the app, so the
+    // button painted but was dead (specs/142). The `<safe-area edges="top">`
+    // wrapper takes over the absolute positioning and the tap (a bigger hit
+    // target, and the icon's tap bubbles to it); the Icon keeps its classes
+    // for size/colour but goes `position: static` so the CSS top/right stop
+    // fighting the wrapper. Only `top-right` moves — the other
+    // closeIconPosition values anchor to edges the inset does not touch.
+    file: IMAGE_PREVIEW,
+    find:
+      'if (props.closeable) {\n' +
+      '        return _createVNode(Icon, {\n' +
+      '          "role": "button",\n' +
+      '          "name": props.closeIcon,\n' +
+      '          "class": [bem("close-icon", props.closeIconPosition), HAPTICS_FEEDBACK],\n' +
+      '          "onClick": emitClose\n' +
+      '        }, null);\n' +
+      '      }',
+    replace:
+      'if (props.closeable) {\n' +
+      '        const icon = _createVNode(Icon, {\n' +
+      '          "role": "button",\n' +
+      '          "name": props.closeIcon,\n' +
+      '          "class": [bem("close-icon", props.closeIconPosition), HAPTICS_FEEDBACK],\n' +
+      '          "style": { position: "static" }\n' +
+      '        }, null);\n' +
+      '        if (props.closeIconPosition !== "top-right") return icon;\n' +
+      '        return _createVNode("safe-area", {\n' +
+      '          "edges": "top",\n' +
+      '          "style": { position: "absolute", top: 0, right: 0, zIndex: 1 },\n' +
+      '          "onClick": emitClose\n' +
+      '        }, [icon]);\n' +
+      '      }',
+    feature: 'showImagePreview close 图标让出状态栏（safe-area top）',
   },
 ];
 

@@ -3,6 +3,12 @@
 `fjs go` 是 ufjs 的调试客户端，类似 Expo Go：手机或模拟器上装一次，以后
 连接任意 `fjs dev` 项目，不需要每次改 JS/Vue 都重新编译原生 App。
 
+**先想清楚要不要用它**：只是调试手头某一个项目时，直接在该项目目录里跑
+`fjs run ios` / `fjs run android`（见 [toolchain.md](toolchain.md)）——它
+自带这个项目的宿主壳、起 dev server 并自动连接，不需要装任何客户端。
+fjs go 的价值是"装一次、到处连"：同时调多个项目、手机上快速切换 dev
+server、或者项目还没有自己的 Flutter 宿主时。
+
 ## 推荐流程
 
 1. 创建并启动一个 fjs 项目：

@@ -127,6 +127,13 @@ app 宿主里的元素 `isConnected` 为 true（body 语义）。
 - `left` / `top` 为 `auto` 时贴 0，不是 CSS 的 static position，需要两端一致就显式写偏移
   （demo `vant-float` 的 `.van-sticky--fixed { left: 28px }`）。
 - 宿主内元素之间按 `z-index` 排序，相等时保持插入顺序；和页面内元素之间不建模层叠上下文。
+- **顶部锚定的交互元素必须让出状态栏**（specs/142）。App 端 edge-to-edge，
+  `top: 0` 顶进状态栏，而**状态栏高度的横条（≈ safe-area top）内的点击不达
+  应用**——vant ImagePreview 的 close 图标画在那里就点不动。让位用现成的
+  `<safe-area edges="top">` 包住内容（App = Flutter `SafeArea`，web =
+  `env(safe-area-inset-top)` 内边距，桌面浏览器为 0 不变）；组件库组件改不了
+  源码的，在项目自己的适配层打补丁（demo 的 `vite/vant.ts`：Notify 文案、
+  ImagePreview close 图标都是这么包的）。
 - 不经 safe-area 包裹：`top: 0` 会顶进状态栏区域。
 - `position` 不再是 `fixed` 时元素回到原父节点的原位置（specs/129）。
 
@@ -140,6 +147,7 @@ app 宿主里的元素 `isConnected` 为 true（body 语义）。
 | 覆盖范围 | Navigator 区域；宿主 App 在 FjsApp 之外的 chrome 不被覆盖 | 视口 |
 | `overlay="app"` | 进 app 级宿主：push 不盖、有可见元素时拦系统返回 | **无效果**：原生 fixed 跟页面 DOM 走，KeepAlive 把页面 detach 后元素也不见；浏览器后退不拦（specs/136，宪法 I 登记） |
 | `<Teleport to="body">` | app 级宿主（同样拦返回） | 真 body，不拦后退 |
+| 状态栏横条（≈ safe-area top） | **点击不达应用**（specs/142 探针实测）：画在 inset 里的交互元素收不到 tap，顶部锚定组件要自己让位（见 §5） | 无此问题（浏览器 chrome 占据顶部） |
 
 ## 7. 相关文件
 
