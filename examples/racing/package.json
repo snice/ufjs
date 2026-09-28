@@ -17,14 +17,14 @@
   "dependencies": {
     "@ufjs/webgl": "workspace:*",
     "three": "0.170.0",
-    "vue": "^3.5.42"
+    "vue": "3.6.0-rc.9"
   },
   "devDependencies": {
     "@types/three": "0.170.0",
     "@ufjs/cli": "workspace:*",
     "@ufjs/runtime": "workspace:*",
     "@vitejs/plugin-vue": "^6.0.3",
-    "@vue/runtime-core": "^3.5.42",
+    "@vue/runtime-core": "3.6.0-rc.9",
     "typescript": "^5.9.3",
     "vite": "^8.2.2",
     "vue-tsc": "^3.3.11"

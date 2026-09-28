@@ -299,6 +299,23 @@ IntersectionObserver）——这是项目对单个库的 opt-in，runtime 仍然
 demo 里实测：about 页加一行 `storeToRefs` 后，`dist/app/pages/about.js` 从 1738 B 涨到
 4707 B；登记 `fjs.shared` 后回到 1848 B，`shared.js` 只多 1.6 KB。
 
+`fjs/vapor`（Vue Vapor 的运行时与 DOM 外壳，specs/148）不用手动登记：应用里有 Vapor 组件时
+（`src/` 下有 `<script setup vapor>`，或开着 `fjs.vapor.libs` 且某个直接依赖发了 `.vue` 文件），
+构建自动把它放进共享 chunk，保证整个 VM 只有一份 runtime-vapor；没有就不带。
+
+### Vue Vapor：`fjs.vapor`
+
+组件写 `<script setup vapor>` 即按 Vapor 编译（用法与取舍见 [vue3.md](vue3.md#vue-vapor可选specs148)）。
+node_modules 里以 `.vue` 发布、只有 `<script setup>` 的库组件默认也按 Vapor 编译，关掉：
+
+```json
+{
+  "fjs": {
+    "vapor": { "libs": false }
+  }
+}
+```
+
 ### 和 `fjs native add` 的分界
 
 `fjs add` 只动 JS 侧。要动 Flutter 宿主（pubspec 插件、Dart 注册、权限清单）的原生

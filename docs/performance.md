@@ -788,6 +788,21 @@ uni-app x 官方 iOS 数字：iPhone SE2 vapor 160.6 ms / UIKit 328.75 ms（终�
 3.4 ms + recompute 自身 2.8 ms 的地板，开了结构规则再多约 11 ms 的首尾位 / 邻居签名计算；Vue + 元素层
 约 115 ms。op 编码是下一个方向，没有立项。
 
+**Vue Vapor 试过，不划算（specs/148 阶段 0）**：`examples/bench/vapor/` 用 Vue 3.6.0-rc.9，把同一个
+`Flat4050.vue` 分别以 VDOM（fjs 渲染器）和 Vapor（官方 runtime-vapor 跑在一层落到同一套 nodeOps 的 DOM 外壳上）
+挂载，同一份 runtime-core、同一个样式引擎。离线挂载 VDOM **65.5 ms**、Vapor **81.5 ms**，卸载 8.2 / 9.5 ms。
+逐段计时：两边的宿主工作（建元素、scope、class、insert、文本）都约 32 ms，flush 都约 18.5 ms；VDOM 的
+runtime-core 只占约 15 ms，Vapor 运行时约 17 ms（每个 v-for 项一个 effect scope + 两个 ref + 一个
+renderEffect），外壳再约 13 ms。**这页的 JS 大头是宿主工作和样式，不是 vnode**——框架层整个拿掉，离线上限
+也只有约 15 ms。
+但**更新**差一个数量级：同一棵树每格文本读响应式数组，改 1 格 VDOM 16.0 ms、Vapor 0.0 ms；改 200 格 17.1 / 2.1 ms；
+改 2000 格 27.8 / 21.4 ms。VDOM 改一格也要重跑整页 render、diff 4050 个 vnode。若加一个原生「按模板克隆子树」op，
+Vapor 挂载估算可到约 59 ms（省掉外壳 14.2 ms 与 create / insert 编码 8.6 ms）。
+
+之后 Vapor 做成了可选（specs/148 阶段 1，用法见 [vue3.md](vue3.md#vue-vapor可选specs148)）。真机（iPhone 12，
+`--profile`，flat-4050 页切到 Vapor 网格）：改 1 格 JS **52–68 → 5.4–6.0 ms**、上屏 82–99 → 49 ms；改 200 格
+55–66 → 17–22 ms；显示 177–196 → 212–216 ms（首次挂载慢约 25 ms，与离线一致）。
+
 ## 已知热点（优化路线）
 
 按 2026-09-03 那轮真机/模拟器实测重排过：

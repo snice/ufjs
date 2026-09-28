@@ -371,6 +371,55 @@ vnode 会得到指名报错。
 - dom-env 另给 popperjs（Popover）补了全局 `Element` / `HTMLElement`
   （对 fjs 元素 `instanceof` 为真）和 document 盒子的最小形状
 
+## Vue Vapor（可选，specs/148）
+
+Vue 3.6 的 Vapor 模式把模板编译成直接改节点的代码，不建 vnode、不 diff。在 fjs 上它按组件选用：
+
+```vue
+<script setup vapor lang="ts">
+defineProps<{ vals: number[] }>();
+</script>
+<template>
+  <view v-for="(v, i) in vals" :key="i" class="cell"><text>{{ v }}</text></view>
+</template>
+```
+
+**什么时候用**：状态频繁局部变化的组件——大表格、列表里改一项、计数器、实时数据。flat-4050 同一棵
+4050 元素的树（`examples/bench` 的 `pnpm run vapor`，fjsrun，Mac）：
+
+| | VDOM | Vapor |
+|---|---:|---:|
+| 改 1 格文本 | 14.5 ms | **0.0 ms** |
+| 改 200 格 | 15.6 ms | **2.1 ms** |
+| 改 2000 格 | 25.8 ms | **21.4 ms** |
+| 首次挂载 | **67 ms** | 82 ms |
+
+VDOM 改一格也要重跑整个组件的 render 再 diff；Vapor 只跑那一格的 effect。**首次挂载反而慢**：
+浏览器里 Vapor 靠原生 `cloneNode` 一次建好模板子树，fjs 没有这个原生操作，只能逐元素建（见
+[performance.md](performance.md)）。所以一次性展示、之后不怎么变的页面继续用 VDOM。
+
+**怎么接进 fjs 的**：`@vue/runtime-vapor` 没有 `createRenderer` 那样的渲染器入口，直接操作 DOM。
+fjs 给它一层 DOM 外壳（`fjs-runtime/src/vapor/dom.ts`）：每个节点是 fjs 元素的薄包装，所有改动走
+VDOM 渲染器同一套 nodeOps / patchProp——样式引擎、scoped CSS、事件载荷都是同一份。外壳只注入给
+runtime-vapor 这一个模块，**不设全局 `document`**（否则按 `typeof document` 分支的三方库会走浏览器路径）。
+
+**和 VDOM 混用**：Vapor 组件可以放在 VDOM 页面里，VDOM 组件也可以放在 Vapor 组件里，Vue 官方的互操作
+负责边界，第一个 Vapor 组件模块加载时自动启用。vant、NutUI 这类发编译后 JS 的库在 Vapor 页面里照常用，
+不用任何适配（`demo` 的 `vant/vapor` 页）。
+
+**三方库**：node_modules 里以 `.vue` 发布、只有 `<script setup>` 的组件自动按 Vapor 编译；
+`package.json` 里 `"fjs": { "vapor": { "libs": false } }` 关掉。带普通 `<script>`（Options API）的
+SFC、TSX / 渲染函数写的库编不了 Vapor，走互操作。
+
+**限制**（Vapor 组件内；都会抛错说明，不会静默出错）：
+
+- 原生元素上的 `v-model`：和 VDOM 一样不支持，用 `:value` + `@input`。
+- Vapor 组件里的 `<Transition>` / `<TransitionGroup>`：还没接。
+- `defineVaporCustomElement`、SSR hydration：不支持。
+- Vue 版本：Vapor 只在 3.6（当前钉 `3.6.0-rc.9`），workspace 与 `fjs create` 模板统一用这个版本。
+
+**包体**：没有 Vapor 组件的应用不带 runtime-vapor 和外壳（`--pages` 构建也只在用到时才进共享 chunk）。
+
 ## 不可用 / 注意
 
 | 项 | 状态 | 说明 |
@@ -378,7 +427,7 @@ vnode 会得到指名报错。
 | `v-model` | ❌ 不可用 | 指令助手面向 DOM（el.addEventListener）。替代：`:value="draft" @text-changed="t => draft = t"` |
 | vue-router | ❌ 不可用 | 路由走 `fjs/router`（web 构建内部才用 vue-router） |
 | pinia | ✅ 可用 | 已在 QuickJS 上验证。用 `fjs add pinia` 装，它会把实例写在 `src/plugins/pinia.ts` 的模块作用域里——Flutter 上每个页面是独立的 Vue app，实例建在函数里会让每页各拿一套 store。见 [toolchain.md 的「添加三方库」](toolchain.md#添加三方库) |
-| `vue` 包 | ⚠️ 被别名 | alias 到 `@vue/runtime-core`，避免拉入 DOM 运行时；runtime-dom 才有的名字由 vue-shim 补（见上节） |
+| `vue` 包 | ⚠️ 被别名 | alias 到 `@vue/runtime-core`，避免拉入 DOM 运行时；runtime-dom 才有的名字由 vue-shim 补（见上节）。Vapor 组件的 `vue` 导入由 CLI 改到 `fjs/vapor`（vue-shim + runtime-vapor） |
 | 元素上的 DOM 形状 API | ✅ 可用 | 一小组 DOM 形状的成员，供组件库直接调用（vant 依赖它们），清单见上文表格；`@x.passive/.capture/.once` 修饰符按 Vue 的规则处理，`.once` 生效 |
 | `window` / `document` | ❌ 无全局 | App 端没有，runtime 也不模拟：组件库里不带浏览器判断直接用它们的地方，由该库的 vite 插件打补丁处理（vant 的在 `demo/vite/vant.ts`，分哪几类补丁见上文），机制见 [toolchain.md](toolchain.md#ui-组件库适配vite-插件的-fjsapp-钩子) |
 

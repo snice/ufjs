@@ -1,5 +1,5 @@
 <route>
-{"title": "4050 元素同屏", "scroll": false, "group": "交互演示", "desc": "对标 uni-app x vapor benchmark：点一下同屏挂 4050 个元素"}
+{"title": "4050 元素同屏", "scroll": false, "group": "交互演示", "desc": "对标 uni-app x vapor benchmark：同屏挂 4050 个元素，VDOM / Vapor 对照"}
 </route>
 
 <script setup lang="ts">
@@ -15,11 +15,21 @@
 //   最慢帧  挂载后 30 帧里最长的一帧
 //
 // 原例里的 `flatten`（uni-app x 的拍平）这里没有对应物，模板照搬但去掉了它。
-import { nextTick, ref } from 'vue';
+//
+// specs/148：网格是子组件，VDOM 版（GridVdom）与 Vue Vapor 版（GridVapor）
+// 只差 `<script setup vapor>`，切换后同一套按钮对照测。「改 1 格 / 改 200 格」
+// 是局部更新：VDOM 要重跑整张网格的 render 再 diff，Vapor 只跑那几格的 effect。
+import { nextTick, reactive, ref } from 'vue';
 import { nowMs, setOpSink } from 'fjs';
 import { styleEngine } from 'fjs/vue';
+import GridVdom from '../../../components/flat4050/GridVdom.vue';
+import GridVapor from '../../../components/flat4050/GridVapor.vue';
 
+const CELLS = 2000;
+const mode = ref<'vdom' | 'vapor'>('vdom');
 const show = ref(false);
+const vals = reactive(Array.from({ length: CELLS }, (_, k) => k % 40));
+let bumps = 0;
 const jsMs = ref<number | null>(null);
 const firstFrameMs = ref<number | null>(null);
 const worstFrameMs = ref<number | null>(null);
@@ -32,7 +42,9 @@ function raf(): Promise<void> {
   return new Promise((r) => requestAnimationFrame(() => r()));
 }
 
-async function toggle() {
+/** One measured action: `act` changes state, then the same three readings
+ * as before (JS to nextTick, on screen, worst of the next 30 frames). */
+async function measure(label: string, act: () => void) {
   if (busy.value) return;
   busy.value = true;
   jsMs.value = firstFrameMs.value = worstFrameMs.value = null;
@@ -46,7 +58,7 @@ async function toggle() {
   });
   styleEngine.resetStats();
   const t0 = nowMs();
-  show.value = !show.value;
+  act();
   await nextTick();
   jsMs.value = +(nowMs() - t0).toFixed(1);
   setOpSink(forward);
@@ -70,10 +82,27 @@ async function toggle() {
   }
   worstFrameMs.value = +worst.toFixed(1);
   console.log(
-    `[flat-4050] show=${show.value} js=${jsMs.value}ms ` +
+    `[flat-4050] ${mode.value} ${label} js=${jsMs.value}ms ` +
       `firstFrame=${firstFrameMs.value}ms worst=${worstFrameMs.value}ms | ${split.value}`,
   );
   busy.value = false;
+}
+
+const toggle = () => measure(show.value ? 'hide' : 'show', () => (show.value = !show.value));
+
+/** Bumps `n` cells spread over the grid (every CELLS/n-th one). */
+function bump(n: number) {
+  if (!show.value) return;
+  measure(`update${n}`, () => {
+    bumps++;
+    for (let k = 0; k < CELLS; k += CELLS / n) vals[k] = bumps;
+  });
+}
+
+function setMode(next: 'vdom' | 'vapor') {
+  if (busy.value || mode.value === next) return;
+  show.value = false;
+  mode.value = next;
 }
 
 const fmt = (v: number | null) => (v == null ? '—' : `${v} ms`);
@@ -89,8 +118,17 @@ const fmt = (v: number | null) => (v == null ? '—' : `${v} ms`);
         </view>
       </view>
     </view>
+    <view class="modes">
+      <view :class="['mode', { on: mode === 'vdom' }]" @tap="setMode('vdom')"><text class="mode-text">VDOM</text></view>
+      <view :class="['mode', { on: mode === 'vapor' }]" @tap="setMode('vapor')"><text class="mode-text">Vapor</text></view>
+    </view>
     <view class="btn" @tap="toggle">
       <text class="btn-text">{{ show ? '隐藏' : '同屏显示4050个元素' }}</text>
+    </view>
+    <view class="bumps">
+      <view :class="['bump', { off: !show }]" @tap="bump(1)"><text class="bump-text">改 1 格</text></view>
+      <view :class="['bump', { off: !show }]" @tap="bump(200)"><text class="bump-text">改 200 格</text></view>
+      <view :class="['bump', { off: !show }]" @tap="bump(2000)"><text class="bump-text">改 2000 格</text></view>
     </view>
     <view class="stats">
       <text class="stat">JS {{ fmt(jsMs) }}</text>
@@ -98,13 +136,10 @@ const fmt = (v: number | null) => (v == null ? '—' : `${v} ms`);
       <text class="stat">最慢帧 {{ fmt(worstFrameMs) }}</text>
     </view>
     <text class="split">{{ split }}</text>
-    <view v-if="show">
-      <view v-for="r in 50" :key="r" class="row">
-        <view v-for="(_, i) in 40" :key="i" class="cell">
-          <text class="tiny">{{ i }}</text>
-        </view>
-      </view>
-    </view>
+    <template v-if="show">
+      <GridVapor v-if="mode === 'vapor'" :vals="vals" />
+      <GridVdom v-else :vals="vals" />
+    </template>
   </scroll-view>
 </template>
 
@@ -123,9 +158,47 @@ const fmt = (v: number | null) => (v == null ? '—' : `${v} ms`);
   background-color: #85d8b4;
   margin: 0.5px;
 }
-.tiny {
-  font-size: 5px;
-  line-height: 5px;
+.modes {
+  flex-direction: row;
+  margin: 16px 16px 0 16px;
+}
+.mode {
+  flex-grow: 1;
+  height: 36px;
+  justify-content: center;
+  align-items: center;
+  border-width: 1px;
+  border-color: #1677ff;
+}
+.mode.on {
+  background-color: #1677ff;
+}
+.mode-text {
+  font-size: 14px;
+  color: #1677ff;
+}
+.mode.on .mode-text {
+  color: #ffffff;
+}
+.bumps {
+  flex-direction: row;
+  margin: 0 16px 12px 16px;
+}
+.bump {
+  flex-grow: 1;
+  height: 36px;
+  margin: 0 4px;
+  border-radius: 6px;
+  background-color: #e8f0ff;
+  justify-content: center;
+  align-items: center;
+}
+.bump.off {
+  opacity: 0.4;
+}
+.bump-text {
+  font-size: 13px;
+  color: #1677ff;
 }
 .btn {
   height: 48px;

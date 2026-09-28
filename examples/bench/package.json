@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "fjs build",
-    "run": "fjs build && ../../packages/flutter_fjs/native/build-native/fjsrun --pump 8000 dist/app/bundle.js"
+    "run": "fjs build && ../../packages/flutter_fjs/native/build-native/fjsrun --pump 8000 dist/app/bundle.js",
+    "vapor": "fjs build vapor/main.ts --out dist/vapor && ../../packages/flutter_fjs/native/build-native/fjsrun --pump 40000 dist/vapor/app/bundle.js"
   },
   "dependencies": {
     "typescript": "^7.0.2"

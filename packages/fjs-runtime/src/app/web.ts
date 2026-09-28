@@ -27,6 +27,7 @@ import {
   markPageSettled,
 } from '../router/settled';
 import { installFjsWeb } from '../web/index';
+import { trackWebApp } from '../vapor/web-apps';
 import { applyPlugins, type FjsPlugin } from './plugin';
 import type {
   NavKind,
@@ -385,6 +386,7 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
   });
 
   const vueApp = createVueApp(root);
+  trackWebApp(vueApp);
   installFjsWeb(vueApp);
   vueApp.use(vueRouter);
   applyPlugins(vueApp, options.plugins);

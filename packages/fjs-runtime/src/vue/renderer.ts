@@ -1079,7 +1079,19 @@ function hoistedUnder(id: number): number[] {
   return out;
 }
 
-const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
+/** A Vapor DOM shell node (vapor/dom.ts) stands for its fjs element: VDOM
+ * subtrees mount inside Vapor blocks and next to their anchors (specs/148).
+ * Duck-typed through the marker so this module does not import the shell. */
+function unshell(node: HostNode): HostNode {
+  return (node as unknown as { $fjsShell?: true }).$fjsShell
+    ? (node as unknown as { toHost(): HostNode }).toHost()
+    : node;
+}
+
+// Exported for the Vapor DOM shell (vapor/dom.ts, specs/148): it routes
+// every node operation through these, so both render paths share the style
+// engine and element bookkeeping.
+export const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
   createElement: (rawTag) => {
     const mapped = resolveHtmlTag(rawTag);
     // the textarea ELEMENT (see the H table): an unknown tag on the Dart
@@ -1175,6 +1187,9 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
   },
 
   insert: (child, parent, anchor) => {
+    child = unshell(child);
+    parent = unshell(parent);
+    anchor = anchor && unshell(anchor);
     // Vue also calls insert to MOVE a node that is already mounted (a keyed
     // v-for reorder). The native side detaches the child before inserting it
     // at the index this computes, so the index has to be read off the list
@@ -1215,6 +1230,7 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
   },
 
   remove: (child) => {
+    child = unshell(child);
     // hoisted descendants first: they are not under `child` in the lists
     // below (they live in the overlay host), but they leave with it
     for (const id of hoistedUnder(child.id)) {
@@ -1227,6 +1243,7 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
   },
 
   parentNode: (node) => {
+    node = unshell(node);
     const parentId = parentOf.get(node.id);
     if (parentId == null) return null;
     // the REAL element, not a fresh wrapper — see nextSibling
@@ -1234,6 +1251,7 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
   },
 
   nextSibling: (node) => {
+    node = unshell(node);
     const parentId = parentOf.get(node.id);
     if (parentId == null) return null;
     const list = childrenOf.get(parentId) ?? [];
@@ -1605,13 +1623,38 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
 
 // ---- public API ---------------------------------------------------------------
 
-const { createApp: rendererCreateApp, render } = createRenderer<HostNode, HostNode>({
+const { createApp: rendererCreateApp, render, internals } = createRenderer<HostNode, HostNode>({
   ...nodeOps,
   patchProp,
-});
+}) as ReturnType<typeof createRenderer<HostNode, HostNode>> & { internals: unknown };
+
+/** runtime-vapor's VDOM interop mounts VDOM components inside Vapor blocks
+ * through the renderer's internals (`ensureRenderer().internals`, resolved
+ * to this renderer by vue/runtime-dom-shim.ts). */
+export const rendererInternals = internals;
+
+type App = ReturnType<typeof rendererCreateApp>;
+const appHooks: ((app: App) => void)[] = [];
+const liveApps: App[] = [];
+
+/** Runs `hook` on every app created so far and every later one. Vapor
+ * support installs itself this way the first time a Vapor component module
+ * loads, so apps without one never pull runtime-vapor in (specs/148). */
+export function onEveryApp(hook: (app: App) => void): void {
+  appHooks.push(hook);
+  for (const app of liveApps) hook(app);
+}
 
 export function createApp(...args: Parameters<typeof rendererCreateApp>) {
-  return rendererCreateApp(...args);
+  const app = rendererCreateApp(...args);
+  liveApps.push(app);
+  const unmount = app.unmount.bind(app);
+  app.unmount = () => {
+    liveApps.splice(liveApps.indexOf(app), 1);
+    unmount();
+  };
+  for (const hook of appHooks) hook(app);
+  return app;
 }
 
 /** Creates the flutter root container element and returns it as the mount
