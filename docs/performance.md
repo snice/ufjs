@@ -864,8 +864,10 @@ specs/146 / 147 / 149 连续三轮之后，样式引擎在 JS 里每元素仍约
   （随帧作为 `fjsStyle` 交给 uiOps），加上「待写元素槽」把 scope / class 折进同一条 EL：样式输入 7.1 → 3.2 ms。
   同期渲染器的按 tag 描述缓存与 insert 快路径把 renderer 层 9.7 → 7.1 ms；flat-4050 VDOM 挂载 43 → 38.5 ms，
   Vapor 60.5 → 49.4 ms（`examples/bench/native/floor.ts` 逐层量）。
-- **下一刀是原生模板克隆**（specs/151 spike）：一个 op 换一棵静态子树、C++ 展开，flat-4050 的格子子树
-  19.8 → 5.5 ms（带现有记账 7.3 ms），样式一致；待另开 spec，从 Vapor 的 `template()` 入手。
+- **原生模板克隆**（specs/152）：Vapor 的 `template()` 在 libfjs-style 注册一次，之后每个实例一条 `W_CLONE`，
+  C++ 展开成 Create / Insert / SetText 并直接登记样式。同一个格子模板实例化 2000 次 24.6 → 10.6 ms，flat-4050
+  Vapor 挂载 49.4 → ~36 ms，首帧 120 → 49 KB。顺带量出外壳 `Element` 构造 17 个字段就要 1 µs（解释器下每加一个
+  属性一次形状迁移），减到 8 个后逐节点路径也受益。
 - 对拍：`__fjsNativeStyle = 'verify'` 下两个引擎同时跑、每帧逐元素比较——flat-4050、demo 全部页面
   （`demo/bench/verify-pages.ts`、`mount-verify.ts`、`mount-prewarm-verify.ts`）、hello-fjs 66 页
   （`examples/hello-fjs/bench/verify-pages.ts`）共 3 万余次比较，0 不一致。

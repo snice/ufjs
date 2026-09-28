@@ -622,6 +622,21 @@ export function create(tag: string): Element {
   return el;
 }
 
+/** Reserves `n` consecutive element ids for a subtree libfjs-style creates
+ * itself (a template clone, specs/152): the caller writes the op that makes
+ * them and adopts each one with [adoptElement]. */
+export function allocIds(n: number): number {
+  const first = nextId;
+  nextId += n;
+  return first;
+}
+
+/** The handle for an element created natively (a template clone): the same
+ * object create() returns, without the Create op — libfjs-style wrote it. */
+export function adoptElement(id: number, tag: string): Element {
+  return makeElement(id, tag);
+}
+
 /** Everything an element does, on ONE shared prototype.
  *
  * Elements used to be object literals carrying their own closures: nine

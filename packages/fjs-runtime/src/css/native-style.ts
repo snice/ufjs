@@ -11,7 +11,7 @@
 // On by default where the host has __fjs.fns.styleAttach (vue/renderer.ts);
 // `globalThis.__fjsNativeStyle = false` before the renderer loads keeps the
 // TS engine, `'verify'` runs both and compares (StyleEngine.verifyNative).
-import { flushNow, getWriter, scheduleFlush } from '../host';
+import { flushNow, frameEpoch, getWriter, scheduleFlush } from '../host';
 import { utf8Encode } from '../ui/utf8';
 import { DISABLED_CLASS, mediaMatches, type AttrTest, type ClassAttrTest, type CssRule } from './parser';
 import type { ComputeResult, MatchedRuleReport, MatchResult, PseudoHits, PseudoStyles, RuleHit, StyleEngine, StyleEngineStats } from './style';
@@ -31,6 +31,27 @@ const ATTR_OPS: Record<ClassAttrTest['op'], number> = { '=': 1, '~=': 2, '|=': 3
 const RESULT_GENERATION_MAX = 16384;
 
 type InlineRecord = { inline?: Record<string, unknown>; inlineCustom?: Record<string, string> };
+
+/** One node of a clone template (specs/152), in pre-order, root first. */
+export interface TemplateNodeSpec {
+  /** Index of the parent node, -1 for the root. */
+  parent: number;
+  /** Registers with the style engine (elements and raw text; not anchors). */
+  styled: boolean;
+  raw: boolean;
+  /** The tag the style engine matches (the tag the page wrote). */
+  styleTag: string;
+  defaults: Record<string, unknown> | undefined;
+  defaultsId: number;
+  scope: string | null;
+  /** The class attribute value, null for none. */
+  classes: string | null;
+  /** What the Create op names, the constant props JSON ('' = none) and the
+   * static text ('' = none) the element gets. */
+  createTag: string;
+  props: string;
+  text: string;
+}
 
 /** What the backend needs from the engine that owns it — its CSS state and
  * the renderer's apply callback. */
@@ -108,8 +129,17 @@ export class NativeStyleBackend {
 
   /** False once a frame was rejected: libfjs-style detached itself. */
   get attached(): boolean {
-    return (this.fns.styleResult?.(0) ?? -1) >= 0;
+    // only a frame can detach it: ask once per frame (a clone checks per
+    // instance, and the answer is a native call)
+    if (this.attachedAt !== frameEpoch.value) {
+      this.attachedAt = frameEpoch.value;
+      this.attachedNow = (this.fns.styleResult?.(0) ?? -1) >= 0;
+    }
+    return this.attachedNow;
   }
+
+  private attachedAt = -1;
+  private attachedNow = true;
 
   private atom(name: string): number {
     let a = this.atoms.get(name);
@@ -441,6 +471,55 @@ export class NativeStyleBackend {
   /** :root tokens or @keyframes changed: every computed style may differ. */
   restyleAll(): void {
     this.writer.styleRestyle(0, true);
+    scheduleFlush();
+  }
+
+  // ---- template clones (specs/152) ---------------------------------------------
+
+  private nextTemplate = 1;
+
+  /** Encodes a template (W_TEMPLATE) and returns its id, or 0 when it holds
+   * something a clone cannot carry: a form control the engine tracks
+   * `:disabled` for keeps a per-element record here (ensure). */
+  defineTemplate(nodes: readonly TemplateNodeSpec[]): number {
+    for (const n of nodes) if (n.styled && DISABLEABLE_TAGS.has(n.styleTag)) return 0;
+    const tid = this.nextTemplate++;
+    const words: number[] = [7, tid, nodes.length];
+    const pack = (v: string) => {
+      const b = utf8Encode(v);
+      words.push(b.length);
+      for (let i = 0; i < b.length; i += 4) {
+        words.push((b[i] | ((b[i + 1] ?? 0) << 8) | ((b[i + 2] ?? 0) << 16) | ((b[i + 3] ?? 0) << 24)) >>> 0);
+      }
+    };
+    for (const n of nodes) {
+      if (n.defaults !== undefined && !this.defaults.has(n.defaultsId)) this.defaults.set(n.defaultsId, n.defaults);
+      if (n.scope !== null) this.seenScopes.add(n.scope);
+      const classes: number[] = [];
+      if (n.classes !== null) for (const c of this.host.parseClasses(n.classes)) if (c !== DISABLED_CLASS) classes.push(this.atom(c));
+      words.push(
+        (n.raw ? 1 : 0) | (n.styled ? 2 : 0),
+        n.parent < 0 ? 0xffffffff : n.parent,
+        n.styled ? this.atom(n.styleTag) : 0,
+        n.defaultsId,
+        n.scope === null ? 0 : this.atom(n.scope),
+        classes.length,
+        ...classes,
+      );
+      pack(n.createTag);
+      pack(n.props);
+      pack(n.text);
+    }
+    this.commit();
+    this.writer.styleTemplate(words);
+    scheduleFlush();
+    return tid;
+  }
+
+  /** One instance of a template; its nodes are `first`, `first + 1`, …. */
+  clone(template: number, first: number): void {
+    this.commit();
+    this.writer.styleClone(template, first);
     scheduleFlush();
   }
 

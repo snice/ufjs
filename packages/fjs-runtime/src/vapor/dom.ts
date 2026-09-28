@@ -18,7 +18,7 @@
 // error, not a silently wrong tree.
 import { camelize, isSpecialBooleanAttr, parseStringStyle, toHandlerKey } from '@vue/shared';
 import type { Element as Host } from '../ui/element';
-import { createDetachedRoot, nodeOps, patchProp } from '../vue/renderer';
+import { cloneReady, cloneTemplate, createDetachedRoot, nodeOps, patchProp, prepareClone, type ClonePlan, type CloneNode } from '../vue/renderer';
 
 // Fields are `declare`d and assigned in constructors: app bundles target
 // es2019, where esbuild lowers class fields to Object.defineProperty calls —
@@ -197,30 +197,47 @@ export class Element extends Node {
   declare firstChild: Node | null;
   declare lastChild: Node | null;
   declare readonly localName: string;
-  /** Template nodes keep their attributes to replay on clone. */
-  declare attrs: [string, string][] | null;
   declare private classValue: string;
-  declare private attrValues: Record<string, unknown> | null;
-  declare private templateContent: Element | null;
-  declare private listeners: Map<string, Set<Listener>> | null;
-  declare private styleView: ShellStyle | null;
-  declare private classView: ShellClassList | null;
+  // The fields below stay unset until used: most nodes never touch them,
+  // and every property the constructor adds is a shape step under the
+  // interpreter — seventeen of them made `new Element` 1 µs, half of a
+  // native template clone (specs/152).
+  /** Template nodes keep their attributes to replay on clone. */
+  declare attrs?: [string, string][] | null;
+  declare private attrValues?: Record<string, unknown> | null;
+  declare private templateContent?: Element | null;
+  declare private listeners?: Map<string, Set<Listener>> | null;
+  declare private styleView?: ShellStyle | null;
+  declare private classView?: ShellClassList | null;
   /** The inline style record last handed to patchProp, for DOM-style merges
    * (a component root takes its own :style and fallthrough ones). */
-  declare appliedStyle: Record<string, unknown> | null;
+  declare appliedStyle?: Record<string, unknown> | null;
+  /** Template nodes: the native clone plan (specs/152), null when this
+   * template cannot be cloned natively, undefined before the first clone. */
+  declare clonePlan?: ClonePlan | null;
 
   constructor(tag: string) {
     super();
     this.localName = tag;
     this.firstChild = this.lastChild = null;
-    this.attrs = null;
     this.classValue = '';
-    this.attrValues = null;
-    this.templateContent = null;
-    this.listeners = null;
-    this.styleView = null;
-    this.classView = null;
-    this.appliedStyle = null;
+  }
+
+  /** A cloned node's class, which libfjs-style already applied. */
+  adoptClass(v: string): void {
+    this.classValue = v;
+  }
+
+  /** Links a child whose host libfjs-style already attached under this
+   * node's host (a template clone): the list only, no insert. */
+  linkChild(child: Node): void {
+    const before = this.lastChild;
+    child.parentNode = this;
+    child.previousSibling = before;
+    child.nextSibling = null;
+    if (before) before.nextSibling = child;
+    else this.firstChild = child;
+    this.lastChild = child;
   }
 
   override get nodeType(): number {
@@ -464,6 +481,11 @@ export class Element extends Node {
 
   cloneNode(deep?: boolean): Element {
     if (this.host || !deep) throw new Error('[fjs vapor] only template nodes are cloned (deep)');
+    // a template holds one element (compiler-vapor's template() returns
+    // its first child); the plan is taken on first use and kept
+    if (this.clonePlan === undefined) this.clonePlan = planClone(this);
+    // a rejected frame detaches libfjs-style: node by node from then on
+    if (this.clonePlan !== null && cloneReady()) return instantiateCloned(this.clonePlan);
     return instantiate(this);
   }
 }
@@ -547,6 +569,79 @@ export function patchStyle(el: Element, prev: unknown, next: unknown): void {
   }
   patchProp(el.host, 'style', current, merged);
   el.appliedStyle = merged;
+}
+
+// ---- native clones (specs/152) ---------------------------------------------
+
+/** What a clone of `t` holds, in the pre-order instantiate walks it — or
+ * null when some node needs what only the node-by-node path does: any
+ * attribute but `class` and one empty `data-v-*` (style, props, events go
+ * through patchProp there). */
+function planClone(t: Element): ClonePlan | null {
+  const nodes: CloneNode[] = [];
+  const visit = (e: Element, parent: number): boolean => {
+    let classes: string | null = null;
+    let scope: string | null = null;
+    for (const [k, v] of e.attrs ?? []) {
+      if (k === 'class') classes = v;
+      else if (v === '' && k.startsWith('data-v-') && scope === null) scope = k;
+      else return false;
+    }
+    const at = nodes.length;
+    const only = e.firstChild;
+    const inline = only !== null && only === e.lastChild && only instanceof Text;
+    // the compiler's single-space placeholder is never written (instantiate)
+    const text = inline && (only as Text).nodeValue.trim() !== '' ? (only as Text).nodeValue : '';
+    nodes.push({ kind: 'element', parent, tag: e.localName, classes, scope, text, inline: inline ? (only as Text).nodeValue : null });
+    if (inline) return true;
+    for (let n = e.firstChild; n; n = n.nextSibling) {
+      if (n instanceof Element) {
+        if (!visit(n, at)) return false;
+      } else if (n instanceof Text) {
+        nodes.push({ kind: 'text', parent: at, tag: 'text', classes: null, scope: null, text: n.nodeValue, inline: null });
+      } else {
+        nodes.push({ kind: 'anchor', parent: at, tag: 'view', classes: null, scope: null, text: (n as Comment).data, inline: null });
+      }
+    }
+    return true;
+  };
+  if (!visit(t, -1)) return null;
+  return prepareClone(nodes);
+}
+
+/** The shell tree for one native clone: the hosts libfjs-style made, put on
+ * shell nodes built from the plan's flat pre-order list (no walk of the
+ * template, no closure per instance). */
+/** Reused across clones, like the renderer's host array. */
+const cloneShells: Node[] = [];
+
+function instantiateCloned(plan: ClonePlan): Element {
+  const hosts = cloneTemplate(plan);
+  const nodes = plan.nodes;
+  const shells = cloneShells;
+  for (let k = 0; k < nodes.length; k++) {
+    const node = nodes[k];
+    let shell: Node;
+    if (node.kind === 'element') {
+      const el = new Element(node.tag);
+      if (node.classes !== null) el.adoptClass(node.classes);
+      if (node.inline !== null) {
+        const text = new Text(node.inline);
+        text.inline = true;
+        text.parentNode = el;
+        el.firstChild = el.lastChild = text;
+      }
+      shell = el;
+    } else if (node.kind === 'text') {
+      shell = new Text(node.text);
+    } else {
+      shell = new Comment(node.text);
+    }
+    shell.host = hosts[k];
+    shells[k] = shell;
+    if (k > 0) (shells[node.parent] as Element).linkChild(shell);
+  }
+  return shells[0] as Element;
 }
 
 /** Builds the live fjs subtree for a parsed template node. The element gets

@@ -126,6 +126,10 @@ JS op 缓冲 ─┤ 结构 op（Create/Insert/Remove…）+ 样式输入 op（0x
   词缓冲，随帧作为 `frame.fjsStyle` 交给 uiOps（`fjs_style_process_words`，词流先于字节流消费——它只改逐元素
   状态，帧末 flush 才读，与结构 op 的相对顺序无关）。解释器下一次字节写与一次词写同价，EL 从 14 次写降到 6 次
   （specs/151）。后端还留一个「待写元素槽」：createElement 之后紧跟的 setScopeId / class 折进同一条 EL。
+- Vapor 的模板克隆（specs/152）：外壳第一次 `cloneNode` 时把只含 class / scope / 静态文字 / 锚点的模板注册成
+  `W_TEMPLATE`，之后每个实例一条 `W_CLONE(模板, 首 id)`；libfjs-style 在输出帧开头写出这棵子树的 Create /
+  SetProps / SetText / Insert（Dart 协议不变）并直接登记样式，JS 只建 host 与外壳节点、做渲染器记账
+  （`renderer.ts` `prepareClone` / `cloneTemplate`，`vapor/dom.ts` `planClone`）。其余模板逐节点。
 - C++ 铸的线上 style id 从 `0x40000000` 起，不与 JS op 写入器（锚点、伪元素盒）
   的 id 冲突。
 - 宿主有 `__fjs.fns.styleAttach` 就默认走 native；`globalThis.__fjsNativeStyle`

@@ -124,6 +124,21 @@ enum {
 //  4 INLINE   id, inlineKey
 //  5 FORGET   id
 //  6 RESTYLE  id, subtree
+//  7 TEMPLATE templateId, nNodes, then per node (pre-order, root first):
+//             flags (bit0 raw text, bit1 styled: registers with the style
+//             engine), parentIndex (0xffffffff = root), tagAtom, defaultsId,
+//             scopeAtom, nClasses, classAtom[nClasses],
+//             then three strings — the Create tag, constant props JSON
+//             (SetProps; empty = none), static text (SetText; empty = none) —
+//             each as a byte length and the UTF-8 bytes packed into
+//             ceil(len / 4) words, little-endian
+//  8 CLONE    templateId, firstId
+//             One instance: nodes get ids firstId, firstId + 1, … in template
+//             order; the expansion (Create / SetProps / SetText per node, then
+//             Insert of every non-root node under its parent) goes at the
+//             front of the output frame, and the styled nodes register as
+//             EL does. The root is left unattached — the host inserts it.
+//             Dart sees ordinary ops (specs/152).
 enum {
   FJS_STYLE_W_EL = 1,
   FJS_STYLE_W_CLASSES = 2,
@@ -131,6 +146,8 @@ enum {
   FJS_STYLE_W_INLINE = 4,
   FJS_STYLE_W_FORGET = 5,
   FJS_STYLE_W_RESTYLE = 6,
+  FJS_STYLE_W_TEMPLATE = 7,
+  FJS_STYLE_W_CLONE = 8,
 };
 
 // Wire style ids libfjs-style mints start here, so they never collide with

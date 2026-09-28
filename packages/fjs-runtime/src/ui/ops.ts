@@ -387,6 +387,25 @@ export class OpWriter {
     return this;
   }
 
+  /** W_TEMPLATE, already encoded (NativeStyleBackend.defineTemplate). */
+  styleTemplate(words: readonly number[]): this {
+    const n = words.length;
+    const w = this.wordRoom(n);
+    let p = this.wlen;
+    for (let i = 0; i < n; i++) w[p++] = words[i];
+    this.wlen = p;
+    return this;
+  }
+
+  /** W_CLONE: one instance of a template, its nodes numbered from `first`. */
+  styleClone(template: number, first: number): this {
+    const w = this.wordRoom(3);
+    w[this.wlen++] = 8;
+    w[this.wlen++] = template;
+    w[this.wlen++] = first;
+    return this;
+  }
+
   /** id 0 = every element, with libfjs-style's caches dropped. */
   styleRestyle(id: number, subtree: boolean): this {
     const w = this.wordRoom(3);

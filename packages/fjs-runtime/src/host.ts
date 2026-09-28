@@ -149,6 +149,11 @@ export function registerPreFlush(fn: () => void): void {
   preFlush.push(fn);
 }
 
+/** Counts frames handed to the sink, bumped before the hand-off: a frame the
+ * host rejects still moves it. What caches a per-frame fact keys on
+ * (NativeStyleBackend.attached). */
+export const frameEpoch = { value: 0 };
+
 /** Queued ops flush once per microtask — one native call per JS tick. */
 export function flushNow(): void {
   flushScheduled = false;
@@ -156,6 +161,7 @@ export function flushNow(): void {
   if (writer.isEmpty) return;
   const frame = writer.toUint8Array();
   writer.reset();
+  frameEpoch.value++;
   sink(frame);
   // spec 092: the DevTools relay polls this to notice "the tree changed" —
   // per frame batch, not per op, so it stays free

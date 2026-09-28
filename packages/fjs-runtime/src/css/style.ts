@@ -7,7 +7,7 @@
 import { DISABLED_CLASS, camelize, normalizeValue, parseInlineCss, parseStylesheet, warnOnce, type AttrTest, type ClassAttrTest, type CssRule, type Selector, mediaMatches } from './parser';
 import { registerFontFace, type FontFaceDecl } from './font-face';
 import type { KeyframesDecl } from './animation';
-import { NativeStyleBackend } from './native-style';
+import { NativeStyleBackend, type TemplateNodeSpec } from './native-style';
 import { setOpSink } from '../host';
 
 /** The viewport assumed before the host reports one. `fjsrun` never gets a
@@ -847,6 +847,24 @@ export class StyleEngine {
 
   get nativeAttached(): boolean {
     return this.native !== undefined;
+  }
+
+  /** Whether template clones can be expanded natively right now (specs/152):
+   * attached, and not detached by a rejected frame since. */
+  get canClone(): boolean {
+    return this.native !== undefined && this.native.attached;
+  }
+
+  /** Registers a clone template with libfjs-style; 0 when this one cannot be
+   * cloned (see NativeStyleBackend.defineTemplate). */
+  defineCloneTemplate(nodes: Array<Omit<TemplateNodeSpec, 'defaultsId'>>): number {
+    if (this.native === undefined) return 0;
+    return this.native.defineTemplate(nodes.map((n) => ({ ...n, defaultsId: n.defaults ? this.defaultsIdOf(n.defaults) : 0 })));
+  }
+
+  /** One instance of a registered template, its nodes numbered from `first`. */
+  cloneTemplate(template: number, first: number): void {
+    this.native!.clone(template, first);
   }
 
   resetStats(): void {

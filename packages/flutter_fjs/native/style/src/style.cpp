@@ -149,6 +149,15 @@ struct Node {
   std::unique_ptr<Elem> el;
 };
 
+// One node of a clone template (FJS_STYLE_W_TEMPLATE).
+struct TemplateNode {
+  uint32_t flags = 0;  // bit0 raw text, bit1 styled
+  uint32_t parent = kNone;
+  uint32_t tag = 0, defaults = 0, scope = 0;
+  std::vector<uint32_t> classes;
+  std::string create_tag, props, text;
+};
+
 struct ChainKey {
   uint32_t parent, sig, prev;
   bool operator==(const ChainKey& o) const { return parent == o.parent && sig == o.sig && prev == o.prev; }
@@ -943,6 +952,111 @@ struct fjs_style {
   // ---- per-element style inputs (byte ops and the word stream share these) ---
 
   std::vector<uint32_t> scratch_classes;
+  std::unordered_map<uint32_t, std::vector<TemplateNode>> templates;
+
+  // A packed string of the word stream: byte length, then the bytes in
+  // ceil(len / 4) little-endian words.
+  static bool read_packed(const uint32_t* w, size_t n, size_t& i, std::string& out) {
+    if (i >= n) return false;
+    uint32_t len = w[i++];
+    size_t words = (static_cast<size_t>(len) + 3) / 4;
+    if (i + words > n) return false;
+    out.assign(reinterpret_cast<const char*>(w + i), len);
+    i += words;
+    return true;
+  }
+
+  bool read_template(const uint32_t* w, size_t n, size_t& i) {
+    if (i + 2 > n) return false;
+    uint32_t tid = w[i], count = w[i + 1];
+    i += 2;
+    std::vector<TemplateNode> t;
+    t.reserve(count);
+    for (uint32_t k = 0; k < count; k++) {
+      if (i + 6 > n) return false;
+      TemplateNode tn;
+      tn.flags = w[i];
+      tn.parent = w[i + 1];
+      tn.tag = w[i + 2];
+      tn.defaults = w[i + 3];
+      tn.scope = w[i + 4];
+      uint32_t ncls = w[i + 5];
+      i += 6;
+      if (i + ncls > n) return false;
+      tn.classes.assign(w + i, w + i + ncls);
+      i += ncls;
+      if (!read_packed(w, n, i, tn.create_tag) || !read_packed(w, n, i, tn.props) ||
+          !read_packed(w, n, i, tn.text)) {
+        return false;
+      }
+      // pre-order: a parent comes before its children, the root first
+      if (k == 0 ? tn.parent != kNone : tn.parent >= k) return false;
+      t.push_back(std::move(tn));
+    }
+    if (t.empty()) return false;
+    templates[tid] = std::move(t);
+    return true;
+  }
+
+  void put_string_op(uint8_t op, uint32_t id, const std::string& v) {
+    out.push_back(op);
+    put_u32(out, id);
+    put_u32(out, static_cast<uint32_t>(v.size()));
+    out.insert(out.end(), v.begin(), v.end());
+  }
+
+  bool clone(uint32_t tid, uint32_t first) {
+    auto it = templates.find(tid);
+    if (it == templates.end()) return false;
+    const std::vector<TemplateNode>& t = it->second;
+    if (first == 0 || first + t.size() >= kMaxId) return false;
+    for (size_t k = 0; k < t.size(); k++) {
+      const TemplateNode& tn = t[k];
+      uint32_t id = first + static_cast<uint32_t>(k);
+      node(id)->live = true;
+      out.push_back(kOpCreate);
+      put_u32(out, id);
+      out.push_back(static_cast<uint8_t>(tn.create_tag.size()));
+      out.push_back(static_cast<uint8_t>(tn.create_tag.size() >> 8));
+      out.insert(out.end(), tn.create_tag.begin(), tn.create_tag.end());
+      if (!tn.props.empty()) put_string_op(kOpSetProps, id, tn.props);
+      if (!tn.text.empty()) put_string_op(kOpSetText, id, tn.text);
+      if (tn.flags & 2) {
+        if (!apply_el(id, tn.tag, tn.defaults, tn.flags & 1)) return false;
+        if (tn.scope != 0) apply_scope(id, tn.scope);
+        if (!tn.classes.empty()) apply_classes(id, tn.classes.data(), tn.classes.size());
+      }
+    }
+    // pre-order: each node appends under a parent already created, and
+    // siblings land in template order
+    for (size_t k = 1; k < t.size(); k++) {
+      uint32_t id = first + static_cast<uint32_t>(k);
+      uint32_t pid = first + t[k].parent;
+      out.push_back(kOpInsert);
+      put_u32(out, pid);
+      put_u32(out, id);
+      put_u32(out, 0x7fffffffu);
+      if (!apply_insert(pid, id, 0x7fffffffu)) return false;
+    }
+    return true;
+  }
+
+  bool apply_insert(uint32_t pid, uint32_t id, uint32_t index) {
+    if (node(pid) == nullptr || node(id) == nullptr) return false;
+    uint32_t old = nodes[id].parent;
+    // mirror_tree.dart: move semantics, clamped index
+    detach(id);
+    std::vector<uint32_t>& kids = nodes[pid].kids;
+    size_t at = std::min<size_t>(index, kids.size());
+    kids.insert(kids.begin() + static_cast<std::ptrdiff_t>(at), id);
+    nodes[id].parent = pid;
+    nodes[id].hint = static_cast<uint32_t>(at);
+    // the runtime's insert: recomputeSubtree(child) + noteStructureChange
+    mark_subtree(id);
+    if (old != kNone && old != pid) note_structure(old);
+    note_structure(pid);
+    return true;
+  }
 
   bool apply_el(uint32_t id, uint32_t tag, uint32_t defaults, uint32_t flags) {
     Node* n = node(id);
@@ -1059,6 +1173,16 @@ struct fjs_style {
           apply_restyle(w[i], w[i + 1] != 0);
           i += 2;
           break;
+        case FJS_STYLE_W_TEMPLATE:
+          if (!read_template(w, n, i)) return false;
+          break;
+        case FJS_STYLE_W_CLONE:
+          // the expansion goes into `out`, which the word stream fills
+          // before any byte op passes through: ahead of every op of the
+          // frame that could name the new ids
+          if (!need(2) || !clone(w[i], w[i + 1])) return false;
+          i += 2;
+          break;
         default:
           return false;
       }
@@ -1094,20 +1218,7 @@ struct fjs_style {
         uint32_t pid = r.u32();
         uint32_t id = r.u32();
         uint32_t index = r.u32();
-        if (!r.ok || node(pid) == nullptr || node(id) == nullptr) return false;
-        uint32_t old = nodes[id].parent;
-        // mirror_tree.dart: move semantics, clamped index
-        detach(id);
-        std::vector<uint32_t>& kids = nodes[pid].kids;
-        size_t at = std::min<size_t>(index, kids.size());
-        kids.insert(kids.begin() + static_cast<std::ptrdiff_t>(at), id);
-        nodes[id].parent = pid;
-        nodes[id].hint = static_cast<uint32_t>(at);
-        // the runtime's insert: recomputeSubtree(child) + noteStructureChange
-        mark_subtree(id);
-        if (old != kNone && old != pid) note_structure(old);
-        note_structure(pid);
-        return true;
+        return r.ok && apply_insert(pid, id, index);
       }
       case kOpRemoveChild: {
         uint32_t pid = r.u32();
@@ -1279,7 +1390,9 @@ struct fjs_style {
     out.reserve(len + 64);
     // the word stream first: it only changes per-element state, which the
     // flush at the end of the frame reads — its order against the byte
-    // stream's structural ops does not matter
+    // stream's structural ops does not matter. Clone expansions it writes
+    // land at the front of the output, ahead of every byte op that could
+    // name the new ids.
     if (nwords != 0 && !apply_words(words, nwords)) {
       strip(in, len);
       return -1;

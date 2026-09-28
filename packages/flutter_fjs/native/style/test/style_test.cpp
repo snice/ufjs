@@ -428,6 +428,77 @@ void test_words() {
   CHECK(hb.match_by_hits == hw.match_by_hits);
 }
 
+// A CLONE builds what the same subtree built node by node builds: the same
+// structure reaching Dart, the same styles.
+void test_clone() {
+  auto pack = [](std::vector<uint32_t>& w, const std::string& v) {
+    w.push_back(static_cast<uint32_t>(v.size()));
+    for (size_t i = 0; i < v.size(); i += 4) {
+      uint32_t word = 0;
+      for (size_t k = 0; k < 4 && i + k < v.size(); k++) word |= uint32_t(uint8_t(v[i + k])) << (8 * k);
+      w.push_back(word);
+    }
+  };
+  enum : uint32_t { TINY = 14 };
+  auto build = [&](bool cloned, Host& h, std::vector<uint8_t>* structure) {
+    auto cb = h.callbacks();
+    fjs_style* s = fjs_style_create(&cb);
+    Frame rules;
+    rules.rules(rule_table({
+        {0, 0, 0, {{0, 10, {{0, 0, 0, {C}}}}}},
+        {1, SCOPE, 0, {{0, 20, {{0, 0, 0, {C}}, {1, 0, 0, {TINY}}}}}},
+        {2, 0, 0, {{0, 10, {{0, 0, 1, {C}}}}}},  // .c:first-child
+    }));
+    run(s, rules);
+    Frame f;
+    std::vector<uint32_t> w;
+    f.create(1, "view").insert(0, 1, 0);
+    w.insert(w.end(), {FJS_STYLE_W_EL, 1, VIEW, 0, 0, SCOPE, 1, A});
+    if (cloned) {
+      // [0] view.c, [1] text.tiny "hi", [2] anchor
+      w.insert(w.end(), {FJS_STYLE_W_TEMPLATE, 7, 3});
+      w.insert(w.end(), {2, 0xffffffffu, VIEW, 0, SCOPE, 1, C});
+      pack(w, "view"); pack(w, ""); pack(w, "");
+      w.insert(w.end(), {2, 0, TEXT, 0, SCOPE, 1, TINY});
+      pack(w, "text"); pack(w, ""); pack(w, "hi");
+      w.insert(w.end(), {0, 0, 0, 0, 0, 0});
+      pack(w, "view"); pack(w, "{\"style\":{\"display\":\"none\"}}"); pack(w, "");
+    }
+    for (uint32_t i = 0; i < 10; i++) {
+      uint32_t id = 2 + 3 * i;
+      if (cloned) {
+        w.insert(w.end(), {FJS_STYLE_W_CLONE, 7, id});
+      } else {
+        f.create(id, "view");
+        w.insert(w.end(), {FJS_STYLE_W_EL, id, VIEW, 0, 0, SCOPE, 1, C});
+        f.create(id + 1, "text").text(id + 1, "hi");
+        w.insert(w.end(), {FJS_STYLE_W_EL, id + 1, TEXT, 0, 0, SCOPE, 1, TINY});
+        const std::string anchor = "{\"style\":{\"display\":\"none\"}}";
+        f.create(id + 2, "view").u8(6).u32(id + 2).u32(anchor.size()).bytes(anchor);
+        f.insert(id, id + 1, 0x7fffffff).insert(id, id + 2, 0x7fffffff);
+      }
+      f.insert(1, id, 0x7fffffff);
+    }
+    const uint8_t* out = nullptr;
+    size_t len = 0;
+    CHECK(fjs_style_process_words(s, w.data(), w.size(), f.b.data(), f.b.size(), &out, &len) == 0);
+    Out o = decode(out, len);
+    if (structure) *structure = o.passthrough;
+    fjs_style_stats st;
+    fjs_style_get_stats(s, &st);
+    CHECK(st.elements == 21);  // the root, 10 cells, 10 texts; anchors unstyled
+    fjs_style_destroy(s);
+    return o;
+  };
+  Host hb, hc;
+  std::vector<uint8_t> sb, sc;
+  Out bytes = build(false, hb, &sb), cloned = build(true, hc, &sc);
+  CHECK(bytes.set_style == 21 && cloned.set_style == 21);
+  CHECK(bytes.style_of == cloned.style_of);
+  CHECK(bytes.defs == cloned.defs);
+  CHECK(sb.size() == sc.size());  // same ops reach Dart, in another order
+}
+
 }  // namespace
 
 int main() {
@@ -437,6 +508,7 @@ int main() {
   test_attributes();
   test_append_and_bad_frame();
   test_words();
+  test_clone();
   if (g_failures) {
     std::fprintf(stderr, "fjs-style-test: %d failure(s)\n", g_failures);
     return 1;

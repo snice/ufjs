@@ -11,7 +11,7 @@ import {
   createRenderer,
   type RendererOptions,
 } from '@vue/runtime-core';
-import { create, forgetHandlers, forgetElementStyle, insert, remove, setHoverStyle, setText, setProps, setConstProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setConnectedResolver, setOffsetParentResolver, setParentResolver, setAttributeSink, currentTapDispatch, type Element, type EventPayload } from '../ui/element';
+import { adoptElement, allocIds, create, forgetHandlers, forgetElementStyle, insert, remove, setHoverStyle, setText, setProps, setConstProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setConnectedResolver, setOffsetParentResolver, setParentResolver, setAttributeSink, currentTapDispatch, type Element, type EventPayload } from '../ui/element';
 import { transitionClassesOf } from './transition-classes';
 import { lastPointer } from '../ui/geometry';
 import { hasNativeHost, host, invokeHost, registerPreFlush } from '../host';
@@ -1371,6 +1371,146 @@ export const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     if (typeof scopeId === 'string' && scopeId) styleEngine.addScope(el.id, scopeId);
   },
 };
+
+// ---- native template clones (specs/152) -------------------------------------
+//
+// The Vapor shell instantiates a parsed template once per cloneNode(true).
+// Node by node that is a createElement + scope + class + insert per node,
+// each paying the element layer, this module's bookkeeping and the style
+// inputs. When libfjs-style is attached, a template made only of what it can
+// carry is registered once and each instance is one CLONE word: libfjs-style
+// writes the Create / SetProps / SetText / Insert ops Dart gets and registers
+// the styles; here only the handles and the bookkeeping are made.
+
+/** One node of a template the Vapor shell wants cloned, in pre-order. */
+export interface CloneNode {
+  kind: 'element' | 'text' | 'anchor';
+  /** Index of the parent node, -1 for the root. */
+  parent: number;
+  /** element: the tag the page wrote. */
+  tag: string;
+  classes: string | null;
+  scope: string | null;
+  /** element: its static inline text ('' = none); text: the text. */
+  text: string;
+  /** element whose only child is a text: that text as the template has it
+   * (the shell's inline Text starts from it; it may be the compiler's
+   * placeholder, which `text` leaves out). */
+  inline: string | null;
+}
+
+export interface ClonePlan {
+  template: number;
+  nodes: CloneNode[];
+  descriptors: Array<TagDescriptor | null>;
+}
+
+const ANCHOR_JSON = JSON.stringify(ANCHOR_PROPS);
+const HTML_BLOCK_JSON = JSON.stringify(HTML_BLOCK_PROPS);
+
+/** Whether prepared templates can be cloned now: libfjs-style attached and
+ * not detached by a rejected frame since. */
+export function cloneReady(): boolean {
+  return styleEngine.canClone;
+}
+
+/** Registers a template for native clones, or null when it cannot be one —
+ * no native style engine, or a node createElement does more for than the
+ * clone can carry (a text control's value shim, a canvas surface, a form
+ * control's `:disabled` record). The caller then instantiates node by node. */
+export function prepareClone(nodes: CloneNode[]): ClonePlan | null {
+  if (!styleEngine.canClone) return null;
+  const specs = [];
+  const descriptors: Array<TagDescriptor | null> = [];
+  for (const n of nodes) {
+    if (n.kind === 'anchor') {
+      // createComment: an unstyled view with the anchor props
+      specs.push({ parent: n.parent, styled: false, raw: false, styleTag: '', defaults: undefined, scope: null, classes: null, createTag: 'view', props: ANCHOR_JSON, text: '' });
+      descriptors.push(null);
+      continue;
+    }
+    if (n.kind === 'text') {
+      // createText: raw text, no scope
+      specs.push({ parent: n.parent, styled: true, raw: true, styleTag: 'text', defaults: undefined, scope: null, classes: null, createTag: 'text', props: '', text: n.text });
+      descriptors.push(null);
+      continue;
+    }
+    const d = tagDescriptor(n.tag);
+    if (d.textControl || d.textarea || d.tag === 'inner-canvas') return null;
+    specs.push({
+      parent: n.parent,
+      styled: true,
+      raw: false,
+      styleTag: n.tag,
+      defaults: d.defaultStyle,
+      scope: n.scope,
+      classes: n.classes,
+      createTag: d.tag,
+      props: d.block ? HTML_BLOCK_JSON : '',
+      text: n.tag === 'br' ? '\n' : n.text,
+    });
+    descriptors.push(d);
+  }
+  const template = styleEngine.defineCloneTemplate(specs);
+  return template === 0 ? null : { template, nodes, descriptors };
+}
+
+/** Reused across clones: the caller reads it before cloning again. */
+const cloneHosts: HostNode[] = [];
+
+/** One instance of a prepared template: the host elements in template order,
+ * with the bookkeeping createElement / createText / createComment and insert
+ * would have done. The root is not attached. The array is reused by the next
+ * clone — read it right away. */
+export function cloneTemplate(plan: ClonePlan): readonly HostNode[] {
+  const { nodes, descriptors } = plan;
+  const n = nodes.length;
+  const first = allocIds(n);
+  styleEngine.cloneTemplate(plan.template, first);
+  const hosts = cloneHosts;
+  hosts.length = n;
+  for (let k = 0; k < n; k++) {
+    const node = nodes[k];
+    const d = descriptors[k];
+    const el = adoptElement(first + k, d !== null ? d.tag : node.kind === 'text' ? 'text' : 'view');
+    hosts[k] = el;
+    track(el);
+    if (d !== null) {
+      if (d.emits !== null) payloadEvents.set(el, d.emits);
+      if (d.mapped !== null) htmlDefaults.set(el.id, d.mapped.defaults);
+    }
+    if (k > 0) {
+      const pid = first + node.parent;
+      parentOf.set(el.id, pid);
+      const list = childrenOf.get(pid);
+      if (list === undefined) childrenOf.set(pid, [el.id]);
+      else list.push(el.id);
+    }
+  }
+  devtoolsStructuralVersion.value++;
+  if (!nativeStyle) {
+    // verify mode: the TS engine never sees what libfjs-style expanded —
+    // register the same elements with it (libfjs-style keeps its first
+    // registration, so the repeats are no-ops there)
+    for (let k = 0; k < n; k++) {
+      const node = nodes[k];
+      if (node.kind === 'anchor') continue;
+      const id = first + k;
+      if (node.kind === 'text') {
+        styleEngine.ensure(id, 'text', undefined, true);
+        continue;
+      }
+      styleEngine.ensure(id, node.tag, descriptors[k]!.defaultStyle);
+      if (node.scope !== null) styleEngine.addScope(id, node.scope);
+      if (node.classes !== null) styleEngine.setClasses(id, node.classes);
+    }
+    for (let k = 1; k < n; k++) {
+      styleEngine.recomputeSubtree(first + k);
+      styleEngine.noteStructureChange(first + nodes[k].parent);
+    }
+  }
+  return hosts;
+}
 
 // Handles for parentNode/nextSibling: Vue only reads identity/ordering from
 // them, so a minimal Element-shaped object is enough.

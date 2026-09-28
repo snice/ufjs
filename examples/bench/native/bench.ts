@@ -14,6 +14,8 @@ import { defineComponent, h, ref } from 'vue';
 import { createApp, flutterRoot, registerStyles, styleEngine } from 'fjs/vue';
 import { create, flush, nowMs, setOpSink } from 'fjs';
 import Flat from '../src/Flat4050.vue';
+import FlatVapor from '../vapor/Flat4050Vapor.vue';
+import { createComponent, createVaporApp, defineVaporComponent, shellOf } from 'fjs/vapor';
 
 /** Time inside uiOps: the host's frame handling, plus libfjs-style's parse
  * and flush (and its callbacks into JS) in native mode. */
@@ -109,9 +111,21 @@ async function main(): Promise<void> {
   await run('page', show);
   // flat-bench's second pass: structural + sibling rules exist (matching
   // nothing here), so position and the `+` neighbour join every key
+  // Vapor: its templates go through native clones when libfjs-style is
+  // attached (specs/152) — same tree, same ids, so the same hash
+  const vaporShow = ref(false);
+  createVaporApp(defineVaporComponent({
+    setup: () => createComponent(FlatVapor, { show: () => vaporShow.value }),
+  })).mount(shellOf(flutterRoot()) as never);
+  await drain();
+  await run('vapor', vaporShow);
   registerStyles(null, '.bench-none:first-child { color: red } .bench-none + .bench-none { color: red }');
   await drain();
   await run('structural', show);
+  await run('vapor-structural', vaporShow);
+  // every run ends unmounted: what is still registered is the two app roots'
+  // scaffolding, or a leak
+  console.log(`[native] ${mode} elements after all runs: ${styleEngine.stats.elements}`);
   if (verify) console.log(`[native] verify ${JSON.stringify(styleEngine.verifyStats)}`);
 }
 
