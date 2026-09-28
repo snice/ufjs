@@ -510,12 +510,12 @@ class MirrorTree {
     for (final child in List<int>.of(node.children)) {
       _removeDeep(child);
     }
+    // _parentOf is the only parent a node can have: `insert` is the one place
+    // that adds to a child list and it detaches first, so a node is never in
+    // two lists. There used to be a sweep over every node here "in case" —
+    // O(total) per removed node, i.e. quadratic for a subtree: unmounting
+    // 4150 nodes spent ~80 ms in it on an iPhone (specs/145).
     _detach(id);
-    _parentOf.remove(id);
-    // detach from any other parent that still references us
-    for (final other in _nodes.values) {
-      other.children.remove(id);
-    }
   }
 
   /// Removes `id` from whichever parent (element or root) currently holds it.
