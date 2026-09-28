@@ -146,6 +146,9 @@ export function createRouter(): Router & { start(): void } {
       else console.warn('[fjs/wx] router.go() only supports negative deltas');
     },
     resolve: (to) => toLocation(to),
+    // Subpackage download is WeChat's job (app.json preloadRule), and a page
+    // module here is part of the page's own package: nothing to load early.
+    preload: () => Promise.resolve(),
     start: () => {},
   };
 }

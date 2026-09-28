@@ -11,6 +11,7 @@ import {
   type Router as VueRouter,
 } from 'vue-router';
 import { Matcher } from './match';
+import { startPreloadQueue } from './preload-queue';
 import { whenSettled } from './settled';
 import type { RouteLocation, RouteLocationRaw, Router, RouterOptions } from './types';
 
@@ -104,9 +105,52 @@ export function createRouter(options: WebRouterOptions): FjsWebRouter {
     back: () => vueRouter.back(),
     go: (delta) => vueRouter.go(delta),
     resolve: (to: RouteLocationRaw) => matcher.resolve(to),
+    preload: (to) => preloadRecord(matcher, to),
   };
   active = router;
+  if (options.preload !== false) {
+    // the web half of specs/143: once the first page has settled, pull every
+    // page module down in idle time so a navigation only renders. Starting
+    // earlier would compete with the first page's own imports.
+    void vueRouter.isReady().then(() => {
+      whenSettled(vueRouter.currentRoute.value.fullPath, () => {
+        const paths = options.routes
+          .map((r) => r.path)
+          .filter((p) => !p.includes(':') && !p.includes('*'));
+        startPreloadQueue(paths, async (p) => {
+          await whenBrowserIdle();
+          await preloadRecord(matcher, p);
+        });
+      });
+    });
+  }
   return router;
+}
+
+/** Runs the route's lazy `() => import(...)` (the generated web table's
+ * shape); the browser keeps the module, so the navigation's own import
+ * resolves from cache. A synchronous component is already loaded. */
+async function preloadRecord(matcher: Matcher, to: RouteLocationRaw): Promise<void> {
+  const record = matcher.record(matcher.resolve(to).path);
+  const component = record?.component;
+  if (typeof component !== 'function' || isComponentFunction(component)) return;
+  await (component as () => Promise<unknown>)();
+}
+
+/** A functional component or a class-style one, not a lazy loader. */
+function isComponentFunction(fn: object): boolean {
+  return 'props' in fn || 'setup' in fn || 'render' in fn || '__vccOpts' in fn;
+}
+
+/** requestIdleCallback where there is one (Safari has none), bounded so a
+ * page that is never idle still gets its modules. */
+function whenBrowserIdle(): Promise<void> {
+  return new Promise((resolve) => {
+    const ric = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void })
+      .requestIdleCallback;
+    if (typeof ric === 'function') ric(() => resolve(), { timeout: 2000 });
+    else setTimeout(resolve, 50);
+  });
 }
 
 // ---- page settled ----------------------------------------------------------
