@@ -746,6 +746,41 @@ article mount 12.2ms (render 12.1 · bridge 0.1 · gc before 8.1)
 挂载那一半这次压下去了，剩下的整堆回收要从堆的大小入手（dev 预载的页面 chunk、
 页面自己的常驻对象），不是 rich-text 能解决的。
 
+## 4050 元素同屏：对标 uni-app x（2026-09，specs/145 / 146）
+
+`examples/hello-fjs` 的 `example/interaction/flat-4050` 是 uni-app x vapor benchmark 的同构页：
+点一下，挂 50 × 40 格（每格 view + text，约 4050 个元素）。页面把点击 → nextTick 的 JS 拆成
+过桥 / 样式 flush / 样式 mark / 其余；`examples/bench` 的 `flat-bench.ts` 在 fjsrun 里把「其余」
+再按样式引擎登记、元素层、Vue 分开（包装计时自身约 0.55 µs/次，报表另给扣除后的 `.net`）。
+
+iPhone 12，`fjs run ios --profile`：
+
+| | JS | 过桥 | 样式 flush | 样式 mark | 其余 | 点击→上屏 |
+|---|---:|---:|---:|---:|---:|---:|
+| 显示，145 基线 | 187–195 ms | 2 ms | 45.5 | 10 | 133 | 316–350 ms |
+| 显示，146 之后 | **163–175 ms** | 2 ms | 45.5 | 0 | 115–126 | 299–332 ms |
+| 隐藏，145 修前 | 109–136 ms | 78–84 ms | 0 | 0 | 30–53 | 133–166 ms |
+| 隐藏，145 修后 | 52–60 ms | **1 ms** | 0 | 0 | 51–59 | 94–115 ms |
+
+uni-app x 官方 iOS 数字：iPhone SE2 vapor 160.6 ms / UIKit 328.75 ms（终点是渲染指令交给系统，
+不含最后一帧 GPU；上表的「上屏」多含约一帧）。
+
+两处修复：
+
+1. **卸载的 80 ms 在 Dart**（specs/145）：`mirror_tree.dart` 的 `_removeDeep` 每删一个节点都扫
+   一遍全部节点的 child list，删子树是二次方。`insert` 是唯一加入 child list 的地方且先
+   detach，节点只可能在一个父节点下，那一遍扫是多余的兜底。
+2. **挂载期登记**（specs/146）：每个元素挂载要进样式引擎 5 次，其中 `addScope` / `setClasses` /
+   insert 各触发一次子树标脏遍历。新元素还没有孩子，`ensure` 时就给它盖「子树已入队」的章，后面
+   三次都走 `markDirty` 入口的早返回；scope 集合按成员驻留共享；`noteStructureChange` 同一轮
+   同一个父节点只全标一次（一行 40 个孩子原来是 1 + 2 + … + 40 次）。离线登记净值 15 → 8 ms，
+   开了结构伪类规则时 22 → 10 ms。`stats.markMs` / `markVisited` 在挂载时因此接近 0——口径变了，
+   不是标脏没发生。
+
+剩下的 JS：flush 重算约 45 ms（4150 个元素只有 3 种样式，但每个都各自算签名、查缓存；app 里一旦
+有结构伪类规则，离线从 24 涨到 42 ms），Vue + 元素层约 110 ms。前者是「同签名兄弟共享结果」的
+方向，没有立项。
+
 ## 已知热点（优化路线）
 
 按 2026-09-03 那轮真机/模拟器实测重排过：

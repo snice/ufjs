@@ -17,7 +17,7 @@
 // device page's `bridge` is measured there. Passes report min/med/max, see
 // docs/performance.md on why single readings lie.
 import { defineComponent, h, ref } from 'vue';
-import { createApp, flutterRoot, styleEngine } from 'fjs/vue';
+import { createApp, flutterRoot, registerStyles, styleEngine } from 'fjs/vue';
 import { create, createRoot, flush, insert, nowMs, remove, setOpSink, setText } from 'fjs';
 import Flat4050 from './Flat4050.vue';
 
@@ -105,52 +105,77 @@ export async function runFlatBench(): Promise<void> {
   app.mount(flutterRoot());
   await drain();
 
+  // What the wrapper itself costs per call, so style.patch can be read net
+  // of it: ~20k wrapped calls per mount, and at a few tenths of a µs each
+  // the timing would otherwise be a visible slice of what it measures.
+  const probe = styleEngine as unknown as Record<string, (...a: unknown[]) => unknown>;
+  probe.__benchNoop = () => undefined;
+  wrap('__benchNoop');
+  acc = {};
+  const tw = nowMs();
+  for (let i = 0; i < 20000; i++) probe.__benchNoop();
+  const wrapUs = ((nowMs() - tw) / 20000) * 1000;
+  acc = {};
+
   for (const m of ['ensure', 'addScope', 'setClasses', 'patchInlineStyle',
     'recomputeSubtree', 'noteStructureChange', 'forget']) wrap(m);
 
-  const rows: Record<string, number[]> = {};
-  const push = (k: string, v: number) => (rows[k] ??= []).push(v);
-  let lastAcc: Record<string, Acc> = {};
-  let lastBytes: Record<string, number> = {};
-  let elements = 0;
+  const measure = async (label: string) => {
+    const rows: Record<string, number[]> = {};
+    const push = (k: string, v: number) => (rows[k] ??= []).push(v);
+    let lastAcc: Record<string, Acc> = {};
+    let lastBytes: Record<string, number> = {};
+    let elements = 0;
 
-  for (let pass = 0; pass <= PASSES; pass++) {
+    for (let pass = 0; pass <= PASSES; pass++) {
+      for (const phase of ['mount', 'unmount'] as const) {
+        acc = {};
+        bytes = 0;
+        styleEngine.resetStats();
+        const t0 = nowMs();
+        show.value = phase === 'mount';
+        await drain();
+        const total = nowMs() - t0;
+        const st = styleEngine.stats;
+        if (phase === 'mount') elements = st.elements;
+        if (pass === 0) continue; // warm-up
+        const patchStyle = Object.values(acc).reduce((s, a) => s + a.ms, 0);
+        const calls = Object.values(acc).reduce((s, a) => s + a.calls, 0);
+        push(`${phase}.style.patch.net`, patchStyle - (calls * wrapUs) / 1000);
+        push(`${phase}.total`, total);
+        push(`${phase}.style.patch`, patchStyle);
+        push(`${phase}.style.flush`, st.flushMs);
+        push(`${phase}.rest`, total - patchStyle - st.flushMs);
+        lastAcc[phase] = acc;
+        lastBytes[phase] = bytes;
+      }
+      const e = elementOnly();
+      if (pass > 0) {
+        push('mount.element', e.mount);
+        push('unmount.element', e.unmount);
+      }
+    }
+
+    console.log(`[flat] ${label}: clock pair ≈ ${(clockUs * 2).toFixed(2)}µs, wrapper ≈ ${wrapUs.toFixed(2)}µs/call, ${elements} elements`);
     for (const phase of ['mount', 'unmount'] as const) {
-      acc = {};
-      bytes = 0;
-      styleEngine.resetStats();
-      const t0 = nowMs();
-      show.value = phase === 'mount';
-      await drain();
-      const total = nowMs() - t0;
-      const st = styleEngine.stats;
-      if (phase === 'mount') elements = st.elements;
-      if (pass === 0) continue; // warm-up
-      const patchStyle = Object.values(acc).reduce((s, a) => s + a.ms, 0);
-      push(`${phase}.total`, total);
-      push(`${phase}.style.patch`, patchStyle);
-      push(`${phase}.style.flush`, st.flushMs);
-      push(`${phase}.rest`, total - patchStyle - st.flushMs);
-      lastAcc[phase] = acc;
-      lastBytes[phase] = bytes;
+      console.log(`[flat] ${label} ${phase}  (min/med/max ms, frame ${lastBytes[phase]} B)`);
+      for (const k of ['total', 'style.patch', 'style.patch.net', 'style.flush', 'element', 'rest']) {
+        console.log(`[flat]   ${k.padEnd(16)} ${stats(rows[`${phase}.${k}`])}`);
+      }
+      for (const [name, a] of Object.entries(lastAcc[phase])) {
+        console.log(`[flat]     ${name.padEnd(20)} ${a.ms.toFixed(1)}ms × ${a.calls}`);
+      }
     }
-    const e = elementOnly();
-    if (pass > 0) {
-      push('mount.element', e.mount);
-      push('unmount.element', e.unmount);
-    }
-  }
 
-  console.log(`[flat] clock pair ≈ ${(clockUs * 2).toFixed(2)}µs, ${elements} elements`);
-  for (const phase of ['mount', 'unmount'] as const) {
-    console.log(`[flat] ${phase}  (min/med/max ms, frame ${lastBytes[phase]} B)`);
-    for (const k of ['total', 'style.patch', 'style.flush', 'element', 'rest']) {
-      console.log(`[flat]   ${k.padEnd(12)} ${stats(rows[`${phase}.${k}`])}`);
-    }
-    for (const [name, a] of Object.entries(lastAcc[phase])) {
-      console.log(`[flat]     ${name.padEnd(20)} ${a.ms.toFixed(1)}ms × ${a.calls}`);
-    }
-  }
+  };
+
+  await measure('page-rules');
+  // A real app registers far more than the page's three rules, and some of
+  // them turn on the engine's structural / sibling paths: every insert then
+  // re-marks all of the parent's children (noteStructureChange). The rules
+  // match nothing here; they only flip hasStructural / hasSiblingRules.
+  registerStyles(null, '.bench-none:first-child { color: red } .bench-none + .bench-none { color: red }');
+  await measure('with-structural-rules');
 
   app.unmount();
   await drain();
