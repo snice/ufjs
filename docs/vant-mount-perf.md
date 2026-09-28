@@ -681,6 +681,53 @@ chunk 时间没了，但开着 preload 时快照导入（JSON 解析 + 建对象
 - **与 preload 无关的发现**：每打开并关闭一个 vant 页，GC 之后堆仍多出 1.3–1.8 MB，开关两边都是
   这样（开：9.2 → 11.0 → 12.6 → 14.1 MB）。它会推高之后每次 GC 的成本，需要单独排查。
 
+## 命中路径瘦身（specs/144）
+
+预热之后 match miss 只剩 0–2 次，但 CSS 段仍有 vant-form 9 ms（bench）、真机每页 11–20 ms。
+对 prewarm 冷挂载做自耗时剖析（临时插桩，已删），vant-form 180 次 recompute、flush 11.4 ms：
+
+| 环节 | 自耗时 | 原因 |
+|---|---:|---|
+| `applyStyle`（DefineStyle / SetStyle 编码） | 4.37 ms | 设备引擎没有 `TextEncoder`，`utf8Encode` 退回两遍 JS 循环，约 0.17 µs / 字符；首开要编 20 K 字符的样式 JSON。`JSON.stringify` 本身是原生的，只占 0.38 ms |
+| `compute`（级联） | 3.67 ms | 42 次 compute miss：带 inline 样式（`:style`）的元素从不记忆，快照也跳过它们及其**整棵子树** |
+| 匹配 + chain key + sibling 签名 | ~2.5 ms | 命中路径的固定开销（未动） |
+
+两处改动：
+
+1. `DefineStyle` 改走 `OpWriter.str`（specs/118 为 SetText / SetProps 做过的 ASCII 直写），字节
+   与原来逐字节相同，op 协议不变。
+2. inline 样式元素按 **inline 内容**记忆（`MatchResult.byInline`，键 = 父样式 id + inline /
+   inline custom 的 JSON，上限 128），并进入快照；快照版本 2 → 3，旧快照按版本拒绝。内容键让同一
+   组件的多个实例（一排 Rate 星星）共用一个结果，也减少了 DefineStyle。
+
+### 实测
+
+bench（本机，prewarm 冷首帧，两轮一致）：
+
+| 页面 | 同步段 / CSS 改前 | 改后 |
+|---|---|---|
+| vant-form | 20.6 / 8.9 | **16.2 / 4.4** |
+| vant-basic | 11.0 / 4.6 | 10.0 / 3.7 |
+| vant-nav | 12.7 / 5.1 | 10.4 / 3.1 |
+| vant-more | 8.5 / 3.0 | 8.0 / 2.4 |
+
+vant-form compute miss 42 → 1，`applyStyle` 4.37 → 2.91 ms；五页 match miss 不变（1/0/1/1/20）。
+快照体积 270 → 299 KB（+11%，bench 五页）。
+
+真机（iPhone，`fjs run ios --profile`，单次采样，基线是 specs/143 的"preload 关"三轮平均）：
+
+| 页面 | 基线 挂载（去掉 chunk） | 144 挂载 | 144 打开合计 |
+|---|---:|---:|---:|
+| vant-basic | 54.0 | 52 | 60 |
+| vant-nav | 60.4 | 53 | 62 |
+| vant-watermark | 38.0 | 34 | 44 |
+| nutui-basic | 43.3 | 31 | 106 |
+| nutui-button | 35.0 | 28 | 111 |
+
+挂载合计 231 → 198 ms（−14%），打开合计 405 → 383 ms。打开合计降得少，是因为快照多了 inline 部分，
+chunk 大了 5–15%，执行时间相应多 1–8 ms；配合 specs/143 的空闲预执行，这部分会移出打开页面的等待。
+逐页外观与改前一致（真机目测）。
+
 ## 附录：怎么复现与怎么量
 
 ```bash

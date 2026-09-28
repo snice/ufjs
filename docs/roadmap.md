@@ -60,6 +60,8 @@
   逐个执行页面 chunk / 单包页面模块（样式快照仍在打开时导入），打开页面时 `[nav] mounted` 不再含
   chunk 的读取与执行（真机 12–16 ms）。空闲由 Dart 判定（手指、转场、帧排队）；web 走
   `requestIdleCallback` + 动态 import；`preload: false` 关闭
+- ✅ **样式引擎命中路径瘦身**（specs/144）：DefineStyle 改 ASCII 直写（字节不变）；inline 样式元素按内容
+  记忆并进入快照（v3）。vant-form 首帧 CSS 8.9 → 4.4 ms（bench），真机五页挂载合计 −14%
 
 ## 工具链分发（已完成 2026-08）
 
