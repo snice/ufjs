@@ -123,6 +123,8 @@ static fjsengine::Value js_clear_timer(fjsengine::Context *ctx, fjsengine::Value
 
 /* ---- UI op buffer ------------------------------------------------------ */
 
+static uint8_t *read_buffer_arg(fjsengine::Context *ctx, fjsengine::ValueConst buf, size_t *size);
+
 static fjsengine::Value js_ui_ops(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
                          fjsengine::ValueConst *argv) {
     (void)this_val;
@@ -173,7 +175,21 @@ static fjsengine::Value js_ui_ops(fjsengine::Context *ctx, fjsengine::ValueConst
         vm->style.threw = false;
         const uint8_t *out = nullptr;
         size_t out_len = 0;
-        int rc = fjs_style_process(vm->style.style, bytes, size, &out, &out_len);
+        /* the per-element style inputs ride the frame as a word buffer
+         * (`frame.fjsStyle`, an Int32Array — see ops.ts OpWriter.words) */
+        const uint32_t *words = nullptr;
+        size_t nwords = 0;
+        fjsengine::Value wv = fjsengine::get_property_str(ctx, buf, "fjsStyle");
+        if (!fjsengine::is_undefined(wv) && !fjsengine::is_exception(wv)) {
+            size_t wsize = 0;
+            uint8_t *wb = read_buffer_arg(ctx, wv, &wsize);
+            if (wb) {
+                words = reinterpret_cast<const uint32_t *>(wb);
+                nwords = wsize / sizeof(uint32_t);
+            }
+        }
+        int rc = fjs_style_process_words(vm->style.style, words, nwords, bytes, size, &out, &out_len);
+        fjsengine::free_value(ctx, wv);
         vm->style.busy = false;
         bool threw = vm->style.threw;
         if (rc != 0) {

@@ -1967,8 +1967,12 @@ export class StyleEngine {
    * swipe measured the full 402px screen before its parents' paddings. */
   flushPending(): void {
     this.flushQueued = false;
-    // native: libfjs-style flushes inside uiOps
-    if (this.nativeOnly) return;
+    // native: libfjs-style flushes inside uiOps; what the backend still holds
+    // goes into this frame
+    if (this.native !== undefined) {
+      this.native.commit();
+      if (this.nativeOnly) return;
+    }
     if (!this.dirtyList.length) return;
     const clock = engineClock();
     const t0 = clock ? clock() : 0;

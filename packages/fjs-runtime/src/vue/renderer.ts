@@ -1043,6 +1043,43 @@ export function resolveHtmlTag(
   return resolved;
 }
 
+/** Everything createElement decides from the tag alone, looked up once per
+ * tag instead of five times per element (specs/151: the lookups were most
+ * of nodeOps.createElement's 1.4 µs over a bare create). */
+interface TagDescriptor {
+  /** The element tag to create (an HTML tag mapped to its fjs tag). */
+  tag: string;
+  mapped: { tag: string; defaults: Record<string, unknown> } | null;
+  defaultStyle: Record<string, unknown> | undefined;
+  emits: ReadonlySet<string> | null;
+  textarea: boolean;
+  block: boolean;
+  textControl: boolean;
+}
+
+const tagDescriptors = new Map<string, TagDescriptor>();
+
+function tagDescriptor(rawTag: string): TagDescriptor {
+  let d = tagDescriptors.get(rawTag);
+  if (d !== undefined) return d;
+  const mapped = resolveHtmlTag(rawTag);
+  // the textarea ELEMENT (see the H table): an unknown tag on the Dart side
+  // rendered nothing at all
+  const tag = mapped ? mapped.tag : rawTag === 'textarea' ? 'input' : rawTag;
+  const emits = emitsFor(rawTag);
+  d = {
+    tag,
+    mapped,
+    defaultStyle: mapped?.defaults.style as Record<string, unknown> | undefined,
+    emits: emits.size > 0 ? emits : null,
+    textarea: rawTag === 'textarea',
+    block: HTML_BLOCK_TAGS.has(rawTag),
+    textControl: TEXT_CONTROL_TAGS.has(tag),
+  };
+  tagDescriptors.set(rawTag, d);
+  return d;
+}
+
 // ---- nodeOps ---------------------------------------------------------------
 
 /** Removes one element and its subtree, native side and bookkeeping. */
@@ -1117,15 +1154,12 @@ function unshell(node: HostNode): HostNode {
 // engine and element bookkeeping.
 export const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
   createElement: (rawTag) => {
-    const mapped = resolveHtmlTag(rawTag);
-    // the textarea ELEMENT (see the H table): an unknown tag on the Dart
-    // side rendered nothing at all
-    const el = create(mapped ? mapped.tag : rawTag === 'textarea' ? 'input' : rawTag);
+    const d = tagDescriptor(rawTag);
+    const el = create(d.tag);
     // What this tag emits on web (specs/104). Only fjs tags have entries in
     // that table, so a vant `div` never gets one and stays DOM-shaped.
-    const emits = emitsFor(rawTag);
-    if (emits.size > 0) payloadEvents.set(el, emits);
-    if (rawTag === 'textarea') {
+    if (d.emits !== null) payloadEvents.set(el, d.emits);
+    if (d.textarea) {
       // vant's Field textarea: the field grows natively (auto-height, see
       // the Field patch in the demo's vite/vant.ts); the cell follows since
       // specs/122 (a two-pass flex line re-measures when an item grows).
@@ -1136,20 +1170,20 @@ export const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     // children. The marker lets the Dart view tell the two apart
     // (node_adapters.dart, _ViewNodeAdapter); `p` / `h1`… carry it too, so
     // they are never taken for inline runs inside such a box.
-    if (HTML_BLOCK_TAGS.has(rawTag)) setConstProps(el, HTML_BLOCK_PROPS);
-    if (mapped) {
+    if (d.block) setConstProps(el, HTML_BLOCK_PROPS);
+    if (d.mapped !== null) {
       // remember defaults; the style engine merges them ahead of matched
       // rules and user style
-      htmlDefaults.set(el.id, mapped.defaults);
+      htmlDefaults.set(el.id, d.mapped.defaults);
       if (rawTag === 'br') setText(el, '\n');
     }
     track(el);
-    if (TEXT_CONTROL_TAGS.has(el.tag)) installTextControlValue(el);
-    styleEngine.ensure(el.id, rawTag, mapped?.defaults.style as Record<string, unknown> | undefined);
-    // no empty child list up front: trackInsert creates it on the first
-    // child, and every reader takes a missing list as no children — most
-    // elements of a page are leaves (specs/149)
-    parentOf.set(el.id, null);
+    if (d.textControl) installTextControlValue(el);
+    styleEngine.ensure(el.id, rawTag, d.defaultStyle);
+    // no parentOf / childrenOf entries up front: every reader takes a
+    // missing parent as none and a missing list as no children, insert
+    // writes both — most elements of a page are leaves, and each entry
+    // written here was a Map write per element (specs/149, specs/151)
     return el;
   },
 
@@ -1215,6 +1249,29 @@ export const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
   insert: (child, parent, anchor) => {
     child = unshell(child);
     parent = unshell(parent);
+    // How a mount builds every list: a fresh child (never attached, or
+    // detached since) appended at the end, not hoisted, into a parent with
+    // no ::before box. Everything the general path below handles — the move,
+    // the anchor lookup, the overlay redirect, the box offset — is a no-op
+    // then, and walking it was ~1 µs per element (specs/151).
+    if (
+      anchor == null &&
+      parentOf.get(child.id) === undefined &&
+      (hoistedFrom.size === 0 || !hoistedFrom.has(child.id)) &&
+      (pseudoBoxes.size === 0 || pseudoBoxes.get(parent.id)?.before === undefined)
+    ) {
+      insert(parent, child);
+      parentOf.set(child.id, parent.id);
+      const list = childrenOf.get(parent.id);
+      if (list === undefined) childrenOf.set(parent.id, [child.id]);
+      else list.push(child.id);
+      if (!nativeStyle) {
+        styleEngine.recomputeSubtree(child.id);
+        styleEngine.noteStructureChange(parent.id);
+      }
+      if (modalMasks.size !== 0 && modalMasks.has(child.id)) syncAllHostModals();
+      return;
+    }
     anchor = anchor && unshell(anchor);
     // Vue also calls insert to MOVE a node that is already mounted (a keyed
     // v-for reorder). The native side detaches the child before inserting it

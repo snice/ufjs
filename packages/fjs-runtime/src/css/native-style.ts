@@ -139,8 +139,32 @@ export class NativeStyleBackend {
     }
     if (defaults !== undefined && !this.defaults.has(defaultsId)) this.defaults.set(defaultsId, defaults);
     if ((info & 1) !== 0) this.disableable.set(id, []);
-    this.writer.styleEl(id, info >>> 1, defaultsId, rawText);
+    this.commit();
+    this.pId = id;
+    this.pTag = info >>> 1;
+    this.pDefaults = defaultsId;
+    this.pRaw = rawText;
+    this.pScope = 0;
+    this.pClasses = null;
     scheduleFlush();
+  }
+
+  /** The element registered last and not written yet: Vue hands a new
+   * element its scope and class right after creating it (createElement →
+   * setScopeId → patchProp('class')), so those fold into its one EL record
+   * instead of three (specs/151). Anything else that writes, and the frame
+   * going out (StyleEngine.flushPending runs as a pre-flush), commits it. */
+  private pId = 0;
+  private pTag = 0;
+  private pDefaults = 0;
+  private pRaw = false;
+  private pScope = 0;
+  private pClasses: readonly number[] | null = null;
+
+  commit(): void {
+    if (this.pId === 0) return;
+    this.writer.styleEl(this.pId, this.pTag, this.pDefaults, this.pRaw, this.pScope, this.pClasses);
+    this.pId = 0;
   }
 
   setClasses(id: number, value: unknown): void {
@@ -162,6 +186,11 @@ export class NativeStyleBackend {
       this.disableable.set(id, atoms);
       if (this.disabledOn.has(id)) atoms = [...atoms, this.disabledAtom()];
     }
+    if (id === this.pId) {
+      this.pClasses = atoms;
+      return;
+    }
+    this.commit();
     this.writer.styleClasses(id, atoms);
     scheduleFlush();
   }
@@ -171,6 +200,7 @@ export class NativeStyleBackend {
     if (own === undefined || this.disabledOn.has(id) === disabled) return;
     if (disabled) this.disabledOn.add(id);
     else this.disabledOn.delete(id);
+    this.commit();
     this.writer.styleClasses(id, disabled ? [...own, this.disabledAtom()] : own);
     scheduleFlush();
   }
@@ -201,6 +231,11 @@ export class NativeStyleBackend {
       this.lastScopeAtom = a;
       this.seenScopes.add(scope);
     }
+    if (id === this.pId && this.pScope === 0) {
+      this.pScope = a;
+      return;
+    }
+    this.commit();
     this.writer.styleScope(id, a);
     scheduleFlush();
   }
@@ -214,6 +249,7 @@ export class NativeStyleBackend {
    * registered later may test one (StyleEngine.setAttribute keeps them all
    * for the same reason). */
   setAttribute(id: number, name: string, value: string | null): void {
+    this.commit();
     this.writer.styleAttr(id, this.atom(name.toLowerCase()), value);
     scheduleFlush();
   }
@@ -234,6 +270,7 @@ export class NativeStyleBackend {
     // the layers from here
     if (key === '') this.inlines.delete(id);
     else if (this.inlines.get(id) !== record) this.inlines.set(id, { inline: record.inline, inlineCustom: record.inlineCustom });
+    this.commit();
     this.writer.styleInline(id, key === '' ? 0 : this.inlineKeyId(key));
     scheduleFlush();
   }
@@ -253,6 +290,8 @@ export class NativeStyleBackend {
     this.disabledOn.delete(id);
     this.inlines.delete(id);
     this.pseudoApplied.delete(id);
+    if (id === this.pId) this.pId = 0;
+    else this.commit();
     this.writer.styleForget(id);
   }
 

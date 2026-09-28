@@ -940,6 +940,132 @@ struct fjs_style {
     return true;
   }
 
+  // ---- per-element style inputs (byte ops and the word stream share these) ---
+
+  std::vector<uint32_t> scratch_classes;
+
+  bool apply_el(uint32_t id, uint32_t tag, uint32_t defaults, uint32_t flags) {
+    Node* n = node(id);
+    if (n == nullptr) return false;
+    if (n->el) return true;  // StyleEngine.ensure: first registration wins
+    n->el = std::make_unique<Elem>();
+    element_count++;
+    Elem& e = *n->el;
+    e.tag = tag;
+    e.defaults = defaults;
+    e.raw = flags & 1;
+    e.pending = pending_epoch;
+    if (n->kids.empty()) e.subtree = pending_epoch;
+    dirty.push_back(id);
+    return true;
+  }
+
+  void apply_classes(uint32_t id, const uint32_t* atoms, size_t count) {
+    Elem* e = el(id);
+    if (e == nullptr) return;
+    // source order kept for class attribute tests, first occurrence wins
+    std::vector<uint32_t> src;
+    src.reserve(count);
+    for (size_t i = 0; i < count; i++)
+      if (std::find(src.begin(), src.end(), atoms[i]) == src.end()) src.push_back(atoms[i]);
+    if (src == e->classes_src) return;
+    std::vector<uint32_t> sorted(src);
+    std::sort(sorted.begin(), sorted.end());
+    e->classes_src.swap(src);
+    e->classes.swap(sorted);
+    e->sig = 0;
+    e->match = 0;
+    mark_subtree(id);
+    mark_next_sibling(id);
+  }
+
+  void apply_scope(uint32_t id, uint32_t scope) {
+    Elem* e = el(id);
+    if (e == nullptr || contains_sorted(e->scopes, scope)) return;
+    e->scopes.insert(std::upper_bound(e->scopes.begin(), e->scopes.end(), scope), scope);
+    e->sig = 0;
+    e->match = 0;
+    mark_subtree(id);
+    mark_next_sibling(id);
+  }
+
+  void apply_inline(uint32_t id, uint32_t key) {
+    Elem* e = el(id);
+    if (e == nullptr || e->inline_key == key) return;
+    e->inline_key = key;
+    mark_subtree(id);
+  }
+
+  void apply_forget(uint32_t id) {
+    if (id < nodes.size()) drop_elem(nodes[id]);
+  }
+
+  void apply_restyle(uint32_t id, bool subtree) {
+    if (id == 0) {
+      drop_caches();
+      mark_all();
+    } else if (subtree) {
+      mark_subtree(id);
+    } else {
+      mark(id);
+    }
+  }
+
+  // The word stream (fjs_style.h FJS_STYLE_W_*): the per-element inputs as
+  // uint32 words. False on a malformed stream.
+  bool apply_words(const uint32_t* w, size_t n) {
+    size_t i = 0;
+    auto need = [&](size_t k) { return i + k <= n; };
+    while (i < n) {
+      uint32_t op = w[i++];
+      switch (op) {
+        case FJS_STYLE_W_EL: {
+          if (!need(6)) return false;
+          uint32_t id = w[i], tag = w[i + 1], defaults = w[i + 2], flags = w[i + 3], scope = w[i + 4], count = w[i + 5];
+          i += 6;
+          if (!need(count)) return false;
+          if (!apply_el(id, tag, defaults, flags)) return false;
+          if (scope != 0) apply_scope(id, scope);
+          if (count != 0) apply_classes(id, w + i, count);
+          i += count;
+          break;
+        }
+        case FJS_STYLE_W_CLASSES: {
+          if (!need(2)) return false;
+          uint32_t id = w[i], count = w[i + 1];
+          i += 2;
+          if (!need(count)) return false;
+          apply_classes(id, w + i, count);
+          i += count;
+          break;
+        }
+        case FJS_STYLE_W_SCOPE:
+          if (!need(2)) return false;
+          apply_scope(w[i], w[i + 1]);
+          i += 2;
+          break;
+        case FJS_STYLE_W_INLINE:
+          if (!need(2)) return false;
+          apply_inline(w[i], w[i + 1]);
+          i += 2;
+          break;
+        case FJS_STYLE_W_FORGET:
+          if (!need(1)) return false;
+          apply_forget(w[i]);
+          i += 1;
+          break;
+        case FJS_STYLE_W_RESTYLE:
+          if (!need(2)) return false;
+          apply_restyle(w[i], w[i + 1] != 0);
+          i += 2;
+          break;
+        default:
+          return false;
+      }
+    }
+    return true;
+  }
+
   // ---- frame -----------------------------------------------------------------
 
   // One op. Returns false on a malformed op; `copy` says whether its bytes
@@ -1055,86 +1181,42 @@ struct fjs_style {
         uint32_t tag = r.u32();
         uint32_t defaults = r.u32();
         uint8_t flags = r.u8();
-        Node* n = node(id);
-        if (!r.ok || n == nullptr) return false;
-        if (n->el) return true;  // StyleEngine.ensure: first registration wins
-        n->el = std::make_unique<Elem>();
-        element_count++;
-        Elem& e = *n->el;
-        e.tag = tag;
-        e.defaults = defaults;
-        e.raw = flags & 1;
-        e.pending = pending_epoch;
-        if (n->kids.empty()) e.subtree = pending_epoch;
-        dirty.push_back(id);
-        return true;
+        return r.ok && apply_el(id, tag, defaults, flags);
       }
       case FJS_STYLE_OP_CLASSES: {
         uint32_t id = r.u32();
         uint16_t count = r.u16();
-        std::vector<uint32_t> classes;
-        classes.reserve(count);
-        for (uint16_t i = 0; i < count && r.ok; i++) classes.push_back(r.u32());
+        scratch_classes.clear();
+        for (uint16_t i = 0; i < count && r.ok; i++) scratch_classes.push_back(r.u32());
         if (!r.ok) return false;
-        Elem* e = el(id);
-        if (e == nullptr) return true;
-        // source order kept for class attribute tests, first occurrence wins
-        std::vector<uint32_t> src;
-        src.reserve(classes.size());
-        for (uint32_t c : classes)
-          if (std::find(src.begin(), src.end(), c) == src.end()) src.push_back(c);
-        std::sort(classes.begin(), classes.end());
-        classes.erase(std::unique(classes.begin(), classes.end()), classes.end());
-        if (src == e->classes_src) return true;
-        e->classes_src.swap(src);
-        e->classes.swap(classes);
-        e->sig = 0;
-        e->match = 0;
-        mark_subtree(id);
-        mark_next_sibling(id);
+        apply_classes(id, scratch_classes.data(), scratch_classes.size());
         return true;
       }
       case FJS_STYLE_OP_SCOPE: {
         uint32_t id = r.u32();
         uint32_t scope = r.u32();
         if (!r.ok) return false;
-        Elem* e = el(id);
-        if (e == nullptr || contains_sorted(e->scopes, scope)) return true;
-        e->scopes.insert(std::upper_bound(e->scopes.begin(), e->scopes.end(), scope), scope);
-        e->sig = 0;
-        e->match = 0;
-        mark_subtree(id);
-        mark_next_sibling(id);
+        apply_scope(id, scope);
         return true;
       }
       case FJS_STYLE_OP_INLINE: {
         uint32_t id = r.u32();
         uint32_t key = r.u32();
         if (!r.ok) return false;
-        Elem* e = el(id);
-        if (e == nullptr || e->inline_key == key) return true;
-        e->inline_key = key;
-        mark_subtree(id);
+        apply_inline(id, key);
         return true;
       }
       case FJS_STYLE_OP_FORGET: {
         uint32_t id = r.u32();
         if (!r.ok) return false;
-        if (id < nodes.size()) drop_elem(nodes[id]);
+        apply_forget(id);
         return true;
       }
       case FJS_STYLE_OP_RESTYLE: {
         uint32_t id = r.u32();
         uint8_t subtree = r.u8();
         if (!r.ok) return false;
-        if (id == 0) {
-          drop_caches();
-          mark_all();
-        } else if (subtree) {
-          mark_subtree(id);
-        } else {
-          mark(id);
-        }
+        apply_restyle(id, subtree != 0);
         return true;
       }
       case FJS_STYLE_OP_SEED_CHAIN: {
@@ -1192,9 +1274,16 @@ struct fjs_style {
     }
   }
 
-  int process(const uint8_t* in, size_t len) {
+  int process(const uint32_t* words, size_t nwords, const uint8_t* in, size_t len) {
     out.clear();
     out.reserve(len + 64);
+    // the word stream first: it only changes per-element state, which the
+    // flush at the end of the frame reads — its order against the byte
+    // stream's structural ops does not matter
+    if (nwords != 0 && !apply_words(words, nwords)) {
+      strip(in, len);
+      return -1;
+    }
     Reader r{in, in + len};
     const uint8_t* copy_from = in;
     while (r.p < r.end) {
@@ -1277,10 +1366,15 @@ fjs_style* fjs_style_create(const fjs_style_callbacks* callbacks) {
 void fjs_style_destroy(fjs_style* style) { delete style; }
 
 int fjs_style_process(fjs_style* style, const uint8_t* in, size_t len, const uint8_t** out, size_t* out_len) {
+  return fjs_style_process_words(style, nullptr, 0, in, len, out, out_len);
+}
+
+int fjs_style_process_words(fjs_style* style, const uint32_t* words, size_t nwords, const uint8_t* in, size_t len,
+                            const uint8_t** out, size_t* out_len) {
   *out = nullptr;
   *out_len = 0;
   if (style->failed) return -3;
-  int rc = style->process(in, len);
+  int rc = style->process(words, nwords, in, len);
   if (rc != 0) {
     style->failed = true;
     *out = style->out.data();

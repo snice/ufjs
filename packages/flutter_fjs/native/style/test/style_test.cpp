@@ -391,6 +391,43 @@ void test_append_and_bad_frame() {
   fjs_style_destroy(s);
 }
 
+// The word stream builds the same styles as the byte ops.
+void test_words() {
+  auto build = [](bool words, Host& h) {
+    auto cb = h.callbacks();
+    fjs_style* s = fjs_style_create(&cb);
+    Frame rules;
+    rules.rules(rule_table({
+        {0, 0, 0, {{0, 10, {{0, 0, 0, {B}}}}}},
+        {1, SCOPE, 0, {{0, 20, {{0, 0, 0, {A}}, {1, 0, 0, {B}}}}}},
+    }));
+    run(s, rules);
+    Frame f;
+    std::vector<uint32_t> w;
+    f.create(1, "view").insert(0, 1, 0);
+    if (words) w.insert(w.end(), {FJS_STYLE_W_EL, 1, VIEW, 0, 0, SCOPE, 1, A});
+    else f.el(1, VIEW).scope(1, SCOPE).classes(1, {A});
+    for (uint32_t i = 0; i < 20; i++) {
+      uint32_t id = 2 + i;
+      f.create(id, "view").insert(1, id, i);
+      if (words) w.insert(w.end(), {FJS_STYLE_W_EL, id, VIEW, 0, 0, SCOPE, 1, B});
+      else f.el(id, VIEW).scope(id, SCOPE).classes(id, {B});
+    }
+    const uint8_t* out = nullptr;
+    size_t len = 0;
+    CHECK(fjs_style_process_words(s, w.data(), w.size(), f.b.data(), f.b.size(), &out, &len) == 0);
+    Out o = decode(out, len);
+    fjs_style_destroy(s);
+    return o;
+  };
+  Host hb, hw;
+  Out bytes = build(false, hb), words = build(true, hw);
+  CHECK(bytes.set_style == 21 && words.set_style == 21);
+  CHECK(bytes.defs == words.defs);
+  CHECK(bytes.style_of == words.style_of);
+  CHECK(hb.match_by_hits == hw.match_by_hits);
+}
+
 }  // namespace
 
 int main() {
@@ -399,6 +436,7 @@ int main() {
   test_notify_and_failure();
   test_attributes();
   test_append_and_bad_frame();
+  test_words();
   if (g_failures) {
     std::fprintf(stderr, "fjs-style-test: %d failure(s)\n", g_failures);
     return 1;

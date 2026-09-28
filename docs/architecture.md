@@ -122,6 +122,10 @@ JS op 缓冲 ─┤ 结构 op（Create/Insert/Remove…）+ 样式输入 op（0x
 
 - 样式输入 op（`ops.ts` 的 `UiOp.Style*`，布局见 `fjs_style.h`）在 uiOps 里被
   消费掉，**Dart 永远见不到**；0x40 起的 opcode 为它们保留。
+- 逐元素的输入（EL / CLASSES / SCOPE / INLINE / FORGET / RESTYLE）不写进字节帧，而是写进 OpWriter 的 Uint32
+  词缓冲，随帧作为 `frame.fjsStyle` 交给 uiOps（`fjs_style_process_words`，词流先于字节流消费——它只改逐元素
+  状态，帧末 flush 才读，与结构 op 的相对顺序无关）。解释器下一次字节写与一次词写同价，EL 从 14 次写降到 6 次
+  （specs/151）。后端还留一个「待写元素槽」：createElement 之后紧跟的 setScopeId / class 折进同一条 EL。
 - C++ 铸的线上 style id 从 `0x40000000` 起，不与 JS op 写入器（锚点、伪元素盒）
   的 id 冲突。
 - 宿主有 `__fjs.fns.styleAttach` 就默认走 native；`globalThis.__fjsNativeStyle`

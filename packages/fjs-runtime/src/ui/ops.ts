@@ -315,75 +315,84 @@ export class OpWriter {
     return this;
   }
 
-  /** Registers an element with libfjs-style: 14 bytes, one capacity check
-   * (the mount writes one per element). */
-  styleEl(id: number, tag: number, defaultsId: number, rawText: boolean): this {
-    this.ensure(14);
-    const buf = this.buf;
-    let p = this.len;
-    buf[p++] = UiOp.StyleEl;
-    buf[p++] = id & 0xff;
-    buf[p++] = (id >>> 8) & 0xff;
-    buf[p++] = (id >>> 16) & 0xff;
-    buf[p++] = (id >>> 24) & 0xff;
-    buf[p++] = tag & 0xff;
-    buf[p++] = (tag >>> 8) & 0xff;
-    buf[p++] = (tag >>> 16) & 0xff;
-    buf[p++] = (tag >>> 24) & 0xff;
-    buf[p++] = defaultsId & 0xff;
-    buf[p++] = (defaultsId >>> 8) & 0xff;
-    buf[p++] = (defaultsId >>> 16) & 0xff;
-    buf[p++] = (defaultsId >>> 24) & 0xff;
-    buf[p++] = rawText ? 1 : 0;
-    this.len = p;
+  // The per-element inputs go into a word buffer beside the frame, not into
+  // the frame: libfjs-style is their only reader, and under the interpreter
+  // a typed-array store costs the same for a byte and a word — an EL was 14
+  // byte stores (0.5 µs a mount element), it is 6 words plus its classes
+  // (specs/151). The buffer rides the frame as `fjsStyle` (toUint8Array);
+  // layouts are fjs_style.h FJS_STYLE_W_*.
+  private words = new Uint32Array(1024);
+  private wlen = 0;
+
+  private wordRoom(n: number): Uint32Array {
+    if (this.wlen + n > this.words.length) {
+      let cap = this.words.length;
+      while (cap < this.wlen + n) cap *= 2;
+      const next = new Uint32Array(cap);
+      next.set(this.words.subarray(0, this.wlen));
+      this.words = next;
+    }
+    return this.words;
+  }
+
+  /** Registers an element (W_EL), with its scope and classes when known. */
+  styleEl(id: number, tag: number, defaultsId: number, rawText: boolean, scope: number, classes: readonly number[] | null): this {
+    const n = classes === null ? 0 : classes.length;
+    const w = this.wordRoom(7 + n);
+    let p = this.wlen;
+    w[p++] = 1;
+    w[p++] = id;
+    w[p++] = tag;
+    w[p++] = defaultsId;
+    w[p++] = rawText ? 1 : 0;
+    w[p++] = scope;
+    w[p++] = n;
+    for (let i = 0; i < n; i++) w[p++] = classes![i];
+    this.wlen = p;
     return this;
   }
 
   styleClasses(id: number, atoms: readonly number[]): this {
     const n = atoms.length;
-    this.op1(UiOp.StyleClasses, id, 2 + 4 * n);
-    const buf = this.buf;
-    let p = this.len;
-    buf[p++] = n & 0xff;
-    buf[p++] = (n >>> 8) & 0xff;
-    for (let i = 0; i < n; i++) {
-      const a = atoms[i];
-      buf[p++] = a & 0xff;
-      buf[p++] = (a >>> 8) & 0xff;
-      buf[p++] = (a >>> 16) & 0xff;
-      buf[p++] = (a >>> 24) & 0xff;
-    }
-    this.len = p;
+    const w = this.wordRoom(3 + n);
+    let p = this.wlen;
+    w[p++] = 2;
+    w[p++] = id;
+    w[p++] = n;
+    for (let i = 0; i < n; i++) w[p++] = atoms[i];
+    this.wlen = p;
     return this;
   }
 
   styleScope(id: number, atom: number): this {
-    this.op1(UiOp.StyleScope, id, 4);
-    const buf = this.buf;
-    let p = this.len;
-    buf[p++] = atom & 0xff;
-    buf[p++] = (atom >>> 8) & 0xff;
-    buf[p++] = (atom >>> 16) & 0xff;
-    buf[p++] = (atom >>> 24) & 0xff;
-    this.len = p;
+    const w = this.wordRoom(3);
+    w[this.wlen++] = 3;
+    w[this.wlen++] = id;
+    w[this.wlen++] = atom;
     return this;
   }
 
   styleInline(id: number, key: number): this {
-    this.op1(UiOp.StyleInline, id, 4);
-    this.u32(key);
+    const w = this.wordRoom(3);
+    w[this.wlen++] = 4;
+    w[this.wlen++] = id;
+    w[this.wlen++] = key;
     return this;
   }
 
   styleForget(id: number): this {
-    this.op1(UiOp.StyleForget, id, 0);
+    const w = this.wordRoom(2);
+    w[this.wlen++] = 5;
+    w[this.wlen++] = id;
     return this;
   }
 
   /** id 0 = every element, with libfjs-style's caches dropped. */
   styleRestyle(id: number, subtree: boolean): this {
-    this.op1(UiOp.StyleRestyle, id, 1);
-    this.buf[this.len++] = subtree ? 1 : 0;
+    const w = this.wordRoom(3);
+    w[this.wlen++] = 6;
+    w[this.wlen++] = id;
+    w[this.wlen++] = subtree ? 1 : 0;
     return this;
   }
 
@@ -576,14 +585,18 @@ export class OpWriter {
   }
 
   get isEmpty(): boolean {
-    return this.len === 0;
+    return this.len === 0 && this.wlen === 0;
   }
 
   reset(): void {
     this.len = 0;
+    this.wlen = 0;
   }
 
   toUint8Array(): Uint8Array {
-    return this.buf.slice(0, this.len);
+    const frame = this.buf.slice(0, this.len);
+    if (this.wlen !== 0) (frame as Uint8Array & { fjsStyle?: Uint32Array }).fjsStyle = this.words.slice(0, this.wlen);
+    return frame;
   }
+
 }

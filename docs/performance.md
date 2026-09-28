@@ -859,6 +859,13 @@ specs/146 / 147 / 149 连续三轮之后，样式引擎在 JS 里每元素仍约
   第一次命中时经回调取（回调返回的字符串在 C 里 memcpy）。
 - **match 按 hit 集合复用**：同一组规则的不同 chain 共用一个 MatchResult，compute 结果也跟着共用（结构规则下
   flat-4050 的 compute 未命中 47 → 6）。
+- **样式输入走词流**（specs/151）：拆开量才看清，每元素 `ensure` 的 0.77 µs 里光写 14 字节的 EL op 就占 0.52 µs——
+  解释器下每次 typed-array 字节写约 37 ns，一次 Map 写反而只有 0.07 µs。逐元素的样式输入改写进一个 Uint32 词缓冲
+  （随帧作为 `fjsStyle` 交给 uiOps），加上「待写元素槽」把 scope / class 折进同一条 EL：样式输入 7.1 → 3.2 ms。
+  同期渲染器的按 tag 描述缓存与 insert 快路径把 renderer 层 9.7 → 7.1 ms；flat-4050 VDOM 挂载 43 → 38.5 ms，
+  Vapor 60.5 → 49.4 ms（`examples/bench/native/floor.ts` 逐层量）。
+- **下一刀是原生模板克隆**（specs/151 spike）：一个 op 换一棵静态子树、C++ 展开，flat-4050 的格子子树
+  19.8 → 5.5 ms（带现有记账 7.3 ms），样式一致；待另开 spec，从 Vapor 的 `template()` 入手。
 - 对拍：`__fjsNativeStyle = 'verify'` 下两个引擎同时跑、每帧逐元素比较——flat-4050、demo 全部页面
   （`demo/bench/verify-pages.ts`、`mount-verify.ts`、`mount-prewarm-verify.ts`）、hello-fjs 66 页
   （`examples/hello-fjs/bench/verify-pages.ts`）共 3 万余次比较，0 不一致。

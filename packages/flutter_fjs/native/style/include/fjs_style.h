@@ -110,6 +110,29 @@ enum {
   FJS_STYLE_OP_SEED_COMPUTE = 0x4b,
 };
 
+// ---- the word stream (host -> libfjs-style) ---------------------------------
+//
+// The per-element inputs a mount writes for every element, as uint32 words in
+// host byte order (fjs_style_process_words): under an interpreter a word
+// store costs what a byte store does, and EL is 5+ words instead of 14
+// bytes. Same meaning as the byte ops above; a host may use either.
+//
+//  1 EL       id, tagAtom, defaultsId, flags, scopeAtom (0 = none),
+//             nClasses, classAtom[nClasses] (source order)
+//  2 CLASSES  id, n, classAtom[n]
+//  3 SCOPE    id, scopeAtom
+//  4 INLINE   id, inlineKey
+//  5 FORGET   id
+//  6 RESTYLE  id, subtree
+enum {
+  FJS_STYLE_W_EL = 1,
+  FJS_STYLE_W_CLASSES = 2,
+  FJS_STYLE_W_SCOPE = 3,
+  FJS_STYLE_W_INLINE = 4,
+  FJS_STYLE_W_FORGET = 5,
+  FJS_STYLE_W_RESTYLE = 6,
+};
+
 // Wire style ids libfjs-style mints start here, so they never collide with
 // the ones the host's own op writer mints from 1 (anchors, pseudo boxes).
 #define FJS_STYLE_WIRE_ID_BASE 0x40000000u
@@ -206,6 +229,10 @@ int fjs_style_process(fjs_style* style, const uint8_t* in, size_t len,
 // it cannot parse. What a host routes frames through once an instance has
 // failed: the runtime keeps writing style ops, Dart must never see them.
 size_t fjs_style_strip(const uint8_t* in, size_t len, uint8_t* out);
+
+// fjs_style_process with a word stream (FJS_STYLE_W_*) consumed first.
+int fjs_style_process_words(fjs_style* style, const uint32_t* words, size_t nwords, const uint8_t* in, size_t len,
+                            const uint8_t** out, size_t* out_len);
 
 // The host result id an element's style currently comes from (0: none yet).
 uint32_t fjs_style_result_of(const fjs_style* style, uint32_t element);
