@@ -84,6 +84,43 @@ export class OpWriter {
     this.len = p;
   }
 
+  /** One op byte followed by three u32s — Insert and SetStyle, the two ops
+   * a mount writes per element. u8 + three u32 calls were four method calls
+   * and four capacity checks for 13 bytes; under the interpreter the calls
+   * cost more than the stores (specs/149). Same bytes as the long form. */
+  private op3(op: number, a: number, b: number, c: number): void {
+    this.ensure(13);
+    const buf = this.buf;
+    let p = this.len;
+    buf[p++] = op;
+    buf[p++] = a & 0xff;
+    buf[p++] = (a >>> 8) & 0xff;
+    buf[p++] = (a >>> 16) & 0xff;
+    buf[p++] = (a >>> 24) & 0xff;
+    buf[p++] = b & 0xff;
+    buf[p++] = (b >>> 8) & 0xff;
+    buf[p++] = (b >>> 16) & 0xff;
+    buf[p++] = (b >>> 24) & 0xff;
+    buf[p++] = c & 0xff;
+    buf[p++] = (c >>> 8) & 0xff;
+    buf[p++] = (c >>> 16) & 0xff;
+    buf[p++] = (c >>> 24) & 0xff;
+    this.len = p;
+  }
+
+  /** One op byte and a u32 id, in one capacity check (see op3). */
+  private op1(op: number, a: number, extra: number): void {
+    this.ensure(5 + extra);
+    const buf = this.buf;
+    let p = this.len;
+    buf[p++] = op;
+    buf[p++] = a & 0xff;
+    buf[p++] = (a >>> 8) & 0xff;
+    buf[p++] = (a >>> 16) & 0xff;
+    buf[p++] = (a >>> 24) & 0xff;
+    this.len = p;
+  }
+
   private u16(v: number): void {
     this.ensure(2);
     const b = this.buf;
@@ -135,15 +172,19 @@ export class OpWriter {
   private tagBytes = new Map<string, Uint8Array>();
 
   create(id: number, tag: string): this {
-    this.u8(UiOp.Create);
-    this.u32(id);
     let encoded = this.tagBytes.get(tag);
     if (encoded === undefined) {
       encoded = utf8Encode(tag);
       this.tagBytes.set(tag, encoded);
     }
-    this.u16(encoded.length);
-    this.bytes(encoded);
+    const n = encoded.length;
+    this.op1(UiOp.Create, id, 2 + n);
+    const buf = this.buf;
+    let p = this.len;
+    buf[p++] = n & 0xff;
+    buf[p++] = (n >>> 8) & 0xff;
+    for (let i = 0; i < n; i++) buf[p++] = encoded[i];
+    this.len = p;
     return this;
   }
 
@@ -154,10 +195,7 @@ export class OpWriter {
   }
 
   insert(parent: number, child: number, index: number): this {
-    this.u8(UiOp.Insert);
-    this.u32(parent);
-    this.u32(child);
-    this.u32(index);
+    this.op3(UiOp.Insert, parent, child, index);
     return this;
   }
 
@@ -169,8 +207,7 @@ export class OpWriter {
   }
 
   setText(id: number, text: string): this {
-    this.u8(UiOp.SetText);
-    this.u32(id);
+    this.op1(UiOp.SetText, id, 0);
     this.str(drawableText(text), true);
     return this;
   }
@@ -272,10 +309,7 @@ export class OpWriter {
     if (this.uiOpsVersion < 2) return this.setStyleAsProps(id, style, activeStyle);
     const sid = this.styleId(style);
     const aid = activeStyle ? this.styleId(activeStyle) : 0;
-    this.u8(UiOp.SetStyle);
-    this.u32(id);
-    this.u32(sid);
-    this.u32(aid);
+    this.op3(UiOp.SetStyle, id, sid, aid);
     return this;
   }
 

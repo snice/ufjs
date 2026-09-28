@@ -841,8 +841,16 @@ setOffsetParentResolver((id) => {
 /** Registers a renderer-created node and gives it the DOM-shaped members. */
 function track(el: HostNode): void {
   elementsById.set(el.id, el);
-  (el as HostNode & { contains: typeof hostContains }).contains = hostContains;
+  // Once on the shared element prototype, not per element: a property added
+  // to each new element was a shape change on every create (specs/149). An
+  // element the renderer never tracked answers false (hostContains checks
+  // elementsById) — before, it had no `contains` at all.
+  if (!containsInstalled) {
+    (Object.getPrototypeOf(el) as { contains: typeof hostContains }).contains = hostContains;
+    containsInstalled = true;
+  }
 }
+let containsInstalled = false;
 
 /** Takes the child out of its current parent's child list, keeping its own
  * subtree bookkeeping (this is half of a move, not a removal). */
@@ -857,10 +865,11 @@ function trackDetach(child: HostNode) {
 
 function trackInsert(parent: HostNode, child: HostNode, index: number) {
   parentOf.set(child.id, parent.id);
-  const list = childrenOf.get(parent.id) ?? [];
-  const at = Math.min(index, list.length);
-  list.splice(at, 0, child.id);
-  childrenOf.set(parent.id, list);
+  const list = childrenOf.get(parent.id);
+  if (list === undefined) childrenOf.set(parent.id, [child.id]);
+  // appending is how a mount builds every list
+  else if (index >= list.length) list.push(child.id);
+  else list.splice(index, 0, child.id);
 }
 
 /** Drops the engine/renderer state for `id` and everything under it. The
@@ -1122,7 +1131,9 @@ export const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     track(el);
     if (TEXT_CONTROL_TAGS.has(el.tag)) installTextControlValue(el);
     styleEngine.ensure(el.id, rawTag, mapped?.defaults.style as Record<string, unknown> | undefined);
-    childrenOf.set(el.id, []);
+    // no empty child list up front: trackInsert creates it on the first
+    // child, and every reader takes a missing list as no children — most
+    // elements of a page are leaves (specs/149)
     parentOf.set(el.id, null);
     return el;
   },
@@ -1489,7 +1500,9 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
   prevValue,
   nextValue,
 ) => {
-  const prop = camelize(key);
+  // class first, before camelize's map lookup: it is the one prop every
+  // styled element patches on mount
+  const prop = key === 'class' ? key : camelize(key);
   if (prop === 'class') {
     // Vue hands us the normalized class string; the style engine matches
     // CSS rules against it. Classes a running <Transition> put on the

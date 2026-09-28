@@ -222,6 +222,15 @@ export default (app: App) => app.use(pinia);
 `fjs add pinia` 生成的文件已经是这个形状。`fjs build --pages` 下 `fjs/plugins` 走
 共享 chunk，页面 chunk 通过 `__FJS_SHARED` 引用同一个 store 模块。
 
+### App 端的 JS 语法目标
+
+App 端 bundle（`fjs dev` / `fjs build`）按 `es2019` 降级，这是 PrimJS 的语法上限（spec 088）。例外是两个设备引擎
+（PrimJS、QuickJS-ng）都原生支持的 class 语法：实例字段、私有字段、私有方法 / 访问器保持原生（specs/149）。
+降级后的实例字段是每次构造、每个字段一次 `Object.defineProperty`——esbuild 对 `.js` 依赖一律按 define 语义降级，
+与 tsconfig 无关——在 PrimJS 上约是直接赋值的 4 倍。仍然降级的：静态字段（PrimJS 在静态字段初始化里引用
+自身类名会报 `lexical variable is not initialized`，`class Color { static WHITE = new Color() }`）、static block、
+`#x in obj`（PrimJS 不认）。一个类只要有要降级的静态字段，esbuild 就把整个类的字段一起降级。web 与小程序构建不受影响。
+
 ### UI 组件库适配：vite 插件的 `fjs.app` 钩子
 
 App 端打包（`fjs dev` / `fjs build`）走 esbuild，不跑 Vite。但组件库的适配仍然写在

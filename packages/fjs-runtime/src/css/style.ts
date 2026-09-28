@@ -307,6 +307,22 @@ function resolveEm(style: Record<string, unknown>, parentPx: number): void {
   }
 }
 
+/** A flush pass's walk of one parent's child list (StyleEngine.locate):
+ * the last child placed, where, and the participating sibling at or before
+ * it — the next one's `+` neighbour. */
+interface SiblingCursor {
+  kids: number[];
+  at: number;
+  id: number;
+  prev: number | null;
+  /** `prev` is the first participating child. */
+  prevFirst: boolean;
+}
+
+/** How far locate() walks past the last child placed before giving up on
+ * the walk: v-if anchors and clean siblings between two dirty ones. */
+const LOCATE_MAX_STEP = 8;
+
 interface ElementState {
   tag: string;
   classes: Set<string>;
@@ -658,6 +674,10 @@ export class StyleEngine {
    * allocation that costs more than the work. */
   private dirtyList: number[] = [];
   private dirtyEpoch = 1;
+  /** The mount fast paths of specs/149 (queuedAlone, the sibling cursor,
+   * whole-result reuse). Always on; the parity test turns it off to get
+   * the element-by-element reference. */
+  private batch = true;
   /** Parent id → the pending set its children were all queued in, for
    * noteStructureChange. Stale entries are harmless (the epoch moved on);
    * forget() drops a parent's entry with its state. */
@@ -673,6 +693,15 @@ export class StyleEngine {
    * exemplars for same-shape elements that follow (see matchRules). Dropped
    * with siblingIdx at every pass. */
   private shapeMemo = new Map<number, ElementState[]>();
+  /** Parent id → how far this flush pass has walked its child list (see
+   * locate). Dropped with siblingIdx at every pass. */
+  private cursors = new Map<number, SiblingCursor>();
+  /** locate()'s answer, in fields rather than a fresh object per element:
+   * the element's first/last bits, its previous participating sibling, and
+   * whether that sibling is itself the first. */
+  private locBits = 0;
+  private locPrev: number | null = null;
+  private locPrevFirst = false;
   private flushQueued = false;
   private matchCache = new Map<string, MatchResult>();
   /** chainKey -> small integer, so a child's key embeds its parent's id
@@ -893,7 +922,9 @@ export class StyleEngine {
         this.defaultsIds.set(defaults, defaultsId);
       }
     }
-    this.states.set(id, {
+    const epoch = this.dirtyEpoch;
+    const kids = this.childrenOf.get(id);
+    const state: ElementState = {
       tag,
       // shared until first written: most elements get a class list (which
       // replaces this set wholesale) and many never get a scope — two fresh
@@ -903,19 +934,22 @@ export class StyleEngine {
       defaults,
       defaultsId,
       rawText,
-    });
-    this.mark(id);
-    // A fresh element has no children, so queuing it IS queuing its whole
-    // subtree: stamp it as walked. Anything attached below it later is
-    // queued by its own insert — the same invariant the walk's stamp relies
-    // on — so the addScope / setClasses / insert that follow in the same
-    // pending set all take markDirty's early return instead of each walking
-    // (specs/146). An element registered with children already under it
-    // (a harness registering a built tree) is left to the first real walk.
-    const kids = this.childrenOf.get(id);
-    if (kids === undefined || kids.length === 0) {
-      this.states.get(id)!.subtreeEpoch = this.dirtyEpoch;
-    }
+      // queued: mark() inlined — the state is new, so it cannot be in the
+      // pending set already, and a second lookup of what we are holding was
+      // most of what mark() costs here (specs/149)
+      dirtyEpoch: epoch,
+      // A fresh element has no children, so queuing it IS queuing its whole
+      // subtree: stamp it as walked. Anything attached below it later is
+      // queued by its own insert — the same invariant the walk's stamp
+      // relies on — so the addScope / setClasses / insert that follow in the
+      // same pending set all take markDirty's early return instead of each
+      // walking (specs/146). An element registered with children already
+      // under it (a harness registering a built tree) is left to the first
+      // real walk.
+      subtreeEpoch: kids === undefined || kids.length === 0 ? epoch : undefined,
+    };
+    this.states.set(id, state);
+    this.dirtyList.push(id);
     this.scheduleFlush();
   }
 
@@ -1325,6 +1359,7 @@ export class StyleEngine {
     if (sameSet(classes, s.classes)) return;
     s.classes = classes;
     s.selfSig = undefined;
+    if (this.queuedAlone(id, s)) return;
     this.markDirty(id, true);
     // `.a + .b` reads this element's classes: the next sibling must re-match
     this.markNextSibling(id);
@@ -1528,8 +1563,19 @@ export class StyleEngine {
     // (specs/146). Adding a scope swaps in another shared set.
     s.scopes = internScopes(s.scopes, scope, this.seenScopes);
     s.selfSig = undefined;
+    if (this.queuedAlone(id, s)) return;
     this.markDirty(id, true);
     this.markNextSibling(id);
+  }
+
+  /** True for an element whose whole subtree is already in the pending set
+   * and that has no parent yet — how both Vue paths hand over a new element:
+   * the scope and class land before the insert. markDirty would take its
+   * stamped early return and markNextSibling finds no siblings, so the two
+   * calls are skipped outright; a mount makes 2 × 4000 of them (specs/149).
+   * The flush still runs: ensure scheduled it when it queued the element. */
+  private queuedAlone(id: number, s: ElementState): boolean {
+    return this.batch && s.subtreeEpoch === this.dirtyEpoch && this.parentOf.get(id) == null;
   }
 
   /** Merges a useCssVars() batch into the element's inline custom props
@@ -1687,6 +1733,7 @@ export class StyleEngine {
       this.dirtyEpoch++;
       this.siblingIdx.clear();
       this.shapeMemo.clear();
+      this.cursors.clear();
       ids.sort((a, b) => a - b);
       for (let i = 0; i < ids.length; i++) this.recompute(ids[i]);
     }
@@ -2185,6 +2232,25 @@ export class StyleEngine {
     if (prev == null) return '';
     const ps = this.states.get(prev);
     if (!ps) return '';
+    return this.siblingSig(ps, this.hasStructural ? this.structuralBits(prev, ps) : 0);
+  }
+
+  /** prevSiblingSig for the element locate() just placed: the neighbour and
+   * its first bit come from the walk. Its last bit is 0 when the element
+   * itself takes part in position (it follows the neighbour), else it is
+   * looked up. */
+  private locatedPrevSig(s: ElementState): string {
+    const prev = this.locPrev;
+    if (prev === null) return '';
+    const ps = this.states.get(prev)!;
+    if (!this.hasStructural) return this.siblingSig(ps, 0);
+    const bits = s.rawText ? this.structuralBits(prev, ps) : this.locPrevFirst ? 2 : 0;
+    return this.siblingSig(ps, bits);
+  }
+
+  /** `ps`'s signature as the next sibling's `+` sees it, with position
+   * `bits` (ignored while no structural rule exists). */
+  private siblingSig(ps: ElementState, bits: number): string {
     // the tag|classes|scopes part is cached on the sibling and checked by
     // set identity; only the position bits are read live (a hoist during
     // this flush can move the sibling without re-marking it)
@@ -2200,9 +2266,107 @@ export class StyleEngine {
     if (!this.hasStructural) return base.str;
     // four possible position suffixes: keep each spelled once, so equal
     // neighbours hand out the same string instead of a fresh concatenation
-    const bits = this.structuralBits(prev, ps);
     const withBits = (base.withBits ??= []);
     return (withBits[bits] ??= `${base.str}\u0004${bits}`);
+  }
+
+  /** Places `id` in its parent's child list by continuing this pass's walk
+   * of that list, and leaves its first/last bits and previous participating
+   * sibling in locBits / locPrev / locPrevFirst. False when it cannot (the
+   * caller then looks each up on its own, as before).
+   *
+   * A pass recomputes in ascending id order, and a list built in one go —
+   * every mount — hands its children over in list order, so the next child
+   * is the next entry after the last one placed (or one past an anchor).
+   * Looked up one by one, each child found its own index and scanned both
+   * ways for neighbours, and the `+` signature scanned again for the
+   * neighbour's own position: 2.5–3 µs per element with structural or
+   * sibling rules on (specs/149). The walk costs one step.
+   *
+   * Everything is read off the live list, never remembered between
+   * elements except the walk's position, and that is verified before use
+   * (`kids[at] === id` of the last one placed), so a list changed in the
+   * middle of the pass — a fixed element hoisted out by applyStyle — only
+   * restarts the walk. */
+  private locate(id: number, pid: number, s: ElementState): boolean {
+    const kids = this.childrenOf.get(pid);
+    if (kids === undefined) return false;
+    const n = kids.length;
+    if (n === 1) {
+      // an only child: no walk to keep (a cell's text — half of a grid)
+      if (kids[0] !== id) return false;
+      this.locBits = 3;
+      this.locPrev = null;
+      this.locPrevFirst = false;
+      return true;
+    }
+    const states = this.states;
+    let c = this.cursors.get(pid);
+    let i: number;
+    let prev: number | null;
+    let prevFirst: boolean;
+    if (c !== undefined && c.kids === kids && kids[c.at] === c.id) {
+      // continue the walk; a short gap is anchors or children that are not
+      // dirty — anything further means the order is not the list's
+      prev = c.prev;
+      prevFirst = c.prevFirst;
+      const end = Math.min(n, c.at + 1 + LOCATE_MAX_STEP);
+      for (i = c.at + 1; i < end; i++) {
+        const k = kids[i];
+        if (k === id) break;
+        const ks = states.get(k);
+        if (ks !== undefined && !ks.rawText) {
+          prevFirst = prev === null;
+          prev = k;
+        }
+      }
+      if (i === end) return false;
+    } else {
+      // start a walk here: where the element sits, and its participating
+      // neighbour before it (and whether that one is the first)
+      i = this.indexIn(pid, kids, id);
+      if (i < 0) return false;
+      prev = null;
+      prevFirst = false;
+      for (let j = i - 1; j >= 0; j--) {
+        const ks = states.get(kids[j]);
+        if (ks !== undefined && !ks.rawText) {
+          if (prev === null) {
+            prev = kids[j];
+            prevFirst = true;
+          } else {
+            prevFirst = false;
+            break;
+          }
+        }
+      }
+      if (c === undefined) {
+        c = { kids, at: i, id, prev: null, prevFirst: false };
+        this.cursors.set(pid, c);
+      }
+      c.kids = kids;
+    }
+    let bits = prev === null ? 3 : 1;
+    for (let j = i + 1; j < n; j++) {
+      const ks = states.get(kids[j]);
+      if (ks !== undefined && !ks.rawText) {
+        bits &= ~1;
+        break;
+      }
+    }
+    this.locBits = bits;
+    this.locPrev = prev;
+    this.locPrevFirst = prevFirst;
+    c.at = i;
+    c.id = id;
+    if (s.rawText) {
+      c.prev = prev;
+      c.prevFirst = prevFirst;
+    } else {
+      c.prevFirst = prev === null;
+      c.prev = id;
+    }
+    return true;
   }
 
   /** Wakes the next participating sibling: `.a + .b` makes this element's
@@ -2236,6 +2400,9 @@ export class StyleEngine {
     // key string and two map lookups for every element on the page.
     const pid = this.parentOf.get(id);
     const parentChainId = (pid != null ? this.states.get(pid)?.chainId : 0) ?? 0;
+    // Position and `+` neighbour from the pass's walk of the parent's child
+    // list when it can give them (locate), else each looked up on its own.
+    const located = this.batch && pid != null && (this.hasStructural || this.hasSiblingRules) && this.locate(id, pid, s);
     if (this.hasStructural) {
       // Sibling position is not in the parent chain: a neighbor's
       // insert/remove leaves the parent chainId alone. The dirty element
@@ -2243,12 +2410,12 @@ export class StyleEngine {
       // stale AND every descendant's chain key embeds this element's chain
       // id, so the whole subtree has to re-key. `noteStructureChange` marks
       // the siblings; this is where each one finds out whether it moved.
-      const bits = this.structuralBits(id, s);
+      const bits = located ? this.locBits : this.structuralBits(id, s);
       if (s.structBits !== bits) {
         const firstBuild = s.selfSig === undefined;
         s.structBits = bits;
         s.selfSig = undefined;
-        this.releaseChain(s);
+        if (s.chainKey !== undefined) this.releaseChain(s);
         if (!firstBuild) this.markDirty(id, true);
       }
     }
@@ -2257,11 +2424,11 @@ export class StyleEngine {
       // the parent chain, so whoever got marked rechecks it here. A change
       // re-keys this element (buildChainKey embeds the signature); unlike
       // the structural case descendants are unaffected — no subtree work.
-      const sig = this.prevSiblingSig(id);
+      const sig = located ? this.locatedPrevSig(s) : this.prevSiblingSig(id);
       if (s.prevSig !== sig) {
         const firstBuild = s.selfSig === undefined && s.prevSig === undefined;
         s.prevSig = sig;
-        this.releaseChain(s);
+        if (s.chainKey !== undefined) this.releaseChain(s);
         if (!firstBuild) this.markDirty(id, false);
       }
     }
@@ -2582,7 +2749,7 @@ export class StyleEngine {
 
   private retainChain(s: ElementState, key: string, chainId: number): void {
     if (s.chainKey === key) return;
-    this.releaseChain(s);
+    if (s.chainKey !== undefined) this.releaseChain(s);
     s.chainKey = key;
     s.chainId = chainId;
     this.chainRefs.set(key, (this.chainRefs.get(key) ?? 0) + 1);

@@ -16,6 +16,7 @@ import { createComponent, createVaporApp, defineVaporComponent, shellOf } from '
 import { createApp, flutterRoot, styleEngine } from 'fjs/vue';
 import { create, createRoot, flush, insert, nowMs, remove, setOpSink } from 'fjs';
 import { nodeOps } from '../../../packages/fjs-runtime/src/vue/renderer';
+import { Element as ShellElement } from '../../../packages/fjs-runtime/src/vapor/dom';
 import FlatVdom from '../src/Flat4050.vue';
 import FlatVapor from './Flat4050Vapor.vue';
 import LiveVdom from './FlatLive.vue';
@@ -64,7 +65,7 @@ if (__VAPOR_PROFILE__) {
   for (const k of Object.keys(nodeOps) as (keyof typeof nodeOps)[]) {
     (nodeOps as Record<string, unknown>)[k] = timed(`nodeOps.${k}`, nodeOps[k] as never);
   }
-  const proto = (globalThis as any).Element.prototype;
+  const proto = ShellElement.prototype as any;
   for (const m of ['cloneNode', 'insertBefore', 'setAttribute']) proto[m] = timed(`shell.${m}`, proto[m]);
   const noop = timed('noop', () => undefined);
   const t0 = nowMs();
