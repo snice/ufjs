@@ -254,6 +254,35 @@ void main() {
     expect(restored.rootChildren, live.rootChildren);
   });
 
+  // remove used to sweep every node's child list for the removed id (a
+  // quadratic safety net, specs/145). Without it, a moved node must still
+  // leave no trace in either its old or its new parent.
+  test('remove after a move leaves both parents clean', () {
+    final w = _W()
+      ..create(1, 'view')
+      ..create(2, 'view')
+      ..create(3, 'view')
+      ..create(4, 'text')
+      ..insert(0, 1, 0)
+      ..insert(0, 2, 1)
+      ..insert(1, 3, 0)
+      ..insert(3, 4, 0)
+      // move #3 (with its child) from #1 to #2
+      ..insert(2, 3, 0);
+    final tree = MirrorTree()..applyFrame(w.frame);
+    expect(tree.node(1)!.children, isEmpty);
+    expect(tree.node(2)!.children, [3]);
+
+    tree.applyFrame((_W()..remove(3)).frame);
+
+    expect(tree.node(1)!.children, isEmpty);
+    expect(tree.node(2)!.children, isEmpty);
+    expect(tree.node(3), isNull);
+    expect(tree.node(4), isNull);
+    expect(tree.rootChildren, [1, 2]);
+    expect(tree.nodeCount, 2);
+  });
+
   test('re-inserting a child moves it instead of mounting it twice', () {
     final w = _W();
     w.u8(UiOpCode.create);
