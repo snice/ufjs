@@ -4,6 +4,7 @@
 import { h, createRoot, setText, nowMs, flush } from 'fjs';
 import { runStyleBenches } from './style';
 import { runVueBenches } from './vue-bench';
+import { runFlatBench } from './flat-bench';
 
 function bench(name: string, fn: () => number, ops: number): void {
   const t0 = nowMs();
@@ -78,6 +79,6 @@ bench('ui-update-1000-texts', () => {
 
 // Style-engine benches run last: they are async (the engine batches its
 // recomputes into a microtask), so `done` has to wait for them.
-runStyleBenches().then(() => runVueBenches()).then(() => {
+runStyleBenches().then(() => runVueBenches()).then(() => runFlatBench()).then(() => {
   console.log('[bench] done');
 });
