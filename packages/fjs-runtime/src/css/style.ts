@@ -651,6 +651,10 @@ export class StyleEngine {
    * allocation that costs more than the work. */
   private dirtyList: number[] = [];
   private dirtyEpoch = 1;
+  /** Parent id → the pending set its children were all queued in, for
+   * noteStructureChange. Stale entries are harmless (the epoch moved on);
+   * forget() drops a parent's entry with its state. */
+  private structureNoted = new Map<number, number>();
   private flushQueued = false;
   private matchCache = new Map<string, MatchResult>();
   /** chainKey -> small integer, so a child's key embeds its parent's id
@@ -883,6 +887,17 @@ export class StyleEngine {
       rawText,
     });
     this.mark(id);
+    // A fresh element has no children, so queuing it IS queuing its whole
+    // subtree: stamp it as walked. Anything attached below it later is
+    // queued by its own insert — the same invariant the walk's stamp relies
+    // on — so the addScope / setClasses / insert that follow in the same
+    // pending set all take markDirty's early return instead of each walking
+    // (specs/146). An element registered with children already under it
+    // (a harness registering a built tree) is left to the first real walk.
+    const kids = this.childrenOf.get(id);
+    if (kids === undefined || kids.length === 0) {
+      this.states.get(id)!.subtreeEpoch = this.dirtyEpoch;
+    }
     this.scheduleFlush();
   }
 
@@ -921,9 +936,21 @@ export class StyleEngine {
    * structural or sibling rules exist. */
   noteStructureChange(parentId: number): void {
     if (!this.hasStructural && !this.hasSiblingRules) return;
+    // Once per parent per pending set. After one full pass every child is
+    // queued, and queued stays queued until the flush bumps dirtyEpoch; a
+    // child attached afterwards was queued by its own attach — every path
+    // that adds to a child list (the renderer's insert, hoist, unhoist,
+    // host migration) calls recomputeSubtree on the child first. Without
+    // this, building a row of N children re-marked 1 + 2 + … + N of them
+    // (specs/146: 8.5 → ~2 ms for 4150 elements with structural rules on).
+    if (this.structureNoted.get(parentId) === this.dirtyEpoch) {
+      this.scheduleFlush();
+      return;
+    }
     const kids = this.childrenOf.get(parentId);
     if (kids === undefined) return;
     for (let i = 0; i < kids.length; i++) this.mark(kids[i]);
+    this.structureNoted.set(parentId, this.dirtyEpoch);
     this.scheduleFlush();
   }
 
@@ -1245,6 +1272,7 @@ export class StyleEngine {
     if (!s) return;
     this.releaseChain(s);
     this.states.delete(id);
+    this.structureNoted.delete(id);
   }
 
   setClasses(id: number, value: unknown): void {
@@ -1477,10 +1505,10 @@ export class StyleEngine {
   addScope(id: number, scope: string): void {
     const s = this.states.get(id);
     if (!s || s.scopes.has(scope)) return;
-    this.seenScopes.add(scope);
-    // copy-on-write: ensure() starts every element on the shared empty set
-    if (s.scopes === EMPTY_CLASSES) s.scopes = new Set();
-    s.scopes.add(scope);
+    // Interned and never mutated: every element of one SFC carries the same
+    // `{data-v-xxx}`, so a fresh Set per element was pure allocation
+    // (specs/146). Adding a scope swaps in another shared set.
+    s.scopes = internScopes(s.scopes, scope, this.seenScopes);
     s.selfSig = undefined;
     this.markDirty(id, true);
     this.markNextSibling(id);
@@ -1527,8 +1555,19 @@ export class StyleEngine {
 
   markDirty(id: number, subtree: boolean): void {
     if (subtree) {
-      const clock = (globalThis as { __fjs?: { fns?: { nowMs?: () => number } } })
-        .__fjs?.fns?.nowMs;
+      // A root already walked in this pending set means the whole subtree is
+      // queued (see the stamp comment in the loop below) — the walk would
+      // `continue` on its first node and end. Checking it here skips the
+      // clock pair and the stack setup, which is most of what the call costs
+      // on a mount: each element comes through here three times (addScope,
+      // setClasses, insert's recomputeSubtree) and only the first one walks
+      // (specs/146). Not timed: there is no walk to time.
+      const root = this.states.get(id);
+      if (root !== undefined && root.subtreeEpoch === this.dirtyEpoch) {
+        this.scheduleFlush();
+        return;
+      }
+      const clock = engineClock();
       const t0 = clock ? clock() : 0;
       // An explicit stack, an indexed loop, and no allocation for the common
       // cases. This walk is the whole subtree on every theme switch, and at
@@ -1617,8 +1656,7 @@ export class StyleEngine {
   flushPending(): void {
     this.flushQueued = false;
     if (!this.dirtyList.length) return;
-    const clock = (globalThis as { __fjs?: { fns?: { nowMs?: () => number } } })
-      .__fjs?.fns?.nowMs;
+    const clock = engineClock();
     const t0 = clock ? clock() : 0;
     // parents are always created before children (ascending ids), so one
     // ascending pass gives every element a fresh parent computed style
@@ -2551,6 +2589,39 @@ function joinSorted(set: Set<string>): string {
 /** The class set of an element that has none yet. Shared and never
  * mutated: class lists are replaced wholesale, scopes copy on first write
  * (addScope). */
+/** Shared, read-only scope sets keyed by their sorted members. Unbounded,
+ * but the key space is the set of scope-id combinations the app's
+ * components actually produce — one per SFC plus a few slot/`:deep` mixes. */
+const scopeSetCache = new Map<string, Set<string>>();
+
+/** `current ∪ {scope}` as an interned set. `seen` is the calling engine's
+ * seenScopes: recorded on every call, not only when a set is built — the
+ * cache is module-wide and outlives engine instances (tests make many). */
+function internScopes(current: Set<string>, scope: string, seen: Set<string>): Set<string> {
+  seen.add(scope);
+  const key = current.size === 0 ? scope : [...current, scope].sort().join(' ');
+  let set = scopeSetCache.get(key);
+  if (set === undefined) {
+    set = new Set(current);
+    set.add(scope);
+    scopeSetCache.set(key, set);
+  }
+  return set;
+}
+
+/** The host clock behind the engine's own timers (`markMs` / `flushMs`).
+ * Resolved once it exists instead of walking `globalThis.__fjs.fns` on every
+ * call: markDirty runs several times per element on a mount (specs/146).
+ * Not cached while absent — tests and the web build install it later or
+ * never, and a cached `undefined` would switch the timers off for good. */
+let cachedClock: (() => number) | undefined;
+function engineClock(): (() => number) | undefined {
+  if (cachedClock !== undefined) return cachedClock;
+  const c = (globalThis as { __fjs?: { fns?: { nowMs?: () => number } } }).__fjs?.fns?.nowMs;
+  if (c !== undefined) cachedClock = c;
+  return c;
+}
+
 const EMPTY_CLASSES: Set<string> = new Set();
 
 /** Parsed class strings. Element class sets are never mutated in place
