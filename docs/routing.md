@@ -63,6 +63,7 @@ router.push({ name: 'detail', params: { id: 3 } });
 router.replace('/api');                        // 原地换页，不进栈——切 tab 用它
 router.back();                                 // = 平台返回
 router.go(-2);
+router.preload('/comp/button');                // 提前加载页面代码，不挂载（见下文）
 
 const route = useRoute();                      // 响应式：path / params / query / meta
 ```
@@ -72,6 +73,43 @@ const route = useRoute();                      // 响应式：path / params / qu
 - `go(n)` 只支持负数：原生栈没有前进历史。
 - `replace` 在栈只有首页时是「原地换首页」，这正是 tabBar 想要的行为
   （无转场，和小程序一致）。
+
+### 页面代码提前加载：`router.preload`
+
+第一个页面停稳（`onPageSettled`）后，路由会在空闲时把**每个静态路由**的页面代码逐个
+加载好（specs/143），打开页面时只剩挂载：
+
+| | 加载什么 | 什么时候算空闲 |
+|---|---|---|
+| Flutter 分包 | 页面 chunk 的读取 + 执行（构建期样式快照仍在打开时导入，见 [vant-mount-perf.md](vant-mount-perf.md#页面-chunk-空闲预执行specs143)） | 由 Dart 判定：没有手指按着、没有路由在转场、本帧之后没有帧在排队（fling、动画都算）；常驻动画的页面等满 2 s 后放行 |
+| Flutter 单包 | 页面模块（`definePageLoader` 的 loader） | 同上 |
+| Web | 路由表里的 `() => import(...)` | `requestIdleCallback`（没有时退回 50 ms 定时器） |
+| 小程序 | 不做（分包由微信加载，`preload` 直接 resolve） | — |
+
+一次只加载一个页面，按路由表顺序；带参数的路由（`/user/:id`）和 `/*` 跳过。某页加载
+失败会打一行 `[fjs-router] preload … failed`，跳过它，打开该页时按原路径再试并报错。
+
+手动预加载用 `router.preload(to)`，**不等空闲**，适合放在马上就要跳转的地方：
+
+```vue
+<view @touchstart="router.preload('/vant/form')" @tap="router.push('/vant/form')">表单</view>
+```
+
+返回 `Promise<void>`；已加载、路径不匹配时立即 resolve。
+
+关掉自动预加载（只留手动）：
+
+```ts
+createFjsApp({ routes, preload: false, /* … */ });
+```
+
+**注意**：
+
+- 页面模块的**顶层代码**（`<script>` 里 setup 之外的部分）会在预加载时执行，而不是在打开时。
+  setup、`onMounted` 不受影响，因为预加载不挂载页面。
+- 页面里**不带 scoped** 的 `<style>` 是全局样式。它原来在"打开过那一页之后"才生效，现在在
+  "预加载到那一页之后"就生效，两端都是这样（web 上 Vite 在模块求值时注入 CSS）。构建期样式
+  快照按同样的状态抓取，所以不会因此被拒（specs/143）。
 
 ### tab 页会被保活
 
@@ -407,9 +445,12 @@ engine.runBundle(await loadApp());
 注册 prelude、接上 chunkLoader——**fjs go 不用改任何代码就能跑分包工程**，热重载
 时 shared 和 bundle 一起重新拉取（外壳代码也可能变）。
 
-不带 `--pages` 时是单包：路由表里直接 `import` 每个页面并 `definePage` 注册，
-`chunk` 字段为空，push 时 Dart 不做任何加载，直接回派 `navMount`。开发期和小
-工程用这个更简单。
+不带 `--pages` 时是单包：路由表用 `definePageLoader` 登记每个页面，页面模块在
+第一次打开（或被预加载，见上文 `router.preload`）时才执行；`chunk` 字段为空，push
+时 Dart 不做任何加载，直接回派 `navMount`。开发期和小工程用这个更简单。
+
+两种模式下页面代码都会在首页停稳后空闲预加载（specs/143），所以打开页面时的
+`[nav] mounted` 通常不再包含 chunk 的读取和执行。
 
 ## 一个坑：页面文件名和内置标签同名
 

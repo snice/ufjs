@@ -35,7 +35,9 @@ import { createApp as createVueApp, flutterRoot, releaseRoot, styleEngine } from
 import type { StyleSnapshot } from '../css/style';
 import { remove, setProps, registerSystemHandler, type Element } from '../ui/element';
 import { hasNativeHost, invokeHost } from '../host';
+import { invokeHostAsync } from '../host-async';
 import { Matcher } from './match';
+import { startPreloadQueue, type PreloadQueue } from './preload-queue';
 import { PAGE_TRANSITION, resolveTransition } from './transition';
 import type {
   NavKind,
@@ -95,6 +97,12 @@ export function definePageLoader(path: string, load: () => Component): void {
   pageLoaders[path] = load;
 }
 
+/** The page's code is in the VM (a chunk registered it, or a single-bundle
+ * loader already ran). */
+function pageLoaded(path: string): boolean {
+  return registry()[path] !== undefined;
+}
+
 export function pageComponent(path: string): Component | undefined {
   const pages = registry();
   let page = pages[path];
@@ -149,6 +157,11 @@ class FlutterRouter implements Router {
   private pending = new Map<number, { entry: PageEntry; replaceKey?: number }>();
   /** Tab pages kept alive across a tab switch, by path. */
   private parked = new Map<string, PageEntry>();
+  /** Idle-time preloading (specs/143): armed by start(), launched by the
+   * first page to settle. Never armed for captureStyles(), which mounts
+   * every page itself. */
+  private preloadArmed = false;
+  private preloadQueue: PreloadQueue | null = null;
 
   constructor(private options: FlutterRouterOptions) {
     this.routes = options.routes;
@@ -173,7 +186,45 @@ class FlutterRouter implements Router {
    * Goes through replace() so the initial page is chunk-loaded like any
    * other one. */
   start(): void {
+    this.preloadArmed = this.options.preload !== false;
     void this.replace(this.options.initial ?? '/');
+  }
+
+  preload(to: RouteLocationRaw): Promise<void> {
+    return this.preloadPage(this.resolve(to), false);
+  }
+
+  /** Gets `location`'s page code into the VM without mounting it. `idle`:
+   * wait until the host says the app is idle (the automatic queue); a direct
+   * preload() is made at the moment a navigation is about to happen and must
+   * not wait. Keyed by location.path, as mount() looks the page up.
+   *
+   * The page's style snapshot is deliberately NOT imported here: nothing
+   * references the imported cache entries until the page mounts, so they sit
+   * in the style engine's retired-chain queue (RETIRED_CHAIN_LIMIT, first in
+   * first out). A dozen pages' snapshots evict each other, and — the epoch
+   * unchanged — mount would not import again: the page opened cold, slower
+   * than with no preload at all (specs/143 plan §3.5). mount() imports it,
+   * 2–3 ms right before it is used. */
+  private async preloadPage(location: RouteLocation, idle: boolean): Promise<void> {
+    const record = this.matcher.record(location.path);
+    if (!record) return;
+    const path = location.path;
+    if (!pageLoaded(path) && hasNativeHost) {
+      // A split build's chunk is evaluated by the host. A single bundle's
+      // page runs below, in pageComponent(); '' only asks for the idle wait.
+      await invokeHostAsync('fjs.nav.preload', record.chunk ?? '', idle);
+    }
+    pageComponent(path);
+  }
+
+  /** Every static route's code, in table order, once the first page has
+   * settled. */
+  private startPreloadQueue(): void {
+    if (!this.preloadArmed || this.preloadQueue) return;
+    this.preloadQueue = startPreloadQueue(staticPaths(this.options.routes), (p) =>
+      this.preloadPage(this.resolve(p), true),
+    );
   }
 
   async push(to: RouteLocationRaw): Promise<void> {
@@ -456,6 +507,11 @@ class FlutterRouter implements Router {
     entry.app = app;
     app.mount(root);
     Object.assign(this.currentRoute, entry.location);
+    // Subscribed rather than hooked into markSettled: the base page is not
+    // animated, is settled from birth and never passes through there.
+    if (this.preloadArmed && !this.preloadQueue) {
+      this.subscribeSettled(entry, () => this.startPreloadQueue());
+    }
   }
 
   /** Build-time style capture (specs/119): mounts every static route in
@@ -479,6 +535,23 @@ class FlutterRouter implements Router {
       }
       styleEngine.flushPending();
     };
+    // The device preloads every page's code once the first page settles
+    // (specs/143), so from then on every page's global (unscoped) sheets are
+    // registered. Capture in that same state, in the same order: a snapshot
+    // taken with only its own page loaded lists fewer global sheets than the
+    // device has, and snapshotMismatch refuses it. Other pages' scoped sheets
+    // match nothing here, so they never become a snapshot's dependency.
+    if (this.options.preload !== false) {
+      for (const record of this.routes) {
+        if (/[:*]/.test(record.path)) continue;
+        try {
+          if (!record.chunk) pageComponent(record.path);
+          else if (!pageLoaded(record.path)) opts.loadChunk?.(record.chunk);
+        } catch {
+          // reported by the capture of that page below, which loads it again
+        }
+      }
+    }
     for (const record of this.routes) {
       const path = record.path;
       // no parameters to fill in at build time: these compute cold
@@ -537,6 +610,11 @@ const snapshotImported = new Map<string, number>();
  * (`fjs build` appends it to the page chunk, see bundler/style-snapshot.ts).
  * Kept as a JSON string until the page is first opened: a page never
  * visited never pays the parse. */
+/** Routes with one page to load: patterns (`/user/:id`, `/*`) have none. */
+function staticPaths(routes: readonly { path: string }[]): string[] {
+  return routes.map((r) => r.path).filter((p) => !p.includes(':') && !p.includes('*'));
+}
+
 function importPageStyleSnapshot(path: string): void {
   const table = (globalThis as { __fjsStyleSnapshots?: Record<string, string> }).__fjsStyleSnapshots;
   const snap = table?.[path];

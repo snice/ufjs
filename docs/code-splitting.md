@@ -33,6 +33,17 @@ src/pages/user/[id].vue    -> /user/:id      -> pages/user-id.fjsbundle
 哪些模块进入 `shared` 由 CLI 自动计算：入口可达模块、Shell、公共组件，以及被多个
 页面共同引用的模块会进入 shared；页面文件自身始终作为独立 chunk。
 
+**chunk 什么时候执行。** 第一个页面停稳后，JS 路由按路由表顺序在空闲时逐个请求宿主
+执行尚未加载的 chunk（`fjs.nav.preload`，specs/143）；空闲由 Dart 判定（没有手指按着、
+没有转场、没有帧在排队）。用户比队列先点进某页时，那一页照旧在打开时加载，同一个 chunk
+不会执行两次。日志里预执行的那一行带 `(preload)`：
+
+```text
+[nav] chunk vant-form 62113 bytes: fetch 1ms, eval 14ms (preload)
+```
+
+关掉用 `createFjsApp({ preload: false })`，细节见 [routing.md](routing.md#页面代码提前加载routerpreload)。
+
 **没有 `src/pages` 的项目不会分包。** shared prelude 的定义是「Vue + fjs + 应用
 自己的模块」，所以一个不用 Vue 的纯 JS app（`examples/hello-js`）如果照样分包，
 拿到的是一个 ~450 KB、里面装着整个 Vue 而它一次都不会调用的 chunk，每次启动都要
@@ -109,7 +120,8 @@ dev server 提供源码形式的 split bundle：
 
 `fjs run android` / `fjs run ios` 会自动启动 `fjs dev --pages`，并把地址通过
 `FJS_DEV` 注入 `flutter run`。`connectDev()` 看到 split manifest 后会自动加载
-shared 和页面 chunk。
+shared，页面 chunk 和 release 一样由 JS 路由在空闲时预执行（以前 dev 有一套单独的
+按 16 ms 间隔全量预加载，specs/143 起统一成一条）。
 
 ### 热更新
 

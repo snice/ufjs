@@ -106,6 +106,13 @@ export interface Router {
   /** Only negative deltas are supported on Flutter (no forward stack). */
   go(delta: number): void;
   resolve(to: RouteLocationRaw): RouteLocation;
+  /** Loads a page's code ahead of opening it, so the open itself only
+   * mounts. Flutter: the page chunk is read and evaluated (its build-time
+   * style snapshot is still imported at the open); web: the page module's
+   * dynamic import. Resolves once that is done — at once for a page already loaded,
+   * a path no route matches, or a mini program. Call it where a navigation
+   * is about to happen, e.g. on touchstart of the thing that will push. */
+  preload(to: RouteLocationRaw): Promise<void>;
 }
 
 export interface RouterOptions {
@@ -115,4 +122,7 @@ export interface RouterOptions {
   shell?: Component;
   /** Where to start. Default '/'. */
   initial?: string;
+  /** Load every page's code in idle time once the first page has settled
+   * (specs/143). Default true; `false` leaves only router.preload(). */
+  preload?: boolean;
 }

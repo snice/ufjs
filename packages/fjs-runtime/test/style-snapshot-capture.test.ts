@@ -32,6 +32,7 @@ describe('router.captureStyles', () => {
     setOpSink(() => {});
     const loaded: string[] = [];
     const router = createRouter({
+      preload: false, // the pre-specs/143 shape: only the captured page's chunk
       routes: [{ path: '/four', chunk: 'four' }, { path: '/five', chunk: 'five' }],
     });
     const out = await router.captureStyles({
@@ -45,6 +46,33 @@ describe('router.captureStyles', () => {
     expect(loaded).toEqual(['five']);
     expect(Object.keys(out)).toEqual(['/five']);
     expect((out['/five'] as StyleSnapshot).v).toBe(STYLE_SNAPSHOT_VERSION);
+  });
+
+  it('loads every page first when the app preloads, so its globals match the device (specs/143)', async () => {
+    setOpSink(() => {});
+    const loaded: string[] = [];
+    const router = createRouter({
+      routes: [
+        { path: '/g143-a', chunk: 'g143-a' },
+        { path: '/g143-b', chunk: 'g143-b' },
+        { path: '/g143-u/:id', chunk: 'g143-u' },
+      ],
+    });
+    const page = defineComponent({ setup: () => () => h('view', { class: 'box' }) });
+    const out = await router.captureStyles({
+      routes: ['/g143-b'],
+      loadChunk: (chunk) => {
+        loaded.push(chunk);
+        if (chunk === 'g143-a') {
+          // a page with its own unscoped <style>: a global sheet
+          registerStyles(null, '.g143-global { color: red }', 'g143global00');
+          definePage('/g143-a', page);
+        }
+        if (chunk === 'g143-b') definePage('/g143-b', page);
+      },
+    });
+    expect(loaded).toEqual(['g143-a', 'g143-b']); // table order, pattern skipped
+    expect((out['/g143-b'] as StyleSnapshot).globals).toContain('g143global00');
   });
 
   it('runs a single bundle\'s page loader once, on first open (specs/121)', () => {

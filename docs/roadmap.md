@@ -56,6 +56,10 @@
   里逐页挂载、导出 CSS 引擎的匹配 / 计算缓存，写进页面 chunk，路由挂载前导入。vant-form
   首开同步段 CSS 22 → 8 ms、match miss 270 → 1；校验不过整份放弃。`fjs.styleSnapshot:
   false` 关闭，dev 不做
+- ✅ **页面 chunk 空闲预执行 + `router.preload()`**（specs/143）：首页停稳后，按路由表
+  逐个执行页面 chunk / 单包页面模块（样式快照仍在打开时导入），打开页面时 `[nav] mounted` 不再含
+  chunk 的读取与执行（真机 12–16 ms）。空闲由 Dart 判定（手指、转场、帧排队）；web 走
+  `requestIdleCallback` + 动态 import；`preload: false` 关闭
 
 ## 工具链分发（已完成 2026-08）
 

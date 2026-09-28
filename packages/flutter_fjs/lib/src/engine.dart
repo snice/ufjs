@@ -17,6 +17,7 @@ import 'ffi.dart';
 import 'font_loader.dart';
 import 'geometry.dart';
 import 'http.dart';
+import 'idle_gate.dart';
 import 'mirror_tree.dart';
 import 'registry/component.dart';
 import 'registry/host.dart';
@@ -84,6 +85,7 @@ class FjsEngine extends ChangeNotifier {
     );
     _http.register(host);
     _setupAsyncInvokeModule();
+    _idle.attach();
     _unwatchPointer = watchGlobalPointer(
       tree: tree,
       onDown: (id, x, y) {
@@ -98,6 +100,9 @@ class FjsEngine extends ChangeNotifier {
   }
 
   VoidCallback? _unwatchPointer;
+
+  /// When an idle-time chunk preload may run (fjs.nav.preload, specs/143).
+  final FjsIdleGate _idle = FjsIdleGate();
 
   /// spec 091/105: a flavor requested through --dart-define that the app
   /// was not built with is the one silent failure this feature can produce
@@ -370,6 +375,9 @@ class FjsEngine extends ChangeNotifier {
   //           of the shared named transitions (see FjsApp)
   //   fjs.nav.load(key, path, chunk)            no route: just load a chunk
   //   fjs.nav.pop()                             pop the top route
+  //   fjs.nav.preload(chunk, idle)              async (invokeHostAsync):
+  //     evaluate a page chunk ahead of its open; idle = wait for the app to
+  //     be idle first (see FjsIdleGate). chunk '' only waits (specs/143)
   //
   // and back the other way as dispatchEvent(key, FjsEvent.navMount / navPop)
   // once the page's chunk is in the VM / once its route is gone. [FjsApp]
@@ -431,6 +439,20 @@ class FjsEngine extends ChangeNotifier {
         if (_navStack.isEmpty) return false;
         _beginRoutePop(_navStack.last.key);
         return true;
+      })
+      // Evaluates a page chunk before its page is opened, so the open only
+      // mounts (specs/143). The JS router drives the order — it also owns
+      // the single-bundle case and the style snapshot, neither of which is
+      // visible from here — and only asks this side for what JS cannot do:
+      // evaluate an asset, and tell when the app is idle. `chunk` '' just
+      // waits for idle.
+      ..registerAsync('fjs.nav.preload', (args) async {
+        final chunk = args.isNotEmpty ? args[0]?.toString() ?? '' : '';
+        final idle = args.length > 1 && args[1] == true;
+        if (idle) await _idle.whenIdle();
+        if (_disposed || _vm == null || chunk.isEmpty) return null;
+        await _ensureChunk(chunk, preload: true);
+        return null;
       });
   }
 
@@ -532,6 +554,7 @@ class FjsEngine extends ChangeNotifier {
       _routesPendingPop.add(old.key);
     }
     _navStack.add(entry);
+    _idle.routeAnimating(entry.key, entry.transition != 'none');
     // Paint the route (and its transition) now; the page's content follows
     // as soon as its chunk is in the VM.
     notifyListeners();
@@ -580,15 +603,18 @@ class FjsEngine extends ChangeNotifier {
     );
   }
 
-  Future<void> _ensureChunk(String chunk) {
+  Future<void> _ensureChunk(String chunk, {bool preload = false}) {
     if (chunk.isEmpty || _loadedChunks.contains(chunk))
       return Future<void>.value();
-    return _loadingChunks[chunk] ??= _loadChunk(chunk).whenComplete(() {
+    return _loadingChunks[chunk] ??= _loadChunk(
+      chunk,
+      preload: preload,
+    ).whenComplete(() {
       _loadingChunks.remove(chunk);
     });
   }
 
-  Future<void> _loadChunk(String chunk) async {
+  Future<void> _loadChunk(String chunk, {bool preload = false}) async {
     final loader = chunkLoader;
     if (loader == null) {
       throw FjsException('no chunkLoader: cannot load page chunk "$chunk"');
@@ -603,7 +629,7 @@ class FjsEngine extends ChangeNotifier {
     final evaluatedAt = DateTime.now();
     _log(
       1,
-      '[nav] chunk $chunk ${bytes.length} bytes: fetch ${fetchedAt.difference(started).inMilliseconds}ms, eval ${evaluatedAt.difference(fetchedAt).inMilliseconds}ms',
+      '[nav] chunk $chunk ${bytes.length} bytes: fetch ${fetchedAt.difference(started).inMilliseconds}ms, eval ${evaluatedAt.difference(fetchedAt).inMilliseconds}ms${preload ? ' (preload)' : ''}',
     );
   }
 
@@ -620,6 +646,8 @@ class FjsEngine extends ChangeNotifier {
   /// really gone.
   void onRouteRemoved(int key) {
     _routesPendingPop.add(key);
+    // the exit animation runs from here to onRouteTransitionComplete
+    _idle.routeAnimating(key, true);
   }
 
   /// Called once a pushed route's transition animation is over — including
@@ -629,6 +657,7 @@ class FjsEngine extends ChangeNotifier {
   ///
   /// Fire-and-forget: a page that never subscribes pays one dispatch.
   void onRouteSettled(int key) {
+    _idle.routeAnimating(key, false);
     if (key == 0 || _disposed || _vm == null) return;
     dispatchEvent(key, FjsEvent.navSettled);
   }
@@ -638,6 +667,7 @@ class FjsEngine extends ChangeNotifier {
   /// animating an already-empty [FjsView] during Android back transitions.
   void onRouteTransitionComplete(int key) {
     if (key == 0) return;
+    _idle.routeAnimating(key, false);
     // Called from inside route.dispose(), i.e. while the Navigator is still
     // tearing the entry down. The microtask runs past that cleanup, so the
     // rebuild below never diffs against a half-disposed route.
@@ -857,7 +887,6 @@ class FjsEngine extends ChangeNotifier {
           return;
         }
         await _loadFromDev(dev, split);
-        if (split) unawaited(_preloadDevChunks(manifest));
       } catch (e) {
         _log(3, '[dev] reload failed: $e');
       }
@@ -909,39 +938,10 @@ class FjsEngine extends ChangeNotifier {
     };
     await dev.listen();
     startEventLoop();
-    if (split) unawaited(_preloadDevChunks(manifest));
+    // No chunk preloading here any more: the JS router's idle-time queue
+    // (specs/143) covers dev, profile and release alike, and restarts by
+    // itself when a reload rebuilds the VM.
     notifyListeners();
-  }
-
-  Future<void> _preloadDevChunks(Map<String, Object?>? manifest) async {
-    final rawRoutes = manifest?['routes'];
-    if (rawRoutes is! List) return;
-    final chunks =
-        <String>{
-              for (final route in rawRoutes)
-                if (route is Map && route['chunk'] is String)
-                  route['chunk'] as String,
-            }
-            .where(
-              (chunk) => chunk.isNotEmpty && !_loadedChunks.contains(chunk),
-            )
-            .toList();
-    if (chunks.isEmpty) return;
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-    _log(1, '[dev] preloading ${chunks.length} page chunks');
-    var loaded = 0;
-    for (final chunk in chunks) {
-      if (_disposed || _vm == null || _dev == null) return;
-      if (_loadedChunks.contains(chunk)) continue;
-      try {
-        await _ensureChunk(chunk);
-        loaded++;
-      } catch (e) {
-        _log(2, '[dev] preload $chunk failed: $e');
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 16));
-    }
-    _log(1, '[dev] preloaded $loaded page chunks');
   }
 
   /// Applies an edit that only touched page chunks, without restarting the
@@ -1408,6 +1408,7 @@ class FjsEngine extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     _unwatchPointer?.call();
+    _idle.dispose();
     _debugRetryTimer?.cancel();
     stopEventLoop();
     _http.close();
