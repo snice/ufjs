@@ -350,6 +350,13 @@ interface ElementState {
   /** Last seen signature of the previous participating sibling — only
    * tracked while some `A + B` rule exists, and part of the chain key. */
   prevSig?: string;
+  /** The dirtyEpoch of the flush pass that last recomputed this element —
+   * a sibling later in the same pass may reuse its match (specs/146→147). */
+  pass?: number;
+  /** `tag|classes|scopes` as the NEXT sibling's `+` signature spells it,
+   * with the class / scope sets it was built from (validated by identity:
+   * both sets are replaced, never mutated). */
+  sibBase?: { classes: Set<string>; scopes: Set<string>; str: string; withBits?: string[] };
   dirtyEpoch?: number; // which pending set this element is already in
   /** The pending set in which this element's WHOLE subtree was walked by
    * markDirty(id, true). A later subtree walk in the same set stops here:
@@ -655,6 +662,17 @@ export class StyleEngine {
    * noteStructureChange. Stale entries are harmless (the epoch moved on);
    * forget() drops a parent's entry with its state. */
   private structureNoted = new Map<number, number>();
+  /** Parent id → each child's index in the parent's child list, rebuilt on
+   * demand and dropped at every flush. Every lookup is verified against the
+   * live list (`kids[i] === id`), so a list changed mid-flush — a fixed
+   * element hoisted out from applyStyle — only costs a rebuild. Without it,
+   * finding your own position was a linear scan per element: O(N²) for a
+   * row of N (specs/147). */
+  private siblingIdx = new Map<number, Map<number, number>>();
+  /** Parent chain id → elements matched in this flush pass under it, as
+   * exemplars for same-shape elements that follow (see matchRules). Dropped
+   * with siblingIdx at every pass. */
+  private shapeMemo = new Map<number, ElementState[]>();
   private flushQueued = false;
   private matchCache = new Map<string, MatchResult>();
   /** chainKey -> small integer, so a child's key embeds its parent's id
@@ -1667,6 +1685,8 @@ export class StyleEngine {
       // in the next one, under the next stamp
       this.dirtyList = [];
       this.dirtyEpoch++;
+      this.siblingIdx.clear();
+      this.shapeMemo.clear();
       ids.sort((a, b) => a - b);
       for (let i = 0; i < ids.length; i++) this.recompute(ids[i]);
     }
@@ -1678,6 +1698,7 @@ export class StyleEngine {
     const s = this.states.get(id);
     if (!s) return;
     this.counters.recompute++;
+    s.pass = this.dirtyEpoch;
     const merged = this.compute(id);
     s.computed = merged;
     const active = s.activeComputed;
@@ -2040,7 +2061,8 @@ export class StyleEngine {
       // Sibling position joins the signature only when some rule cares.
       // Without the gate, every list row would pay the sibling scan and the
       // key would churn on every reorder for nothing.
-      if (this.hasStructural) sig += `\u0004${this.structuralBits(id, s)}`;
+      // matchRules — the only caller — has just recomputed structBits
+      if (this.hasStructural) sig += `\u0004${s.structBits ?? this.structuralBits(id, s)}`;
       if (s.attrs && this.attrNames.size > 0) {
         const parts: string[] = [];
         for (const n of this.attrNames) {
@@ -2063,28 +2085,80 @@ export class StyleEngine {
    * anchors are not) and not raw-text elements. A parentless element is
    * both — on web the page root is `#app`'s first (and last) child. */
   private structuralBits(id: number, s: ElementState): number {
+    void s;
     const pid = this.parentOf.get(id);
     if (pid == null) return 3;
     const kids = this.childrenOf.get(pid);
     if (kids === undefined) return 3;
-    let bits = 0;
-    for (let i = 0; i < kids.length; i++) {
-      if (kids[i] === id) {
-        bits |= 2;
+    const at = this.indexIn(pid, kids, id);
+    if (at < 0) return 0;
+    // first: nothing participating before it; last: nothing after. The same
+    // rule the two full scans applied, walked outward from the element's own
+    // index instead of inward from the ends.
+    let bits = 2 | 1;
+    for (let i = at - 1; i >= 0; i--) {
+      const k = this.states.get(kids[i]);
+      if (k !== undefined && !k.rawText) {
+        bits &= ~2;
         break;
       }
-      const k = this.states.get(kids[i]);
-      if (k !== undefined && !k.rawText) break;
     }
-    for (let i = kids.length - 1; i >= 0; i--) {
-      if (kids[i] === id) {
-        bits |= 1;
+    for (let i = at + 1; i < kids.length; i++) {
+      const k = this.states.get(kids[i]);
+      if (k !== undefined && !k.rawText) {
+        bits &= ~1;
         break;
       }
-      const k = this.states.get(kids[i]);
-      if (k !== undefined && !k.rawText) break;
     }
     return bits;
+  }
+
+  /** An element matched earlier in this pass whose match stands in for
+   * `s`'s (see the call site in matchRules), else undefined. */
+  private sameShape(s: ElementState, parentChainId: number): ElementState | undefined {
+    const list = this.shapeMemo.get(parentChainId);
+    if (list === undefined) return undefined;
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      if (
+        // own signature: tag, and the class / scope sets by identity (shared
+        // sets from parseClassValue and internScopes — equal content in two
+        // different objects just misses, it cannot mis-share). attrs were
+        // ruled out by the caller for both sides.
+        p.tag === s.tag &&
+        p.classes === s.classes &&
+        p.scopes === s.scopes &&
+        // position and `+` neighbour, both freshly computed for s above
+        (!this.hasStructural || p.structBits === s.structBits) &&
+        (!this.hasSiblingRules || p.prevSig === s.prevSig) &&
+        // still holding the match it made in this pass, under this parent
+        // chain, against this generation of the sheets
+        p.matched !== undefined &&
+        p.chainKey !== undefined &&
+        p.selfSig !== undefined &&
+        p.matchedEpoch === this.matchEpoch &&
+        p.matchedParentChainId === parentChainId
+      ) {
+        return p;
+      }
+    }
+    return undefined;
+  }
+
+  /** `id`'s index in `kids` (the child list of `pid`), -1 if absent. */
+  private indexIn(pid: number, kids: number[], id: number): number {
+    // a short list is cheaper to scan than to index: most parents have a
+    // handful of children, and a Map per parent per flush is an allocation
+    if (kids.length <= 16) return kids.indexOf(id);
+    let idx = this.siblingIdx.get(pid);
+    let at = idx?.get(id);
+    if (at === undefined || kids[at] !== id) {
+      idx = new Map();
+      for (let i = 0; i < kids.length; i++) idx.set(kids[i], i);
+      this.siblingIdx.set(pid, idx);
+      at = idx.get(id);
+    }
+    return at ?? -1;
   }
 
   /** The previous sibling that participates in structural position
@@ -2095,13 +2169,7 @@ export class StyleEngine {
     if (pid == null) return null;
     const kids = this.childrenOf.get(pid);
     if (kids === undefined) return null;
-    let at = -1;
-    for (let i = 0; i < kids.length; i++) {
-      if (kids[i] === id) {
-        at = i;
-        break;
-      }
-    }
+    const at = this.indexIn(pid, kids, id);
     if (at < 0) return null;
     for (let i = at - 1; i >= 0; i--) {
       const k = this.states.get(kids[i]);
@@ -2117,9 +2185,24 @@ export class StyleEngine {
     if (prev == null) return '';
     const ps = this.states.get(prev);
     if (!ps) return '';
-    let sig = `${ps.tag}\u0001${joinSorted(ps.classes)}\u0001${joinSorted(ps.scopes)}`;
-    if (this.hasStructural) sig += `\u0004${this.structuralBits(prev, ps)}`;
-    return sig;
+    // the tag|classes|scopes part is cached on the sibling and checked by
+    // set identity; only the position bits are read live (a hoist during
+    // this flush can move the sibling without re-marking it)
+    let base = ps.sibBase;
+    if (base === undefined || base.classes !== ps.classes || base.scopes !== ps.scopes) {
+      base = {
+        classes: ps.classes,
+        scopes: ps.scopes,
+        str: `${ps.tag}\u0001${joinSorted(ps.classes)}\u0001${joinSorted(ps.scopes)}`,
+      };
+      ps.sibBase = base;
+    }
+    if (!this.hasStructural) return base.str;
+    // four possible position suffixes: keep each spelled once, so equal
+    // neighbours hand out the same string instead of a fresh concatenation
+    const bits = this.structuralBits(prev, ps);
+    const withBits = (base.withBits ??= []);
+    return (withBits[bits] ??= `${base.str}\u0004${bits}`);
   }
 
   /** Wakes the next participating sibling: `.a + .b` makes this element's
@@ -2192,6 +2275,30 @@ export class StyleEngine {
       return s.matched;
     }
 
+    // Same shape, same pass: an element matched earlier in THIS flush pass
+    // under the same parent chain, with the same inputs this element would
+    // feed buildChainKey, has this element's chain key, id and match. Rows
+    // of a list are the case — siblings, and their children as cousins (the
+    // parents shared one chain id). Compared by identity, so no key string
+    // and no map lookup on a string (specs/147). Each condition in
+    // sameShape is one input of buildChainKey / the rule match; a new match
+    // input must join it, or an exemplar silently hands over a stale match.
+    const shareable = this.attrNames.size === 0 || s.attrs === undefined;
+    // Also for an element that still holds an old key (a re-key after an
+    // ancestor's class flip): retainChain swaps it for the shared one.
+    if (shareable) {
+      const shared = this.sameShape(s, parentChainId);
+      if (shared !== undefined) {
+        this.counters.matchHit++;
+        s.selfSig = shared.selfSig;
+        this.retainChain(s, shared.chainKey!, shared.chainId!);
+        s.matched = shared.matched;
+        s.matchedParentChainId = parentChainId;
+        s.matchedEpoch = this.matchEpoch;
+        return shared.matched!;
+      }
+    }
+
     // rows in a list share one chainKey, so the whole rule scan runs once
     // per distinct tree signature instead of once per element
     const key = this.buildChainKey(id, s);
@@ -2205,6 +2312,11 @@ export class StyleEngine {
       s.matched = result;
       s.matchedParentChainId = parentChainId;
       s.matchedEpoch = this.matchEpoch;
+      if (shareable) {
+        const list = this.shapeMemo.get(parentChainId);
+        if (list === undefined) this.shapeMemo.set(parentChainId, [s]);
+        else if (list.length < 8) list.push(s);
+      }
       return result;
     };
     const cached = this.matchCache.get(key);
