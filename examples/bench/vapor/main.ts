@@ -39,8 +39,11 @@ function stats(xs: number[]): string {
 }
 
 let bytes = 0;
-setOpSink((frame) => {
+// chained, not swallowed: the native style engine (specs/150) styles inside
+// the host's uiOps, so frames must reach it (run under fjsrun --frames)
+const hostSink = setOpSink((frame) => {
   bytes += frame.length;
+  hostSink(frame);
 });
 
 // ---- per-call timing (PROFILE=1 builds only) --------------------------------

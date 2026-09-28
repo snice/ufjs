@@ -5,7 +5,10 @@
   "scripts": {
     "build": "fjs build",
     "run": "fjs build && ../../packages/flutter_fjs/native/build-native/fjsrun --pump 8000 dist/app/bundle.js",
-    "vapor": "fjs build vapor/main.ts --out dist/vapor && ../../packages/flutter_fjs/native/build-native/fjsrun --pump 40000 dist/vapor/app/bundle.js"
+    "vapor": "fjs build vapor/main.ts --out dist/vapor && ../../packages/flutter_fjs/native/build-native/fjsrun --frames --pump 40000 dist/vapor/app/bundle.js | grep -v '^\\[frame\\]'",
+    "native:ts": "fjs build native/entry-ts.ts --out dist/native-ts && ../../packages/flutter_fjs/native/build-native/fjsrun --frames --pump 40000 dist/native-ts/app/bundle.js | grep '\\[native\\]'",
+    "native:verify": "fjs build native/entry-verify.ts --out dist/native-verify && ../../packages/flutter_fjs/native/build-native/fjsrun --frames --pump 40000 dist/native-verify/app/bundle.js | grep -i 'native'",
+    "native:on": "fjs build native/entry-native.ts --out dist/native-on && ../../packages/flutter_fjs/native/build-native/fjsrun --frames --pump 40000 dist/native-on/app/bundle.js | grep '\\[native\\]'"
   },
   "dependencies": {
     "typescript": "^7.0.2"

@@ -140,6 +140,7 @@ void fjs_vm_destroy(FJSVM *vm) {
     fjs::dbg::transport_closed(vm); /* lets the transport release before the ctx */
     for (auto &t : vm->timers) fjsengine::free_value(vm->ctx, t.callback);
     vm->timers.clear();
+    fjs::style_detach(vm);
     fjsengine::clear_rejections(vm->ctx, &vm->rejections);
     fjsengine::free_context(vm->ctx);
     fjsengine::free_runtime(vm->rt);

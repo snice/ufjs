@@ -7,6 +7,8 @@
 import { DISABLED_CLASS, camelize, normalizeValue, parseInlineCss, parseStylesheet, warnOnce, type AttrTest, type ClassAttrTest, type CssRule, type Selector, mediaMatches } from './parser';
 import { registerFontFace, type FontFaceDecl } from './font-face';
 import type { KeyframesDecl } from './animation';
+import { NativeStyleBackend } from './native-style';
+import { setOpSink } from '../host';
 
 /** The viewport assumed before the host reports one. `fjsrun` never gets a
  * viewport event and web never feeds this engine (real CSS there), so the
@@ -410,7 +412,22 @@ export interface PseudoStyles {
   activeAfter?: Record<string, unknown>;
 }
 
-interface MatchResult {
+/** The element-side inputs of the compute pipeline (computeResult). */
+type ComputeSubject = Pick<ElementState, 'tag' | 'rawText' | 'defaults' | 'defaultsId' | 'inline' | 'inlineCustom'>;
+
+/** One rule a match drew on, weighted by its best matching selector under
+ * the cascade it joins (scope bump included). `state`: a pressed pseudo
+ * variant reached through an :active selector (see scanPseudoBucket). */
+export interface RuleHit {
+  rule: CssRule;
+  spec: number;
+  state?: boolean;
+}
+
+/** The pseudo-element hit lists of one match, one per pseudo cascade. */
+export type PseudoHits = Record<'before' | 'after' | 'placeholder' | 'activeBefore' | 'activeAfter', RuleHit[]>;
+
+export interface MatchResult {
   decls: Record<string, unknown>;
   custom: Record<string, string>;
   /** The same cascade with the `:active` rules folded in, present only when
@@ -446,7 +463,7 @@ interface MatchResult {
   byInline: Map<string, ComputeResult>;
 }
 
-interface ComputeResult {
+export interface ComputeResult {
   style: Record<string, unknown>;
   /** `style`'s own keys, taken once here so the per-element comparison in
    * recompute() never has to enumerate an object. Computed styles are shared
@@ -745,14 +762,95 @@ export class StyleEngine {
   /** Counters since [resetStats]. Cheap enough to leave on (a few integer
    * increments per element); `examples/hello-fjs`'s theme page reads them. */
   get stats(): StyleEngineStats {
-    return {
+    const base = {
       ...this.counters,
       elements: this.states.size,
       rules: this.rules.length,
     };
+    return this.nativeOnly ? this.native!.stats(base) : base;
+  }
+
+  /** The native style engine (specs/150), once attached. The per-element
+   * entry points then only write style input ops; libfjs-style keeps the
+   * element state and calls back into buildMatch / computeResult. */
+  private native: NativeStyleBackend | undefined;
+  /** Native attached and not verifying: the TS half is off. */
+  private nativeOnly = false;
+  /** Verify mode (specs/150): elements the TS engine recomputed since the
+   * last comparison, and what the comparisons found. */
+  private verifyIds: number[] | undefined;
+  private verifyCounts = { compared: 0, mismatched: 0 };
+
+  /** Hands the per-element half to libfjs-style. Call before the first
+   * element is registered: state already held here is not migrated.
+   *
+   * `verify`: both engines run. The TS one keeps its state and writes its
+   * styles as always; libfjs-style's land after them in each frame (and
+   * win). After every frame the elements the TS engine recomputed are
+   * compared with libfjs-style's results and differences are logged — any
+   * app becomes a parity test, on fjsrun or a device. */
+  attachNative(fns: FjsNativeFns, verify = false): boolean {
+    if (this.native !== undefined || fns.styleAttach === undefined || this.states.size > 0) return false;
+    this.native = new NativeStyleBackend(
+      {
+        engine: this,
+        sources: () => ({
+          rules: this.rules,
+          pseudoRules: this.pseudoRules ?? [],
+          rootCustom: this.rootCustom,
+          viewport: this.viewport,
+          hasPseudo: this.hasPseudo,
+        }),
+        parseClasses: parseClassValue,
+        apply: (id, style, active, pseudo) => this.applyStyle(id, style, active, undefined, pseudo, true),
+      },
+      fns,
+    );
+    if (this.rules.length > 0 || this.pseudoRules !== undefined) this.native.sendRules();
+    this.nativeOnly = !verify;
+    if (verify) {
+      this.native.verifying = true;
+      this.verifyIds = [];
+      const next = setOpSink((frame) => {
+        next(frame);
+        this.compareNative();
+      });
+    }
+    return true;
+  }
+
+  /** Verify mode: what the comparisons found so far. */
+  get verifyStats(): { compared: number; mismatched: number } {
+    return { ...this.verifyCounts };
+  }
+
+  private compareNative(): void {
+    const ids = this.verifyIds!;
+    if (ids.length === 0) return;
+    this.verifyIds = [];
+    const native = this.native!;
+    for (const id of ids) {
+      const s = this.states.get(id);
+      if (s === undefined || s.computed === undefined) continue;
+      const r = native.resultOf(id);
+      if (r === null) continue; // detached: nothing left to compare
+      this.verifyCounts.compared++;
+      const ts = JSON.stringify([s.computed, s.activeComputed ?? null, s.hoverComputed ?? null, s.pseudo ?? null]);
+      const nv = r === undefined ? 'none' : JSON.stringify([r.style, r.activeStyle ?? null, r.hoverStyle ?? null, r.pseudo ?? null]);
+      if (ts === nv) continue;
+      if (++this.verifyCounts.mismatched <= 20) {
+        const cls = [...s.classes].join('.');
+        console.error(`[fjs] native style verify: #${id} <${s.tag}${cls ? `.${cls}` : ''}> ts=${ts} native=${nv}`);
+      }
+    }
+  }
+
+  get nativeAttached(): boolean {
+    return this.native !== undefined;
   }
 
   resetStats(): void {
+    this.native?.resetStats();
     this.counters = { recompute: 0, computeHit: 0, computeMiss: 0, matchHit: 0, matchMiss: 0, applied: 0, flushMs: 0, flushes: 0, markMs: 0, markCalls: 0, markVisited: 0 };
   }
 
@@ -771,11 +869,27 @@ export class StyleEngine {
       // an object = the current pseudo-element styles (before / after /
       // placeholder — any kind may be absent)
       pseudo?: PseudoStyles | null,
+      // true: the native style engine has written the element's styles to
+      // the frame already; only the side effects of the style are wanted
+      sent?: boolean,
     ) => void,
   ) {}
 
   /** Registers a <style> block. scope=null means global (non-scoped). */
   register(scope: string | null, cssText: string, hash = ''): void {
+    const outcome = this.registerSheet(scope, cssText, hash);
+    if (this.native === undefined || outcome === null) return;
+    // libfjs-style gets the sheet's rules appended either way (resending the
+    // whole table per sheet was quadratic: vant registers dozens); outside
+    // the fast path every cache is dropped on top, as here
+    this.native.appendRules(outcome === 'full' ? this.lastAdded : outcome);
+    if (outcome === 'full') this.native.restyleAll();
+  }
+
+  /** Registers one sheet. Returns null when it added no rules, the rules it
+   * added when the fast path below applied (no cached answer can change),
+   * 'full' when every cache was invalidated. */
+  private registerSheet(scope: string | null, cssText: string, hash: string): CssRule[] | 'full' | null {
     // every sheet, in order, for the style snapshot check (specs/119)
     this.sheetLog.push({ hash, scoped: scope !== null });
     const flagsBefore = this.shapeFlags();
@@ -791,7 +905,7 @@ export class StyleEngine {
     // keyframes feed computed `animation` styles without any rule matching
     // through them, so a snapshot depends on the sheet all the same
     if (keyframes.length > 0) this.inputSheets.add(hash);
-    if (all.length === 0) return;
+    if (all.length === 0) return null;
     for (const r of all) r.sheet = hash;
     this.nextOrder = all[all.length - 1].order + 1;
     const parsed: CssRule[] = [];
@@ -876,11 +990,12 @@ export class StyleEngine {
     if (
       scope !== null &&
       !this.seenScopes.has(scope) &&
+      !(this.native?.hasSeenScope(scope) ?? false) &&
       !touchesRoot &&
       keyframes.length === 0 &&
       this.shapeFlags() === flagsBefore
     ) {
-      return;
+      return all.filter((r) => r.root !== true);
     }
     this.matchEpoch++;
     // every MatchResult (and the computed styles hanging off it) is stale
@@ -892,6 +1007,21 @@ export class StyleEngine {
     this.retiredSet.clear();
     for (const id of this.states.keys()) this.mark(id);
     this.scheduleFlush();
+    this.lastAdded = all.filter((r) => r.root !== true);
+    return 'full';
+  }
+
+  /** The rules the last 'full' registerSheet added (see register). */
+  private lastAdded: CssRule[] = [];
+
+  /** The identity token of a tag-defaults object (see defaultsIdForJson). */
+  private defaultsIdOf(defaults: Record<string, unknown>): number {
+    let id = this.defaultsIds.get(defaults) ?? 0;
+    if (id === 0) {
+      id = this.defaultsIdForJson(JSON.stringify(defaults));
+      this.defaultsIds.set(defaults, id);
+    }
+    return id;
   }
 
   /** The id of the tag defaults with this JSON content — one stringify per
@@ -913,15 +1043,13 @@ export class StyleEngine {
    * browser DOM, so it must not count for `:first-child`/`:last-child`
    * position (see the plan's two mixing cases). */
   ensure(id: number, tag: string, defaults?: Record<string, unknown>, rawText?: boolean): void {
-    if (this.states.has(id)) return;
-    let defaultsId = 0;
-    if (defaults) {
-      defaultsId = this.defaultsIds.get(defaults) ?? 0;
-      if (defaultsId === 0) {
-        defaultsId = this.defaultsIdForJson(JSON.stringify(defaults));
-        this.defaultsIds.set(defaults, defaultsId);
-      }
+    if (this.native !== undefined) {
+      // libfjs-style ignores a second registration, as the check below does
+      this.native.ensure(id, tag, defaults ? this.defaultsIdOf(defaults) : 0, defaults, rawText === true);
+      if (this.nativeOnly) return;
     }
+    if (this.states.has(id)) return;
+    const defaultsId = defaults ? this.defaultsIdOf(defaults) : 0;
     const epoch = this.dirtyEpoch;
     const kids = this.childrenOf.get(id);
     const state: ElementState = {
@@ -970,6 +1098,11 @@ export class StyleEngine {
     this.viewport.width = width;
     this.viewport.height = height;
     if (!this.hasMedia) return;
+    if (this.native !== undefined) {
+      // media conditions are judged here and baked into the table
+      this.native.sendRules();
+      if (this.nativeOnly) return;
+    }
     this.matchEpoch++;
     this.matchCache.clear();
     this.retiredChains.length = 0;
@@ -987,6 +1120,8 @@ export class StyleEngine {
    * elements that actually moved pay for a subtree re-key. No-op while no
    * structural or sibling rules exist. */
   noteStructureChange(parentId: number): void {
+    // native: libfjs-style reads the structure off the Insert / Remove ops
+    if (this.nativeOnly) return;
     if (!this.hasStructural && !this.hasSiblingRules) return;
     // Once per parent per pending set. After one full pass every child is
     // queued, and queued stays queued until the flush bumps dirtyEpoch; a
@@ -1213,6 +1348,11 @@ export class StyleEngine {
       warnOnce(`style snapshot${of} skipped: ${why}; styles are computed at runtime instead`);
       return false;
     }
+    if (this.native !== undefined) {
+      // verify mode seeds libfjs-style too, so the comparison covers seeds
+      this.importSnapshotNative(snap);
+      if (this.nativeOnly) return true;
+    }
     const objs = snap.objs;
     const obj = <T>(i: number): T | undefined => (i < 0 ? undefined : (objs[i] as T));
     const results: MatchResult[] = [];
@@ -1307,6 +1447,72 @@ export class StyleEngine {
     return true;
   }
 
+  /** importSnapshot under the native engine: the same MatchResult /
+   * ComputeResult objects the TS import builds, handed to libfjs-style as
+   * seeded chains and compute entries (NativeStyleBackend.seedChain /
+   * seedCompute) — a seeded page's first open calls back for nothing. */
+  private importSnapshotNative(snap: StyleSnapshot): void {
+    const native = this.native!;
+    const objs = snap.objs;
+    const obj = <T>(i: number): T | undefined => (i < 0 ? undefined : (objs[i] as T));
+    const matchOf: MatchResult[] = [];
+    const chainMatch: number[] = [];
+    for (let i = 0; i < snap.chains.length; i++) {
+      const [parent, suffix, m] = snap.chains[i];
+      let result = matchOf[m];
+      if (result === undefined) {
+        const [decls, custom, active, hover, before, after, placeholder, activeBefore, activeAfter] = snap.matches[m];
+        result = {
+          decls: obj<Record<string, unknown>>(decls) ?? {},
+          custom: obj<Record<string, string>>(custom) ?? {},
+          activeDecls: obj(active),
+          hoverDecls: obj(hover),
+          beforeDecls: obj(before),
+          afterDecls: obj(after),
+          placeholderDecls: obj(placeholder),
+          activeBeforeDecls: obj(activeBefore),
+          activeAfterDecls: obj(activeAfter),
+          id: this.nextObjId++,
+          byParent: new Map(),
+          byInline: new Map(),
+        };
+        matchOf[m] = result;
+      }
+      chainMatch[i] = result.id;
+      native.seedChain(i, parent < 0 ? 0 : parent + 1, suffix, result);
+    }
+    const resultIdOf: number[] = [];
+    const customOf: Array<Record<string, string> | undefined> = [];
+    for (let j = 0; j < snap.computes.length; j++) {
+      const [chain, parentCompute, style, active, hover, custom, pseudo, defaultsJson, rawText, inlineKey] = snap.computes[j];
+      if (parentCompute >= 0 && resultIdOf[parentCompute] === undefined) continue;
+      const computed = obj<Record<string, unknown>>(style) ?? {};
+      const activeStyle = obj<Record<string, unknown>>(active);
+      const hoverStyle = obj<Record<string, unknown>>(hover);
+      const customMap =
+        custom === CUSTOM_INHERITED
+          ? parentCompute < 0 ? this.rootCustom : customOf[parentCompute]
+          : obj<Record<string, string>>(custom);
+      const result: ComputeResult = {
+        style: computed,
+        keys: Object.keys(computed),
+        activeStyle,
+        activeKeys: activeStyle ? Object.keys(activeStyle) : undefined,
+        hoverStyle,
+        hoverKeys: hoverStyle ? Object.keys(hoverStyle) : undefined,
+        custom: customMap,
+        pseudo: obj<PseudoStyles>(pseudo),
+        styleId: this.nextObjId++,
+        customId: customMap ? this.nextObjId++ : 0,
+        defaultsId: defaultsJson === '' ? 0 : this.defaultsIdForJson(defaultsJson),
+        rawText: rawText === 1,
+      };
+      native.seedCompute(chainMatch[chain], parentCompute < 0 ? 0 : resultIdOf[parentCompute], inlineKey, result);
+      resultIdOf[j] = result.styleId;
+      customOf[j] = customMap;
+    }
+  }
+
   /** @internal Test/diagnostic view of cache sizes. */
   cacheStatsForTest(): { matchCache: number; chainIds: number; byParent: number } {
     let byParent = 0;
@@ -1319,6 +1525,10 @@ export class StyleEngine {
   }
 
   forget(id: number): void {
+    if (this.native !== undefined) {
+      this.native.forget(id);
+      if (this.nativeOnly) return;
+    }
     // the id may still sit in dirtyList; recompute skips ids with no state
     const s = this.states.get(id);
     if (!s) return;
@@ -1328,6 +1538,10 @@ export class StyleEngine {
   }
 
   setClasses(id: number, value: unknown): void {
+    if (this.native !== undefined) {
+      this.native.setClasses(id, value);
+      if (this.nativeOnly) return;
+    }
     const s = this.states.get(id);
     if (!s) return;
     let classes = parseClassValue(value);
@@ -1347,6 +1561,10 @@ export class StyleEngine {
    * CSS only lets form controls be `:disabled`; a `disabled` attribute on a
    * div matches nothing, so other tags are ignored here too. */
   setDisabled(id: number, disabled: boolean): void {
+    if (this.native !== undefined) {
+      this.native.setDisabled(id, disabled);
+      if (this.nativeOnly) return;
+    }
     const s = this.states.get(id);
     if (!s || !DISABLEABLE_TAGS.has(s.tag) || s.classes.has(DISABLED_CLASS) === disabled) return;
     const classes = new Set(s.classes);
@@ -1371,6 +1589,10 @@ export class StyleEngine {
    * sit on an ancestor compound, `.van-popover[data-popper-placement^=top]
    * .van-popover__arrow`) (specs/129). */
   setAttribute(id: number, name: string, value: string | null): void {
+    if (this.native !== undefined) {
+      this.native.setAttribute(id, name, value);
+      if (this.nativeOnly) return;
+    }
     const s = this.states.get(id);
     if (!s) return;
     const key = name.toLowerCase();
@@ -1392,6 +1614,7 @@ export class StyleEngine {
    * remove its `-enter-*` / `-leave-*` classes without losing whatever the
    * renderer last patched in (setClasses replaces the list). */
   classesOf(id: number): string[] {
+    if (this.nativeOnly) return this.native!.classesOf(id);
     const s = this.states.get(id);
     return s ? [...s.classes].filter((c) => c !== DISABLED_CLASS) : [];
   }
@@ -1406,6 +1629,7 @@ export class StyleEngine {
    * while the state is off, so they are reported as not-matching (a rule
    * that only has state selectors is left out entirely). */
   matchedRulesOf(id: number): MatchedRuleReport[] {
+    if (this.nativeOnly) return this.native!.matchedRulesOf(id);
     const s = this.states.get(id);
     if (!s) return [];
     const stamp = ++this.bucketEpoch;
@@ -1449,17 +1673,35 @@ export class StyleEngine {
    * to time the class removal — there are no DOM transitionend events on
    * this side to listen for. */
   computedOf(id: number): Record<string, unknown> | undefined {
+    if (this.nativeOnly) return this.native!.computedOf(id);
     return this.states.get(id)?.computed;
   }
 
+  /** The record the inline-style entry points edit: the element's state, or
+   * under the native engine a sparse per-element record (created here —
+   * the engine cannot tell an unregistered id from one never styled). */
+  private inlineState(id: number): Pick<ElementState, 'inline' | 'inlineCustom' | 'inlineKeyCache'> | undefined {
+    return this.nativeOnly ? this.native!.inlineRecord(id, true) : this.states.get(id);
+  }
+
+  /** An inline record changed: restyle the element and its subtree. */
+  private inlineChanged(id: number, s: Pick<ElementState, 'inline' | 'inlineCustom' | 'inlineKeyCache'>): void {
+    if (this.native !== undefined) {
+      const empty = s.inline === undefined && s.inlineCustom === undefined;
+      this.native.inlineChanged(id, empty ? '' : this.inlineKeyOf(s), s);
+      if (this.nativeOnly) return;
+    }
+    this.markDirty(id, true);
+  }
+
   setInlineStyle(id: number, value: unknown): void {
-    const s = this.states.get(id);
+    const s = this.inlineState(id);
     if (!s) return;
     const { style, custom } = normalizeInline(value);
     if (sameMap(style, s.inline) && sameMap(custom, s.inlineCustom)) return;
     s.inline = style;
     s.inlineCustom = custom;
-    this.markDirty(id, true);
+    this.inlineChanged(id, s);
   }
 
   /** The DOM's patchStyle semantics for a `:style` re-patch: an object
@@ -1470,7 +1712,7 @@ export class StyleEngine {
    * re-render, and the shim needs the same here. A css string or a clear
    * replaces wholesale, like cssText. */
   patchInlineStyle(id: number, prev: unknown, next: unknown): void {
-    const s = this.states.get(id);
+    const s = this.inlineState(id);
     if (!s) return;
     if (typeof next !== 'object' || next === null) {
       if (next == null) {
@@ -1485,7 +1727,7 @@ export class StyleEngine {
         if (sameMap(inline, s.inline) && sameMap(inlineCustom, s.inlineCustom)) return;
         s.inline = inline;
         s.inlineCustom = inlineCustom;
-        this.markDirty(id, true);
+        this.inlineChanged(id, s);
       } else {
         // a css string replaces wholesale, like cssText
         this.setInlineStyle(id, next);
@@ -1505,7 +1747,7 @@ export class StyleEngine {
     if (sameMap(inline, s.inline) && sameMap(custom, s.inlineCustom)) return;
     s.inline = inline;
     s.inlineCustom = custom;
-    this.markDirty(id, true);
+    this.inlineChanged(id, s);
   }
 
   /** The element's current inline layer, for the DOM-shaped `el.style` shim
@@ -1513,7 +1755,7 @@ export class StyleEngine {
    * custom ones; this is the WRITE record, not the resolved cascade — the
    * DOM's getComputedStyle semantics are out of scope for the shim. */
   inlineRecord(id: number): Record<string, unknown> | undefined {
-    const s = this.states.get(id);
+    const s = this.nativeOnly ? this.native!.inlineRecord(id, false) : this.states.get(id);
     if (!s) return undefined;
     if (!s.inline && !s.inlineCustom) return undefined;
     return { ...s.inline, ...s.inlineCustom };
@@ -1525,7 +1767,7 @@ export class StyleEngine {
    * library, a `:style` binding and useCssVars all merge into one record
    * and re-resolve together instead of clobbering each other. */
   mutateInline(id: number, key: string, value: unknown): void {
-    const s = this.states.get(id);
+    const s = this.inlineState(id);
     if (!s) {
       // Every renderer-created element is ensure()d at createElement; an
       // unregistered id means a raw element API user the style engine was
@@ -1550,12 +1792,16 @@ export class StyleEngine {
     if (sameMap(inline, s.inline) && sameMap(custom, s.inlineCustom)) return;
     s.inline = inline;
     s.inlineCustom = custom;
-    this.markDirty(id, true);
+    this.inlineChanged(id, s);
   }
 
   /** Called via the renderer's setScopeId hook: Vue marks every element of
    * a component whose SFC has <style scoped> with its data-v-xxx id. */
   addScope(id: number, scope: string): void {
+    if (this.native !== undefined) {
+      this.native.addScope(id, scope);
+      if (this.nativeOnly) return;
+    }
     const s = this.states.get(id);
     if (!s || s.scopes.has(scope)) return;
     // Interned and never mutated: every element of one SFC carries the same
@@ -1581,7 +1827,7 @@ export class StyleEngine {
   /** Merges a useCssVars() batch into the element's inline custom props
    * (keys without the leading `--` are normalized; null/'' removes). */
   setInlineCustomProps(id: number, vars: Record<string, unknown>): void {
-    const s = this.states.get(id);
+    const s = this.inlineState(id);
     if (!s) return;
     const next: Record<string, string> = { ...(s.inlineCustom ?? {}) };
     let changed = false;
@@ -1602,7 +1848,7 @@ export class StyleEngine {
     }
     if (!changed && sameMap(next, s.inlineCustom)) return;
     s.inlineCustom = next;
-    this.markDirty(id, true);
+    this.inlineChanged(id, s);
   }
 
   /** Marks `id` (and optionally its subtree) for recomputation and queues a
@@ -1618,6 +1864,8 @@ export class StyleEngine {
   }
 
   markDirty(id: number, subtree: boolean): void {
+    // native: structure and inputs arrive as ops, libfjs-style marks
+    if (this.nativeOnly) return;
     if (subtree) {
       // A root already walked in this pending set means the whole subtree is
       // queued (see the stamp comment in the loop below) — the walk would
@@ -1719,6 +1967,8 @@ export class StyleEngine {
    * swipe measured the full 402px screen before its parents' paddings. */
   flushPending(): void {
     this.flushQueued = false;
+    // native: libfjs-style flushes inside uiOps
+    if (this.nativeOnly) return;
     if (!this.dirtyList.length) return;
     const clock = engineClock();
     const t0 = clock ? clock() : 0;
@@ -1744,6 +1994,7 @@ export class StyleEngine {
   private recompute(id: number): void {
     const s = this.states.get(id);
     if (!s) return;
+    if (this.verifyIds !== undefined) this.verifyIds.push(id);
     this.counters.recompute++;
     s.pass = this.dirtyEpoch;
     const merged = this.compute(id);
@@ -1850,19 +2101,53 @@ export class StyleEngine {
       // tag), but a mismatch would be silent corruption, so it is checked
       if (hit && hit.defaultsId === (s.defaultsId ?? 0) && hit.rawText === (s.rawText === true)) {
         this.counters.computeHit++;
-        s.custom = hit.custom;
-        s.computedId = hit.styleId;
-        s.customId = hit.customId;
-        s.activeComputed = hit.activeStyle;
-        s.computedKeys = hit.keys;
-        s.activeKeys = hit.activeKeys;
-        s.hoverComputed = hit.hoverStyle;
-        s.hoverKeys = hit.hoverKeys;
-        s.pseudo = hit.pseudo;
-        if (hit.hoverStyle) s.hadHover = true;
+        this.takeResult(s, hit);
         return hit.style;
       }
     }
+    const entry = this.computeResult(matched, parentComputed, parentCustom, s);
+    {
+      // Bounded: every restyle mints new parent style ids, so entries for
+      // parents that no longer exist would otherwise pile up per rule set.
+      // Inline styles get more room — distinct inline contents are the norm
+      // there — and an animation writing a new transform every frame keeps
+      // missing (as it always did) without growing the table past 128.
+      if (memoizable) {
+        if (matched.byParent.size > 64) matched.byParent.clear();
+        matched.byParent.set(parentStyleId, entry);
+      } else {
+        if (matched.byInline.size > 128) matched.byInline.clear();
+        matched.byInline.set(inlineKey, entry);
+      }
+    }
+    this.takeResult(s, entry);
+    return entry.style;
+  }
+
+  /** Copies a compute result onto the element (a cache hit or a fresh one). */
+  private takeResult(s: ElementState, hit: ComputeResult): void {
+    s.custom = hit.custom;
+    s.computedId = hit.styleId;
+    s.customId = hit.customId;
+    s.activeComputed = hit.activeStyle;
+    s.computedKeys = hit.keys;
+    s.activeKeys = hit.activeKeys;
+    s.hoverComputed = hit.hoverStyle;
+    s.hoverKeys = hit.hoverKeys;
+    s.pseudo = hit.pseudo;
+    if (hit.hoverStyle) s.hadHover = true;
+  }
+
+  /** The compute pipeline for one set of inputs — everything a computed style
+   * depends on is a parameter (see the input list in compute()), so the
+   * native engine (specs/150) calls it for its cache misses as well. Mints a
+   * fresh style id; caching is the caller's business. */
+  computeResult(
+    matched: MatchResult,
+    parentComputed: Record<string, unknown> | undefined,
+    parentCustom: Record<string, string> | undefined,
+    s: ComputeSubject,
+  ): ComputeResult {
     this.counters.computeMiss++;
     // 076 skipped merging inherit into `merged` because the custom-map copy
     // was 30ms and this merge was <1ms under it. After that copy went away,
@@ -1926,7 +2211,6 @@ export class StyleEngine {
       if (hasMatchedCustom) for (const k in matched.custom) custom[k] = matched.custom[k];
       if (hasInlineCustom) for (const k in s.inlineCustom!) custom[k] = s.inlineCustom![k];
     }
-    s.custom = custom;
     if (s.defaults) for (const k in s.defaults) merged[k] = s.defaults[k];
     for (const k in matched.decls) merged[k] = matched.decls[k];
     if (s.inline) for (const k in s.inline) merged[k] = s.inline[k];
@@ -1989,14 +2273,14 @@ export class StyleEngine {
     // inline styles and inherited values keep winning where they should.
     // :hover computes the same way; both state variants keep custom
     // properties out (they inherit, and a state only restyles the node).
-    s.activeComputed = matched.activeDecls
+    const activeComputed = matched.activeDecls
       ? resolveVars(overlayCascade(matched.activeDecls), custom)
       : undefined;
-    if (s.activeComputed) resolveEm(s.activeComputed, parentFontPx);
-    s.hoverComputed = matched.hoverDecls
+    if (activeComputed) resolveEm(activeComputed, parentFontPx);
+    const hoverComputed = matched.hoverDecls
       ? resolveVars(overlayCascade(matched.hoverDecls), custom)
       : undefined;
-    if (s.hoverComputed) resolveEm(s.hoverComputed, parentFontPx);
+    if (hoverComputed) resolveEm(hoverComputed, parentFontPx);
     // Pseudo-element styles: the element's inheritable computed properties
     // are the base (a pseudo-element inherits from its originating element —
     // its own width/background must NOT leak into the decoration box), the
@@ -2044,42 +2328,22 @@ export class StyleEngine {
       resolveInheritKeyword(ph, style);
       (pseudo ??= {}).placeholder = ph;
     }
-    s.pseudo = pseudo;
-    if (s.hoverComputed) s.hadHover = true;
-    s.computedId = this.nextObjId++;
-    s.customId = custom ? this.nextObjId++ : 0;
-    s.computedKeys = Object.keys(style);
-    s.activeKeys = s.activeComputed ? Object.keys(s.activeComputed) : undefined;
-    s.hoverKeys = s.hoverComputed ? Object.keys(s.hoverComputed) : undefined;
-    {
-      // Bounded: every restyle mints new parent style ids, so entries for
-      // parents that no longer exist would otherwise pile up per rule set.
-      // Inline styles get more room — distinct inline contents are the norm
-      // there — and an animation writing a new transform every frame keeps
-      // missing (as it always did) without growing the table past 128.
-      const entry: ComputeResult = {
-        style,
-        keys: s.computedKeys,
-        activeStyle: s.activeComputed,
-        activeKeys: s.activeKeys,
-        hoverStyle: s.hoverComputed,
-        hoverKeys: s.hoverKeys,
-        custom,
-        pseudo: s.pseudo,
-        styleId: s.computedId,
-        rawText: s.rawText === true,
-        customId: s.customId,
-        defaultsId: s.defaultsId ?? 0,
-      };
-      if (memoizable) {
-        if (matched.byParent.size > 64) matched.byParent.clear();
-        matched.byParent.set(parentStyleId, entry);
-      } else {
-        if (matched.byInline.size > 128) matched.byInline.clear();
-        matched.byInline.set(inlineKey, entry);
-      }
-    }
-    return style;
+    const styleId = this.nextObjId++;
+    const customId = custom ? this.nextObjId++ : 0;
+    return {
+      style,
+      keys: Object.keys(style),
+      activeStyle: activeComputed,
+      activeKeys: activeComputed ? Object.keys(activeComputed) : undefined,
+      hoverStyle: hoverComputed,
+      hoverKeys: hoverComputed ? Object.keys(hoverComputed) : undefined,
+      custom,
+      pseudo,
+      styleId,
+      rawText: s.rawText === true,
+      customId,
+      defaultsId: s.defaultsId ?? 0,
+    };
   }
 
   /** The element's inline style + inline custom props as one string. Cached
@@ -2087,7 +2351,7 @@ export class StyleEngine {
    * them rather than mutating (setInlineStyle, patchInlineStyle,
    * mutateInline, setInlineCustomProps), so identity says when to rebuild
    * without each writer having to remember to clear it. */
-  private inlineKeyOf(s: ElementState): string {
+  private inlineKeyOf(s: Pick<ElementState, 'inline' | 'inlineCustom' | 'inlineKeyCache'>): string {
     const c = s.inlineKeyCache;
     if (c !== undefined && c.inline === s.inline && c.custom === s.inlineCustom) return c.key;
     const key = `${JSON.stringify(s.inline ?? null)}\u0003${JSON.stringify(s.inlineCustom ?? null)}`;
@@ -2526,12 +2790,33 @@ export class StyleEngine {
     }
     this.scanPlainBucket(this.plainBuckets.byTag.get(s.tag), stamp, id, s, plain, active, hover);
     this.scanPlainBucket(this.plainBuckets.catchAll, stamp, id, s, plain, active, hover);
-    const anyActive = this.matchAnyActive;
-    const anyHover = this.matchAnyHover;
-    const byCascade = (
-      a: { rule: CssRule; spec: number },
-      b: { rule: CssRule; spec: number },
-    ) => a.spec - b.spec || a.rule.order - b.rule.order;
+    let pseudoLists: PseudoHits | undefined;
+    if (this.hasPseudo) {
+      pseudoLists = { before: [], after: [], placeholder: [], activeBefore: [], activeAfter: [] };
+      for (const cls of s.classes) {
+        this.scanPseudoBucket(this.pseudoBuckets.byClass.get(cls), stamp, id, s, pseudoLists);
+      }
+      this.scanPseudoBucket(this.pseudoBuckets.byTag.get(s.tag), stamp, id, s, pseudoLists);
+      this.scanPseudoBucket(this.pseudoBuckets.catchAll, stamp, id, s, pseudoLists);
+    }
+    const result = this.buildMatch(plain, active, hover, this.matchAnyActive, this.matchAnyHover, pseudoLists);
+    this.matchCache.set(key, result);
+    return remember(result);
+  }
+
+  /** Folds one match's hits into its cascades: the matchRules miss path
+   * after the candidate walk. Public for the native style engine (specs/150),
+   * which does the walk in C++ and calls back with the same hit lists, so the
+   * cascade semantics exist once. Sorts the lists in place. */
+  buildMatch(
+    plain: RuleHit[],
+    active: RuleHit[],
+    hover: RuleHit[],
+    anyActive: boolean,
+    anyHover: boolean,
+    pseudoLists: PseudoHits | undefined,
+  ): MatchResult {
+    const byCascade = (a: RuleHit, b: RuleHit) => a.spec - b.spec || a.rule.order - b.rule.order;
     plain.sort(byCascade);
     // build-time capture only: which sheets this answer depends on
     const sheetSet = this.trackSheets ? new Set<string>() : undefined;
@@ -2589,20 +2874,9 @@ export class StyleEngine {
     let placeholderDecls: Record<string, unknown> | undefined;
     let activeBeforeDecls: Record<string, unknown> | undefined;
     let activeAfterDecls: Record<string, unknown> | undefined;
-    if (this.hasPseudo) {
-      const before: Array<{ rule: CssRule; spec: number }> = [];
-      const after: Array<{ rule: CssRule; spec: number }> = [];
-      const placeholder: Array<{ rule: CssRule; spec: number }> = [];
-      // `state`: reached through an :active selector (see scanPseudoBucket)
-      const activeBefore: Array<{ rule: CssRule; spec: number; state?: boolean }> = [];
-      const activeAfter: Array<{ rule: CssRule; spec: number; state?: boolean }> = [];
-      const pseudoLists = { before, after, placeholder, activeBefore, activeAfter };
-      for (const cls of s.classes) {
-        this.scanPseudoBucket(this.pseudoBuckets.byClass.get(cls), stamp, id, s, pseudoLists);
-      }
-      this.scanPseudoBucket(this.pseudoBuckets.byTag.get(s.tag), stamp, id, s, pseudoLists);
-      this.scanPseudoBucket(this.pseudoBuckets.catchAll, stamp, id, s, pseudoLists);
-      const fold = (bucket: Array<{ rule: CssRule; spec: number }>) => {
+    if (pseudoLists !== undefined) {
+      const { before, after, placeholder, activeBefore, activeAfter } = pseudoLists;
+      const fold = (bucket: RuleHit[]) => {
         if (bucket.length === 0) return undefined;
         bucket.sort(byCascade);
         const out: Record<string, unknown> = {};
@@ -2631,7 +2905,7 @@ export class StyleEngine {
       if (hasState(activeBefore)) activeBeforeDecls = fold(activeBefore);
       if (hasState(activeAfter)) activeAfterDecls = fold(activeAfter);
     }
-    const result: MatchResult = {
+    return {
       decls,
       custom,
       activeDecls,
@@ -2646,8 +2920,6 @@ export class StyleEngine {
       byInline: new Map(),
       sheets: sheetSet ? [...sheetSet] : undefined,
     };
-    this.matchCache.set(key, result);
-    return remember(result);
   }
 
   /** One candidate bucket of the plain scan — the body is the per-rule work
@@ -2708,10 +2980,7 @@ export class StyleEngine {
     stamp: number,
     id: number,
     s: ElementState,
-    lists: Record<
-      'before' | 'after' | 'placeholder' | 'activeBefore' | 'activeAfter',
-      Array<{ rule: CssRule; spec: number; state?: boolean }>
-    >,
+    lists: PseudoHits,
   ): void {
     if (bucket === undefined) return;
     for (const rule of bucket) {

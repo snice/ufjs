@@ -51,6 +51,63 @@ interface FjsNativeFns {
   gc(): { before: number; after: number; objects: number };
   toast(message: string): void;
   engine: FjsEngineInfo;
+  /** libfjs-style (specs/150): routes every later uiOps frame through the
+   * native style engine, which consumes the style input ops and appends the
+   * styles its flush wrote. `defineMatch` gets the hits of a new match set
+   * as an ArrayBuffer of int32 quadruples (rule, plain, active, hover — see
+   * fjs_style.h) and returns a nonzero match id; `compute` returns the
+   * result for one fjs_style_subject (parent result id 0 = root; flags bit0
+   * = raw text); `styled` fires for elements taking a result flagged NOTIFY.
+   * A callback must not call uiOps. Absent on hosts built before specs/150. */
+  styleAttach?(
+    defineMatch: (hits: ArrayBuffer) => number,
+    compute: (
+      element: number,
+      match: number,
+      parentResult: number,
+      tag: number,
+      defaultsId: number,
+      inlineKey: number,
+      flags: number,
+      /** nonzero: describe this seeded result, compute nothing */
+      seeded: number,
+    ) => FjsNativeStyleResult,
+    styled: (element: number, result: number) => void,
+  ): boolean;
+  styleDetach?(): void;
+  /** The result id the element's style came from (0: none yet), or -1 when
+   * no instance is attached — a rejected frame detaches it. */
+  styleResult?(element: number): number;
+  /** The element's class atoms (uint32, ascending), null when not attached. */
+  styleClasses?(element: number): ArrayBuffer | null;
+  /** The hits of the element's current match (int32 quadruples, as
+   * defineMatch gets them), null when not attached. DevTools only. */
+  styleMatchedRules?(element: number): ArrayBuffer | null;
+  /** Counters since the last reset (`reset` resets after reading); null when
+   * not attached. */
+  styleStats?(reset?: boolean): FjsNativeStyleStats | null;
+}
+
+interface FjsNativeStyleResult {
+  result: number;
+  /** 1 = NOTIFY: call `styled` for every element taking this result. */
+  flags?: number;
+  /** JSON of the computed style, and of its :active / :hover variants. */
+  style: string;
+  active?: string | null;
+  hover?: string | null;
+}
+
+interface FjsNativeStyleStats {
+  elements: number;
+  rules: number;
+  recompute: number;
+  matchHit: number;
+  matchMiss: number;
+  computeHit: number;
+  computeMiss: number;
+  applied: number;
+  flushMs: number;
 }
 
 interface FjsNative {

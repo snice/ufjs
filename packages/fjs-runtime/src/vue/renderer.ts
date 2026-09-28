@@ -14,7 +14,7 @@ import {
 import { create, forgetHandlers, forgetElementStyle, insert, remove, setHoverStyle, setText, setProps, setConstProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setConnectedResolver, setOffsetParentResolver, setParentResolver, setAttributeSink, currentTapDispatch, type Element, type EventPayload } from '../ui/element';
 import { transitionClassesOf } from './transition-classes';
 import { lastPointer } from '../ui/geometry';
-import { hasNativeHost, invokeHost, registerPreFlush } from '../host';
+import { hasNativeHost, host, invokeHost, registerPreFlush } from '../host';
 import { usesDeclaredFont } from '../css/font-face';
 import { INHERITABLE_KEYS, StyleEngine, type PseudoStyles } from '../css/style';
 import { devtoolsSlots, devtoolsStructuralVersion } from '../devtools-hooks';
@@ -664,22 +664,25 @@ function syncPlaceholderStyle(
 }
 
 /** Shared engine instance; css-vars.ts also drives it (useCssVars). */
-export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, activeStyle, hoverStyle, pseudo) => {
+export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, activeStyle, hoverStyle, pseudo, sent) => {
   const el = elementsById.get(id);
   if (!el) return;
-  // `activeStyle` only rides along for elements that some `:active` rule
-  // matched; null clears one the native side is still holding
-  if (activeStyle === null && !hadActiveStyle.has(id)) {
-    setStyle(el, style);
-  } else {
-    if (activeStyle) hadActiveStyle.add(id);
-    else hadActiveStyle.delete(id);
-    setStyle(el, style, activeStyle);
+  // `sent`: libfjs-style wrote the styles into the frame itself (specs/150)
+  if (!sent) {
+    // `activeStyle` only rides along for elements that some `:active` rule
+    // matched; null clears one the native side is still holding
+    if (activeStyle === null && !hadActiveStyle.has(id)) {
+      setStyle(el, style);
+    } else {
+      if (activeStyle) hadActiveStyle.add(id);
+      else hadActiveStyle.delete(id);
+      setStyle(el, style, activeStyle);
+    }
+    // :hover crosses as its own op (op 12). The engine sends undefined for
+    // elements that never matched a hover rule (the common case — no bytes
+    // at all) and null to clear one the native side may still hold.
+    if (hoverStyle !== undefined) setHoverStyle(el, hoverStyle);
   }
-  // :hover crosses as its own op (op 12). The engine sends undefined for
-  // elements that never matched a hover rule (the common case — no bytes at
-  // all) and null to clear one the native side may still hold.
-  if (hoverStyle !== undefined) setHoverStyle(el, hoverStyle);
   if (pseudo !== undefined) {
     syncPseudoBoxes(el, pseudo);
     // ::placeholder has no box — it styles the input's hint text
@@ -693,6 +696,18 @@ export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, act
 // Styles go out with the ops that create their elements: the host flush
 // finishes the engine's pending recompute first (see flushPending)
 registerPreFlush(() => styleEngine.flushPending());
+
+// specs/150: the per-element half of the style engine runs in libfjs-style
+// wherever the host has it. `globalThis.__fjsNativeStyle`, set before this
+// module loads: false keeps the TS engine, 'verify' runs both and logs every
+// element they disagree on. Must attach before the first element exists.
+const nativeStyleMode = (globalThis as { __fjsNativeStyle?: unknown }).__fjsNativeStyle;
+const nativeAttached =
+  nativeStyleMode !== false &&
+  host?.styleAttach !== undefined &&
+  styleEngine.attachNative(host, nativeStyleMode === 'verify');
+/** The TS engine's structural bookkeeping is off (native, not verifying). */
+const nativeStyle = nativeAttached && nativeStyleMode !== 'verify';
 
 // The DOM-shaped `el.style` writes funnel into the same engine: libraries
 // like @vueuse/motion assign `el.style[key] = v`, a `:style` binding calls
@@ -1232,10 +1247,14 @@ export const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     trackInsert(target, child, index);
     // the child just gained an ancestor chain: recompute inheritance and
     // descendant/:deep selectors for its subtree
-    styleEngine.recomputeSubtree(child.id);
-    // the child also landed between siblings: first/last positions may have
-    // flipped for the neighbors it displaced (structural pseudos)
-    styleEngine.noteStructureChange(target.id);
+    // (native style engine: both read off the Insert op instead — skipped
+    // here, a mount makes 2 × 4000 of these calls)
+    if (!nativeStyle) {
+      styleEngine.recomputeSubtree(child.id);
+      // the child also landed between siblings: first/last positions may
+      // have flipped for the neighbors it displaced (structural pseudos)
+      styleEngine.noteStructureChange(target.id);
+    }
     // a mask styled before it landed (teleported content) joins its host now
     if (modalMasks.has(child.id)) syncAllHostModals();
   },

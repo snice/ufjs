@@ -21,6 +21,22 @@ export const enum UiOp {
   Canvas = 10,
   Webgl = 11,
   SetHoverStyle = 12,
+  // Style input ops (specs/150): consumed by libfjs-style inside
+  // __fjs.fns.uiOps and stripped before the frame reaches Dart, so Dart's
+  // decoder never sees them — only written while the native style engine is
+  // attached. Layouts in native/style/include/fjs_style.h.
+  StyleAtom = 0x40,
+  StyleEl = 0x41,
+  StyleClasses = 0x42,
+  StyleScope = 0x43,
+  StyleInline = 0x44,
+  StyleForget = 0x45,
+  StyleRestyle = 0x46,
+  StyleRules = 0x47,
+  StyleAttr = 0x48,
+  StyleRulesAppend = 0x49,
+  StyleSeedChain = 0x4a,
+  StyleSeedCompute = 0x4b,
 }
 
 /** How many interned styles the peer is asked to remember at once. The style
@@ -288,6 +304,156 @@ export class OpWriter {
     this.u8(UiOp.SetHoverStyle);
     this.u32(id);
     this.u32(hid);
+    return this;
+  }
+
+  // ---- native style input (specs/150; see UiOp.StyleAtom) ----
+
+  styleAtom(atom: number, name: string): this {
+    this.op1(UiOp.StyleAtom, atom, 0);
+    this.str(name, false);
+    return this;
+  }
+
+  /** Registers an element with libfjs-style: 14 bytes, one capacity check
+   * (the mount writes one per element). */
+  styleEl(id: number, tag: number, defaultsId: number, rawText: boolean): this {
+    this.ensure(14);
+    const buf = this.buf;
+    let p = this.len;
+    buf[p++] = UiOp.StyleEl;
+    buf[p++] = id & 0xff;
+    buf[p++] = (id >>> 8) & 0xff;
+    buf[p++] = (id >>> 16) & 0xff;
+    buf[p++] = (id >>> 24) & 0xff;
+    buf[p++] = tag & 0xff;
+    buf[p++] = (tag >>> 8) & 0xff;
+    buf[p++] = (tag >>> 16) & 0xff;
+    buf[p++] = (tag >>> 24) & 0xff;
+    buf[p++] = defaultsId & 0xff;
+    buf[p++] = (defaultsId >>> 8) & 0xff;
+    buf[p++] = (defaultsId >>> 16) & 0xff;
+    buf[p++] = (defaultsId >>> 24) & 0xff;
+    buf[p++] = rawText ? 1 : 0;
+    this.len = p;
+    return this;
+  }
+
+  styleClasses(id: number, atoms: readonly number[]): this {
+    const n = atoms.length;
+    this.op1(UiOp.StyleClasses, id, 2 + 4 * n);
+    const buf = this.buf;
+    let p = this.len;
+    buf[p++] = n & 0xff;
+    buf[p++] = (n >>> 8) & 0xff;
+    for (let i = 0; i < n; i++) {
+      const a = atoms[i];
+      buf[p++] = a & 0xff;
+      buf[p++] = (a >>> 8) & 0xff;
+      buf[p++] = (a >>> 16) & 0xff;
+      buf[p++] = (a >>> 24) & 0xff;
+    }
+    this.len = p;
+    return this;
+  }
+
+  styleScope(id: number, atom: number): this {
+    this.op1(UiOp.StyleScope, id, 4);
+    const buf = this.buf;
+    let p = this.len;
+    buf[p++] = atom & 0xff;
+    buf[p++] = (atom >>> 8) & 0xff;
+    buf[p++] = (atom >>> 16) & 0xff;
+    buf[p++] = (atom >>> 24) & 0xff;
+    this.len = p;
+    return this;
+  }
+
+  styleInline(id: number, key: number): this {
+    this.op1(UiOp.StyleInline, id, 4);
+    this.u32(key);
+    return this;
+  }
+
+  styleForget(id: number): this {
+    this.op1(UiOp.StyleForget, id, 0);
+    return this;
+  }
+
+  /** id 0 = every element, with libfjs-style's caches dropped. */
+  styleRestyle(id: number, subtree: boolean): this {
+    this.op1(UiOp.StyleRestyle, id, 1);
+    this.buf[this.len++] = subtree ? 1 : 0;
+    return this;
+  }
+
+  styleRules(table: Uint8Array, append = false): this {
+    this.op1(append ? UiOp.StyleRulesAppend : UiOp.StyleRules, table.length, 0);
+    this.bytes(table);
+    return this;
+  }
+
+  /** SEED_CHAIN head: seed, parent seed. The signatures follow through
+   * styleSigPart; styleSeedChainEnd closes it. */
+  styleSeedChain(seed: number, parentSeed: number): this {
+    this.op1(UiOp.StyleSeedChain, seed, 4);
+    this.u32(parentSeed);
+    return this;
+  }
+
+  /** One signature of a SEED_CHAIN (fjs_style.h `<sig>`); `attrs` only for
+   * the chain's own signature (null for the neighbour's). */
+  styleSigPart(tag: number, classes: readonly number[], scopes: readonly number[], bits: number, attrs: Array<[number, string]> | null): this {
+    this.u32(tag);
+    this.u16(classes.length);
+    for (let i = 0; i < classes.length; i++) this.u32(classes[i]);
+    this.u16(scopes.length);
+    for (let i = 0; i < scopes.length; i++) this.u32(scopes[i]);
+    this.u32(bits);
+    if (attrs !== null) {
+      this.u16(attrs.length);
+      for (const [name, value] of attrs) {
+        this.u32(name);
+        this.str(value, true);
+      }
+    }
+    return this;
+  }
+
+  styleSeedChainPrev(has: boolean): this {
+    this.u8(has ? 1 : 0);
+    return this;
+  }
+
+  styleSeedChainEnd(match: number): this {
+    this.u32(match);
+    return this;
+  }
+
+  /** SEED_COMPUTE (its JSON is asked for on first use). */
+  styleSeedCompute(
+    match: number,
+    parentResult: number,
+    defaultsId: number,
+    inlineKey: number,
+    rawText: boolean,
+    result: number,
+    flags: number,
+  ): this {
+    this.op3(UiOp.StyleSeedCompute, match, parentResult, defaultsId);
+    this.u32(inlineKey);
+    this.u8(rawText ? 1 : 0);
+    this.u32(result);
+    this.u32(flags);
+    return this;
+  }
+
+  /** A reported attribute; null removes it. */
+  styleAttr(id: number, name: number, value: string | null): this {
+    this.op1(UiOp.StyleAttr, id, 0);
+    this.u32(name);
+    this.u8(value === null ? 0 : 1);
+    this.str(value ?? '', true);
     return this;
   }
 

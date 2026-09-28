@@ -116,6 +116,16 @@ endif()
 find_package(Threads REQUIRED)
 find_library(M_LIB m)
 
+# ---- libfjs-style (specs/150) ---------------------------------------------
+# The per-element half of the style engine, engine-agnostic: no JS engine
+# headers, C ABI in style/include/fjs_style.h. Both engine flavors link the
+# same library and bind it in natives.cpp.
+add_library(fjs_style STATIC style/src/style.cpp)
+target_include_directories(fjs_style PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/style/include)
+if(NOT MSVC)
+    target_compile_options(fjs_style PRIVATE -Wall -Wextra -Wno-unused-parameter)
+endif()
+
 # ---- fjs core -------------------------------------------------------------
 # spec 090: the debugger is a MODULE, never part of the engine —
 #   engine (here)        vm/natives/value + debugger-glue.cpp, the transport
@@ -134,7 +144,7 @@ target_compile_definitions(fjs_core PUBLIC ${FJS_ENGINE_DEFINE})
 # Threads: PrimJS's own CMakeLists never links it, but its GC/thread-pool
 # code needs pthread symbols at final link (host builds; Android's libc
 # has them builtin).
-target_link_libraries(fjs_core PUBLIC quickjs Threads::Threads)
+target_link_libraries(fjs_core PUBLIC quickjs fjs_style Threads::Threads)
 if(ANDROID)
     # PrimJS's quickjs.cc calls __android_log_print (its logging layer);
     # the log library is only auto-linked for Android shared libs.
@@ -156,7 +166,7 @@ target_include_directories(fjs PRIVATE
     ${FJS_ENGINE_INCLUDE_DIRS}
 )
 target_compile_definitions(fjs PRIVATE ${FJS_ENGINE_DEFINE})
-target_link_libraries(fjs PRIVATE quickjs Threads::Threads)
+target_link_libraries(fjs PRIVATE quickjs fjs_style Threads::Threads)
 if(ANDROID)
     find_library(LOG_LIB_FJS log)
     target_link_libraries(fjs PRIVATE ${LOG_LIB_FJS})
@@ -180,6 +190,7 @@ if(FJS_DEBUGGER_ENABLED)
     target_include_directories(fjs_debugger_plugin PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/style/include
         ${FJS_ENGINE_INCLUDE_DIRS}
     )
     set_target_properties(fjs_debugger_plugin PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -283,6 +294,10 @@ if(FJS_BUILD_TESTS)
     endif()
     enable_testing()
     add_test(NAME fjs-core COMMAND fjs-test)
+
+    add_executable(fjs-style-test style/test/style_test.cpp)
+    target_link_libraries(fjs-style-test PRIVATE fjs_style)
+    add_test(NAME fjs-style COMMAND fjs-style-test)
 endif()
 
 # ---- fjsc/fjsrun host tools (host only) ------------------------------------

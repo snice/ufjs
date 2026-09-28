@@ -12,6 +12,11 @@
 > 再翻译成 Flutter 的 Widget 参数
 > （[`render/style.dart`](../packages/flutter_fjs/lib/src/render/style.dart)）。
 > **Web 侧是真 CSS**，所以这张表的本质是"Flutter 侧能到哪"。
+>
+> Flutter 上匹配与缓存默认在 C++ 的 libfjs-style 里跑（specs/150，见
+> [architecture.md](architecture.md) 的「样式引擎分两半」），cascade 与计算
+> 仍是上面这两个 TS 文件——**支持范围只有这一份**，两条路径逐元素对拍一致
+> （`__fjsNativeStyle = 'verify'`）。
 
 图例：✅ 两端一致　⚠️ 支持但有差异　❌ 不支持（引擎会 `warnOnce` 跳过，不会静默）
 

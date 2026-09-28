@@ -8,6 +8,7 @@
  *   __fjs.invokeHost(name, ...args)     — synchronous host-module call (JSI)
  *   __fjs.nowMs()
  *   __fjs.gc()                          — collect now; returns heap before/after
+ *   __fjs.styleAttach/Detach/Result/Stats — libfjs-style binding (specs/150)
  *   __fjs.engine                        — { engineId, abiVersion }
  *   __fjs.natives.fibonacci(n)          — demo C++ JSI module
  *
@@ -162,9 +163,217 @@ static fjsengine::Value js_ui_ops(fjsengine::Context *ctx, fjsengine::ValueConst
         }
     }
     if (!bytes) return fjs_fail(vm, "uiOps expects a Uint8Array/ArrayBuffer");
+    if (vm->style.style) {
+        /* specs/150: the frame goes through libfjs-style, which strips the
+         * style input ops and appends the styles its flush wrote. Callbacks
+         * into JS happen in here; the frame bytes stay valid because argv
+         * holds the buffer. */
+        if (vm->style.busy) return fjs_fail(vm, "uiOps: called from inside a style callback");
+        vm->style.busy = true;
+        vm->style.threw = false;
+        const uint8_t *out = nullptr;
+        size_t out_len = 0;
+        int rc = fjs_style_process(vm->style.style, bytes, size, &out, &out_len);
+        vm->style.busy = false;
+        bool threw = vm->style.threw;
+        if (rc != 0) {
+            /* the frame's structure still goes to Dart (libfjs-style hands
+             * back the frame minus its style ops); the tree it kept is out
+             * of step now: detach, so the runtime notices (styleResult stops
+             * answering) and restyles with its own engine */
+            if (out) vm->on_ui_ops(out, (int32_t)out_len);
+            fjs::style_detach(vm);
+            vm->style.stripping = true;
+            if (threw) return fjsengine::exception();
+            return fjs_fail(vm, "uiOps: the native style engine rejected the frame");
+        }
+        vm->on_ui_ops(out, (int32_t)out_len);
+        return threw ? fjsengine::exception() : fjsengine::undefined();
+    }
+    if (vm->style.stripping) {
+        vm->style.stripped.resize(size);
+        size_t n = fjs_style_strip(bytes, size, vm->style.stripped.data());
+        vm->on_ui_ops(vm->style.stripped.data(), (int32_t)n);
+        return fjsengine::undefined();
+    }
     /* The host copies synchronously inside the callback. */
     vm->on_ui_ops(bytes, (int32_t)size);
     return fjsengine::undefined();
+}
+
+/* ---- libfjs-style binding (specs/150) -------------------------------------
+ *
+ * The engine-specific half of the native style engine: libfjs-style itself
+ * knows no JS engine and calls back through plain C function pointers; these
+ * turn each callback into a call of the JS function styleAttach was given.
+ * Another engine needs only this block rewritten. */
+
+static uint32_t style_define_match(void *user, const fjs_style_hit *hits, uint32_t count) {
+    FJSVM *vm = (FJSVM *)user;
+    fjsengine::Context *ctx = vm->ctx;
+    /* the hit structs as they lie in memory: four int32 each, read with an
+     * Int32Array (host byte order on both ends) */
+    fjsengine::Value buf =
+        fjsengine::new_array_buffer_copy(ctx, (const uint8_t *)hits, count * sizeof(fjs_style_hit));
+    fjsengine::Value r = fjsengine::call(ctx, vm->style.define_match, fjsengine::undefined(), 1, &buf);
+    fjsengine::free_value(ctx, buf);
+    if (fjsengine::is_exception(r)) {
+        vm->style.threw = true;
+        return 0;
+    }
+    uint32_t id = 0;
+    fjsengine::to_uint32(ctx, &id, r);
+    fjsengine::free_value(ctx, r);
+    return id;
+}
+
+/* Copies an optional string property into `slot`; false when present but
+ * not convertible. */
+static bool style_read_json(fjsengine::Context *ctx, fjsengine::ValueConst obj, const char *prop,
+                            std::string &slot, const char **ptr, size_t *len) {
+    *ptr = nullptr;
+    *len = 0;
+    fjsengine::Value v = fjsengine::get_property_str(ctx, obj, prop);
+    if (fjsengine::is_exception(v)) return false;
+    if (fjsengine::is_undefined(v) || fjsengine::is_null(v)) return true;
+    size_t n = 0;
+    const char *s = fjsengine::to_cstring_len(ctx, &n, v);
+    fjsengine::free_value(ctx, v);
+    if (!s) return false;
+    slot.assign(s, n);
+    fjsengine::free_cstring(ctx, s);
+    *ptr = slot.data();
+    *len = slot.size();
+    return true;
+}
+
+static int style_compute(void *user, const fjs_style_subject *sub, fjs_style_result *out) {
+    FJSVM *vm = (FJSVM *)user;
+    fjsengine::Context *ctx = vm->ctx;
+    fjsengine::Value args[8] = {
+        fjsengine::new_int64(ctx, sub->element),   fjsengine::new_int64(ctx, sub->match),
+        fjsengine::new_int64(ctx, sub->parent_result), fjsengine::new_int64(ctx, sub->tag),
+        fjsengine::new_int64(ctx, sub->defaults),  fjsengine::new_int64(ctx, sub->inline_key),
+        fjsengine::new_int64(ctx, sub->flags),     fjsengine::new_int64(ctx, sub->seeded)};
+    fjsengine::Value r = fjsengine::call(ctx, vm->style.compute, fjsengine::undefined(), 8, args);
+    if (fjsengine::is_exception(r)) {
+        vm->style.threw = true;
+        return -1;
+    }
+    bool ok = fjsengine::is_object(r);
+    if (ok) {
+        fjsengine::Value id = fjsengine::get_property_str(ctx, r, "result");
+        fjsengine::Value flags = fjsengine::get_property_str(ctx, r, "flags");
+        ok = fjsengine::to_uint32(ctx, &out->result, id) == 0;
+        if (ok && !fjsengine::is_undefined(flags)) ok = fjsengine::to_uint32(ctx, &out->flags, flags) == 0;
+        fjsengine::free_value(ctx, id);
+        fjsengine::free_value(ctx, flags);
+    }
+    ok = ok && style_read_json(ctx, r, "style", vm->style.json[0], &out->style, &out->style_len) &&
+         style_read_json(ctx, r, "active", vm->style.json[1], &out->active, &out->active_len) &&
+         style_read_json(ctx, r, "hover", vm->style.json[2], &out->hover, &out->hover_len);
+    fjsengine::free_value(ctx, r);
+    return ok ? 0 : -1;
+}
+
+static void style_styled(void *user, uint32_t element, uint32_t result) {
+    FJSVM *vm = (FJSVM *)user;
+    fjsengine::Context *ctx = vm->ctx;
+    fjsengine::Value args[2] = {fjsengine::new_int64(ctx, element), fjsengine::new_int64(ctx, result)};
+    fjsengine::Value r = fjsengine::call(ctx, vm->style.styled, fjsengine::undefined(), 2, args);
+    if (fjsengine::is_exception(r)) vm->style.threw = true;
+    else fjsengine::free_value(ctx, r);
+}
+
+/* styleAttach(defineMatch, compute, styled): routes every later frame
+ * through a fresh libfjs-style instance. */
+static fjsengine::Value js_style_attach(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                                        fjsengine::ValueConst *argv) {
+    (void)this_val;
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
+    if (argc < 3 || !fjsengine::is_function(ctx, argv[0]) || !fjsengine::is_function(ctx, argv[1]) ||
+        !fjsengine::is_function(ctx, argv[2]))
+        return fjs_fail(vm, "styleAttach(defineMatch, compute, styled): three functions required");
+    if (vm->style.busy) return fjs_fail(vm, "styleAttach: called from inside a style callback");
+    fjs::style_detach(vm);
+    vm->style.stripping = false;
+    vm->style.define_match = fjsengine::dup_value(ctx, argv[0]);
+    vm->style.compute = fjsengine::dup_value(ctx, argv[1]);
+    vm->style.styled = fjsengine::dup_value(ctx, argv[2]);
+    fjs_style_callbacks cb{vm, style_define_match, style_compute, style_styled};
+    vm->style.style = fjs_style_create(&cb);
+    return fjsengine::new_bool(ctx, true);
+}
+
+static fjsengine::Value js_style_detach(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                                        fjsengine::ValueConst *argv) {
+    (void)this_val; (void)argc; (void)argv;
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
+    if (vm->style.busy) return fjs_fail(vm, "styleDetach: called from inside a style callback");
+    fjs::style_detach(vm);
+    return fjsengine::undefined();
+}
+
+/* styleResult(element): the host result id the element's style came from,
+ * or -1 when no instance is attached (a failed frame detaches it). */
+static fjsengine::Value js_style_result(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                                        fjsengine::ValueConst *argv) {
+    (void)this_val;
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
+    if (!vm->style.style) return fjsengine::new_int32(ctx, -1);
+    uint32_t id = 0;
+    if (argc < 1 || fjsengine::to_uint32(ctx, &id, argv[0]) != 0) return fjs_fail(vm, "styleResult(id): id required");
+    return fjsengine::new_int64(ctx, fjs_style_result_of(vm->style.style, id));
+}
+
+/* styleClasses(element): the element's class atoms as an ArrayBuffer of
+ * uint32 (host byte order), or null when no instance is attached. */
+static fjsengine::Value js_style_classes(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                                         fjsengine::ValueConst *argv) {
+    (void)this_val;
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
+    if (!vm->style.style) return fjsengine::null();
+    uint32_t id = 0;
+    if (argc < 1 || fjsengine::to_uint32(ctx, &id, argv[0]) != 0) return fjs_fail(vm, "styleClasses(id): id required");
+    const uint32_t *atoms = nullptr;
+    size_t n = fjs_style_classes_of(vm->style.style, id, &atoms);
+    return fjsengine::new_array_buffer_copy(ctx, (const uint8_t *)atoms, n * sizeof(uint32_t));
+}
+
+/* styleMatchedRules(element): the hits of the element's current match as an
+ * ArrayBuffer of int32 quadruples (DevTools), null when not attached. */
+static fjsengine::Value js_style_matched_rules(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                                               fjsengine::ValueConst *argv) {
+    (void)this_val;
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
+    if (!vm->style.style) return fjsengine::null();
+    uint32_t id = 0;
+    if (argc < 1 || fjsengine::to_uint32(ctx, &id, argv[0]) != 0)
+        return fjs_fail(vm, "styleMatchedRules(id): id required");
+    const fjs_style_hit *hits = nullptr;
+    size_t n = fjs_style_hits_of(vm->style.style, id, &hits);
+    return fjsengine::new_array_buffer_copy(ctx, (const uint8_t *)hits, n * sizeof(fjs_style_hit));
+}
+
+static fjsengine::Value js_style_stats(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
+                                       fjsengine::ValueConst *argv) {
+    (void)this_val;
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
+    if (!vm->style.style) return fjsengine::null();
+    fjs_style_stats s{};
+    fjs_style_get_stats(vm->style.style, &s);
+    if (argc > 0 && fjsengine::to_bool(ctx, argv[0])) fjs_style_reset_stats(vm->style.style);
+    fjsengine::Value o = fjsengine::new_object(ctx);
+    fjsengine::set_property_str(ctx, o, "elements", fjsengine::new_int64(ctx, s.elements));
+    fjsengine::set_property_str(ctx, o, "rules", fjsengine::new_int64(ctx, s.rules));
+    fjsengine::set_property_str(ctx, o, "recompute", fjsengine::new_int64(ctx, s.recompute));
+    fjsengine::set_property_str(ctx, o, "matchHit", fjsengine::new_int64(ctx, s.match_hit));
+    fjsengine::set_property_str(ctx, o, "matchMiss", fjsengine::new_int64(ctx, s.match_miss));
+    fjsengine::set_property_str(ctx, o, "computeHit", fjsengine::new_int64(ctx, s.compute_hit));
+    fjsengine::set_property_str(ctx, o, "computeMiss", fjsengine::new_int64(ctx, s.compute_miss));
+    fjsengine::set_property_str(ctx, o, "applied", fjsengine::new_int64(ctx, s.applied));
+    fjsengine::set_property_str(ctx, o, "flushMs", fjsengine::new_float64(ctx, s.flush_ms));
+    return o;
 }
 
 /* ---- synchronous host-module invocation (JSI) --------------------------- */
@@ -369,6 +578,16 @@ static fjsengine::Value js_engine_info(fjsengine::Context *ctx, fjsengine::Value
 
 namespace fjs {
 
+void style_detach(FJSVM *vm) {
+    FjsStyleBinding &b = vm->style;
+    if (b.style) fjs_style_destroy(b.style);
+    b.style = nullptr;
+    fjsengine::free_value(vm->ctx, b.define_match);
+    fjsengine::free_value(vm->ctx, b.compute);
+    fjsengine::free_value(vm->ctx, b.styled);
+    b.define_match = b.compute = b.styled = fjsengine::undefined();
+}
+
 bool install_natives(FJSVM *vm) {
     fjsengine::Context *ctx = vm->ctx;
     fjsengine::set_context_opaque(ctx, vm);
@@ -399,6 +618,12 @@ bool install_natives(FJSVM *vm) {
     fjsengine::set_property_str(ctx, fns, "toast", fjsengine::new_c_function(ctx, js_toast, "toast", 1));
     fjsengine::set_property_str(ctx, fns, "gc", fjsengine::new_c_function(ctx, js_gc, "gc", 0));
     fjsengine::set_property_str(ctx, fns, "engine", js_engine_info(ctx, fjsengine::undefined(), 0, nullptr));
+    fjsengine::set_property_str(ctx, fns, "styleAttach", fjsengine::new_c_function(ctx, js_style_attach, "styleAttach", 3));
+    fjsengine::set_property_str(ctx, fns, "styleDetach", fjsengine::new_c_function(ctx, js_style_detach, "styleDetach", 0));
+    fjsengine::set_property_str(ctx, fns, "styleResult", fjsengine::new_c_function(ctx, js_style_result, "styleResult", 1));
+    fjsengine::set_property_str(ctx, fns, "styleStats", fjsengine::new_c_function(ctx, js_style_stats, "styleStats", 1));
+    fjsengine::set_property_str(ctx, fns, "styleClasses", fjsengine::new_c_function(ctx, js_style_classes, "styleClasses", 1));
+    fjsengine::set_property_str(ctx, fns, "styleMatchedRules", fjsengine::new_c_function(ctx, js_style_matched_rules, "styleMatchedRules", 1));
 
     fjsengine::Value root = fjsengine::new_object(ctx);
     fjsengine::set_property_str(ctx, root, "fns", fns);

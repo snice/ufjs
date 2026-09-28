@@ -25,6 +25,8 @@
 │   console / timers / uiOps / invokeHost natives     │
 │   源码 eval（NUL 结尾约束）/ 字节码 ReadObject        │
 │   CDP 调试器是可插拔模块（见 debugger.md）            │
+│   libfjs-style：样式引擎逐元素的那一半（specs/150）   │
+│     纯 C++、不依赖 JS 引擎，两个引擎 flavor 共用       │
 ├──────────────── dart:ffi（纯 C ABI）────────────────┤
 │ flutter_fjs（Flutter 插件）                          │
 │   NativeCallable.isolateLocal 同步回调               │
@@ -95,6 +97,44 @@ style，目录项消失不会让任何节点悬空。引用了本解码器没见
 一个 1000 行的页面切换主题，帧从约 600 KB 降到约 50 KB，Dart 侧的
 `jsonDecode` 从每节点一次降到每种样式一次。
 
+**样式引擎分两半（specs/150）。** Flutter 目标上，样式引擎逐元素的工作在
+C++ 里：`packages/flutter_fjs/native/style/`（libfjs-style，C ABI 见
+`fjs_style.h`，不含任何 JS 引擎头文件，PrimJS / quickjs-ng 两个 flavor 链接
+同一个库，natives.cpp 里一层薄绑定）。CSS 语义仍只有一份，在 TS：
+
+```
+渲染器 ──ensure / setClasses / addScope / 属性 / inline──► css/style.ts (StyleEngine)
+                                                            │ native 分支：只写样式输入 op
+                                                            ▼
+            ┌──────────────── 一帧 (uiOps) ────────────────────────────┐
+JS op 缓冲 ─┤ 结构 op（Create/Insert/Remove…）+ 样式输入 op（0x40–0x4b）   │
+            └───────────────────────┬──────────────────────────────────┘
+                                    ▼ libfjs-style（C++）
+          元素树（读结构 op）· 签名 / chain 缓存 · 候选桶 + 选择器匹配
+          · 脏标记与 flush · match / compute 缓存 · 线上 style 表
+                 │ 未命中才回调（每页「不同样式数」次）
+                 ├─► defineMatch(hits) → StyleEngine.buildMatch（cascade）
+                 ├─► compute(subject)  → StyleEngine.computeResult（继承 / var / em / keyframes …）
+                 └─► styled(el)        → 渲染器副作用（fixed 提升、模态遮罩、伪元素盒）
+                                    ▼
+          输出帧 = 结构 op 原样 + SET_STYLE / DEFINE_STYLE / SET_HOVER_STYLE ──► Dart（协议不变）
+```
+
+- 样式输入 op（`ops.ts` 的 `UiOp.Style*`，布局见 `fjs_style.h`）在 uiOps 里被
+  消费掉，**Dart 永远见不到**；0x40 起的 opcode 为它们保留。
+- C++ 铸的线上 style id 从 `0x40000000` 起，不与 JS op 写入器（锚点、伪元素盒）
+  的 id 冲突。
+- 宿主有 `__fjs.fns.styleAttach` 就默认走 native；`globalThis.__fjsNativeStyle`
+  在渲染器加载前设成 `false` 回到纯 TS 引擎，设成 `'verify'` 两个引擎同时跑、
+  每帧比对每个重算过的元素（`styleEngine.verifyStats`，不一致逐个打印）——任何
+  app 在 fjsrun / 真机上都能当对拍用例。web、小程序、vitest 没有 natives，照旧 TS。
+- 构建期样式快照（specs/119）在 native 下直接灌进 C++ 缓存（SEED_CHAIN /
+  SEED_COMPUTE），样式 JSON 在第一次用到时才经回调取。
+- 帧被拒（协议 bug 或回调抛错）时，C++ 把该帧剔掉样式 op 交给 Dart（不丢结构），
+  之后断开并只做剔除，错误抛给 JS——样式停在那一刻，但不会静默错乱。
+- 自定义 `setOpSink` 若吞掉帧不转给宿主，native 下就没有样式：包一层时要转发
+  （`setOpSink` 返回上一个 sink）。
+
 **宿主能力协商。** bundle 与 Flutter 二进制分开发布（page chunk、dev server、
 pub.dev 上的 `flutter_fjs`），所以新 bundle 可能遇到老宿主。宿主建 VM 时写入
 `globalThis.__fjsHost = { uiOpsVersion }`（见 `FjsEngine.uiOpsVersion`），
@@ -158,6 +198,8 @@ dispose → fjs_vm_destroy
 | C ABI | `packages/flutter_fjs/native/include/fjs.h` |
 | VM/字节码 | `packages/flutter_fjs/native/src/vm.cpp` |
 | natives（JSI）| `packages/flutter_fjs/native/src/natives.cpp` |
+| libfjs-style（C++）| `packages/flutter_fjs/native/style/`（`include/fjs_style.h` 是唯一 ABI 描述，`test/style_test.cpp`）|
+| 样式引擎（TS）| `packages/fjs-runtime/src/css/style.ts`（语义与纯 TS 路径）、`css/native-style.ts`（native 后端）|
 | FFI 绑定 | `packages/flutter_fjs/lib/src/ffi.dart` |
 | 引擎宿主 | `packages/flutter_fjs/lib/src/engine.dart` |
 | 镜像树 | `packages/flutter_fjs/lib/src/mirror_tree.dart` |

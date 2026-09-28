@@ -815,6 +815,54 @@ JS 里的样式引擎到此为止：每元素约 6 µs（十几个状态字段�
 样式调用换成每次一个 op、JS 不再 flush——不经过 Vue 的渲染器挂载 42.6 → 21.6 ms，所以下一步是样式引擎下沉 C++
 （specs/150，门控 spike）。
 
+## 样式引擎下沉 C++：libfjs-style（2026-09，specs/150）
+
+specs/146 / 147 / 149 连续三轮之后，样式引擎在 JS 里每元素仍约 6 µs（十几个状态字段的读写、几次 Map
+查找），flat-4050 挂载里登记 + flush 占 25–33 ms。把逐元素那一半（元素树、签名、chain / match / compute
+缓存、选择器匹配、脏标记、flush、style 表）搬进引擎无关的 C++ 库 libfjs-style，CSS 语义留在 TS、只在未命中时
+回调（数据流见 [architecture.md](architecture.md)「样式引擎分两半」）。native 侧整个 flush 连回调 **0.2–0.7 ms**。
+
+离线（fjsrun，Mac，`examples/bench`：`pnpm run native:ts` / `native:on` / `vapor`，中位数 ms）：
+
+| | TS 引擎 | libfjs-style |
+|---|---:|---:|
+| flat-4050 VDOM 挂载，PrimJS | 59.3 | 42.5 |
+| 同上 + 结构 / 兄弟规则 | 69.0 | 42.7 |
+| flat-4050 VDOM 挂载，quickjs-ng | 58.5 | 36.3 |
+| 同上 + 结构 / 兄弟规则，quickjs-ng | 61.0 | 33.7 |
+| flat-4050 Vapor 挂载，PrimJS | ~74 | 60.5 |
+
+`demo` `pnpm run bench:mount`（`<defer>`，首帧 sync / 其中 css，ms）：
+
+| 页 | TS 冷 | native 冷 | TS 热 css | native 热 css | TS 快照 导入+sync | native 快照 导入+sync |
+|---|---:|---:|---:|---:|---:|---:|
+| vant-basic | 19.8 / 13.7 | 13.8 / 7.8 | 2.4 | 1.2 | 2.6 + 10.4 | 3.3 + 7.8 |
+| vant-feedback | 12.3 / 7.2 | 7.1 / 2.2 | 1.7 | 0.9 | 0.7 + 7.4 | 1.1 + 6.2 |
+| vant-form | 27.7 / 16.7 | 24.2 / 8.5 | 3.0 | 1.3 | 3.2 + 15.1 | 4.7 + 13.0 |
+| vant-more | 14.7 / 9.7 | 10.5 / 5.3 | 1.6 | 0.6 | 3.3 + 7.6 | 4.5 + 6.1 |
+| vant-nav | 19.0 / 12.0 | 13.0 / 6.0 | 1.6 | 0.4 | 2.1 + 10.0 | 2.8 + 7.8 |
+
+读法与踩过的坑：
+
+- **剩下的时间不在样式。** PrimJS 上 flat-4050 的 42 ms ≈ Vue ~18 + 元素层 ~9.5 + 渲染器 ~7.5 + 样式输入 op
+  ~6（每元素 ensure / addScope / setClasses 三次调用，每次 ~0.5 µs，解释器下函数调用的底线；把后两个直接
+  bind 到后端省一层，差异在噪声内）。
+- **每元素的 JS 调用必须比 TS 的快路径还便宜**，否则 flush 省下的又还回去：第一版每元素记一份 class 表、调用链
+  多两跳，登记反而比 TS 慢 30%。现在不存逐元素记录（class 表在 C++，罕见的读经 `styleClasses`），按 tag /
+  class 串 / scope 缓存原子，每个 op 一次写入。
+- **读 C++ 状态会 flush**：表单控件的 `:disabled` 状态若去 C++ 读 class 表，Vue patch 中途就会发帧，半棵树被
+  反复重算（vant-basic 重算 275 → 1076 次）。改成 JS 侧为表单控件稀疏记一份。
+- **规则表逐 sheet 追加**：每注册一个 sheet 重发整张表，vant 几十个 sheet 让首帧涨到 1.3 MB；改成追加 + 需要时
+  RESTYLE(0)。
+- **快照要种进 C++，JSON 延迟取**：native 不导入快照时，带快照的 TS 冷开反而更快。把快照的 chain / compute
+  灌进 C++ 缓存后首开零回调；但从 JS 往帧里逐字写 JSON（~20 µs / 条）比整个 TS 导入还贵——改成种子不带 JSON，
+  第一次命中时经回调取（回调返回的字符串在 C 里 memcpy）。
+- **match 按 hit 集合复用**：同一组规则的不同 chain 共用一个 MatchResult，compute 结果也跟着共用（结构规则下
+  flat-4050 的 compute 未命中 47 → 6）。
+- 对拍：`__fjsNativeStyle = 'verify'` 下两个引擎同时跑、每帧逐元素比较——flat-4050、demo 全部页面
+  （`demo/bench/verify-pages.ts`、`mount-verify.ts`、`mount-prewarm-verify.ts`）、hello-fjs 66 页
+  （`examples/hello-fjs/bench/verify-pages.ts`）共 3 万余次比较，0 不一致。
+
 ## 已知热点（优化路线）
 
 按 2026-09-03 那轮真机/模拟器实测重排过：
