@@ -317,6 +317,8 @@ interface ElementState {
   defaults?: Record<string, unknown>; // HTML tag default style (h1, tr, ...)
   inline?: Record<string, unknown>;
   inlineCustom?: Record<string, string>; // inline `--x` props
+  /** `inlineKey` of the inline pair it was built from (see inlineKeyOf). */
+  inlineKeyCache?: { inline?: Record<string, unknown>; custom?: Record<string, string>; key: string };
   custom?: Record<string, string>; // computed custom props (cascade + inherited)
   computed?: Record<string, unknown>; // last computed merged style (inheritance source for children)
   computedKeys?: string[]; // `computed`'s own keys (see ComputeResult.keys)
@@ -415,6 +417,10 @@ interface MatchResult {
    * style) is already part of the chain key this result is cached under. It
    * replaces a per-element template string plus a global map lookup. */
   byParent: Map<number, ComputeResult>;
+  /** The same for elements carrying an inline style (specs/144), keyed by
+   * `${parentStyleId}\u0003${inlineKey}`. See compute() for why those two
+   * complete the key. */
+  byInline: Map<string, ComputeResult>;
 }
 
 interface ComputeResult {
@@ -481,7 +487,7 @@ const RETIRED_CHAIN_LIMIT = 512;
 
 /** Bump when the snapshot layout or the meaning of any cached field changes:
  * an older snapshot is then refused instead of misread. */
-export const STYLE_SNAPSHOT_VERSION = 2;
+export const STYLE_SNAPSHOT_VERSION = 3;
 
 /** A compute entry's custom slot meaning "the table inherited from the
  * parent entry (the :root table for a root)" — see exportSnapshot. */
@@ -508,8 +514,9 @@ export interface StyleSnapshot {
    *  activeBefore, activeAfter]. */
   matches: Array<[number, number, number, number, number, number, number, number, number]>;
   /** [chain, parent compute, style, active, hover, custom, pseudo,
-   *  defaults JSON ('' = none), rawText 0/1]. */
-  computes: Array<[number, number, number, number, number, number, number, string, number]>;
+   *  defaults JSON ('' = none), rawText 0/1, inline key ('' = no inline
+   *  style; v3, specs/144)]. */
+  computes: Array<[number, number, number, number, number, number, number, string, number, string]>;
 }
 
 /**
@@ -1013,11 +1020,14 @@ export class StyleEngine {
         chains.push([parentChain, key.slice(key.indexOf('\u0003') + 1), match]);
       }
       let compute = -1;
-      const memoizable = s.inline === undefined && s.inlineCustom === undefined;
+      // Inline-styled elements are exported too since v3 (specs/144): before,
+      // they were skipped and so was their whole subtree (no parent compute
+      // to key the children on) — the bulk of a vant form's cold misses.
+      const inlineKey = s.inline === undefined && s.inlineCustom === undefined ? '' : this.inlineKeyOf(s);
       const parentStateless = parentChain < 0;
-      if (memoizable && s.computed !== undefined && s.computedId !== undefined && (parentStateless || parentCompute >= 0)) {
+      if (s.computed !== undefined && s.computedId !== undefined && (parentStateless || parentCompute >= 0)) {
         const rawText = s.rawText === true ? 1 : 0;
-        const ckey = `${chain}:${parentCompute}`;
+        const ckey = `${chain}:${parentCompute}:${inlineKey}`;
         const seen = computeIndex.get(ckey);
         if (seen !== undefined) {
           compute = seen;
@@ -1035,7 +1045,7 @@ export class StyleEngine {
                 : ref(s.custom);
           computes.push([
             chain, parentCompute, ref(s.computed), ref(s.activeComputed), ref(s.hoverComputed),
-            custom, ref(s.pseudo), s.defaults ? JSON.stringify(s.defaults) : '', rawText,
+            custom, ref(s.pseudo), s.defaults ? JSON.stringify(s.defaults) : '', rawText, inlineKey,
           ]);
         }
       }
@@ -1157,6 +1167,7 @@ export class StyleEngine {
           activeAfterDecls: obj(activeAfter),
           id: this.nextObjId++,
           byParent: new Map(),
+          byInline: new Map(),
         };
         this.matchCache.set(key, result);
         // unreferenced until an element takes it: same standing as a chain
@@ -1171,11 +1182,12 @@ export class StyleEngine {
     const styleIdOf: number[] = [];
     const customOf: Array<Record<string, string> | undefined> = [];
     for (let j = 0; j < snap.computes.length; j++) {
-      const [chain, parentCompute, style, active, hover, custom, pseudo, defaultsJson, rawText] = snap.computes[j];
+      const [chain, parentCompute, style, active, hover, custom, pseudo, defaultsJson, rawText, inlineKey] = snap.computes[j];
       if (parentCompute >= 0 && styleIdOf[parentCompute] === undefined) continue;
       const parentStyleId = parentCompute < 0 ? 0 : styleIdOf[parentCompute];
       const matched = results[chain];
-      const existing = matched.byParent.get(parentStyleId);
+      const byInlineKey = inlineKey === '' ? '' : `${parentStyleId}\u0003${inlineKey}`;
+      const existing = byInlineKey === '' ? matched.byParent.get(parentStyleId) : matched.byInline.get(byInlineKey);
       if (existing !== undefined) {
         styleIdOf[j] = existing.styleId;
         customOf[j] = existing.custom;
@@ -1202,8 +1214,13 @@ export class StyleEngine {
         defaultsId: defaultsJson === '' ? 0 : this.defaultsIdForJson(defaultsJson),
         rawText: rawText === 1,
       };
-      if (matched.byParent.size > 64) matched.byParent.clear();
-      matched.byParent.set(parentStyleId, result);
+      if (byInlineKey === '') {
+        if (matched.byParent.size > 64) matched.byParent.clear();
+        matched.byParent.set(parentStyleId, result);
+      } else {
+        if (matched.byInline.size > 128) matched.byInline.clear();
+        matched.byInline.set(byInlineKey, result);
+      }
       styleIdOf[j] = result.styleId;
       customOf[j] = customMap;
     }
@@ -1710,8 +1727,19 @@ export class StyleEngine {
     // defaults) — all shared objects — so equal inputs reuse one result.
     const memoizable = s.inline === undefined && s.inlineCustom === undefined;
     const parentStyleId = parentComputed ? parent!.computedId! : 0;
-    if (memoizable) {
-      const hit = matched.byParent.get(parentStyleId);
+    // An inline style is the one input the byParent key leaves out, so those
+    // elements are memoized apart, under the inline CONTENT (specs/144). The
+    // full input list of this function is: parent computed style + parent
+    // custom props (one parentStyleId, minted together), the matched rule
+    // set (the MatchResult itself; its chain key includes the tag, hence the
+    // tag defaults), defaultsId and rawText (checked on a hit), and inline +
+    // inlineCustom (the inline key). Anything new that compute() reads must
+    // join one of these, or a hit hands back a stale style without a sound.
+    // Content, not object identity: Vue builds a fresh object for every
+    // `:style` render, and a row of vant Rate stars carries equal ones.
+    const inlineKey = memoizable ? '' : `${parentStyleId}\u0003${this.inlineKeyOf(s)}`;
+    {
+      const hit = memoizable ? matched.byParent.get(parentStyleId) : matched.byInline.get(inlineKey);
       // defaultsId is fixed for a given match (the chain key includes the
       // tag), but a mismatch would be silent corruption, so it is checked
       if (hit && hit.defaultsId === (s.defaultsId ?? 0) && hit.rawText === (s.rawText === true)) {
@@ -1917,11 +1945,13 @@ export class StyleEngine {
     s.computedKeys = Object.keys(style);
     s.activeKeys = s.activeComputed ? Object.keys(s.activeComputed) : undefined;
     s.hoverKeys = s.hoverComputed ? Object.keys(s.hoverComputed) : undefined;
-    if (memoizable) {
+    {
       // Bounded: every restyle mints new parent style ids, so entries for
       // parents that no longer exist would otherwise pile up per rule set.
-      if (matched.byParent.size > 64) matched.byParent.clear();
-      matched.byParent.set(parentStyleId, {
+      // Inline styles get more room — distinct inline contents are the norm
+      // there — and an animation writing a new transform every frame keeps
+      // missing (as it always did) without growing the table past 128.
+      const entry: ComputeResult = {
         style,
         keys: s.computedKeys,
         activeStyle: s.activeComputed,
@@ -1934,9 +1964,29 @@ export class StyleEngine {
         rawText: s.rawText === true,
         customId: s.customId,
         defaultsId: s.defaultsId ?? 0,
-      });
+      };
+      if (memoizable) {
+        if (matched.byParent.size > 64) matched.byParent.clear();
+        matched.byParent.set(parentStyleId, entry);
+      } else {
+        if (matched.byInline.size > 128) matched.byInline.clear();
+        matched.byInline.set(inlineKey, entry);
+      }
     }
     return style;
+  }
+
+  /** The element's inline style + inline custom props as one string. Cached
+   * against the two objects it was built from: every inline write replaces
+   * them rather than mutating (setInlineStyle, patchInlineStyle,
+   * mutateInline, setInlineCustomProps), so identity says when to rebuild
+   * without each writer having to remember to clear it. */
+  private inlineKeyOf(s: ElementState): string {
+    const c = s.inlineKeyCache;
+    if (c !== undefined && c.inline === s.inline && c.custom === s.inlineCustom) return c.key;
+    const key = `${JSON.stringify(s.inline ?? null)}\u0003${JSON.stringify(s.inlineCustom ?? null)}`;
+    s.inlineKeyCache = { inline: s.inline, custom: s.inlineCustom, key };
+    return key;
   }
 
   /** Rebuilds the matching-relevant signature of self + the ancestor chain
@@ -2276,6 +2326,7 @@ export class StyleEngine {
       activeAfterDecls,
       id: this.nextObjId++,
       byParent: new Map(),
+      byInline: new Map(),
       sheets: sheetSet ? [...sheetSet] : undefined,
     };
     this.matchCache.set(key, result);

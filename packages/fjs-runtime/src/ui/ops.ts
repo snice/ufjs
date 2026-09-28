@@ -295,11 +295,15 @@ export class OpWriter {
         this.u8(UiOp.ResetStyles);
         this.defined.clear();
       }
-      const json = utf8Encode(JSON.stringify(style));
+      // str() writes the same u32 length + UTF-8 bytes, but straight into
+      // the frame for ASCII (nearly every style): utf8Encode's two JS passes
+      // and temporary array were most of a cold page's style encoding —
+      // there is no TextEncoder on the device engines (specs/144). Caching
+      // the bytes per style would not help: an object is defined once per
+      // style epoch anyway.
       this.u8(UiOp.DefineStyle);
       this.u32(id);
-      this.u32(json.length);
-      this.bytes(json);
+      this.str(JSON.stringify(style), true);
       this.defined.add(id);
     }
     return id;

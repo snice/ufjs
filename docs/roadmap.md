@@ -56,6 +56,8 @@
   里逐页挂载、导出 CSS 引擎的匹配 / 计算缓存，写进页面 chunk，路由挂载前导入。vant-form
   首开同步段 CSS 22 → 8 ms、match miss 270 → 1；校验不过整份放弃。`fjs.styleSnapshot:
   false` 关闭，dev 不做
+- ✅ **样式引擎命中路径瘦身**（specs/144）：DefineStyle 改 ASCII 直写（字节不变）；inline 样式元素按内容
+  记忆并进入快照（v3）。vant-form 首帧 CSS 8.9 → 4.4 ms（bench），真机五页挂载合计 −14%
 
 ## 工具链分发（已完成 2026-08）
 
