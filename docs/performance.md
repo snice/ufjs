@@ -766,6 +766,10 @@ iPhone 12，`fjs run ios --profile`：
 | 显示，153 之后（Vapor） | 121–144 ms | 3.0–3.3 ms | 0.5–0.6 | 0 | 117–140 | 248–265 ms |
 | 隐藏，153 之后（VDOM / Vapor） | 46 / 42–55 ms | 1.6 ms | 0 | 0 | 45 / 41–53 | 82–94 ms |
 
+**JS 之后的上屏链路**（specs/154，`packages/flutter_fjs/tool/frame-timeline.mjs` 录 VM timeline）：显示那一帧
+UI 线程 99.6 ms，其中 LAYOUT 89 ms = 布局期 build 30（每个 flex 容器的子节点在 `LayoutBuilder` 里建，一格一次）
++ GC 35 + 纯布局 24；PAINT 10 ms；光栅化只有 4 ms。
+
 153 之后改 1 / 200 / 2000 格（JS）：VDOM 32 / 45 / 76 ms，Vapor 4.7–5.9 / 16.9 / 70 ms（2026-09-29，
 样式引擎已在 libfjs-style，specs/150–153）。
 
