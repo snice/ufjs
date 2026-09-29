@@ -23,7 +23,7 @@ type Measured = { width: number; height: number; lines: number } | null;
 
 interface FjsShared {
   'fjs/vue'?: {
-    styleEngine?: { states?: Map<number, { computed?: Style }>; flushPending?: () => void };
+    styleEngine?: { computedOf?: (id: number) => Style | undefined; flushPending?: () => void };
     measureTextBlock?: (style: Style, text: string, maxWidth?: number) => Measured;
   };
 }
@@ -33,11 +33,15 @@ const sharedVue = () => (globalThis as { __FJS_SHARED?: FjsShared }).__FJS_SHARE
 /** The element's RESOLVED style from the fjs style engine (camelCase,
  * lengths as numbers). The runtime keeps getComputedStyle out of scope
  * (ui/element.ts), so this reads the engine directly; empty when the app
- * was built without the shared chunk. */
+ * was built without the shared chunk. Through `computedOf`, which answers
+ * under either engine: the TS engine's per-element states stay empty once
+ * libfjs-style styles the page (specs/150) — reading them left
+ * TextEllipsis's measuring box without a line height, its max height 0, and
+ * every cut too tall: the text came out as a bare "…". */
 function resolvedStyle(el: unknown): Style {
   const id = (el as { id?: unknown } | null)?.id;
   if (typeof id !== 'number') return {};
-  return sharedVue()?.styleEngine?.states?.get(id)?.computed ?? {};
+  return sharedVue()?.styleEngine?.computedOf?.(id) ?? {};
 }
 
 const kebabToCamel = (name: string) => name.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
