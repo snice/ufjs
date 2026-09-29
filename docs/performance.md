@@ -770,6 +770,10 @@ iPhone 12，`fjs run ios --profile`：
 UI 线程 99.6 ms，其中 LAYOUT 89 ms = 布局期 build 30（每个 flex 容器的子节点在 `LayoutBuilder` 里建，一格一次）
 + GC 35 + 纯布局 24；PAINT 10 ms；光栅化只有 4 ms。
 
+**flex 免 LayoutBuilder**（specs/156）：用不上约束的 flex 盒直接建，column 的 stretch / start 挪进
+`RenderFjsFlex` 的 layout。显示帧 LayoutBuilder 回调 2060 → 4、UI 帧 99.6 → 87.7 ms、GC 36 → 31 ms；连同
+specs/155 的文字引用，真机 VDOM 显示 JS 77–89 ms、上屏 181–199 ms。剩下的 GC 来自每节点展开的 Widget 串。
+
 153 之后改 1 / 200 / 2000 格（JS）：VDOM 32 / 45 / 76 ms，Vapor 4.7–5.9 / 16.9 / 70 ms（2026-09-29，
 样式引擎已在 libfjs-style，specs/150–153）。
 

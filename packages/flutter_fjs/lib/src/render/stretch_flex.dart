@@ -22,6 +22,8 @@
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
+import 'decoration.dart' show FjsClipScope;
+
 mixin FjsShrinkStretchFlex on RenderFlex {
   bool _measuring = false;
   BoxConstraints? _crossTight;
@@ -45,16 +47,65 @@ mixin FjsShrinkStretchFlex on RenderFlex {
   /// [RenderFjsCrossLineItem] for why a child needs to know.
   bool get inCrossPass => _crossTight != null;
 
+  /// A `stretch` that lays out as `start` when the cross axis is unbounded
+  /// (a column inside a row: CSS stretches to the line, Flutter cannot
+  /// stretch to infinity). flex.dart used to make that choice in a
+  /// LayoutBuilder, which built the whole subtree during layout; the box
+  /// decides it here instead, at layout (specs/156). Its items carry
+  /// [FjsAdaptiveShrinkCross], which counts only while [startsNow].
+  bool get startWhenUnbounded => _startWhenUnbounded;
+  bool _startWhenUnbounded = false;
+  set startWhenUnbounded(bool value) {
+    if (value == _startWhenUnbounded) return;
+    _startWhenUnbounded = value;
+    markNeedsLayout();
+  }
+
+  /// Whether the current layout took the `start` of [startWhenUnbounded].
+  bool get startsNow => _startsNow;
+  bool _startsNow = false;
+
+  bool _startsFor(BoxConstraints c) =>
+      _startWhenUnbounded &&
+      super.crossAxisAlignment == CrossAxisAlignment.stretch &&
+      !(direction == Axis.horizontal ? c.hasBoundedHeight : c.hasBoundedWidth);
+
   @override
-  CrossAxisAlignment get crossAxisAlignment =>
-      _measuring ? CrossAxisAlignment.center : super.crossAxisAlignment;
+  CrossAxisAlignment get crossAxisAlignment => _measuring
+      ? CrossAxisAlignment.center
+      : _startsNow
+      ? CrossAxisAlignment.start
+      : super.crossAxisAlignment;
 
   @override
   BoxConstraints get constraints => _crossTight ?? super.constraints;
 
   @override
+  Size computeDryLayout(covariant BoxConstraints constraints) {
+    final saved = _startsNow;
+    _startsNow = _startsFor(constraints);
+    try {
+      return super.computeDryLayout(constraints);
+    } finally {
+      _startsNow = saved;
+    }
+  }
+
+  @override
+  double? computeDryBaseline(BoxConstraints constraints, TextBaseline baseline) {
+    final saved = _startsNow;
+    _startsNow = _startsFor(constraints);
+    try {
+      return super.computeDryBaseline(constraints, baseline);
+    } finally {
+      _startsNow = saved;
+    }
+  }
+
+  @override
   void performLayout() {
     final c = super.constraints;
+    _startsNow = _startsFor(c);
     final horizontal = direction == Axis.horizontal;
     final crossTight = horizontal ? c.hasTightHeight : c.hasTightWidth;
     final crossBounded = horizontal ? c.hasBoundedHeight : c.hasBoundedWidth;
@@ -94,7 +145,7 @@ mixin FjsShrinkStretchFlex on RenderFlex {
     RenderObject? from = this;
     RenderObject? p = parent;
     for (var depth = 0; p != null && depth < 16; depth++) {
-      if (p is RenderFjsShrinkCross) return true;
+      if (p is RenderFjsShrinkCross && p.active) return true;
       if (p is RenderFlex) return false;
       if (p is RenderStack) {
         final pd = from!.parentData;
@@ -184,7 +235,36 @@ class FjsShrinkCross extends SingleChildRenderObjectWidget {
       RenderFjsShrinkCross();
 }
 
-class RenderFjsShrinkCross extends RenderProxyBox {}
+class RenderFjsShrinkCross extends RenderProxyBox {
+  /// Whether the marker counts right now (see [FjsAdaptiveShrinkCross]).
+  bool get active => true;
+}
+
+/// [FjsShrinkCross] for an item of a [FjsFlex] with `startWhenUnbounded`:
+/// the item is shrink-to-fit only when that flex lays out as `start` — under
+/// its `stretch` it is stretched (the cross constraint is tight) and the
+/// marker must not count, exactly as if it were not there, which is what
+/// the LayoutBuilder path built for the bounded case (specs/156).
+class FjsAdaptiveShrinkCross extends FjsShrinkCross {
+  const FjsAdaptiveShrinkCross({super.key, super.child});
+
+  @override
+  RenderFjsShrinkCross createRenderObject(BuildContext context) =>
+      _RenderFjsAdaptiveShrinkCross();
+}
+
+class _RenderFjsAdaptiveShrinkCross extends RenderFjsShrinkCross {
+  @override
+  bool get active {
+    // the flex this item belongs to: the nearest one up (the marker is its
+    // direct child on the path flex.dart builds, but wrappers may follow)
+    for (var p = parent; p != null; p = p.parent) {
+      if (p is FjsShrinkStretchFlex) return p.startsNow;
+      if (p is RenderFlex) return false;
+    }
+    return false;
+  }
+}
 
 /// [RenderFlex] with CSS's shrink-then-stretch cross sizing.
 class RenderFjsFlex extends RenderFlex with FjsShrinkStretchFlex {
@@ -247,6 +327,8 @@ class FjsFlex extends Flex {
     super.clipBehavior,
     this.measureCross = false,
     this.cssOverflowClip = false,
+    this.startWhenUnbounded = false,
+    this.inheritClip = false,
     super.children,
   });
 
@@ -255,6 +337,23 @@ class FjsFlex extends Flex {
 
   /// See [RenderFjsFlex.cssOverflowClip].
   final bool cssOverflowClip;
+
+  /// See [FjsShrinkStretchFlex.startWhenUnbounded].
+  final bool startWhenUnbounded;
+
+  /// Also clip-scoped when a box above clips us ([FjsClipScope]) — read
+  /// here, where there is a context, rather than by the caller (which
+  /// needed a LayoutBuilder's for it).
+  final bool inheritClip;
+
+  bool _clips(BuildContext context) => cssOverflowClip || (inheritClip && FjsClipScope.of(context));
+
+  /// Flex resolves a text direction only when its declared alignment needs
+  /// one; a `stretch` that may lay out as `start` does too.
+  @override
+  TextDirection? getEffectiveTextDirection(BuildContext context) => startWhenUnbounded
+      ? textDirection ?? Directionality.maybeOf(context)
+      : super.getEffectiveTextDirection(context);
 
   @override
   RenderFlex createRenderObject(BuildContext context) {
@@ -268,7 +367,8 @@ class FjsFlex extends Flex {
       textBaseline: textBaseline,
       clipBehavior: clipBehavior,
     )..measureCross = measureCross
-      ..cssOverflowClip = cssOverflowClip;
+      ..startWhenUnbounded = startWhenUnbounded
+      ..cssOverflowClip = _clips(context);
   }
 
   @override
@@ -279,6 +379,7 @@ class FjsFlex extends Flex {
     super.updateRenderObject(context, renderObject);
     renderObject
       ..measureCross = measureCross
-      ..cssOverflowClip = cssOverflowClip;
+      ..startWhenUnbounded = startWhenUnbounded
+      ..cssOverflowClip = _clips(context);
   }
 }
