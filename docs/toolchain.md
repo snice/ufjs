@@ -396,7 +396,19 @@ fjs types --check           # 只读；有过期文件时列出并退出码 1—
 
 项目没有本地模块/资产时照旧不生成（输出 `skipped`）；核心标签的组件类型
 由 `@ufjs/runtime` 自带的 `vue-global.d.ts` 提供（跟着包走），这条命令只
-负责项目级的四个文件。
+负责项目级的四个文件（autoimport 的 `fjs-objects.d.ts` 从缓存生成，没跑
+过 `fjs run`/`fjs autoimport` 时跳过）。
+
+## 绑定 pub 包：`fjs autoimport`
+
+`fjs.autoimport: ['mmkv']`（package.json）声明的包，由这条命令（或
+`fjs run` 的宿主同步顺带）dump 公开 API 并生成 Dart 适配器 + TS 类型，
+用法见 [modules.md](modules.md) 的 autoimport 一节：
+
+```bash
+fjs autoimport            # 缓存命中则只重新生成文件
+fjs autoimport --force    # 强制重 dump（改了包不换版本时用）
+```
 
 ## Flutter 宿主
 

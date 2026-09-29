@@ -183,6 +183,36 @@ inline int to_float64(Context *ctx, double *pres, ValueConst v) {
 }
 inline int to_bool(Context *ctx, ValueConst v) { return JS_ToBool(ctx, v); }
 
+/* Object ABI (spec 159): per-object lifecycle classes. ng's JS_NewClassID
+ * takes the runtime, PrimJS's draws from a global counter — the facade
+ * normalizes to "give me a fresh id for this runtime". */
+using ClassID = JSClassID;
+using ClassDef = JSClassDef;
+inline ClassID new_class_id(Runtime *rt) {
+    ClassID id = 0;
+    JS_NewClassID(rt, &id);
+    return id;
+}
+inline int new_class(Runtime *rt, ClassID id, const ClassDef *def) {
+    return JS_NewClass(rt, id, def);
+}
+inline Value new_object_class(Context *ctx, ClassID id) {
+    return JS_NewObjectClass(ctx, (int)id);
+}
+/* JS_SetOpaque returns int on ng, void on PrimJS — normalized to void. */
+inline void set_opaque(Value obj, void *opaque) { JS_SetOpaque(obj, opaque); }
+inline void *get_opaque(ValueConst obj, ClassID id) { return JS_GetOpaque(obj, id); }
+inline Value new_promise_capability(Context *ctx, Value *resolving) {
+    return JS_NewPromiseCapability(ctx, resolving);
+}
+using ExoticMethods = JSClassExoticMethods;
+/* The class of an arbitrary value — used by GC finalizers, which only get
+ * the runtime. ng exposes it without a context. */
+inline ClassID value_class_id(ValueConst v) { return JS_GetClassID(v); }
+inline const char *atom_to_cstring(Context *ctx, int atom) {
+    return JS_AtomToCString(ctx, (JSAtom)atom);
+}
+
 inline bool is_exception(Value v) { return JS_IsException(v); }
 inline bool is_error(Context *ctx, ValueConst v) { return JS_IsError(ctx, v); }
 inline bool is_undefined(ValueConst v) { return JS_IsUndefined(v); }
@@ -335,6 +365,39 @@ inline int to_float64(Context *ctx, double *pres, ValueConst v) {
     return LEPUS_ToFloat64(ctx, pres, v);
 }
 inline int to_bool(Context *ctx, ValueConst v) { return LEPUS_ToBool(ctx, v); }
+
+/* Object ABI (spec 159): per-object lifecycle classes. ng's JS_NewClassID
+ * takes the runtime, PrimJS's draws from a global counter — the facade
+ * normalizes to "give me a fresh id for this runtime". */
+using ClassID = LEPUSClassID;
+using ClassDef = LEPUSClassDef;
+inline ClassID new_class_id(Runtime *rt) {
+    (void)rt;
+    ClassID id = 0; /* LEPUS_NewClassID dereferences the pointer */
+    return LEPUS_NewClassID(&id);
+}
+inline int new_class(Runtime *rt, ClassID id, const ClassDef *def) {
+    return LEPUS_NewClass(rt, id, def);
+}
+inline Value new_object_class(Context *ctx, ClassID id) {
+    return LEPUS_NewObjectClass(ctx, (int)id);
+}
+/* JS_SetOpaque returns int on ng, void on PrimJS — normalized to void. */
+inline void set_opaque(Value obj, void *opaque) { LEPUS_SetOpaque(obj, opaque); }
+inline void *get_opaque(ValueConst obj, ClassID id) { return LEPUS_GetOpaque(obj, id); }
+inline Value new_promise_capability(Context *ctx, Value *resolving) {
+    return LEPUS_NewPromiseCapability(ctx, resolving);
+}
+using ExoticMethods = LEPUSClassExoticMethods;
+/* The class of an arbitrary value — used by GC finalizers, which only get
+ * the runtime. The vendored PrimJS implementation ignores its ctx parameter
+ * entirely (reads p->class_id), so nullptr is safe here. */
+inline ClassID value_class_id(ValueConst v) {
+    return LEPUS_GetClassID(nullptr, v);
+}
+inline const char *atom_to_cstring(Context *ctx, int atom) {
+    return LEPUS_AtomToCString(ctx, (JSAtom)atom);
+}
 
 inline bool is_exception(Value v) { return LEPUS_IsException(v); }
 inline bool is_error(Context *ctx, ValueConst v) { return LEPUS_IsError(ctx, v); }

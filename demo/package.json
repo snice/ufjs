@@ -41,6 +41,9 @@
     "shared": [
       "pinia",
       "vant"
+    ],
+    "autoimport": [
+      "mmkv@^2.4.2"
     ]
   }
 }

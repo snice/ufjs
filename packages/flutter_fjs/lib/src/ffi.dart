@@ -10,8 +10,12 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 
-/// FJSValue — mirrors native/include/fjs.h (flat struct, 32 bytes):
-/// tag@0 i@4 d@8 s@16 len@24 pad@28.
+/// FJSValue — mirrors native/include/fjs.h (flat struct, 40 bytes):
+/// tag@0 i@4 d@8 s@16 len@24 pad@28 j@32.
+///
+/// The four object-ABI tags (spec 159) only ever travel over the rich
+/// `objectCall` path and the three fjs_vm_*_callback entries; the scalar
+/// invokeHost contract stays frozen at null/bool/num/string.
 final class FJSValue extends ffi.Struct {
   @ffi.Int32()
   external int tag;
@@ -29,6 +33,9 @@ final class FJSValue extends ffi.Struct {
 
   @ffi.Int32()
   external int pad;
+
+  @ffi.Int64()
+  external int j;
 }
 
 const int fjsTNull = 0;
@@ -36,6 +43,12 @@ const int fjsTBool = 1;
 const int fjsTInt32 = 2;
 const int fjsTFloat64 = 3;
 const int fjsTString = 4;
+/* Object ABI (spec 159) — see the tag comment block in fjs.h. */
+const int fjsTHandle = 5;
+const int fjsTCallback = 6; /* j > 0 engine-held JS fn, j < 0 -j host closure */
+const int fjsTPending = 7;
+const int fjsTMethod = 8;
+const int fjsTJson = 9; /* reply-only: JSON text materialized via JSON.parse */
 
 typedef FJSVMHandle = ffi.Pointer<ffi.Void>;
 
@@ -155,6 +168,32 @@ typedef _HandleBytesD =
 typedef _HandleReleaseC = ffi.Void Function(FJSVMHandle, ffi.Int64);
 typedef _HandleReleaseD = void Function(FJSVMHandle, int);
 
+// Object ABI (spec 159): the host's way back into JS. call mirrors the
+// invokeHost shape (rich args in, out value + rc), settle resolves/rejects
+// the promise a FJS_T_PENDING reply created and pumps the queued microtasks.
+typedef _CallCallbackC =
+    ffi.Int32 Function(
+      FJSVMHandle,
+      ffi.Int64,
+      ffi.Int32,
+      ffi.Pointer<FJSValue>,
+      ffi.Pointer<FJSValue>,
+    );
+typedef _CallCallbackD =
+    int Function(
+      FJSVMHandle,
+      int,
+      int,
+      ffi.Pointer<FJSValue>,
+      ffi.Pointer<FJSValue>,
+    );
+typedef _SettlePromiseC =
+    ffi.Int32 Function(FJSVMHandle, ffi.Int64, ffi.Int32, ffi.Pointer<FJSValue>);
+typedef _SettlePromiseD =
+    int Function(FJSVMHandle, int, int, ffi.Pointer<FJSValue>);
+typedef _ReleaseCallbackC = ffi.Int32 Function(FJSVMHandle, ffi.Int64);
+typedef _ReleaseCallbackD = int Function(FJSVMHandle, int);
+
 // Devtools debugger (spec 088/090): the debugger module dials out to the
 // `fjs debug` relay and serves CDP on the JS thread. Only scalars cross —
 // the debug traffic itself never touches Dart.
@@ -201,6 +240,15 @@ class FjsBindings {
       ),
       handleRelease = lib.lookupFunction<_HandleReleaseC, _HandleReleaseD>(
         'fjs_handle_release',
+      ),
+      callCallback = lib.lookupFunction<_CallCallbackC, _CallCallbackD>(
+        'fjs_vm_call_callback',
+      ),
+      settlePromise = lib.lookupFunction<_SettlePromiseC, _SettlePromiseD>(
+        'fjs_vm_settle_promise',
+      ),
+      releaseCallback = lib.lookupFunction<_ReleaseCallbackC, _ReleaseCallbackD>(
+        'fjs_vm_release_callback',
       ) {
     final module = _openDebuggerModule();
     debuggerAttach = module == null ? null : _maybeDebuggerAttach(module);
@@ -313,6 +361,10 @@ class FjsBindings {
   /// supported by this build" and says so once.
   late final _DebuggerAttachD? debuggerAttach;
   late final _DebuggerDetachD? debuggerDetach;
+
+  final _CallCallbackD callCallback;
+  final _SettlePromiseD settlePromise;
+  final _ReleaseCallbackD releaseCallback;
 
   /// Dials out to the `fjs debug` relay. Returns 0 on success, -1 on
   /// failure (message via lastError).

@@ -137,6 +137,37 @@ ctrl.abort()
 [`lib/src/http.dart`](../packages/flutter_fjs/lib/src/http.dart) 和
 [`net/fetch.ts`](../packages/fjs-runtime/src/net/fetch.ts)。
 
+## 对象 ABI 的两条异步边（spec 159）
+
+对象 ABI 没有动「发起同步、结果走事件循环」的骨架，只是把回程从 JSON 事件
+换成了两个专用 C 入口——仍然全部发生在 UI 线程上：
+
+```
+JS                              Dart                               JS
+const p = c.getRepo()
+  └─ objectCall('invoke', c, 'getRepo')       ← 同步：adapter 返回 Future 时
+     native 造原生 Promise，resolve/reject       立刻回 FJS_T_PENDING(callId)
+     挂在隐藏全局根下等结算
+                                  │ Future 在 Dart 事件循环上完成
+                                  ▼
+       scheduleMicrotask → fjs_vm_settle_promise(callId, ok, value)
+       （结算后泵空微任务，dispatchEvent 同款收尾）
+                                                    ──► then/catch 链跑起来
+
+c.onTick(cb)          ← JS 函数被引擎 dup，JS 侧立即可 GC-安全
+                                  │ Dart 想触发时（任意晚，同线程）
+                                  ▼
+       fjs_vm_call_callback(cbId, args) ──────────► cb(args) 同步执行，
+       返回值富值带回 Dart                            可再入 objectCall（深度 ≤ 64）
+```
+
+两个不走 dispatchEvent 的原因：结算值和回调参数是富值（对象句柄、回调
+引用），JSON 装不下；且这两条是 Dart **主动**调 JS，而 dispatchEvent 的
+语义是「给页面派节点/系统事件」。微任务延迟是刻意的——adapter 的 Future
+可能已经完成，但 invokeHost 的调用栈还压在 JS 上，栈内结算等于中途重入
+（`fjs.async.invoke` 的同一条规则）。`fjs_vm_call_callback` 没有
+微任务延迟：它是 Dart 在自己的栈上主动发起，立刻同步执行。
+
 ## Worker：真正的并行
 
 worker 是**文件**（specs/049）：代码放 `src/workers/<name>.ts|js`（可 import 本地模块，构建期

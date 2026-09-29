@@ -21,6 +21,7 @@ import 'idle_gate.dart';
 import 'mirror_tree.dart';
 import 'registry/component.dart';
 import 'registry/host.dart';
+import 'registry/object_bridge.dart';
 import 'widgets/control_scope.dart';
 import 'worker.dart';
 import 'bytes.dart';
@@ -70,6 +71,7 @@ class FjsEngine extends ChangeNotifier {
     _warnEngineFlavorMismatch();
     _setupWorkerModules();
     _setupPlatformModule();
+    _setupObjectModule();
     _setupViewportModule();
     // @font-face fonts (specs/071); log reads onLog at call time, a host
     // may attach it after construction
@@ -251,6 +253,25 @@ class FjsEngine extends ChangeNotifier {
   final MirrorTree tree = MirrorTree();
   final HostRegistry host = HostRegistry();
 
+  /// Object ABI (spec 159): Dart object modules exposed to JS. Register
+  /// adapters before the first page evaluates:
+  /// `engine.objects.registerModule('myService', MyModule());`
+  late final ObjectBridge objects = ObjectBridge(
+    vmHandle: () => _vm ?? ffi.nullptr,
+    lastError: () => _lastError(),
+  );
+
+  /// The reserved "fjs.object.*" names funnel through the same host
+  /// registry as every other module — one trampoline, one Dart funnel.
+  void _setupObjectModule() {
+    for (final op in const [
+      'construct', 'invoke', 'get', 'set', 'release', 'callback',
+      'releaseCallback',
+    ]) {
+      host.register('fjs.object.$op', (args) => objects.handle(op, args));
+    }
+  }
+
   /// Whether the dev performance overlay is showing. [FjsApp] watches it;
   /// `fjs dev`'s `p` key flips it, and a host can flip it itself.
   final ValueNotifier<bool> perfOverlay = ValueNotifier<bool>(false);
@@ -276,6 +297,8 @@ class FjsEngine extends ChangeNotifier {
 
   void _createVm() {
     HostBridge.install(host);
+    HostBridge.installBridge(objects);
+    objects.reset(); // rebuild: handles/closures belonged to the old VM
     // callback trampolines are created once; reset() only recycles the VM
     _onLogPtr ??= ffi.Pointer.fromFunction(_onLogTrampoline);
     _onUiOpsPtr ??= ffi.Pointer.fromFunction(_onUiOpsTrampoline);

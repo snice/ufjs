@@ -24,6 +24,23 @@ interface FjsEngineInfo {
  * docs/jsi-and-native-modules.md. */
 type FjsHostValue = string | number | boolean | null;
 
+/** A Dart object the engine handed over as a proxy (spec 159). Its members
+ * dispatch to the owning Dart module: reads consult the adapter, unknown
+ * members become callable methods. Do not structural-type it — the class is
+ * native ("DartObject") and never serializes. */
+interface FjsDartObject {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the
+  // shape is whatever the registered Dart module exposes
+  [member: string]: any;
+}
+
+/** A JS function that crossed into Dart as a callback (spec 159). */
+type FjsCallbackFn = (...args: never[]) => unknown;
+
+/** Values accepted by the rich objectCall channel (spec 159): the scalar
+ * v1 set plus Dart-object proxies and callback functions. */
+type FjsObjectValue = FjsHostValue | FjsDartObject | FjsCallbackFn;
+
 interface FjsNativeFns {
   setTimeout(cb: () => void, ms: number): number;
   clearTimeout(id: number): void;
@@ -34,6 +51,12 @@ interface FjsNativeFns {
   /** Calls a Dart-side host module. Synchronous: the Dart handler runs to
    * completion before this returns. */
   invokeHost(name: string, ...args: FjsHostValue[]): unknown;
+  /** The rich sibling of invokeHost (spec 159): Dart objects cross as
+   * proxies, JS functions as callback references, and a Dart Future answer
+   * arrives as a native Promise. `op` is one of the allowlisted
+   * fjs.object.* ops — construct/invoke/get/set/release/callback. Absent on
+   * hosts older than FJS_ABI_VERSION 3. */
+  objectCall?(op: string, ...args: FjsObjectValue[]): unknown;
   /** Binary handles (FJS_ABI_VERSION 2, spec 038): copies the bytes into
    * the VM's table and returns an int id that any host module accepts as a
    * plain scalar. */

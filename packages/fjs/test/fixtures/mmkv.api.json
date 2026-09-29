@@ -1,0 +1,1524 @@
+{
+  "package": "mmkv",
+  "entry": "package:mmkv/mmkv.dart",
+  "types": [
+    "MMBuffer",
+    "MMKV",
+    "MMKVHandler",
+    "MMKVLogLevel",
+    "MMKVMode",
+    "MMKVRecoverStrategic",
+    "NameSpace"
+  ],
+  "classes": [
+    {
+      "name": "MMBuffer",
+      "constructors": [
+        {
+          "params": [
+            {
+              "name": "length",
+              "type": {
+                "k": "int"
+              },
+              "named": false,
+              "required": true
+            }
+          ]
+        }
+      ],
+      "statics": [
+        {
+          "name": "fromList",
+          "params": [
+            {
+              "name": "list",
+              "type": {
+                "k": "list",
+                "e": {
+                  "k": "int"
+                },
+                "n": true
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "cls",
+            "pkg": "mmkv",
+            "name": "MMBuffer",
+            "n": true
+          }
+        }
+      ],
+      "methods": [
+        {
+          "name": "destroy",
+          "params": [],
+          "returns": {
+            "k": "void"
+          }
+        }
+      ],
+      "getters": [
+        {
+          "name": "length",
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "isFromNative",
+          "returns": {
+            "k": "bool"
+          }
+        }
+      ],
+      "setters": []
+    },
+    {
+      "name": "MMKV",
+      "constructors": [
+        {
+          "params": [
+            {
+              "name": "mmapID",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "mode",
+              "type": {
+                "k": "cls",
+                "pkg": "mmkv",
+                "name": "MMKVMode"
+              },
+              "named": true,
+              "required": false,
+              "default": "MMKVMode.SINGLE_PROCESS_MODE"
+            },
+            {
+              "name": "cryptKey",
+              "type": {
+                "k": "string",
+                "n": true
+              },
+              "named": true,
+              "required": false
+            },
+            {
+              "name": "aes256",
+              "type": {
+                "k": "bool"
+              },
+              "named": true,
+              "required": false,
+              "default": "false"
+            },
+            {
+              "name": "rootDir",
+              "type": {
+                "k": "string",
+                "n": true
+              },
+              "named": true,
+              "required": false
+            },
+            {
+              "name": "expectedCapacity",
+              "type": {
+                "k": "int"
+              },
+              "named": true,
+              "required": false,
+              "default": "0"
+            },
+            {
+              "name": "readOnly",
+              "type": {
+                "k": "bool"
+              },
+              "named": true,
+              "required": false,
+              "default": "false"
+            },
+            {
+              "name": "enableKeyExpire",
+              "type": {
+                "k": "bool",
+                "n": true
+              },
+              "named": true,
+              "required": false
+            },
+            {
+              "name": "expiredInSeconds",
+              "type": {
+                "k": "int"
+              },
+              "named": true,
+              "required": false,
+              "default": "0"
+            },
+            {
+              "name": "enableCompareBeforeSet",
+              "type": {
+                "k": "bool"
+              },
+              "named": true,
+              "required": false,
+              "default": "false"
+            },
+            {
+              "name": "itemSizeLimit",
+              "type": {
+                "k": "int"
+              },
+              "named": true,
+              "required": false,
+              "default": "0"
+            }
+          ]
+        }
+      ],
+      "statics": [
+        {
+          "name": "initialize",
+          "params": [
+            {
+              "name": "rootDir",
+              "type": {
+                "k": "string",
+                "n": true
+              },
+              "named": true,
+              "required": false
+            },
+            {
+              "name": "groupDir",
+              "type": {
+                "k": "string",
+                "n": true
+              },
+              "named": true,
+              "required": false
+            }
+          ],
+          "returns": {
+            "k": "future",
+            "t": {
+              "k": "string"
+            }
+          }
+        },
+        {
+          "name": "nameSpace",
+          "params": [
+            {
+              "name": "path",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "cls",
+            "pkg": "mmkv",
+            "name": "NameSpace"
+          }
+        },
+        {
+          "name": "defaultNameSpace",
+          "params": [],
+          "returns": {
+            "k": "cls",
+            "pkg": "mmkv",
+            "name": "NameSpace"
+          }
+        },
+        {
+          "name": "defaultMMKV",
+          "params": [
+            {
+              "name": "cryptKey",
+              "type": {
+                "k": "string",
+                "n": true
+              },
+              "named": true,
+              "required": false
+            },
+            {
+              "name": "aes256",
+              "type": {
+                "k": "bool"
+              },
+              "named": true,
+              "required": false,
+              "default": "false"
+            },
+            {
+              "name": "expectedCapacity",
+              "type": {
+                "k": "int"
+              },
+              "named": true,
+              "required": false,
+              "default": "0"
+            },
+            {
+              "name": "enableKeyExpire",
+              "type": {
+                "k": "bool",
+                "n": true
+              },
+              "named": true,
+              "required": false
+            },
+            {
+              "name": "expiredInSeconds",
+              "type": {
+                "k": "int"
+              },
+              "named": true,
+              "required": false,
+              "default": "0"
+            },
+            {
+              "name": "enableCompareBeforeSet",
+              "type": {
+                "k": "bool"
+              },
+              "named": true,
+              "required": false,
+              "default": "false"
+            },
+            {
+              "name": "itemSizeLimit",
+              "type": {
+                "k": "int"
+              },
+              "named": true,
+              "required": false,
+              "default": "0"
+            }
+          ],
+          "returns": {
+            "k": "cls",
+            "pkg": "mmkv",
+            "name": "MMKV"
+          }
+        },
+        {
+          "name": "backupOneToDirectory",
+          "params": [
+            {
+              "name": "mmapID",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "dstDir",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "rootDir",
+              "type": {
+                "k": "string",
+                "n": true
+              },
+              "named": true,
+              "required": false
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "restoreOneMMKVFromDirectory",
+          "params": [
+            {
+              "name": "mmapID",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "srcDir",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "rootDir",
+              "type": {
+                "k": "string",
+                "n": true
+              },
+              "named": true,
+              "required": false
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "backupAllToDirectory",
+          "params": [
+            {
+              "name": "dstDir",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "restoreAllFromDirectory",
+          "params": [
+            {
+              "name": "srcDir",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "isFileValid",
+          "params": [
+            {
+              "name": "mmapID",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "rootDir",
+              "type": {
+                "k": "string",
+                "n": true
+              },
+              "named": true,
+              "required": false
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "removeStorage",
+          "params": [
+            {
+              "name": "mmapID",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "rootDir",
+              "type": {
+                "k": "string",
+                "n": true
+              },
+              "named": true,
+              "required": false
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "checkExist",
+          "params": [
+            {
+              "name": "mmapID",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "rootDir",
+              "type": {
+                "k": "string",
+                "n": true
+              },
+              "named": true,
+              "required": false
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "groupPath",
+          "params": [],
+          "returns": {
+            "k": "string",
+            "n": true
+          }
+        }
+      ],
+      "methods": [
+        {
+          "name": "encodeBool",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "value",
+              "type": {
+                "k": "bool"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "expireDurationInSecond",
+              "type": {
+                "k": "int",
+                "n": true
+              },
+              "named": false,
+              "required": false
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "decodeBool",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "defaultValue",
+              "type": {
+                "k": "bool"
+              },
+              "named": true,
+              "required": false,
+              "default": "false"
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "encodeInt32",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "value",
+              "type": {
+                "k": "int"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "expireDurationInSecond",
+              "type": {
+                "k": "int",
+                "n": true
+              },
+              "named": false,
+              "required": false
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "decodeInt32",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "defaultValue",
+              "type": {
+                "k": "int"
+              },
+              "named": true,
+              "required": false,
+              "default": "0"
+            }
+          ],
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "encodeInt",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "value",
+              "type": {
+                "k": "int"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "expireDurationInSecond",
+              "type": {
+                "k": "int",
+                "n": true
+              },
+              "named": false,
+              "required": false
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "decodeInt",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "defaultValue",
+              "type": {
+                "k": "int"
+              },
+              "named": true,
+              "required": false,
+              "default": "0"
+            }
+          ],
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "encodeDouble",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "value",
+              "type": {
+                "k": "num"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "expireDurationInSecond",
+              "type": {
+                "k": "int",
+                "n": true
+              },
+              "named": false,
+              "required": false
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "decodeDouble",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "defaultValue",
+              "type": {
+                "k": "num"
+              },
+              "named": true,
+              "required": false,
+              "default": "0"
+            }
+          ],
+          "returns": {
+            "k": "num"
+          }
+        },
+        {
+          "name": "encodeString",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "value",
+              "type": {
+                "k": "string",
+                "n": true
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "expireDurationInSecond",
+              "type": {
+                "k": "int",
+                "n": true
+              },
+              "named": false,
+              "required": false
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "decodeString",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "string",
+            "n": true
+          }
+        },
+        {
+          "name": "encodeBytes",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "value",
+              "type": {
+                "k": "cls",
+                "pkg": "mmkv",
+                "name": "MMBuffer",
+                "n": true
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "expireDurationInSecond",
+              "type": {
+                "k": "int",
+                "n": true
+              },
+              "named": false,
+              "required": false
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "decodeBytes",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "cls",
+            "pkg": "mmkv",
+            "name": "MMBuffer",
+            "n": true
+          }
+        },
+        {
+          "name": "reKey",
+          "params": [
+            {
+              "name": "cryptKey",
+              "type": {
+                "k": "string",
+                "n": true
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "aes256",
+              "type": {
+                "k": "bool"
+              },
+              "named": true,
+              "required": false,
+              "default": "false"
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "checkReSetCryptKey",
+          "params": [
+            {
+              "name": "cryptKey",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "aes256",
+              "type": {
+                "k": "bool"
+              },
+              "named": true,
+              "required": false,
+              "default": "false"
+            }
+          ],
+          "returns": {
+            "k": "void"
+          }
+        },
+        {
+          "name": "valueSize",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "actualSize",
+              "type": {
+                "k": "bool"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "writeValueToNativeBuffer",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "buffer",
+              "type": {
+                "k": "cls",
+                "pkg": "mmkv",
+                "name": "MMBuffer"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "containsKey",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "removeValue",
+          "params": [
+            {
+              "name": "key",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "void"
+          }
+        },
+        {
+          "name": "removeValues",
+          "params": [
+            {
+              "name": "keys",
+              "type": {
+                "k": "list",
+                "e": {
+                  "k": "string"
+                }
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "void"
+          }
+        },
+        {
+          "name": "clearAll",
+          "params": [
+            {
+              "name": "keepSpace",
+              "type": {
+                "k": "bool"
+              },
+              "named": true,
+              "required": false,
+              "default": "false"
+            }
+          ],
+          "returns": {
+            "k": "void"
+          }
+        },
+        {
+          "name": "sync",
+          "params": [
+            {
+              "name": "sync",
+              "type": {
+                "k": "bool"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "void"
+          }
+        },
+        {
+          "name": "clearMemoryCache",
+          "params": [],
+          "returns": {
+            "k": "void"
+          }
+        },
+        {
+          "name": "trim",
+          "params": [],
+          "returns": {
+            "k": "void"
+          }
+        },
+        {
+          "name": "importFrom",
+          "params": [
+            {
+              "name": "src",
+              "type": {
+                "k": "cls",
+                "pkg": "mmkv",
+                "name": "MMKV"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "close",
+          "params": [],
+          "returns": {
+            "k": "void"
+          }
+        },
+        {
+          "name": "enableAutoKeyExpire",
+          "params": [
+            {
+              "name": "expiredInSeconds",
+              "type": {
+                "k": "int"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "disableAutoKeyExpire",
+          "params": [],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "enableCompareBeforeSet",
+          "params": [],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "disableCompareBeforeSet",
+          "params": [],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "checkContentChangedByOuterProcess",
+          "params": [],
+          "returns": {
+            "k": "void"
+          }
+        }
+      ],
+      "getters": [
+        {
+          "name": "mmapID",
+          "returns": {
+            "k": "string"
+          }
+        },
+        {
+          "name": "cryptKey",
+          "returns": {
+            "k": "string",
+            "n": true
+          }
+        },
+        {
+          "name": "allKeys",
+          "returns": {
+            "k": "list",
+            "e": {
+              "k": "string"
+            }
+          }
+        },
+        {
+          "name": "allNonExpiredKeys",
+          "returns": {
+            "k": "list",
+            "e": {
+              "k": "string"
+            }
+          }
+        },
+        {
+          "name": "count",
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "countNonExpiredKeys",
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "totalSize",
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "actualSize",
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "isMultiProcess",
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "isReadOnly",
+          "returns": {
+            "k": "bool"
+          }
+        }
+      ],
+      "setters": []
+    },
+    {
+      "name": "MMKVHandler",
+      "constructors": [
+        {
+          "params": []
+        }
+      ],
+      "statics": [],
+      "methods": [
+        {
+          "name": "wantLogRedirect",
+          "params": [],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "wantContentChangeNotification",
+          "params": [],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "onContentChangedByOuterProcess",
+          "params": [
+            {
+              "name": "mmapID",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "void"
+          }
+        },
+        {
+          "name": "onMMKVContentLoadSuccessfully",
+          "params": [
+            {
+              "name": "mmapID",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "void"
+          }
+        }
+      ],
+      "getters": [],
+      "setters": []
+    },
+    {
+      "name": "NameSpace",
+      "constructors": [
+        {
+          "params": [
+            {
+              "name": "dir",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            }
+          ]
+        }
+      ],
+      "statics": [],
+      "methods": [
+        {
+          "name": "mmkv",
+          "params": [
+            {
+              "name": "mmapID",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "mode",
+              "type": {
+                "k": "cls",
+                "pkg": "mmkv",
+                "name": "MMKVMode"
+              },
+              "named": true,
+              "required": false,
+              "default": "MMKVMode.SINGLE_PROCESS_MODE"
+            },
+            {
+              "name": "cryptKey",
+              "type": {
+                "k": "string",
+                "n": true
+              },
+              "named": true,
+              "required": false
+            },
+            {
+              "name": "aes256",
+              "type": {
+                "k": "bool"
+              },
+              "named": true,
+              "required": false,
+              "default": "false"
+            },
+            {
+              "name": "expectedCapacity",
+              "type": {
+                "k": "int"
+              },
+              "named": true,
+              "required": false,
+              "default": "0"
+            },
+            {
+              "name": "readOnly",
+              "type": {
+                "k": "bool"
+              },
+              "named": true,
+              "required": false,
+              "default": "false"
+            },
+            {
+              "name": "enableKeyExpire",
+              "type": {
+                "k": "bool",
+                "n": true
+              },
+              "named": true,
+              "required": false
+            },
+            {
+              "name": "expiredInSeconds",
+              "type": {
+                "k": "int"
+              },
+              "named": true,
+              "required": false,
+              "default": "0"
+            },
+            {
+              "name": "enableCompareBeforeSet",
+              "type": {
+                "k": "bool"
+              },
+              "named": true,
+              "required": false,
+              "default": "false"
+            },
+            {
+              "name": "itemSizeLimit",
+              "type": {
+                "k": "int"
+              },
+              "named": true,
+              "required": false,
+              "default": "0"
+            }
+          ],
+          "returns": {
+            "k": "cls",
+            "pkg": "mmkv",
+            "name": "MMKV"
+          }
+        },
+        {
+          "name": "backupOneToDirectory",
+          "params": [
+            {
+              "name": "mmapID",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "dstDir",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "restoreOneMMKVFromDirectory",
+          "params": [
+            {
+              "name": "mmapID",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            },
+            {
+              "name": "srcDir",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "isFileValid",
+          "params": [
+            {
+              "name": "mmapID",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "removeStorage",
+          "params": [
+            {
+              "name": "mmapID",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        },
+        {
+          "name": "checkExist",
+          "params": [
+            {
+              "name": "mmapID",
+              "type": {
+                "k": "string"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "bool"
+          }
+        }
+      ],
+      "getters": [
+        {
+          "name": "rootDir",
+          "returns": {
+            "k": "string"
+          }
+        }
+      ],
+      "setters": []
+    }
+  ],
+  "functions": [],
+  "skipped": [
+    {
+      "what": "MMBuffer.asList (return)",
+      "why": "unsupported type Uint8List?"
+    },
+    {
+      "what": "MMBuffer.takeList (return)",
+      "why": "unsupported type Uint8List?"
+    },
+    {
+      "what": "MMBuffer.pointer",
+      "why": "unsupported type Pointer<Uint8>?"
+    },
+    {
+      "what": "MMKV(recover)",
+      "why": "unsupported type MMKVRecoverStrategic?"
+    },
+    {
+      "what": "MMKV(logLevel)",
+      "why": "unsupported type MMKVLogLevel"
+    },
+    {
+      "what": "MMKV(handler)",
+      "why": "unsupported type MMKVHandler?"
+    },
+    {
+      "what": "MMKV(recover)",
+      "why": "unsupported type MMKVRecoverStrategic?"
+    },
+    {
+      "what": "MMKVHandler(level)",
+      "why": "unsupported type MMKVLogLevel"
+    },
+    {
+      "what": "MMKVHandler.onMMKVCRCCheckFail (return)",
+      "why": "unsupported type MMKVRecoverStrategic"
+    },
+    {
+      "what": "MMKVHandler.onMMKVFileLengthError (return)",
+      "why": "unsupported type MMKVRecoverStrategic"
+    },
+    {
+      "what": "MMKVLogLevel",
+      "why": "EnumElementImpl (only classes and functions bind in v1)"
+    },
+    {
+      "what": "MMKVMode",
+      "why": "EnumElementImpl (only classes and functions bind in v1)"
+    },
+    {
+      "what": "MMKVRecoverStrategic",
+      "why": "EnumElementImpl (only classes and functions bind in v1)"
+    },
+    {
+      "what": "NameSpace(recover)",
+      "why": "unsupported type MMKVRecoverStrategic?"
+    }
+  ]
+}

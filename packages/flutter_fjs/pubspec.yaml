@@ -58,6 +58,9 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # the object-ABI tests drive a real pub package through the generated
+  # adapter (test/fixtures/mmkv_objects.g.dart) — see specs/160
+  mmkv: any
 
 flutter:
   plugin:

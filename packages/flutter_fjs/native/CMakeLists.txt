@@ -133,7 +133,8 @@ endif()
 #                        module loaded; contains no inspector, no socket.
 #   debugger-plugin.cpp  + the PrimJS inspector objects => libfjs_debugger,
 #                        which release builds simply do not ship.
-set(FJS_ENGINE_SOURCES src/vm.cpp src/natives.cpp src/value.cpp src/debugger-glue.cpp)
+set(FJS_ENGINE_SOURCES src/vm.cpp src/natives.cpp src/value.cpp src/object_abi.cpp
+                    src/debugger-glue.cpp)
 add_library(fjs_core STATIC ${FJS_ENGINE_SOURCES})
 target_include_directories(fjs_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include

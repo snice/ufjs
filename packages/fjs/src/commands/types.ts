@@ -16,6 +16,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { colorByLevel } from '../terminal/colors.js';
+import {
+  OBJECT_TYPES_FILE,
+  loadCachedDumps,
+  objectTypesSource,
+} from '../project/autoimport.js';
 import { routeTypesSource, scanPages, ROUTE_TYPES_FILE } from '../project/pages.js';
 import { assetTypesSource, scanLocalAssets, ASSET_TYPES_FILE } from '../project/assets.js';
 import {
@@ -62,6 +67,13 @@ function generators(root: string): Generated[] {
     {
       file: MODULE_COMPONENT_TYPES_FILE,
       compute: () => (hasComponents ? moduleComponentTypesSource(root, modules) : null),
+    },
+    {
+      // autoimport types come from the cached dumps only — computing them
+      // never invokes dart, so this works on web-only projects too. No
+      // cache means nothing to declare.
+      file: OBJECT_TYPES_FILE,
+      compute: () => objectTypesSource(loadCachedDumps(root)),
     },
   ];
 }

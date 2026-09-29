@@ -276,3 +276,73 @@ JS    pending 表按 callId settle
 - hello-fjs 的 `/example/interaction/async-host` 一页可以看到两端的样子：App 走
   `demo.asyncStore`（宿主 main.dart 里的假 KV 存储，每次应答 400ms），
   web 端同一页展示 reject 文案。
+
+## 对象 ABI：Dart 对象作为一等 JS 值（spec 159）
+
+invokeHost 与 invokeHostAsync 解决的是「调一个函数」；对象 ABI 解决的是
+「持有一个对象」。JS 拿到的是真对象——成员访问、方法调用、字段读写、
+传参、回收，都不再经过 JSON：
+
+```ts
+import { dartModule } from 'fjs';
+
+const m = dartModule('mmkv');        // Dart 侧 engine.objects.registerModule('mmkv', …)
+const kv = m.MMKV();                 // 构造 → DartObject 代理（原生 JSClass）
+kv.encodeString('k', 'v');           // 方法 → fjs.object.invoke（零序列化）
+kv.count;                            // 字段读 → fjs.object.get（无本地静默回退）
+kv.decodeString('k');                // Dart `String?` → string | null
+await kv.backupToDirectory('/tmp');  // Dart Future 回答 → 原生 Promise
+kv.setOnChange((n) => …);            // JS 函数 → 引擎持有的回调，Dart 可随时触发
+```
+
+### 传输层（FJS_ABI_VERSION 3）
+
+`FJSValue` 扩了六个 tag（32→40 字节，`fjs.h` 与 `lib/src/ffi.dart` 互为
+镜像）：`FJS_T_HANDLE`（Dart 对象句柄）、`FJS_T_CALLBACK`（**符号即方向**：
+j>0 是引擎持有的 JS 函数，j<0 的 -j 是宿主闭包 id）、`FJS_T_PENDING`
+（Future 回答，后续 `fjs_vm_settle_promise` 结算）、`FJS_T_METHOD`
+（`fjs.object.get` 专属回答：该成员是方法，JS 侧得到绑定的可调用）、
+`FJS_T_JSON`（List/Map 回答：宿主发 JSON 文本，引擎经全局 JSON.parse
+物化成真数组/对象——生成的 d.ts 类型即运行时类型）。富路径上 Dart 的
+null 就是 JS `null`（d.ts 的 `| null` 是真话）；冻结的 invokeHost 路径
+维持 null→undefined 的 v1 行为。
+
+JS → Dart 走新 native `__fjs.fns.objectCall(op, …args)`，op 在 native 侧
+白名单校验（construct/invoke/get/set/release/callback），**全部汇入同一个
+`fjs_invoke_host` 回调**——Dart 侧仍是一个 trampoline 漏斗，`fjs.object.*`
+保留名由 `ObjectBridge` 接管。invokeHost 的标量契约完全冻结：既有宿主模块
+零感知。Dart → JS 新增三个 C 入口：`fjs_vm_call_callback`（同步调 JS 回调，
+结果富值回传）、`fjs_vm_settle_promise`（结算后泵微任务，同 dispatchEvent
+的收尾）、`fjs_vm_release_callback`。
+
+### 生命周期
+
+- **句柄单调不复用**（spec 038 纪律）：stale 句柄第一次使用即抛错，绝不
+  alias 到别的对象。JS 代理对象被 GC 后，finalizer 只把句柄推进
+  `pending_releases` 队列，**泵边界统一 flush**——GC 过程中绝不跨界。
+- **引擎不持有任何跨 GC 的 JSValue**：回调表、promise 的 resolve/reject、
+  绑定方法缓存全部挂在隐藏全局 `\x02fjsObj` 下（`\x02` 前缀对 JS 不可
+  见），GC 顺普通对象图就能看到它们；「释放」是把属性覆写为 null。
+- **跨堆环**（JS 对象 ↔ Dart 对象 ↔ JS 回调）GC 解不了：JS 函数被 dup 强
+  持有后，Dart 侧必须显式 `fjs_vm_release_callback`（或随 VM 销毁清算）。
+- **重入上限 64**：JS→Dart→JS 循环在原生栈打死之前抛
+  "nesting too deep"（style binding 的 busy 先例）。
+- **代理身份按次交叉**：同一个 Dart 对象两次过界得到两个 JS 包装
+  （包装缓存会让 GC 永不回收）；保持不变的是 Dart 对象身份。绑定方法按
+  (handle, member) 缓存共享。
+- **Worker 没有对象模块**：worker 是独立 runtime + 独立注册表，worker 里
+  触碰对象 tag 是响亮的报错。
+
+### 错误路径（v3 顺带修的老洞）
+
+rc != 0 时宿主可以往 `out` 写一个字符串，引擎把它作为 JS 异常的 message
+抛出——此前只有 "host module call failed" 一句话，Dart 侧的细节进不了
+JS（宪法 V）。对象调用与标量 invokeHost 都走了这条路。
+
+### JS 侧 API 与 web 对齐
+
+`@ufjs/runtime` 的 `dartModule<T>(name)`（模块代理，构造器按需缓存）、
+`registerDartModuleStub(name, impl)`（web 替身注册，iconmind 模式）、
+`hasDartObjectSupport()`（能力探测：`abiVersion>=3` 且 `objectCall`
+存在）。模块包自带 `.d.ts` 做声明合并。web 端缺替身：warnOnce 一次后
+throw，不发散架子。

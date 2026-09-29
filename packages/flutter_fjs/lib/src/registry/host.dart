@@ -10,6 +10,7 @@ import 'dart:ffi' as ffi;
 import 'package:ffi/ffi.dart';
 
 import '../ffi.dart';
+import 'object_bridge.dart';
 
 typedef HostHandler = Object? Function(List<Object?> args);
 
@@ -87,16 +88,20 @@ class HostBridge {
   ) {
     try {
       final name = cString(namePtr);
+      // rich = the object-ABI ops (spec 159): their answers may carry the
+      // structured tags (JSON lists/maps), which the frozen scalar modules
+      // must never produce
+      final rich = name.startsWith('fjs.object.');
       final list = <Object?>[];
       for (var i = 0; i < argc; i++) {
-        list.add(_fromNative(args[i]));
+        list.add(_fromNative(args[i], rich));
       }
       final result = _registryForThread!.invoke(name, list);
       if (result.message != null) {
         _writeErrorOut(out, result.message!);
         return -1;
       }
-      _writeOut(out, result.value);
+      _writeOut(out, result.value, rich);
       return 0;
     } catch (e) {
       _writeErrorOut(out, 'host bridge failure: $e');
@@ -112,7 +117,18 @@ class HostBridge {
     _registryForThread = registry;
   }
 
-  static Object? _fromNative(FJSValue v) {
+  /// The object-ABI side of the same story (spec 159): the trampoline
+  /// consults it for the rich tags — FJS_T_HANDLE resolves to the live
+  /// object, functions and objects encode as callback ids / handles. Null
+  /// on hosts without a bridge (workers): touching object tags there is a
+  /// loud error, never a silent misread.
+  static ObjectBridge? bridgeForThread;
+
+  static void installBridge(ObjectBridge bridge) {
+    bridgeForThread = bridge;
+  }
+
+  static Object? _fromNative(FJSValue v, bool rich) {
     switch (v.tag) {
       case fjsTNull:
         return null;
@@ -124,13 +140,29 @@ class HostBridge {
         return v.d;
       case fjsTString:
         return cString(v.s, v.len);
+      case fjsTHandle:
+        final bridge = bridgeForThread;
+        if (bridge == null) {
+          throw StateError('object handle without an ObjectBridge '
+              '(worker VM? spec 159 modules are main-VM only)');
+        }
+        return bridge.instanceFor(v.j);
+      case fjsTCallback:
+        final bridge = bridgeForThread;
+        if (bridge == null) {
+          throw StateError('callback id without an ObjectBridge');
+        }
+        return v.j > 0 ? bridge.callbackFor(v.j) : bridge.closureFor(-v.j);
       default:
-        return null;
+        // FJS_T_PENDING / FJS_T_JSON are reply-only; anything else is a tag
+        // this build does not know — loud, never a silent null.
+        throw StateError('unsupported FJSValue tag ${v.tag}');
     }
   }
 
-  static void _writeOut(ffi.Pointer<FJSValue> out, Object? value) {
+  static void _writeOut(ffi.Pointer<FJSValue> out, Object? value, bool rich) {
     out.ref.tag = fjsTNull;
+    out.ref.j = 0;
     if (value == null) {
       return;
     } else if (value is bool) {
@@ -145,22 +177,39 @@ class HostBridge {
     } else if (value is num) {
       out.ref.tag = fjsTFloat64;
       out.ref.d = value.toDouble();
+    } else if (value is String) {
+      _writeStringValue(out, value);
     } else {
-      // everything else crosses as its utf8 string form (v1 ABI)
-      final str = value is String ? value : value.toString();
-      final units = utf8.encode(str);
-      final p = malloc<ffi.Uint8>(units.length + 1);
-      p.asTypedList(units.length + 1)
-        ..setRange(0, units.length, units)
-        ..[units.length] = 0;
-      out.ref.tag = fjsTString;
-      out.ref.s = p;
-      out.ref.len = units.length;
+      // rich values (spec 159) — a bridge is prerequisite for any of these
+      // to exist, but stay defensive: without one, keep the v1 string rule.
+      final bridge = bridgeForThread;
+      if (bridge != null) {
+        bridge.writeValue(out, value, rich);
+        return;
+      }
+      _writeStringValue(out, value.toString());
     }
   }
 
+  /// out strings are malloc'ed here; the engine free()s them after
+  /// conversion (the fjs.h contract).
+  static void _writeStringValue(ffi.Pointer<FJSValue> out, String str) {
+    final units = utf8.encode(str);
+    final p = malloc<ffi.Uint8>(units.length + 1);
+    p.asTypedList(units.length + 1)
+      ..setRange(0, units.length, units)
+      ..[units.length] = 0;
+    out.ref.tag = fjsTString;
+    out.ref.s = p;
+    out.ref.len = units.length;
+  }
+
+  /// v3 (spec 159): the failure message rides back to JS as the exception
+  /// text instead of dying in the console (constitution V). Same malloc
+  /// contract as _writeStringValue — the engine frees it on the error path.
   static void _writeErrorOut(ffi.Pointer<FJSValue> out, String message) {
     out.ref.tag = fjsTNull;
-    // error details also go to the console via log callback in engine
+    out.ref.j = 0;
+    _writeStringValue(out, message);
   }
 }

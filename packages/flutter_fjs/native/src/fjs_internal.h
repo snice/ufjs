@@ -48,6 +48,36 @@ struct FjsStyleBinding {
  * module attached — the engine is fully inert on this path. */
 struct FjsDebuggerTransport;
 
+/* Object ABI state (spec 159). The tables here hold NO JSValues of their
+ * own: every registered JS callback, every promise's resolving functions
+ * and every cached bound method lives as a property of one hidden root
+ * object hanging off the globalThis, so the GC sees all of them through the
+ * normal object graph and no class needs a gc_mark. "Releasing" overwrites
+ * the property with null — dead slots accumulate until the VM dies, which
+ * keeps the roots O(total callbacks ever made) instead of O(live), and
+ * avoids a delete-property facade across both engines. */
+struct FjsObjectAbi {
+    fjsengine::ClassID proxy_class = 0;   /* "DartObject" — handle carrier */
+    fjsengine::ClassID method_class = 0;  /* bound member function */
+    fjsengine::ClassID dartfn_class = 0;  /* host-closure wrapper function */
+    int64_t next_callback_id = 1; /* engine-held JS functions (positive) */
+    int64_t next_call_id = 1;     /* pending promise settle ids */
+    /* hidden global: "\x02fjsObj" -> { c: callback id -> fn,
+     * p: settle id -> {r: resolve, j: reject},
+     * m: "handle\x1fmember" -> bound fn }. Owned reference, freed at
+     * teardown before the context goes. */
+    fjsengine::Value roots = fjsengine::undefined();
+    /* GC finalizers only enqueue here; the flush (which crosses into the
+     * host) runs at pump boundaries and objectCall entry — never during a
+     * collection pass. Object handles are > 0; host-closure releases are
+     * reported negative (the FJS_T_CALLBACK sign convention). */
+    std::vector<int64_t> pending_releases;
+    bool flushing = false;
+    /* JS -> Dart -> JS alternation guard, shared by objectCall and
+     * fjs_vm_call_callback (the style binding's `busy` precedent). */
+    int reentry_depth = 0;
+};
+
 struct FJSVM {
     fjsengine::Runtime *rt = nullptr;
     fjsengine::Context *ctx = nullptr;
@@ -70,6 +100,7 @@ struct FJSVM {
     /* spec 111: rejections still unhandled, reported after each job drain */
     fjsengine::RejectionState rejections;
     FjsStyleBinding style;
+    FjsObjectAbi object_abi;
 };
 
 namespace fjs {
@@ -103,6 +134,49 @@ void transport_closed(FJSVM *vm);
 bool to_fjs_value(FJSVM *vm, fjsengine::ValueConst v, FJSValue *out);
 void fjs_free_abi_value(FJSVM *vm, FJSValue *v);
 fjsengine::Value from_fjs_value(FJSVM *vm, const FJSValue *v);
+
+/* object_abi.cpp: the structured object ABI (spec 159). The rich conversions
+ * extend the scalar ones — proxies to FJS_T_HANDLE, functions to
+ * FJS_T_CALLBACK (sign convention in fjs.h), plus the PENDING / METHOD
+ * replies — and every op funnels through the same fjs_invoke_host callback
+ * under the reserved "fjs.object.*" module names. */
+namespace obj {
+
+/* Registers the three classes and the hidden roots object. */
+bool install(FJSVM *vm);
+/* Drops the roots reference; called once at fjs_vm_destroy. */
+void teardown(FJSVM *vm);
+/* Drains the GC-queued releases into the host. Called at pump boundaries
+ * and at object-call entry — never from a finalizer, never reentrant. */
+void flush_pending_releases(FJSVM *vm);
+
+/* True when v is a DartObject proxy; *handle receives its id. */
+bool proxy_handle(FJSVM *vm, fjsengine::ValueConst v, int64_t *handle);
+/* Rich JS -> FJSValue. Returns false when v is scalar-shaped and the plain
+ * to_fjs_value should run. */
+bool to_rich(FJSVM *vm, fjsengine::ValueConst v, FJSValue *out);
+/* Rich FJSValue -> JS; plain-scalar tags delegate to from_fjs_value.
+ * (method_handle, method_member) give an FJS_T_METHOD reply the receiver it
+ * needs to build a bound function — only the fjs.object.get op passes them. */
+fjsengine::Value from_rich(FJSVM *vm, const FJSValue *v,
+                           int64_t method_handle, const char *method_member);
+
+/* The funnel every object op takes: flush GC-queued releases, guard
+ * reentry, convert argv richly, call the host's fjs_invoke_host under
+ * "fjs.object.<op>", convert the result back. pre_args are already-encoded
+ * FJSValues (their strings are NOT freed here — they outlive the call). */
+fjsengine::Value dispatch_op(FJSVM *vm, const char *op, int pre_argc,
+                             const FJSValue *pre_args, int argc,
+                             fjsengine::ValueConst *argv);
+
+/* The exported C entry points (fjs.h) minus the FJSVM-less signature. */
+int32_t call_callback(FJSVM *vm, int64_t cb_id, int32_t argc,
+                      const FJSValue *args, FJSValue *out);
+int32_t settle_promise(FJSVM *vm, int64_t call_id, int32_t ok,
+                       const FJSValue *value);
+int32_t release_callback(FJSVM *vm, int64_t cb_id);
+
+} // namespace obj
 
 } // namespace fjs
 

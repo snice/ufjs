@@ -12,10 +12,12 @@
 #include <atomic>
 #include <cstdio>
 #include <cctype>
+#include <cstddef>
 #include <cstring>
 #include <cstdlib>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #ifndef _WIN32
@@ -91,6 +93,172 @@ static void eval_ok(FJSVM *vm, const char *src) {
     int32_t rc = fjs_vm_eval_source(vm, (const uint8_t *)src, (int32_t)strlen(src), "test.js");
     if (rc != 0) printf("  eval error: %s\n", fjs_last_error(vm));
     CHECK(rc == 0, "eval succeeds");
+}
+
+/* ---- object ABI (spec 159) fake bridge ------------------------------------ */
+/* A minimal ObjectBridge in C: enough of construct/invoke/get/set/release/
+ * callback to exercise proxies, callbacks, promises, GC release and stale
+ * handles without a Dart host. */
+static_assert(sizeof(FJSValue) == 40, "FJSValue layout: tag@0 i@4 d@8 s@16 len@24 j@32");
+static_assert(offsetof(FJSValue, j) == 32, "FJSValue.j must sit at 32");
+
+struct FakeObject {
+    int value = 0;
+    bool released = false;
+};
+static std::unordered_map<int64_t, FakeObject> g_objects;
+static int64_t g_next_handle = 1;
+static int64_t g_next_call = 100;
+static int64_t g_pending_call = 0;
+static int64_t g_last_cb_id = 0;      /* JS fn passed to onTick */
+static int64_t g_last_dart_id = -1;   /* host closure the JS side called */
+static int g_seen_arg_tag = -1;
+static int64_t g_seen_arg_handle = -1;
+static std::vector<int64_t> g_released_handles;
+static FJSVM *g_obj_vm = nullptr;     /* for fjs_vm_call_callback in "loop" */
+
+/* JS numbers cross as FJS_T_FLOAT64 (the scalar path never emits INT32);
+ * only values the native side built (callback ids, handles) are INT32. */
+static int as_int(const FJSValue &v) {
+    return v.tag == FJS_T_INT32 ? v.i : (v.tag == FJS_T_FLOAT64 ? (int)v.d : 0);
+}
+static bool is_num(const FJSValue &v) {
+    return v.tag == FJS_T_INT32 || v.tag == FJS_T_FLOAT64;
+}
+
+static std::string g_innermost_error;
+static int32_t on_invoke_host_object(const char *name, int32_t argc,
+                                     const FJSValue *args, FJSValue *out) {
+    std::string n = name;
+    out->tag = FJS_T_NULL;
+    if (n == "fjs.object.construct") {
+        FakeObject o;
+        o.value = argc > 2 && is_num(args[2]) ? as_int(args[2]) : 0;
+        int64_t h = g_next_handle++;
+        g_objects[h] = o;
+        out->tag = FJS_T_HANDLE;
+        out->j = h;
+        return 0;
+    }
+    if (n == "fjs.object.invoke") {
+        int64_t h = args[0].j;
+        auto it = g_objects.find(h);
+        std::string member = args[1].s ? args[1].s : "";
+        if (it == g_objects.end() || it->second.released) {
+            out->tag = FJS_T_STRING;
+            out->s = strdup("object released");
+            out->len = (int32_t)strlen(out->s);
+            return -1;
+        }
+        if (member == "add") {
+            it->second.value += as_int(args[2]);
+            out->tag = FJS_T_INT32;
+            out->i = it->second.value;
+            return 0;
+        }
+        if (member == "takeRef") {
+            g_seen_arg_tag = args[2].tag;
+            g_seen_arg_handle = args[2].tag == FJS_T_HANDLE ? args[2].j : -1;
+            return 0;
+        }
+        if (member == "onTick") {
+            g_last_cb_id = args[2].tag == FJS_T_CALLBACK ? args[2].j : 0;
+            return 0;
+        }
+        if (member == "getPromise") {
+            g_pending_call = g_next_call++;
+            out->tag = FJS_T_PENDING;
+            out->j = g_pending_call;
+            return 0;
+        }
+        if (member == "makeFn") {
+            out->tag = FJS_T_CALLBACK;
+            out->j = -7; /* host closure id 7 */
+            return 0;
+        }
+        if (member == "loop") {
+            /* re-entry bomb: the callback calls back in; the guard's
+             * message rides back as the JS exception text */
+            FJSValue ret{};
+            int32_t rc = fjs_vm_call_callback(g_obj_vm, g_last_cb_id, 0, nullptr, &ret);
+            if (rc != 0) {
+                /* first failure = innermost frame: that is where the
+                 * depth guard fired, before the messages start nesting */
+                if (g_innermost_error.empty()) {
+                    g_innermost_error = fjs_last_error(g_obj_vm);
+                }
+                out->tag = FJS_T_STRING;
+                out->s = strdup(fjs_last_error(g_obj_vm));
+                out->len = (int32_t)strlen(out->s);
+                return -1;
+            }
+            return 0;
+        }
+        if (member == "echoBack") {
+            *out = args[2]; /* identity probe: the value crosses back */
+            return 0;
+        }
+        if (member == "boom") {
+            out->tag = FJS_T_STRING;
+            out->s = strdup("kaboom: the detail");
+            out->len = (int32_t)strlen(out->s);
+            return -1;
+        }
+        out->tag = FJS_T_STRING;
+        out->s = strdup("no such member");
+        out->len = (int32_t)strlen(out->s);
+        return -1;
+    }
+    if (n == "fjs.object.get") {
+        auto it = g_objects.find(args[0].j);
+        std::string member = args[1].s ? args[1].s : "";
+        if (it != g_objects.end() && member == "value") {
+            out->tag = FJS_T_INT32;
+            out->i = it->second.value;
+            return 0;
+        }
+        if (it != g_objects.end() && member == "allKeys") {
+            /* FJS_T_JSON: the engine parses it into a real JS array */
+            out->tag = FJS_T_JSON;
+            out->s = strdup("[\"a\",\"b\"]");
+            out->len = (int32_t)strlen(out->s);
+            return 0;
+        }
+        out->tag = FJS_T_METHOD; /* everything else is a method here */
+        return 0;
+    }
+    if (n == "fjs.object.set") {
+        auto it = g_objects.find(args[0].j);
+        std::string member = args[1].s ? args[1].s : "";
+        if (it != g_objects.end() && member == "value" && is_num(args[2])) {
+            it->second.value = as_int(args[2]);
+        }
+        return 0;
+    }
+    if (n == "fjs.object.release") {
+        int64_t h = args[0].j;
+        auto it = g_objects.find(h);
+        if (it == g_objects.end() || it->second.released) return -1;
+        it->second.released = true;
+        g_released_handles.push_back(h);
+        return 0;
+    }
+    if (n == "fjs.object.callback") {
+        g_last_dart_id = args[0].i;
+        int sum = 0;
+        for (int32_t i = 1; i < argc; i++) {
+            if (is_num(args[i])) sum += as_int(args[i]);
+        }
+        out->tag = FJS_T_INT32;
+        out->i = sum;
+        return 0;
+    }
+    if (n == "fjs.object.releaseCallback") return 0;
+    /* plain invokeHost error-message path (v3) */
+    out->tag = FJS_T_STRING;
+    out->s = strdup("module exploded: the reason");
+    out->len = (int32_t)strlen(out->s);
+    return -1;
 }
 
 int main() {
@@ -417,6 +585,202 @@ int main() {
     }
 #endif
 #endif
+
+    /* ---- object ABI (spec 159) ---- */
+    {
+        FJSVM *ovm = fjs_vm_create();
+        CHECK(ovm != nullptr, "object-abi vm created");
+        fjs_set_callbacks(ovm, on_log, on_ui_ops, on_invoke_host_object);
+        g_obj_vm = ovm;
+
+        /* construct: JS gets a proxy, and the value constructor arg crossed
+         * as a plain scalar */
+        eval_ok(ovm, "globalThis.c = __fjs.fns.objectCall('construct', 'test', 'Counter', 10)");
+        eval_ok(ovm, "console.log('ctor kind:', typeof c)");
+        CHECK(g_logs.back().find("object") != std::string::npos,
+              "constructed Dart object arrives as an object");
+
+        /* bound method: get('add') answers FJS_T_METHOD, the call funnels */
+        eval_ok(ovm, "globalThis.sum = c.add(5)");
+        CHECK(g_objects[1].value == 15, "invoke reached the fake bridge");
+        eval_ok(ovm, "console.log('sum:', sum)");
+        CHECK(g_logs.back().find("sum: 15") != std::string::npos,
+              "bound method returns the Dart result");
+
+        /* field read: get('value') answers the scalar */
+        eval_ok(ovm, "console.log('field:', c.value)");
+        CHECK(g_logs.back().find("field: 15") != std::string::npos,
+              "field read crosses fjs.object.get");
+
+        /* FJS_T_JSON answers materialize as real JS values */
+        eval_ok(ovm, "console.log('json:', c.allKeys, c.allKeys.length)");
+        CHECK(g_logs.back().find("json: a,b 2") != std::string::npos,
+              "FJS_T_JSON answer becomes a real JS array");
+
+        /* field write: no silent local property — funnels to Dart */
+        eval_ok(ovm, "c.value = 42; console.log('after set:', c.value)");
+        CHECK(g_logs.back().find("after set: 42") != std::string::npos,
+              "field write funnels to fjs.object.set");
+
+        /* reserved members stay native (an `await proxy` must be a no-op,
+         * not a Dart call) */
+        eval_ok(ovm, "console.log('then:', c.then)");
+        CHECK(g_logs.back().find("then: undefined") != std::string::npos,
+              "reserved members are not proxied into Dart");
+
+        /* a proxy passed as an argument arrives as FJS_T_HANDLE */
+        eval_ok(ovm, "c.takeRef(c)");
+        CHECK(g_seen_arg_tag == FJS_T_HANDLE && g_seen_arg_handle == 1,
+              "proxy argument crosses as its handle");
+
+        /* a function argument crosses as FJS_T_CALLBACK and the host can
+         * call it back through fjs_vm_call_callback */
+        eval_ok(ovm, "globalThis.cbRan = 0; c.onTick(function (n) { cbRan = n; })");
+        CHECK(g_last_cb_id > 0, "function argument became a callback id");
+        {
+            FJSValue arg{};
+            arg.tag = FJS_T_INT32;
+            arg.i = 7;
+            FJSValue out{};
+            int32_t rc = fjs_vm_call_callback(ovm, g_last_cb_id, 1, &arg, &out);
+            CHECK(rc == 0, "host -> JS callback succeeds");
+            eval_ok(ovm, "console.log('cbRan:', cbRan)");
+            CHECK(g_logs.back().find("cbRan: 7") != std::string("").npos,
+                  "callback received the rich-converted argument");
+            if (out.tag == FJS_T_STRING && out.s) free((void *)out.s);
+
+            /* calling it twice works until it is released */
+            rc = fjs_vm_release_callback(ovm, g_last_cb_id);
+            CHECK(rc == 0, "release_callback drops the engine's reference");
+            rc = fjs_vm_call_callback(ovm, g_last_cb_id, 0, nullptr, &out);
+            CHECK(rc == -1, "calling a released callback is a loud error");
+        }
+
+        /* identity: a function passed in and handed back by Dart is the
+         * very same JS object (positive callback ids round-trip) */
+        eval_ok(ovm,
+                "globalThis.f1 = function () { return 'identity'; };"
+                "c.onTick(f1);"
+                "globalThis.f2 = __fjs.fns.objectCall('invoke', c, 'echoBack', f1);"
+                "console.log('same fn:', f2 === f1)");
+        CHECK(g_logs.back().find("same fn: true") != std::string::npos,
+              "callback identity survives the round trip");
+
+        /* Future: a FJS_T_PENDING reply is a native Promise the host
+         * settles later */
+        eval_ok(ovm,
+                "globalThis.p = c.getPromise();"
+                "p.then(function (v) { console.log('promise got', v); });");
+        eval_ok(ovm, "console.log('isPromise:', p instanceof Promise)");
+        CHECK(g_logs.back().find("isPromise: true") != std::string::npos,
+              "pending reply is a native Promise");
+        {
+            FJSValue v{};
+            v.tag = FJS_T_INT32;
+            v.i = 99;
+            int32_t rc = fjs_vm_settle_promise(ovm, g_pending_call, 1, &v);
+            CHECK(rc == 0, "settle_promise resolves");
+            CHECK(!g_logs.empty() &&
+                      g_logs.back().find("promise got 99") != std::string::npos,
+                  "then-handler ran (pump after settle)");
+
+            rc = fjs_vm_settle_promise(ovm, g_pending_call, 1, &v);
+            CHECK(rc == -1, "double settle is a loud error");
+        }
+        /* rejection path */
+        eval_ok(ovm,
+                "globalThis.p2 = c.getPromise();"
+                "p2.catch(function (e) { console.log('rejected:', String(e)); });");
+        {
+            FJSValue err{};
+            const char *msg = "boom from Dart";
+            char *buf = (char *)malloc(strlen(msg) + 1);
+            memcpy(buf, msg, strlen(msg) + 1);
+            err.tag = FJS_T_STRING;
+            err.s = buf; /* engine free()s it */
+            err.len = (int32_t)strlen(msg);
+            int32_t rc = fjs_vm_settle_promise(ovm, g_pending_call, 0, &err);
+            CHECK(rc == 0, "settle_promise rejects");
+            CHECK(g_logs.back().find("rejected: boom from Dart") != std::string::npos,
+                  "catch-handler got the rejection reason");
+        }
+
+        /* host closure: a negative FJS_T_CALLBACK becomes a callable that
+         * funnels to fjs.object.callback */
+        eval_ok(ovm, "globalThis.dartFn = c.makeFn(); console.log('via dart:', dartFn(3, 4))");
+        CHECK(g_last_dart_id == 7, "wrapper funnels to the closure id");
+        CHECK(g_logs.back().find("via dart: 7") != std::string::npos,
+              "host closure returns its Dart result");
+
+        /* reentry guard: an adapter that ping-pongs JS<->Dart trips the
+         * depth limit instead of the native stack */
+        {
+            eval_ok(ovm, "c.onTick(function loopFn() { c.loop(); })");
+            const char *src =
+                "try { c.loop(); console.log('LOOP-NO-ERROR'); }"
+                "catch (e) { console.log('loop error:', e.message); }";
+            fjs_vm_eval_source(ovm, (const uint8_t *)src, (int32_t)strlen(src), "loop.js");
+            bool terminated = false;
+            for (const auto &l : g_logs) {
+                if (l.find("LOOP-NO-ERROR") != std::string::npos) break;
+                if (l.find("loop error:") != std::string::npos) terminated = true;
+            }
+            CHECK(terminated && g_innermost_error.find("nesting too deep") != std::string::npos,
+                  "reentry depth guard fires before the stack does");
+        }
+
+        /* host error messages surface as the JS exception text (v3) */
+        {
+            const char *src =
+                "try { __fjs.fns.invokeHost('boom'); }"
+                "catch (e) { console.log('caught:', e.message); }";
+            fjs_vm_eval_source(ovm, (const uint8_t *)src, (int32_t)strlen(src), "boom.js");
+            CHECK(g_logs.back().find("caught: host module call failed: module "
+                                     "exploded: the reason") != std::string::npos,
+                  "Dart error message reaches the JS exception");
+        }
+        {
+            eval_ok(ovm, "try { c.boom(); } catch (e) { console.log('obj-caught:', e.message); }");
+            CHECK(g_logs.back().find("obj-caught: object call failed: invoke: "
+                                     "kaboom: the detail") != std::string::npos,
+                  "object-call error message reaches the JS exception");
+        }
+
+        /* GC: dropping the last proxy queues the release; the flush at the
+         * pump boundary tells the host. A bound method captured before the
+         * drop survives and must fail loudly afterwards. */
+        eval_ok(ovm, "globalThis.staleAdd = c.add; c = null; __fjs.fns.gc()");
+        fjs_vm_pump(ovm, fjs_vm_now(ovm));
+        bool released = false;
+        for (int64_t h : g_released_handles) {
+            if (h == 1) released = true;
+        }
+        CHECK(released, "GC'd proxy releases its Dart object at the pump boundary");
+
+        /* stale use after release: loud error, never an alias */
+        {
+            const char *src =
+                "try { staleAdd(1); console.log('STALE-NO-ERROR'); }"
+                "catch (e) { console.log('stale error:', e.message); }";
+            fjs_vm_eval_source(ovm, (const uint8_t *)src, (int32_t)strlen(src), "stale.js");
+            CHECK(g_logs.back().find("stale error:") != std::string::npos &&
+                      g_logs.back().find("STALE-NO-ERROR") == std::string::npos,
+                  "using a released object throws");
+        }
+
+        /* an unknown op is rejected at the native gate */
+        {
+            const char *src =
+                "try { __fjs.fns.objectCall('eval'); }"
+                "catch (e) { console.log('op error:', e.message); }";
+            fjs_vm_eval_source(ovm, (const uint8_t *)src, (int32_t)strlen(src), "op.js");
+            CHECK(g_logs.back().find("op error: objectCall: unknown op") != std::string::npos,
+                  "objectCall ops are allowlisted");
+        }
+
+        fjs_vm_destroy(ovm);
+        g_obj_vm = nullptr;
+    }
 
     fjs_vm_destroy(vm);
     printf("\n%s (%d failure(s))\n", g_failures == 0 ? "ALL PASS" : "FAILURES", g_failures);
