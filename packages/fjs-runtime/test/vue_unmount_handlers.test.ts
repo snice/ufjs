@@ -113,4 +113,36 @@ describe('unmount', () => {
     tapEverything();
     expect(hit.size).toBe(0);
   });
+
+  it('keeps a fired .once armed when an unrelated subtree unmounts', async () => {
+    // onceFired keys are `${id}:${event}`; the subtree walk drops the keys
+    // of the elements it forgets and nothing else — a live element's fired
+    // `.once` must survive a sibling's unmount or the handler re-runs
+    const subtreeGone = ref(false);
+    let taps = 0;
+    const app = createApp({
+      render: () =>
+        h('view', [
+          h('view', { key: 'fixture', onTapOnce: () => taps++ }),
+          subtreeGone.value
+            ? null
+            : h('view', { key: 'subtree', onTapOnce: () => taps++ }, [h('view', { onTapOnce: () => taps++ })]),
+        ]),
+    });
+    app.mount(flutterRoot('view'));
+    await flush();
+
+    // fire every `.once` on the page: three entries in onceFired
+    tapEverything();
+    expect(taps).toBe(3);
+    tapEverything();
+    expect(taps).toBe(3); // fired stays fired
+
+    subtreeGone.value = true;
+    await flush();
+    tapEverything();
+    // the fixture's `.once` is still consumed — the walk only forgot the
+    // subtree's own two keys
+    expect(taps).toBe(3);
+  });
 });

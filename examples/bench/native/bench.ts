@@ -30,6 +30,11 @@ const PASSES = 7;
 const native = styleEngine.nativeAttached;
 const verify = (globalThis as { __fjsNativeStyle?: unknown }).__fjsNativeStyle === 'verify';
 const mode = verify ? 'verify' : native ? 'native' : 'ts';
+// hostile.ts set this before this module evaluated (import order): a fixed
+// element (hoisted → hoistedFrom) and a fired `.once` handler (onceFired)
+// stay alive beside the v-if through every run, so the unmount walk meets
+// both tables non-empty (specs/158)
+const hostile = (globalThis as { __fjsBenchHostile?: unknown }).__fjsBenchHostile === true;
 
 const drain = async () => {
   for (let i = 0; i < 8; i++) await Promise.resolve();
@@ -105,9 +110,29 @@ async function run(label: string, show: { value: boolean }): Promise<void> {
 
 async function main(): Promise<void> {
   const show = ref(false);
-  const App = defineComponent({ setup: () => () => h(Flat, { show: show.value }) });
+  const onceEl = ref<{ id: number } | null>(null);
+  const App = defineComponent({
+    setup: () =>
+      hostile
+        ? () =>
+            h('view', [
+              h(Flat, { show: show.value }),
+              // 2×2: hoists, but is no modal mask — only hoistedFrom fills
+              h('view', { style: { position: 'fixed', left: 0, top: 0, width: 2, height: 2 } }),
+              h('view', { ref: onceEl, onTapOnce: () => {} }),
+            ])
+        : () => h(Flat, { show: show.value }),
+  });
   createApp(App).mount(flutterRoot());
   await drain();
+  if (hostile) {
+    // fire the `.once` once so onceFired holds an entry for the walk to skip
+    const fire = (globalThis as { __fjsDispatchEvent?: (id: number, type: number, payload: string | null) => void })
+      .__fjsDispatchEvent;
+    fire?.(onceEl.value?.id ?? 0, 1, null);
+    await drain();
+    if (!onceEl.value) console.log('[native] hostile: ref missing, onceFired not planted');
+  }
   await run('page', show);
   // flat-bench's second pass: structural + sibling rules exist (matching
   // nothing here), so position and the `+` neighbour join every key
@@ -124,8 +149,11 @@ async function main(): Promise<void> {
   await run('structural', show);
   await run('vapor-structural', vaporShow);
   // every run ends unmounted: what is still registered is the two app roots'
-  // scaffolding, or a leak
-  console.log(`[native] ${mode} elements after all runs: ${styleEngine.stats.elements}`);
+  // scaffolding, or a leak — plus the three hostile fixtures (fixed view,
+  // once view, their overlay host) which outlive every run on purpose
+  console.log(
+    `[native] ${mode} elements after all runs: ${styleEngine.stats.elements}${hostile ? ' (hostile: 3 fixtures expected on top)' : ''}`,
+  );
   if (verify) console.log(`[native] verify ${JSON.stringify(styleEngine.verifyStats)}`);
 }
 

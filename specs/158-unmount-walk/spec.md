@@ -58,3 +58,30 @@
 - elements 三种模式都回到 3；verify 132121 / 2359 / 11160 / 17745 次 0 不一致；`native:on` 交给 Dart 的帧
   139 帧 460484 op 5577940 字节与改前相同。
 - demo verify 里 about 页的 `store.count` 报错在 main 上同样存在（verify 环境没有 store），与本 spec 无关。
+
+## 9. 追加（2026-09-29，复查发现的两处同类扫描）
+
+复查发现卸载链上还有两处「每元素 × 全局表」的扫描，是 §4 手法的漏网：
+
+- `forgetSubtree` 的 `onceFired` 清理：只要 app 里触发过任意一个 `.once`，隐藏 4050 页就是每元素拼一个
+  模板字符串 + 全表 `startsWith`。
+- `hoistedUnder`（nodeOps.remove 每次删除都调）：`hoistedFrom` 在真实 app 里几乎从不为空（fixed NavBar、
+  Toast 都算），每个子树节点扫一遍全表。
+
+改法同 §4：子树 id 收进一个 Set，全局表各扫一遍，嵌套 hoist（弹层里再弹）用不动点多扫几轮。
+
+bench 加 `native:hostile` / `native:hostile-ts` 变体（`native/hostile.ts` 种 flag，App 里挂一个 hoisted 的
+fixed 元素和一个已触发的 `.once`，随 v-if 循环存活）。离线 fjsrun，flat-4050 page unmount（min/med/max ms）：
+
+| | 改前 | 改后 |
+|---|---:|---:|
+| native plain | 3.8 / 3.9 / 4.0 | 3.9 / 4.0 / 4.0（无回归） |
+| native hostile | 10.2 / 10.3 / 10.8 | 6.6 / 6.9 / 7.1 |
+| ts hostile | 11.6 / 11.7 / 12.1 | 8.3 / 8.5 / 8.6 |
+
+- parity hash 六次全为 `48142bbd`；plain 泄漏 3、hostile 泄漏 6（+3 个故意存活的 fixture）。
+- 剩余的 hostile − plain ≈ 2.9 ms 是两次 `Set(ids)` 构建（hoistedUnder 一次、onceFired 清理一次），
+  已从 O(子树×表) 降到 O(子树)；要再压得跨函数共享 Set，收益有限，先不动。
+- `NativeStyleBackend.forgetRemoved` 的四表合一次数检查保持不变：拆成四个 size 标志在表全空时（bench 正是
+  这种）反而每元素多三次分支。
+- 回归测试：`vue_unmount_handlers.test.ts` 加「无关子树卸载不得重新武装已触发的 .once」。

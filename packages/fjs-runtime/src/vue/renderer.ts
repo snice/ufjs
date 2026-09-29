@@ -902,7 +902,6 @@ function forgetSubtree(id: number) {
   const defaults = htmlDefaults.size !== 0;
   const values = textValues.size !== 0;
   const placeholders = placeholderStyled.size !== 0;
-  const once = onceFired.size !== 0;
   const ids: number[] = [];
   const stack = [id];
   while (stack.length) {
@@ -921,7 +920,17 @@ function forgetSubtree(id: number) {
     if (defaults) htmlDefaults.delete(current);
     if (values) textValues.delete(current);
     if (placeholders) placeholderStyled.delete(current);
-    if (once) for (const key of onceFired) if (key.startsWith(`${current}:`)) onceFired.delete(key);
+  }
+  // one pass over onceFired for the whole subtree, not a full-set scan per
+  // element — one fired `.once` anywhere in the app used to cost every
+  // element of a hidden page a template string plus |onceFired| startsWith
+  // (specs/158). Keys spell their node id before the ':'.
+  if (onceFired.size !== 0) {
+    const inSubtree = new Set(ids);
+    for (const key of onceFired) {
+      const c = key.indexOf(':');
+      if (c > 0 && inSubtree.has(Number(key.slice(0, c)))) onceFired.delete(key);
+    }
   }
   // one call each for the whole subtree rather than three per element
   forgetElementStyles(ids);
@@ -1143,19 +1152,35 @@ function dropElement(child: HostNode): void {
  * nested ones included (a popup inside a popup). */
 function hoistedUnder(id: number): number[] {
   if (!hoistedFrom.size) return [];
-  const out: number[] = [];
+  // the subtree's ids first, then hoistedFrom scanned once per nesting level
+  // instead of once per subtree element (specs/158): a fixed NavBar or Toast
+  // anywhere in the app used to make every element of a removed subtree walk
+  // the whole table. `from` joining through an already-found hoist (a popup
+  // in a popup) needs the extra passes; nesting is shallow.
+  const seen = new Set<number>([id]);
   const stack = [id];
   while (stack.length) {
     const current = stack.pop()!;
-    for (const kid of childrenOf.get(current) ?? []) stack.push(kid);
-    for (const [el, from] of hoistedFrom) {
-      if (from === current && el !== id) {
-        out.push(el);
-        stack.push(el);
+    for (const kid of childrenOf.get(current) ?? []) {
+      if (!seen.has(kid)) {
+        seen.add(kid);
+        stack.push(kid);
       }
     }
   }
-  return out;
+  const out: number[] = [];
+  for (;;) {
+    let grew = false;
+    for (const [el, from] of hoistedFrom) {
+      // `from` is null when the logical parent IS the host — never in the set
+      if (from !== null && seen.has(from) && !seen.has(el)) {
+        seen.add(el);
+        out.push(el);
+        grew = true;
+      }
+    }
+    if (!grew) return out;
+  }
 }
 
 /** A Vapor DOM shell node (vapor/dom.ts) stands for its fjs element: VDOM
