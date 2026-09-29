@@ -53,14 +53,16 @@ flavor() {
             -DCMAKE_OSX_ARCHITECTURES="$archs" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="$target" \
             >/dev/null
-        # one archive per slice: fjs core objects + vendored engine objects.
+        # one archive per slice: fjs core objects + vendored engine objects
+        # + libfjs-style (specs/150, engine-agnostic, linked by both flavors).
         # Both engines' static lib lands at libquickjs.a (PrimJS renames its
         # upstream "quick" target; the ng target is ours).
-        cmake --build "$OUT/$engine-$name" --target fjs_core quickjs \
+        cmake --build "$OUT/$engine-$name" --target fjs_core quickjs fjs_style \
             --config Release -j"$(sysctl -n hw.ncpu)" >/dev/null
         libtool -static -no_warning_for_no_symbols \
             -o "$OUT/$engine-$name/libfjs.a" \
-            "$OUT/$engine-$name/libfjs_core.a" "$OUT/$engine-$name/libquickjs.a"
+            "$OUT/$engine-$name/libfjs_core.a" "$OUT/$engine-$name/libquickjs.a" \
+            "$OUT/$engine-$name/libfjs_style.a"
         if [ "$debugger" = "ON" ]; then
             # the debugger module: transport + the whole PrimJS inspector,
             # which is NOT in libfjs.a above

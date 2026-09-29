@@ -60,7 +60,7 @@ const templates: Template[] = [
             typecheck: 'vue-tsc --noEmit',
           },
           dependencies: {
-            vue: '^3.5.42',
+            vue: '3.6.0-rc.9',
           },
           devDependencies: {
             '@vitejs/plugin-vue': '^6.0.3',

@@ -166,7 +166,12 @@ Widget _nodeView(
 ///
 /// Holds ids, never a [MirrorNode]: a widget outlives the frame that built it,
 /// and a captured node would go stale.
-class _FjsNodeView extends StatelessWidget {
+///
+/// Listens to the node's signal itself rather than through a
+/// ListenableBuilder: one Element per node instead of two, and on a
+/// 4050-element page every node's Element is allocated, built and later
+/// collected (specs/157).
+class _FjsNodeView extends StatefulWidget {
   const _FjsNodeView({
     super.key,
     required this.tree,
@@ -195,20 +200,7 @@ class _FjsNodeView extends StatelessWidget {
   static int buildCount = 0;
 
   @override
-  Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: tree.listenableFor(nodeId),
-      builder: (context, _) {
-        buildCount++;
-        final node = tree.node(nodeId);
-        // removed between the signal firing and this rebuild
-        if (node == null) return const SizedBox.shrink();
-        // the geometry module measures the node through this (geometry.dart)
-        node.element = context;
-        return _buildNode(context, node, isRoot: isRoot);
-      },
-    );
-  }
+  State<_FjsNodeView> createState() => _FjsNodeViewState();
 
   Widget _view(int id) => _nodeView(
     tree,
@@ -407,6 +399,49 @@ class _FjsNodeView extends StatelessWidget {
       );
     }
     return gestureNode(node, style, decorated, dispatch);
+  }
+}
+
+class _FjsNodeViewState extends State<_FjsNodeView> {
+  Listenable? _signal;
+
+  void _changed() => setState(() {});
+
+  void _listen() {
+    final signal = widget.tree.listenableFor(widget.nodeId);
+    if (identical(signal, _signal)) return;
+    _signal?.removeListener(_changed);
+    _signal = signal..addListener(_changed);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _listen();
+  }
+
+  @override
+  void didUpdateWidget(_FjsNodeView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _listen();
+  }
+
+  @override
+  void dispose() {
+    _signal?.removeListener(_changed);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _FjsNodeView.buildCount++;
+    final view = widget;
+    final node = view.tree.node(view.nodeId);
+    // removed between the signal firing and this rebuild
+    if (node == null) return const SizedBox.shrink();
+    // the geometry module measures the node through this (geometry.dart)
+    node.element = context;
+    return view._buildNode(context, node, isRoot: view.isRoot);
   }
 }
 

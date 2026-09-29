@@ -11,6 +11,8 @@ import 'package:flutter_fjs/src/render/renderer.dart';
 import 'package:flutter_fjs/src/ui_ops.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/node_box.dart';
+
 class _W {
   final List<int> b = [];
   void u8(int v) => b.add(v & 0xff);
@@ -73,7 +75,7 @@ Widget _render(MirrorTree tree) => MaterialApp(
 );
 
 BoxDecoration _deco(WidgetTester tester) =>
-    tester.widget<Container>(find.byType(Container).first).decoration
+    tester.widget<DecoratedBox>(nodeBoxes.first).decoration
         as BoxDecoration;
 
 Color? _background(WidgetTester tester) => _deco(tester).color;
@@ -149,26 +151,26 @@ void main() {
     // the subtree re-lays-out each frame — same cost as on web
     final tree = MirrorTree()..applyFrame(_frame('#dd524d', 'width 1s linear'));
     await tester.pumpWidget(_render(tree));
-    expect(tester.getSize(find.byType(Container)).width, 100);
+    expect(tester.getSize(nodeBoxes).width, 100);
 
     tree.applyFrame(_frame('#dd524d', 'width 1s linear', width: 200));
     tree.flushDirty();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
-    final mid = tester.getSize(find.byType(Container)).width;
+    final mid = tester.getSize(nodeBoxes).width;
     expect(mid, inInclusiveRange(140, 160), reason: 'halfway of 100 -> 200');
     await tester.pump(const Duration(milliseconds: 600));
-    expect(tester.getSize(find.byType(Container)).width, 200);
+    expect(tester.getSize(nodeBoxes).width, 200);
   });
 
   testWidgets('width without a track jumps', (tester) async {
     final tree = MirrorTree()..applyFrame(_frame('#dd524d', ''));
     await tester.pumpWidget(_render(tree));
-    expect(tester.getSize(find.byType(Container)).width, 100);
+    expect(tester.getSize(nodeBoxes).width, 100);
     tree.applyFrame(_frame('#dd524d', '', width: 200));
     tree.flushDirty();
     await tester.pump();
-    expect(tester.getSize(find.byType(Container)).width, 200);
+    expect(tester.getSize(nodeBoxes).width, 200);
   });
 
   testWidgets('a gradient background jumps instead of transitioning', (

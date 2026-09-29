@@ -20,9 +20,9 @@
 //   };
 //   __createWevuComponent(__sfc__);
 import {
+  WatcherEffect,
   effectScope,
   reactive,
-  watch,
   type Ref,
 } from '@vue/reactivity';
 import {
@@ -212,47 +212,35 @@ function mountInstance(self: MpInstance, sfc: WevuSfc): void {
   // changed — the getter builds the full snapshot each run, which doubles
   // as the deep dependency scan. Data stays untouched until the first diff.
   //
-  // The scheduler is not optional here: @vue/reactivity on its own has no job
+  // The coalescing is not optional here: @vue/reactivity on its own has no job
   // queue (that lives in runtime-core, which this target does not ship), so
-  // without one the getter re-runs and setData fires on EVERY property write.
+  // without it the getter re-runs and setData fires on EVERY property write.
   // One Anime.js tick writing 25 objects × 3 properties crossed the bridge 75
   // times per frame. Coalescing to one flush per microtask is what
   // runtime-core's pre-flush queue does, and it keeps `nextTick()` (also a
   // microtask) ordered after the setData of the writes that preceded it.
-  let queued = false;
-  const stopWatch = scope.run(() =>
-    watch(
-      render,
-      (next) => {
-        const patch = shallowDiff(prev, next as Record<string, unknown>);
-        if (patch) {
-          prev = next as Record<string, unknown>;
-          self.setData(patch, () => runHooks(hooks, 'rendered'));
-        }
-      },
-      {
-        scheduler: (job, isFirstRun) => {
-          if (isFirstRun) {
-            job();
-            return;
-          }
-          if (queued) return;
-          queued = true;
-          void Promise.resolve().then(() => {
-            queued = false;
-            job();
-          });
-        },
-      },
-    ),
-  );
+  // Vue 3.6 dropped watch()'s `scheduler` option; runtime-core now subclasses
+  // WatcherEffect and overrides notify(), and so does this.
+  // created inside the scope so scope.stop() takes it down too
+  const watcher = scope.run(() => {
+    const w = new CoalescedWatcher(render, (next) => {
+      const patch = shallowDiff(prev, next as Record<string, unknown>);
+      if (patch) {
+        prev = next as Record<string, unknown>;
+        self.setData(patch, () => runHooks(hooks, 'rendered'));
+      }
+    });
+    w.run(true);
+    return w;
+  });
+  const stopWatch = () => watcher?.stop();
 
   self.__fjs_state = {
     fns,
     returned,
     hooks,
     scope,
-    stopWatch: stopWatch ?? (() => {}),
+    stopWatch,
     props,
   } satisfies InstanceState;
 
@@ -482,6 +470,25 @@ export function pageQuery(): Record<string, string> {
 
 /** Registers the SFC with the mini-program runtime. Calling this is the
  * module's side effect — exactly what `Component()` means on wx. */
+/** A watcher whose re-runs after the first land once per microtask. */
+class CoalescedWatcher extends WatcherEffect {
+  declare queued: boolean;
+
+  constructor(source: () => unknown, cb: (next: unknown) => void) {
+    super(source, cb);
+    this.queued = false;
+  }
+
+  override notify(): void {
+    if (this.queued) return;
+    this.queued = true;
+    void Promise.resolve().then(() => {
+      this.queued = false;
+      if (this.dirty) this.run();
+    });
+  }
+}
+
 export function createWevuComponent(sfc: WevuSfc, options: WevuComponentOptions = {}): void {
   const names = propNames(sfc);
   const config: Record<string, unknown> = {

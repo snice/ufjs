@@ -6,6 +6,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/node_box.dart';
 import 'package:flutter_fjs/src/mirror_tree.dart';
 import 'package:flutter_fjs/src/render/renderer.dart';
 import 'package:flutter_fjs/src/ui_ops.dart';
@@ -59,7 +61,7 @@ Widget _render(MirrorTree tree, {bool scrollable = false}) {
 }
 
 Color? _boxColor(WidgetTester tester) {
-  final container = tester.widget<Container>(find.byType(Container));
+  final container = tester.widget<DecoratedBox>(nodeBoxes);
   return (container.decoration as BoxDecoration?)?.color;
 }
 
@@ -74,7 +76,7 @@ void main() {
     expect(_boxColor(tester), const Color(0xFFFFFFFF));
 
     final press = await tester.startGesture(
-      tester.getCenter(find.byType(Container)),
+      tester.getCenter(nodeBoxes),
     );
     await tester.pump(); // the very next frame, not one deadline later
     expect(_boxColor(tester), const Color(0xFFEEF4FF));
@@ -92,7 +94,7 @@ void main() {
       _render(_treeWith('{$base,$active,"onTap":true}'), scrollable: true),
     );
     final press = await tester.startGesture(
-      tester.getCenter(find.byType(Container)),
+      tester.getCenter(nodeBoxes),
     );
     await tester.pump();
     expect(_boxColor(tester), const Color(0xFFEEF4FF));
@@ -110,7 +112,7 @@ void main() {
       _render(_treeWith('{$base,$active,"onTap":true}'), scrollable: true),
     );
     final press = await tester.startGesture(
-      tester.getCenter(find.byType(Container)),
+      tester.getCenter(nodeBoxes),
     );
     await tester.pump();
     await press.moveBy(const Offset(3, 0));
@@ -125,7 +127,7 @@ void main() {
     await tester.pumpWidget(_render(_treeWith('{$base,$active}')));
 
     final press = await tester.startGesture(
-      tester.getCenter(find.byType(Container)),
+      tester.getCenter(nodeBoxes),
     );
     await tester.pump();
     expect(_boxColor(tester), const Color(0xFFEEF4FF));
@@ -172,7 +174,7 @@ void main() {
     );
 
     final press = await tester.startGesture(
-      tester.getCenter(find.byType(Container)),
+      tester.getCenter(nodeBoxes),
     );
     await tester.pump();
     final scales = tester

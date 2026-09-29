@@ -19,8 +19,11 @@ export function untrackTransitionClass(el: object, cls: string): void {
   if (!set.size) transitionClasses.delete(el);
 }
 
-/** The transition classes currently on [el], if any. */
-export function transitionClassesOf(el: object): string[] {
+const NONE: readonly string[] = Object.freeze([]);
+
+/** The transition classes currently on [el], if any. The empty answer is
+ * one shared array: every class patch asks, and almost none has any. */
+export function transitionClassesOf(el: object): readonly string[] {
   const set = transitionClasses.get(el);
-  return set ? [...set] : [];
+  return set ? [...set] : NONE;
 }

@@ -11,10 +11,10 @@ import {
   createRenderer,
   type RendererOptions,
 } from '@vue/runtime-core';
-import { create, forgetHandlers, forgetElementStyle, insert, remove, setHoverStyle, setText, setProps, setConstProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setConnectedResolver, setOffsetParentResolver, setParentResolver, setAttributeSink, currentTapDispatch, type Element, type EventPayload } from '../ui/element';
+import { adoptElement, allocIds, create, forgetHandlers, forgetElementStyle, insert, remove, setHoverStyle, setText, setProps, setConstProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setConnectedResolver, setOffsetParentResolver, setParentResolver, setAttributeSink, currentTapDispatch, type Element, type EventPayload } from '../ui/element';
 import { transitionClassesOf } from './transition-classes';
 import { lastPointer } from '../ui/geometry';
-import { hasNativeHost, invokeHost, registerPreFlush } from '../host';
+import { hasNativeHost, host, invokeHost, registerPreFlush } from '../host';
 import { usesDeclaredFont } from '../css/font-face';
 import { INHERITABLE_KEYS, StyleEngine, type PseudoStyles } from '../css/style';
 import { devtoolsSlots, devtoolsStructuralVersion } from '../devtools-hooks';
@@ -664,22 +664,25 @@ function syncPlaceholderStyle(
 }
 
 /** Shared engine instance; css-vars.ts also drives it (useCssVars). */
-export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, activeStyle, hoverStyle, pseudo) => {
+export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, activeStyle, hoverStyle, pseudo, sent) => {
   const el = elementsById.get(id);
   if (!el) return;
-  // `activeStyle` only rides along for elements that some `:active` rule
-  // matched; null clears one the native side is still holding
-  if (activeStyle === null && !hadActiveStyle.has(id)) {
-    setStyle(el, style);
-  } else {
-    if (activeStyle) hadActiveStyle.add(id);
-    else hadActiveStyle.delete(id);
-    setStyle(el, style, activeStyle);
+  // `sent`: libfjs-style wrote the styles into the frame itself (specs/150)
+  if (!sent) {
+    // `activeStyle` only rides along for elements that some `:active` rule
+    // matched; null clears one the native side is still holding
+    if (activeStyle === null && !hadActiveStyle.has(id)) {
+      setStyle(el, style);
+    } else {
+      if (activeStyle) hadActiveStyle.add(id);
+      else hadActiveStyle.delete(id);
+      setStyle(el, style, activeStyle);
+    }
+    // :hover crosses as its own op (op 12). The engine sends undefined for
+    // elements that never matched a hover rule (the common case — no bytes
+    // at all) and null to clear one the native side may still hold.
+    if (hoverStyle !== undefined) setHoverStyle(el, hoverStyle);
   }
-  // :hover crosses as its own op (op 12). The engine sends undefined for
-  // elements that never matched a hover rule (the common case — no bytes at
-  // all) and null to clear one the native side may still hold.
-  if (hoverStyle !== undefined) setHoverStyle(el, hoverStyle);
   if (pseudo !== undefined) {
     syncPseudoBoxes(el, pseudo);
     // ::placeholder has no box — it styles the input's hint text
@@ -693,6 +696,18 @@ export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, act
 // Styles go out with the ops that create their elements: the host flush
 // finishes the engine's pending recompute first (see flushPending)
 registerPreFlush(() => styleEngine.flushPending());
+
+// specs/150: the per-element half of the style engine runs in libfjs-style
+// wherever the host has it. `globalThis.__fjsNativeStyle`, set before this
+// module loads: false keeps the TS engine, 'verify' runs both and logs every
+// element they disagree on. Must attach before the first element exists.
+const nativeStyleMode = (globalThis as { __fjsNativeStyle?: unknown }).__fjsNativeStyle;
+const nativeAttached =
+  nativeStyleMode !== false &&
+  host?.styleAttach !== undefined &&
+  styleEngine.attachNative(host, nativeStyleMode === 'verify');
+/** The TS engine's structural bookkeeping is off (native, not verifying). */
+const nativeStyle = nativeAttached && nativeStyleMode !== 'verify';
 
 // The DOM-shaped `el.style` writes funnel into the same engine: libraries
 // like @vueuse/motion assign `el.style[key] = v`, a `:style` binding calls
@@ -841,8 +856,16 @@ setOffsetParentResolver((id) => {
 /** Registers a renderer-created node and gives it the DOM-shaped members. */
 function track(el: HostNode): void {
   elementsById.set(el.id, el);
-  (el as HostNode & { contains: typeof hostContains }).contains = hostContains;
+  // Once on the shared element prototype, not per element: a property added
+  // to each new element was a shape change on every create (specs/149). An
+  // element the renderer never tracked answers false (hostContains checks
+  // elementsById) — before, it had no `contains` at all.
+  if (!containsInstalled) {
+    (Object.getPrototypeOf(el) as { contains: typeof hostContains }).contains = hostContains;
+    containsInstalled = true;
+  }
 }
+let containsInstalled = false;
 
 /** Takes the child out of its current parent's child list, keeping its own
  * subtree bookkeeping (this is half of a move, not a removal). */
@@ -857,10 +880,11 @@ function trackDetach(child: HostNode) {
 
 function trackInsert(parent: HostNode, child: HostNode, index: number) {
   parentOf.set(child.id, parent.id);
-  const list = childrenOf.get(parent.id) ?? [];
-  const at = Math.min(index, list.length);
-  list.splice(at, 0, child.id);
-  childrenOf.set(parent.id, list);
+  const list = childrenOf.get(parent.id);
+  if (list === undefined) childrenOf.set(parent.id, [child.id]);
+  // appending is how a mount builds every list
+  else if (index >= list.length) list.push(child.id);
+  else list.splice(index, 0, child.id);
 }
 
 /** Drops the engine/renderer state for `id` and everything under it. The
@@ -1019,6 +1043,43 @@ export function resolveHtmlTag(
   return resolved;
 }
 
+/** Everything createElement decides from the tag alone, looked up once per
+ * tag instead of five times per element (specs/151: the lookups were most
+ * of nodeOps.createElement's 1.4 µs over a bare create). */
+interface TagDescriptor {
+  /** The element tag to create (an HTML tag mapped to its fjs tag). */
+  tag: string;
+  mapped: { tag: string; defaults: Record<string, unknown> } | null;
+  defaultStyle: Record<string, unknown> | undefined;
+  emits: ReadonlySet<string> | null;
+  textarea: boolean;
+  block: boolean;
+  textControl: boolean;
+}
+
+const tagDescriptors = new Map<string, TagDescriptor>();
+
+function tagDescriptor(rawTag: string): TagDescriptor {
+  let d = tagDescriptors.get(rawTag);
+  if (d !== undefined) return d;
+  const mapped = resolveHtmlTag(rawTag);
+  // the textarea ELEMENT (see the H table): an unknown tag on the Dart side
+  // rendered nothing at all
+  const tag = mapped ? mapped.tag : rawTag === 'textarea' ? 'input' : rawTag;
+  const emits = emitsFor(rawTag);
+  d = {
+    tag,
+    mapped,
+    defaultStyle: mapped?.defaults.style as Record<string, unknown> | undefined,
+    emits: emits.size > 0 ? emits : null,
+    textarea: rawTag === 'textarea',
+    block: HTML_BLOCK_TAGS.has(rawTag),
+    textControl: TEXT_CONTROL_TAGS.has(tag),
+  };
+  tagDescriptors.set(rawTag, d);
+  return d;
+}
+
 // ---- nodeOps ---------------------------------------------------------------
 
 /** Removes one element and its subtree, native side and bookkeeping. */
@@ -1079,17 +1140,26 @@ function hoistedUnder(id: number): number[] {
   return out;
 }
 
-const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
+/** A Vapor DOM shell node (vapor/dom.ts) stands for its fjs element: VDOM
+ * subtrees mount inside Vapor blocks and next to their anchors (specs/148).
+ * Duck-typed through the marker so this module does not import the shell. */
+function unshell(node: HostNode): HostNode {
+  return (node as unknown as { $fjsShell?: true }).$fjsShell
+    ? (node as unknown as { toHost(): HostNode }).toHost()
+    : node;
+}
+
+// Exported for the Vapor DOM shell (vapor/dom.ts, specs/148): it routes
+// every node operation through these, so both render paths share the style
+// engine and element bookkeeping.
+export const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
   createElement: (rawTag) => {
-    const mapped = resolveHtmlTag(rawTag);
-    // the textarea ELEMENT (see the H table): an unknown tag on the Dart
-    // side rendered nothing at all
-    const el = create(mapped ? mapped.tag : rawTag === 'textarea' ? 'input' : rawTag);
+    const d = tagDescriptor(rawTag);
+    const el = create(d.tag);
     // What this tag emits on web (specs/104). Only fjs tags have entries in
     // that table, so a vant `div` never gets one and stays DOM-shaped.
-    const emits = emitsFor(rawTag);
-    if (emits.size > 0) payloadEvents.set(el, emits);
-    if (rawTag === 'textarea') {
+    if (d.emits !== null) payloadEvents.set(el, d.emits);
+    if (d.textarea) {
       // vant's Field textarea: the field grows natively (auto-height, see
       // the Field patch in the demo's vite/vant.ts); the cell follows since
       // specs/122 (a two-pass flex line re-measures when an item grows).
@@ -1100,18 +1170,20 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     // children. The marker lets the Dart view tell the two apart
     // (node_adapters.dart, _ViewNodeAdapter); `p` / `h1`… carry it too, so
     // they are never taken for inline runs inside such a box.
-    if (HTML_BLOCK_TAGS.has(rawTag)) setConstProps(el, HTML_BLOCK_PROPS);
-    if (mapped) {
+    if (d.block) setConstProps(el, HTML_BLOCK_PROPS);
+    if (d.mapped !== null) {
       // remember defaults; the style engine merges them ahead of matched
       // rules and user style
-      htmlDefaults.set(el.id, mapped.defaults);
+      htmlDefaults.set(el.id, d.mapped.defaults);
       if (rawTag === 'br') setText(el, '\n');
     }
     track(el);
-    if (TEXT_CONTROL_TAGS.has(el.tag)) installTextControlValue(el);
-    styleEngine.ensure(el.id, rawTag, mapped?.defaults.style as Record<string, unknown> | undefined);
-    childrenOf.set(el.id, []);
-    parentOf.set(el.id, null);
+    if (d.textControl) installTextControlValue(el);
+    styleEngine.ensure(el.id, rawTag, d.defaultStyle);
+    // no parentOf / childrenOf entries up front: every reader takes a
+    // missing parent as none and a missing list as no children, insert
+    // writes both — most elements of a page are leaves, and each entry
+    // written here was a Map write per element (specs/149, specs/151)
     return el;
   },
 
@@ -1175,6 +1247,32 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
   },
 
   insert: (child, parent, anchor) => {
+    child = unshell(child);
+    parent = unshell(parent);
+    // How a mount builds every list: a fresh child (never attached, or
+    // detached since) appended at the end, not hoisted, into a parent with
+    // no ::before box. Everything the general path below handles — the move,
+    // the anchor lookup, the overlay redirect, the box offset — is a no-op
+    // then, and walking it was ~1 µs per element (specs/151).
+    if (
+      anchor == null &&
+      parentOf.get(child.id) === undefined &&
+      (hoistedFrom.size === 0 || !hoistedFrom.has(child.id)) &&
+      (pseudoBoxes.size === 0 || pseudoBoxes.get(parent.id)?.before === undefined)
+    ) {
+      insert(parent, child);
+      parentOf.set(child.id, parent.id);
+      const list = childrenOf.get(parent.id);
+      if (list === undefined) childrenOf.set(parent.id, [child.id]);
+      else list.push(child.id);
+      if (!nativeStyle) {
+        styleEngine.recomputeSubtree(child.id);
+        styleEngine.noteStructureChange(parent.id);
+      }
+      if (modalMasks.size !== 0 && modalMasks.has(child.id)) syncAllHostModals();
+      return;
+    }
+    anchor = anchor && unshell(anchor);
     // Vue also calls insert to MOVE a node that is already mounted (a keyed
     // v-for reorder). The native side detaches the child before inserting it
     // at the index this computes, so the index has to be read off the list
@@ -1206,15 +1304,20 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     trackInsert(target, child, index);
     // the child just gained an ancestor chain: recompute inheritance and
     // descendant/:deep selectors for its subtree
-    styleEngine.recomputeSubtree(child.id);
-    // the child also landed between siblings: first/last positions may have
-    // flipped for the neighbors it displaced (structural pseudos)
-    styleEngine.noteStructureChange(target.id);
+    // (native style engine: both read off the Insert op instead — skipped
+    // here, a mount makes 2 × 4000 of these calls)
+    if (!nativeStyle) {
+      styleEngine.recomputeSubtree(child.id);
+      // the child also landed between siblings: first/last positions may
+      // have flipped for the neighbors it displaced (structural pseudos)
+      styleEngine.noteStructureChange(target.id);
+    }
     // a mask styled before it landed (teleported content) joins its host now
     if (modalMasks.has(child.id)) syncAllHostModals();
   },
 
   remove: (child) => {
+    child = unshell(child);
     // hoisted descendants first: they are not under `child` in the lists
     // below (they live in the overlay host), but they leave with it
     for (const id of hoistedUnder(child.id)) {
@@ -1227,6 +1330,7 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
   },
 
   parentNode: (node) => {
+    node = unshell(node);
     const parentId = parentOf.get(node.id);
     if (parentId == null) return null;
     // the REAL element, not a fresh wrapper — see nextSibling
@@ -1234,6 +1338,7 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
   },
 
   nextSibling: (node) => {
+    node = unshell(node);
     const parentId = parentOf.get(node.id);
     if (parentId == null) return null;
     const list = childrenOf.get(parentId) ?? [];
@@ -1266,6 +1371,146 @@ const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
     if (typeof scopeId === 'string' && scopeId) styleEngine.addScope(el.id, scopeId);
   },
 };
+
+// ---- native template clones (specs/152) -------------------------------------
+//
+// The Vapor shell instantiates a parsed template once per cloneNode(true).
+// Node by node that is a createElement + scope + class + insert per node,
+// each paying the element layer, this module's bookkeeping and the style
+// inputs. When libfjs-style is attached, a template made only of what it can
+// carry is registered once and each instance is one CLONE word: libfjs-style
+// writes the Create / SetProps / SetText / Insert ops Dart gets and registers
+// the styles; here only the handles and the bookkeeping are made.
+
+/** One node of a template the Vapor shell wants cloned, in pre-order. */
+export interface CloneNode {
+  kind: 'element' | 'text' | 'anchor';
+  /** Index of the parent node, -1 for the root. */
+  parent: number;
+  /** element: the tag the page wrote. */
+  tag: string;
+  classes: string | null;
+  scope: string | null;
+  /** element: its static inline text ('' = none); text: the text. */
+  text: string;
+  /** element whose only child is a text: that text as the template has it
+   * (the shell's inline Text starts from it; it may be the compiler's
+   * placeholder, which `text` leaves out). */
+  inline: string | null;
+}
+
+export interface ClonePlan {
+  template: number;
+  nodes: CloneNode[];
+  descriptors: Array<TagDescriptor | null>;
+}
+
+const ANCHOR_JSON = JSON.stringify(ANCHOR_PROPS);
+const HTML_BLOCK_JSON = JSON.stringify(HTML_BLOCK_PROPS);
+
+/** Whether prepared templates can be cloned now: libfjs-style attached and
+ * not detached by a rejected frame since. */
+export function cloneReady(): boolean {
+  return styleEngine.canClone;
+}
+
+/** Registers a template for native clones, or null when it cannot be one —
+ * no native style engine, or a node createElement does more for than the
+ * clone can carry (a text control's value shim, a canvas surface, a form
+ * control's `:disabled` record). The caller then instantiates node by node. */
+export function prepareClone(nodes: CloneNode[]): ClonePlan | null {
+  if (!styleEngine.canClone) return null;
+  const specs = [];
+  const descriptors: Array<TagDescriptor | null> = [];
+  for (const n of nodes) {
+    if (n.kind === 'anchor') {
+      // createComment: an unstyled view with the anchor props
+      specs.push({ parent: n.parent, styled: false, raw: false, styleTag: '', defaults: undefined, scope: null, classes: null, createTag: 'view', props: ANCHOR_JSON, text: '' });
+      descriptors.push(null);
+      continue;
+    }
+    if (n.kind === 'text') {
+      // createText: raw text, no scope
+      specs.push({ parent: n.parent, styled: true, raw: true, styleTag: 'text', defaults: undefined, scope: null, classes: null, createTag: 'text', props: '', text: n.text });
+      descriptors.push(null);
+      continue;
+    }
+    const d = tagDescriptor(n.tag);
+    if (d.textControl || d.textarea || d.tag === 'inner-canvas') return null;
+    specs.push({
+      parent: n.parent,
+      styled: true,
+      raw: false,
+      styleTag: n.tag,
+      defaults: d.defaultStyle,
+      scope: n.scope,
+      classes: n.classes,
+      createTag: d.tag,
+      props: d.block ? HTML_BLOCK_JSON : '',
+      text: n.tag === 'br' ? '\n' : n.text,
+    });
+    descriptors.push(d);
+  }
+  const template = styleEngine.defineCloneTemplate(specs);
+  return template === 0 ? null : { template, nodes, descriptors };
+}
+
+/** Reused across clones: the caller reads it before cloning again. */
+const cloneHosts: HostNode[] = [];
+
+/** One instance of a prepared template: the host elements in template order,
+ * with the bookkeeping createElement / createText / createComment and insert
+ * would have done. The root is not attached. The array is reused by the next
+ * clone — read it right away. */
+export function cloneTemplate(plan: ClonePlan): readonly HostNode[] {
+  const { nodes, descriptors } = plan;
+  const n = nodes.length;
+  const first = allocIds(n);
+  styleEngine.cloneTemplate(plan.template, first);
+  const hosts = cloneHosts;
+  hosts.length = n;
+  for (let k = 0; k < n; k++) {
+    const node = nodes[k];
+    const d = descriptors[k];
+    const el = adoptElement(first + k, d !== null ? d.tag : node.kind === 'text' ? 'text' : 'view');
+    hosts[k] = el;
+    track(el);
+    if (d !== null) {
+      if (d.emits !== null) payloadEvents.set(el, d.emits);
+      if (d.mapped !== null) htmlDefaults.set(el.id, d.mapped.defaults);
+    }
+    if (k > 0) {
+      const pid = first + node.parent;
+      parentOf.set(el.id, pid);
+      const list = childrenOf.get(pid);
+      if (list === undefined) childrenOf.set(pid, [el.id]);
+      else list.push(el.id);
+    }
+  }
+  devtoolsStructuralVersion.value++;
+  if (!nativeStyle) {
+    // verify mode: the TS engine never sees what libfjs-style expanded —
+    // register the same elements with it (libfjs-style keeps its first
+    // registration, so the repeats are no-ops there)
+    for (let k = 0; k < n; k++) {
+      const node = nodes[k];
+      if (node.kind === 'anchor') continue;
+      const id = first + k;
+      if (node.kind === 'text') {
+        styleEngine.ensure(id, 'text', undefined, true);
+        continue;
+      }
+      styleEngine.ensure(id, node.tag, descriptors[k]!.defaultStyle);
+      if (node.scope !== null) styleEngine.addScope(id, node.scope);
+      if (node.classes !== null) styleEngine.setClasses(id, node.classes);
+    }
+    for (let k = 1; k < n; k++) {
+      styleEngine.recomputeSubtree(first + k);
+      styleEngine.noteStructureChange(first + nodes[k].parent);
+    }
+  }
+  return hosts;
+}
 
 // Handles for parentNode/nextSibling: Vue only reads identity/ordering from
 // them, so a minimal Element-shaped object is enough.
@@ -1471,7 +1716,9 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
   prevValue,
   nextValue,
 ) => {
-  const prop = camelize(key);
+  // class first, before camelize's map lookup: it is the one prop every
+  // styled element patches on mount
+  const prop = key === 'class' ? key : camelize(key);
   if (prop === 'class') {
     // Vue hands us the normalized class string; the style engine matches
     // CSS rules against it. Classes a running <Transition> put on the
@@ -1605,13 +1852,38 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
 
 // ---- public API ---------------------------------------------------------------
 
-const { createApp: rendererCreateApp, render } = createRenderer<HostNode, HostNode>({
+const { createApp: rendererCreateApp, render, internals } = createRenderer<HostNode, HostNode>({
   ...nodeOps,
   patchProp,
-});
+}) as ReturnType<typeof createRenderer<HostNode, HostNode>> & { internals: unknown };
+
+/** runtime-vapor's VDOM interop mounts VDOM components inside Vapor blocks
+ * through the renderer's internals (`ensureRenderer().internals`, resolved
+ * to this renderer by vue/runtime-dom-shim.ts). */
+export const rendererInternals = internals;
+
+type App = ReturnType<typeof rendererCreateApp>;
+const appHooks: ((app: App) => void)[] = [];
+const liveApps: App[] = [];
+
+/** Runs `hook` on every app created so far and every later one. Vapor
+ * support installs itself this way the first time a Vapor component module
+ * loads, so apps without one never pull runtime-vapor in (specs/148). */
+export function onEveryApp(hook: (app: App) => void): void {
+  appHooks.push(hook);
+  for (const app of liveApps) hook(app);
+}
 
 export function createApp(...args: Parameters<typeof rendererCreateApp>) {
-  return rendererCreateApp(...args);
+  const app = rendererCreateApp(...args);
+  liveApps.push(app);
+  const unmount = app.unmount.bind(app);
+  app.unmount = () => {
+    liveApps.splice(liveApps.indexOf(app), 1);
+    unmount();
+  };
+  for (const hook of appHooks) hook(app);
+  return app;
 }
 
 /** Creates the flutter root container element and returns it as the mount

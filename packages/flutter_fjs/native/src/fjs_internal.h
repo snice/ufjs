@@ -11,6 +11,7 @@
 /* Engine boundary (spec 091): core code only ever sees fjsengine::*, never
  * a concrete engine's C API. */
 #include "engine.h"
+#include "fjs_style.h"
 
 struct FjsTimer {
     int32_t id;
@@ -21,6 +22,25 @@ struct FjsTimer {
 };
 
 struct FJSVM;
+
+/* libfjs-style binding (specs/150): the instance plus the three JS callbacks
+ * it reaches back through, each holding a reference. `json` keeps a compute
+ * callback's strings alive until libfjs-style has copied them; `busy` refuses
+ * a uiOps call made from inside a callback (the output frame is not
+ * re-entrant); `threw` carries a callback's JS exception out of the frame. */
+struct FjsStyleBinding {
+    fjs_style *style = nullptr;
+    fjsengine::Value define_match = fjsengine::undefined();
+    fjsengine::Value compute = fjsengine::undefined();
+    fjsengine::Value styled = fjsengine::undefined();
+    std::string json[3];
+    bool busy = false;
+    bool threw = false;
+    /* an instance failed: frames keep arriving with style ops in them, and
+     * are stripped until the runtime attaches again */
+    bool stripping = false;
+    std::vector<uint8_t> stripped;
+};
 
 /* Devtools transport slot (spec 090): the pluggable module
  * (libfjs_debugger.so) installs one via fjs_debugger_set_transport(); the
@@ -49,6 +69,7 @@ struct FJSVM {
     const FjsDebuggerTransport *dbg_transport = nullptr;
     /* spec 111: rejections still unhandled, reported after each job drain */
     fjsengine::RejectionState rejections;
+    FjsStyleBinding style;
 };
 
 namespace fjs {
@@ -65,6 +86,8 @@ bool fail_with_pending_exception(FJSVM *vm, const char *where);
 
 /* natives.cpp: installs `console` and `__fjs` on the global object. */
 bool install_natives(FJSVM *vm);
+/* natives.cpp: drops the libfjs-style instance and its JS callbacks. */
+void style_detach(FJSVM *vm);
 
 /* debugger-glue.cpp: the engine-side half of the pluggable debugger
  * (spec 090) — transport slot + the pump/teardown gates. */

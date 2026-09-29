@@ -21,6 +21,25 @@ export const enum UiOp {
   Canvas = 10,
   Webgl = 11,
   SetHoverStyle = 12,
+  // Style input ops (specs/150): consumed by libfjs-style inside
+  // __fjs.fns.uiOps and stripped before the frame reaches Dart, so Dart's
+  // decoder never sees them — only written while the native style engine is
+  // attached. Layouts in native/style/include/fjs_style.h.
+  StyleAtom = 0x40,
+  StyleEl = 0x41,
+  StyleClasses = 0x42,
+  StyleScope = 0x43,
+  StyleInline = 0x44,
+  StyleForget = 0x45,
+  StyleRestyle = 0x46,
+  StyleRules = 0x47,
+  StyleAttr = 0x48,
+  StyleRulesAppend = 0x49,
+  StyleSeedChain = 0x4a,
+  StyleSeedCompute = 0x4b,
+  // specs/155: u32 id, u32 index into the frame's `fjsText` — a SetText the
+  // host expands (only once the host said `styleTextRefs`)
+  StyleText = 0x4c,
 }
 
 /** How many interned styles the peer is asked to remember at once. The style
@@ -84,6 +103,43 @@ export class OpWriter {
     this.len = p;
   }
 
+  /** One op byte followed by three u32s — Insert and SetStyle, the two ops
+   * a mount writes per element. u8 + three u32 calls were four method calls
+   * and four capacity checks for 13 bytes; under the interpreter the calls
+   * cost more than the stores (specs/149). Same bytes as the long form. */
+  private op3(op: number, a: number, b: number, c: number): void {
+    this.ensure(13);
+    const buf = this.buf;
+    let p = this.len;
+    buf[p++] = op;
+    buf[p++] = a & 0xff;
+    buf[p++] = (a >>> 8) & 0xff;
+    buf[p++] = (a >>> 16) & 0xff;
+    buf[p++] = (a >>> 24) & 0xff;
+    buf[p++] = b & 0xff;
+    buf[p++] = (b >>> 8) & 0xff;
+    buf[p++] = (b >>> 16) & 0xff;
+    buf[p++] = (b >>> 24) & 0xff;
+    buf[p++] = c & 0xff;
+    buf[p++] = (c >>> 8) & 0xff;
+    buf[p++] = (c >>> 16) & 0xff;
+    buf[p++] = (c >>> 24) & 0xff;
+    this.len = p;
+  }
+
+  /** One op byte and a u32 id, in one capacity check (see op3). */
+  private op1(op: number, a: number, extra: number): void {
+    this.ensure(5 + extra);
+    const buf = this.buf;
+    let p = this.len;
+    buf[p++] = op;
+    buf[p++] = a & 0xff;
+    buf[p++] = (a >>> 8) & 0xff;
+    buf[p++] = (a >>> 16) & 0xff;
+    buf[p++] = (a >>> 24) & 0xff;
+    this.len = p;
+  }
+
   private u16(v: number): void {
     this.ensure(2);
     const b = this.buf;
@@ -135,15 +191,19 @@ export class OpWriter {
   private tagBytes = new Map<string, Uint8Array>();
 
   create(id: number, tag: string): this {
-    this.u8(UiOp.Create);
-    this.u32(id);
     let encoded = this.tagBytes.get(tag);
     if (encoded === undefined) {
       encoded = utf8Encode(tag);
       this.tagBytes.set(tag, encoded);
     }
-    this.u16(encoded.length);
-    this.bytes(encoded);
+    const n = encoded.length;
+    this.op1(UiOp.Create, id, 2 + n);
+    const buf = this.buf;
+    let p = this.len;
+    buf[p++] = n & 0xff;
+    buf[p++] = (n >>> 8) & 0xff;
+    for (let i = 0; i < n; i++) buf[p++] = encoded[i];
+    this.len = p;
     return this;
   }
 
@@ -154,10 +214,7 @@ export class OpWriter {
   }
 
   insert(parent: number, child: number, index: number): this {
-    this.u8(UiOp.Insert);
-    this.u32(parent);
-    this.u32(child);
-    this.u32(index);
+    this.op3(UiOp.Insert, parent, child, index);
     return this;
   }
 
@@ -168,9 +225,29 @@ export class OpWriter {
     return this;
   }
 
+  /** Set once the host expands TEXT ops (libfjs-style attached and the host
+   * says `styleTextRefs`). Encoding a string byte by byte — plus the
+   * drawableText scan — was ~1.1 µs of a 1.4 µs SetText under the
+   * interpreter; handing the string over as it is costs an array push, and
+   * the host writes the bytes Dart gets (specs/155). */
+  textRefs = false;
+  private texts: string[] = [];
+
   setText(id: number, text: string): this {
-    this.u8(UiOp.SetText);
-    this.u32(id);
+    if (this.textRefs) {
+      this.op1(UiOp.StyleText, id, 4);
+      const buf = this.buf;
+      let p = this.len;
+      const index = this.texts.length;
+      buf[p++] = index & 0xff;
+      buf[p++] = (index >>> 8) & 0xff;
+      buf[p++] = (index >>> 16) & 0xff;
+      buf[p++] = (index >>> 24) & 0xff;
+      this.len = p;
+      this.texts.push(text);
+      return this;
+    }
+    this.op1(UiOp.SetText, id, 0);
     this.str(drawableText(text), true);
     return this;
   }
@@ -254,6 +331,184 @@ export class OpWriter {
     return this;
   }
 
+  // ---- native style input (specs/150; see UiOp.StyleAtom) ----
+
+  styleAtom(atom: number, name: string): this {
+    this.op1(UiOp.StyleAtom, atom, 0);
+    this.str(name, false);
+    return this;
+  }
+
+  // The per-element inputs go into a word buffer beside the frame, not into
+  // the frame: libfjs-style is their only reader, and under the interpreter
+  // a typed-array store costs the same for a byte and a word — an EL was 14
+  // byte stores (0.5 µs a mount element), it is 6 words plus its classes
+  // (specs/151). The buffer rides the frame as `fjsStyle` (toUint8Array);
+  // layouts are fjs_style.h FJS_STYLE_W_*.
+  private words = new Uint32Array(1024);
+  private wlen = 0;
+
+  private wordRoom(n: number): Uint32Array {
+    if (this.wlen + n > this.words.length) {
+      let cap = this.words.length;
+      while (cap < this.wlen + n) cap *= 2;
+      const next = new Uint32Array(cap);
+      next.set(this.words.subarray(0, this.wlen));
+      this.words = next;
+    }
+    return this.words;
+  }
+
+  /** Registers an element (W_EL), with its scope and classes when known. */
+  styleEl(id: number, tag: number, defaultsId: number, rawText: boolean, scope: number, classes: readonly number[] | null): this {
+    const n = classes === null ? 0 : classes.length;
+    const w = this.wordRoom(7 + n);
+    let p = this.wlen;
+    w[p++] = 1;
+    w[p++] = id;
+    w[p++] = tag;
+    w[p++] = defaultsId;
+    w[p++] = rawText ? 1 : 0;
+    w[p++] = scope;
+    w[p++] = n;
+    for (let i = 0; i < n; i++) w[p++] = classes![i];
+    this.wlen = p;
+    return this;
+  }
+
+  styleClasses(id: number, atoms: readonly number[]): this {
+    const n = atoms.length;
+    const w = this.wordRoom(3 + n);
+    let p = this.wlen;
+    w[p++] = 2;
+    w[p++] = id;
+    w[p++] = n;
+    for (let i = 0; i < n; i++) w[p++] = atoms[i];
+    this.wlen = p;
+    return this;
+  }
+
+  styleScope(id: number, atom: number): this {
+    const w = this.wordRoom(3);
+    w[this.wlen++] = 3;
+    w[this.wlen++] = id;
+    w[this.wlen++] = atom;
+    return this;
+  }
+
+  styleInline(id: number, key: number): this {
+    const w = this.wordRoom(3);
+    w[this.wlen++] = 4;
+    w[this.wlen++] = id;
+    w[this.wlen++] = key;
+    return this;
+  }
+
+  styleForget(id: number): this {
+    const w = this.wordRoom(2);
+    w[this.wlen++] = 5;
+    w[this.wlen++] = id;
+    return this;
+  }
+
+  /** W_TEMPLATE, already encoded (NativeStyleBackend.defineTemplate). */
+  styleTemplate(words: readonly number[]): this {
+    const n = words.length;
+    const w = this.wordRoom(n);
+    let p = this.wlen;
+    for (let i = 0; i < n; i++) w[p++] = words[i];
+    this.wlen = p;
+    return this;
+  }
+
+  /** W_CLONE: one instance of a template, its nodes numbered from `first`. */
+  styleClone(template: number, first: number): this {
+    const w = this.wordRoom(3);
+    w[this.wlen++] = 8;
+    w[this.wlen++] = template;
+    w[this.wlen++] = first;
+    return this;
+  }
+
+  /** id 0 = every element, with libfjs-style's caches dropped. */
+  styleRestyle(id: number, subtree: boolean): this {
+    const w = this.wordRoom(3);
+    w[this.wlen++] = 6;
+    w[this.wlen++] = id;
+    w[this.wlen++] = subtree ? 1 : 0;
+    return this;
+  }
+
+  styleRules(table: Uint8Array, append = false): this {
+    this.op1(append ? UiOp.StyleRulesAppend : UiOp.StyleRules, table.length, 0);
+    this.bytes(table);
+    return this;
+  }
+
+  /** SEED_CHAIN head: seed, parent seed. The signatures follow through
+   * styleSigPart; styleSeedChainEnd closes it. */
+  styleSeedChain(seed: number, parentSeed: number): this {
+    this.op1(UiOp.StyleSeedChain, seed, 4);
+    this.u32(parentSeed);
+    return this;
+  }
+
+  /** One signature of a SEED_CHAIN (fjs_style.h `<sig>`); `attrs` only for
+   * the chain's own signature (null for the neighbour's). */
+  styleSigPart(tag: number, classes: readonly number[], scopes: readonly number[], bits: number, attrs: Array<[number, string]> | null): this {
+    this.u32(tag);
+    this.u16(classes.length);
+    for (let i = 0; i < classes.length; i++) this.u32(classes[i]);
+    this.u16(scopes.length);
+    for (let i = 0; i < scopes.length; i++) this.u32(scopes[i]);
+    this.u32(bits);
+    if (attrs !== null) {
+      this.u16(attrs.length);
+      for (const [name, value] of attrs) {
+        this.u32(name);
+        this.str(value, true);
+      }
+    }
+    return this;
+  }
+
+  styleSeedChainPrev(has: boolean): this {
+    this.u8(has ? 1 : 0);
+    return this;
+  }
+
+  styleSeedChainEnd(match: number): this {
+    this.u32(match);
+    return this;
+  }
+
+  /** SEED_COMPUTE (its JSON is asked for on first use). */
+  styleSeedCompute(
+    match: number,
+    parentResult: number,
+    defaultsId: number,
+    inlineKey: number,
+    rawText: boolean,
+    result: number,
+    flags: number,
+  ): this {
+    this.op3(UiOp.StyleSeedCompute, match, parentResult, defaultsId);
+    this.u32(inlineKey);
+    this.u8(rawText ? 1 : 0);
+    this.u32(result);
+    this.u32(flags);
+    return this;
+  }
+
+  /** A reported attribute; null removes it. */
+  styleAttr(id: number, name: number, value: string | null): this {
+    this.op1(UiOp.StyleAttr, id, 0);
+    this.u32(name);
+    this.u8(value === null ? 0 : 1);
+    this.str(value ?? '', true);
+    return this;
+  }
+
   /** Style assignment for a computed style map. The style engine hands the
    * same (immutable) object to every element with an identical computed
    * style, so the map itself crosses the bridge ONCE per frame (DefineStyle)
@@ -272,10 +527,7 @@ export class OpWriter {
     if (this.uiOpsVersion < 2) return this.setStyleAsProps(id, style, activeStyle);
     const sid = this.styleId(style);
     const aid = activeStyle ? this.styleId(activeStyle) : 0;
-    this.u8(UiOp.SetStyle);
-    this.u32(id);
-    this.u32(sid);
-    this.u32(aid);
+    this.op3(UiOp.SetStyle, id, sid, aid);
     return this;
   }
 
@@ -376,14 +628,23 @@ export class OpWriter {
   }
 
   get isEmpty(): boolean {
-    return this.len === 0;
+    return this.len === 0 && this.wlen === 0;
   }
 
   reset(): void {
     this.len = 0;
+    this.wlen = 0;
+    if (this.texts.length !== 0) this.texts = [];
   }
 
   toUint8Array(): Uint8Array {
-    return this.buf.slice(0, this.len);
+    const frame = this.buf.slice(0, this.len);
+    if (this.wlen !== 0) (frame as Uint8Array & { fjsStyle?: Uint32Array }).fjsStyle = this.words.slice(0, this.wlen);
+    if (this.texts.length !== 0) {
+      (frame as Uint8Array & { fjsText?: string[] }).fjsText = this.texts;
+      this.texts = [];
+    }
+    return frame;
   }
+
 }

@@ -762,6 +762,24 @@ iPhone 12，`fjs run ios --profile`：
 | 显示，147 之后 | **152–166 ms** | 2 ms | 35.5–37 | 0 | 114–127 | 282–316 ms |
 | 隐藏，145 修前 | 109–136 ms | 78–84 ms | 0 | 0 | 30–53 | 133–166 ms |
 | 隐藏，145 修后 | 52–60 ms | **1 ms** | 0 | 0 | 51–59 | 94–115 ms |
+| 显示，153 之后（VDOM） | **92–93 ms** | 3.5–3.9 ms | 0.5–0.9 | 0 | 88 | 215 ms |
+| 显示，153 之后（Vapor） | 121–144 ms | 3.0–3.3 ms | 0.5–0.6 | 0 | 117–140 | 248–265 ms |
+| 隐藏，153 之后（VDOM / Vapor） | 46 / 42–55 ms | 1.6 ms | 0 | 0 | 45 / 41–53 | 82–94 ms |
+
+**JS 之后的上屏链路**（specs/154，`packages/flutter_fjs/tool/frame-timeline.mjs` 录 VM timeline）：显示那一帧
+UI 线程 99.6 ms，其中 LAYOUT 89 ms = 布局期 build 30（每个 flex 容器的子节点在 `LayoutBuilder` 里建，一格一次）
++ GC 35 + 纯布局 24；PAINT 10 ms；光栅化只有 4 ms。
+
+**flex 免 LayoutBuilder**（specs/156）：用不上约束的 flex 盒直接建，column 的 stretch / start 挪进
+`RenderFjsFlex` 的 layout。显示帧 LayoutBuilder 回调 2060 → 4、UI 帧 99.6 → 87.7 ms、GC 36 → 31 ms；连同
+specs/155 的文字引用，真机 VDOM 显示 JS 77–89 ms、上屏 181–199 ms。剩下的 GC 来自每节点展开的 Widget 串。
+
+**每节点 Widget 层数**（specs/157）：节点视图自己监听信号（去掉 ListenableBuilder）、装饰盒不经 Container
+（零宽边框不再包 Padding），一格 13 → 9 个 Element。显示帧 87.7 → 80.5 ms（build 29 → 26、GC 31 → 28），隐藏帧
+30 → 23 ms；上屏 182 ms。
+
+153 之后改 1 / 200 / 2000 格（JS）：VDOM 32 / 45 / 76 ms，Vapor 4.7–5.9 / 16.9 / 70 ms（2026-09-29，
+样式引擎已在 libfjs-style，specs/150–153）。
 
 uni-app x 官方 iOS 数字：iPhone SE2 vapor 160.6 ms / UIKit 328.75 ms（终点是渲染指令交给系统，
 不含最后一帧 GPU；上表的「上屏」多含约一帧）。
@@ -787,6 +805,96 @@ uni-app x 官方 iOS 数字：iPhone SE2 vapor 160.6 ms / UIKit 328.75 ms（终�
 剩下的 JS：flush 重算约 36 ms——离线逐方法计时，页面规则下是 op 编码（`applyStyle`）6.5 ms + compute
 3.4 ms + recompute 自身 2.8 ms 的地板，开了结构规则再多约 11 ms 的首尾位 / 邻居签名计算；Vue + 元素层
 约 115 ms。op 编码是下一个方向，没有立项。
+
+**Vue Vapor 试过，不划算（specs/148 阶段 0）**：`examples/bench/vapor/` 用 Vue 3.6.0-rc.9，把同一个
+`Flat4050.vue` 分别以 VDOM（fjs 渲染器）和 Vapor（官方 runtime-vapor 跑在一层落到同一套 nodeOps 的 DOM 外壳上）
+挂载，同一份 runtime-core、同一个样式引擎。离线挂载 VDOM **65.5 ms**、Vapor **81.5 ms**，卸载 8.2 / 9.5 ms。
+逐段计时：两边的宿主工作（建元素、scope、class、insert、文本）都约 32 ms，flush 都约 18.5 ms；VDOM 的
+runtime-core 只占约 15 ms，Vapor 运行时约 17 ms（每个 v-for 项一个 effect scope + 两个 ref + 一个
+renderEffect），外壳再约 13 ms。**这页的 JS 大头是宿主工作和样式，不是 vnode**——框架层整个拿掉，离线上限
+也只有约 15 ms。
+但**更新**差一个数量级：同一棵树每格文本读响应式数组，改 1 格 VDOM 16.0 ms、Vapor 0.0 ms；改 200 格 17.1 / 2.1 ms；
+改 2000 格 27.8 / 21.4 ms。VDOM 改一格也要重跑整页 render、diff 4050 个 vnode。若加一个原生「按模板克隆子树」op，
+Vapor 挂载估算可到约 59 ms（省掉外壳 14.2 ms 与 create / insert 编码 8.6 ms）。
+
+之后 Vapor 做成了可选（specs/148 阶段 1，用法见 [vue3.md](vue3.md#vue-vapor可选specs148)）。真机（iPhone 12，
+`--profile`，flat-4050 页切到 Vapor 网格）：改 1 格 JS **52–68 → 5.4–6.0 ms**、上屏 82–99 → 49 ms；改 200 格
+55–66 → 17–22 ms；显示 177–196 → 212–216 ms（首次挂载慢约 25 ms，与离线一致）。
+
+**批量挂载（specs/149）**：把 8.6 ms 的元素层底线之外的时间逐层拆开——渲染器登记 ~8、样式引擎逐元素登记 ~8、
+样式 flush 17–25、Vue 18（VDOM）——然后逐项削：op 写入器一次扩容内联写字节（帧不变，元素层 12 → 9.5 ms）；
+新元素的 scope / class 在插入前落地时跳过必然空转的标脏；渲染器不再逐元素给元素对象加 `contains`、不预建空
+child list；flush 里按父节点的 child list 顺序游标一次得到首尾位与 `+` 邻居，不再每元素找下标、两侧扫描。
+离线 VDOM 挂载 66 → ~60 ms、Vapor 83 → ~74 ms，结构规则下 flush 30.4 → 26.4 ms，帧字节不变；真机 VDOM
+显示 JS 177–196 → **162–165 ms**（flush 33 ms）。启动后头两次显示 flush 可能读到 52 ms 而「其余」同步变小——
+是 GC 落在了 flush 里，看总 JS。
+
+JS 里的样式引擎到此为止：每元素约 6 µs（十几个状态字段、几次 Map 查找）是 PrimJS 解释执行的地板。量过的上限——
+样式调用换成每次一个 op、JS 不再 flush——不经过 Vue 的渲染器挂载 42.6 → 21.6 ms，所以下一步是样式引擎下沉 C++
+（specs/150，门控 spike）。
+
+## 样式引擎下沉 C++：libfjs-style（2026-09，specs/150）
+
+specs/146 / 147 / 149 连续三轮之后，样式引擎在 JS 里每元素仍约 6 µs（十几个状态字段的读写、几次 Map
+查找），flat-4050 挂载里登记 + flush 占 25–33 ms。把逐元素那一半（元素树、签名、chain / match / compute
+缓存、选择器匹配、脏标记、flush、style 表）搬进引擎无关的 C++ 库 libfjs-style，CSS 语义留在 TS、只在未命中时
+回调（数据流见 [architecture.md](architecture.md)「样式引擎分两半」）。native 侧整个 flush 连回调 **0.2–0.7 ms**。
+
+离线（fjsrun，Mac，`examples/bench`：`pnpm run native:ts` / `native:on` / `vapor`，中位数 ms）：
+
+| | TS 引擎 | libfjs-style |
+|---|---:|---:|
+| flat-4050 VDOM 挂载，PrimJS | 59.3 | 42.5 |
+| 同上 + 结构 / 兄弟规则 | 69.0 | 42.7 |
+| flat-4050 VDOM 挂载，quickjs-ng | 58.5 | 36.3 |
+| 同上 + 结构 / 兄弟规则，quickjs-ng | 61.0 | 33.7 |
+| flat-4050 Vapor 挂载，PrimJS | ~74 | 60.5 |
+
+`demo` `pnpm run bench:mount`（`<defer>`，首帧 sync / 其中 css，ms）：
+
+| 页 | TS 冷 | native 冷 | TS 热 css | native 热 css | TS 快照 导入+sync | native 快照 导入+sync |
+|---|---:|---:|---:|---:|---:|---:|
+| vant-basic | 19.8 / 13.7 | 13.8 / 7.8 | 2.4 | 1.2 | 2.6 + 10.4 | 3.3 + 7.8 |
+| vant-feedback | 12.3 / 7.2 | 7.1 / 2.2 | 1.7 | 0.9 | 0.7 + 7.4 | 1.1 + 6.2 |
+| vant-form | 27.7 / 16.7 | 24.2 / 8.5 | 3.0 | 1.3 | 3.2 + 15.1 | 4.7 + 13.0 |
+| vant-more | 14.7 / 9.7 | 10.5 / 5.3 | 1.6 | 0.6 | 3.3 + 7.6 | 4.5 + 6.1 |
+| vant-nav | 19.0 / 12.0 | 13.0 / 6.0 | 1.6 | 0.4 | 2.1 + 10.0 | 2.8 + 7.8 |
+
+读法与踩过的坑：
+
+- **剩下的时间不在样式。** PrimJS 上 flat-4050 的 42 ms ≈ Vue ~18 + 元素层 ~9.5 + 渲染器 ~7.5 + 样式输入 op
+  ~6（每元素 ensure / addScope / setClasses 三次调用，每次 ~0.5 µs，解释器下函数调用的底线；把后两个直接
+  bind 到后端省一层，差异在噪声内）。
+- **每元素的 JS 调用必须比 TS 的快路径还便宜**，否则 flush 省下的又还回去：第一版每元素记一份 class 表、调用链
+  多两跳，登记反而比 TS 慢 30%。现在不存逐元素记录（class 表在 C++，罕见的读经 `styleClasses`），按 tag /
+  class 串 / scope 缓存原子，每个 op 一次写入。
+- **读 C++ 状态会 flush**：表单控件的 `:disabled` 状态若去 C++ 读 class 表，Vue patch 中途就会发帧，半棵树被
+  反复重算（vant-basic 重算 275 → 1076 次）。改成 JS 侧为表单控件稀疏记一份。
+- **规则表逐 sheet 追加**：每注册一个 sheet 重发整张表，vant 几十个 sheet 让首帧涨到 1.3 MB；改成追加 + 需要时
+  RESTYLE(0)。
+- **快照要种进 C++，JSON 延迟取**：native 不导入快照时，带快照的 TS 冷开反而更快。把快照的 chain / compute
+  灌进 C++ 缓存后首开零回调；但从 JS 往帧里逐字写 JSON（~20 µs / 条）比整个 TS 导入还贵——改成种子不带 JSON，
+  第一次命中时经回调取（回调返回的字符串在 C 里 memcpy）。
+- **match 按 hit 集合复用**：同一组规则的不同 chain 共用一个 MatchResult，compute 结果也跟着共用（结构规则下
+  flat-4050 的 compute 未命中 47 → 6）。
+- **样式输入走词流**（specs/151）：拆开量才看清，每元素 `ensure` 的 0.77 µs 里光写 14 字节的 EL op 就占 0.52 µs——
+  解释器下每次 typed-array 字节写约 37 ns，一次 Map 写反而只有 0.07 µs。逐元素的样式输入改写进一个 Uint32 词缓冲
+  （随帧作为 `fjsStyle` 交给 uiOps），加上「待写元素槽」把 scope / class 折进同一条 EL：样式输入 7.1 → 3.2 ms。
+  同期渲染器的按 tag 描述缓存与 insert 快路径把 renderer 层 9.7 → 7.1 ms；flat-4050 VDOM 挂载 43 → 38.5 ms，
+  Vapor 60.5 → 49.4 ms（`examples/bench/native/floor.ts` 逐层量）。
+- **原生模板克隆**（specs/152）：Vapor 的 `template()` 在 libfjs-style 注册一次，之后每个实例一条 `W_CLONE`，
+  C++ 展开成 Create / Insert / SetText 并直接登记样式。同一个格子模板实例化 2000 次 24.6 → 10.6 ms，flat-4050
+  Vapor 挂载 49.4 → ~36 ms，首帧 120 → 49 KB。顺带量出外壳 `Element` 构造 17 个字段就要 1 µs（解释器下每加一个
+  属性一次形状迁移），减到 8 个后逐节点路径也受益。
+- **VDOM 模板块**（specs/153）：编译期把「结构和 class 全静态、只有文字在变」的子树编成一个走 Teleport 协议的
+  vnode，挂载时一次克隆。flat-4050 VDOM 挂载 39.5 → 20.1 ms、首帧 121 → 51 KB；改 1 / 200 / 2000 格
+  14.5 / 15.3 / 25.5 → 11.1 / 12.2 / 22.6 ms（少了一半 vnode 的 diff）。vant 页几乎没有这类子树，bench:mount 持平。
+- **文字走引用**（specs/155）：一次 setText 1.36 µs 里，`drawableText` 的正则 0.45、逐字节写 1–2 个字符 0.64——
+  解释器下循环本身就贵。改成字符串随帧交给 host（数组 push + 9 字节 op），C++ 展开成同样的 SetText：flat-4050 VDOM
+  挂载 20.3 → 17.7 ms，改 2000 格 VDOM 22.6 → 20.1、Vapor 21.2 → 18.5 ms。
+- 对拍：`__fjsNativeStyle = 'verify'` 下两个引擎同时跑、每帧逐元素比较——flat-4050、demo 全部页面
+  （`demo/bench/verify-pages.ts`、`mount-verify.ts`、`mount-prewarm-verify.ts`）、hello-fjs 66 页
+  （`examples/hello-fjs/bench/verify-pages.ts`）共 3 万余次比较，0 不一致。
 
 ## 已知热点（优化路线）
 

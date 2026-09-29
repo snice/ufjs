@@ -7,6 +7,8 @@ import 'dart:typed_data';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/node_box.dart';
 import 'package:flutter_fjs/src/mirror_tree.dart';
 import 'package:flutter_fjs/src/render/renderer.dart';
 import 'package:flutter_fjs/src/ui_ops.dart';
@@ -83,7 +85,7 @@ Widget _render(MirrorTree tree) {
 }
 
 Color? _boxColor(WidgetTester tester) {
-  final container = tester.widget<Container>(find.byType(Container));
+  final container = tester.widget<DecoratedBox>(nodeBoxes);
   return (container.decoration as BoxDecoration?)?.color;
 }
 
@@ -145,7 +147,7 @@ void main() {
 
     final gesture = await _hover(
       tester,
-      tester.getCenter(find.byType(Container)),
+      tester.getCenter(nodeBoxes),
     );
     expect(_boxColor(tester), const Color(0xFFF2F2F2));
 
@@ -160,12 +162,12 @@ void main() {
     );
     final gesture = await _hover(
       tester,
-      tester.getCenter(find.byType(Container)),
+      tester.getCenter(nodeBoxes),
     );
     expect(_boxColor(tester), const Color(0xFFF2F2F2));
 
     // mouse down = pressed while still hovered: :active lays over :hover
-    await gesture.down(tester.getCenter(find.byType(Container)));
+    await gesture.down(tester.getCenter(nodeBoxes));
     await tester.pump();
     expect(_boxColor(tester), const Color(0xFFEEF4FF));
 
@@ -180,7 +182,7 @@ void main() {
     );
     // a touch pointer entering the node is not a hover
     final press = await tester.startGesture(
-      tester.getCenter(find.byType(Container)),
+      tester.getCenter(nodeBoxes),
     );
     await tester.pump();
     expect(_boxColor(tester), const Color(0xFFEEF4FF));

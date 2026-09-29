@@ -15,7 +15,8 @@ import {
   writeModuleTypes,
   type FjsModule,
 } from './project/modules.js';
-import { isNativeTagFor, runtimeDir } from './bundler/vue-plugin.js';
+import { isNativeTagFor, prepareVaporSfcSource, runtimeDir } from './bundler/vue-plugin.js';
+import { readConfig } from './project/config.js';
 import { swiperChildrenTransform } from './template/swiper-children.js';
 import { copyLocalDir, copyModuleDataForWeb, HTML_DIR } from './bundler/build.js';
 import { moduleContentType } from './dev/server.js';
@@ -165,6 +166,7 @@ export function fjs(): VitePlugin {
             { find: /^fjs\/router$/, replacement: path.join(runtime, 'src', 'router', 'web.ts') },
             { find: /^fjs\/web$/, replacement: path.join(runtime, 'src', 'web', 'index.ts') },
             { find: /^fjs\/vue$/, replacement: path.join(runtime, 'src', 'vue', 'index.ts') },
+            { find: /^fjs\/vapor$/, replacement: path.join(runtime, 'src', 'vapor', 'web.ts') },
             { find: /^fjs$/, replacement: path.join(runtime, 'src', 'index.ts') },
           ],
         },
@@ -309,6 +311,10 @@ export function fjs(): VitePlugin {
     // with that rule, and NutUI's <view>s rely on it. A raw scss block is
     // skipped for the same reason: its nesting would fool the rule scanner.
     transform(code, id) {
+      // Vapor SFCs (specs/148): see prepareVaporSfcSource
+      if (id.endsWith('.vue')) {
+        return prepareVaporSfcSource(code, id, readConfig(root).vapor?.libs !== false);
+      }
       if (VUE_STYLE_BLOCK_RE.test(id)) {
         return rewriteFjsCss(code, { flexDefault: !/[&?]lang\.(?!css\b)/.test(id) });
       }

@@ -43,6 +43,11 @@ bool isOutOfFlowPosition(String? position) =>
 /// clip. Only a scroller turns it on: everywhere else there is no clip to
 /// cull against, so it would be per-child arithmetic for nothing. See
 /// [FjsCullingFlex] for what it does and does not change.
+/// Off: every flex box takes the LayoutBuilder path (tests compare the two,
+/// specs/156).
+@visibleForTesting
+bool debugFjsFlexDirectPath = true;
+
 Widget buildFlex(
   FjsStyle style,
   List<Widget> kids,
@@ -130,6 +135,56 @@ Widget buildFlex(
     final s = FjsStyle.of(n);
     return s.alignSelf != null && !isOutOfFlowPosition(s.position);
   });
+  // Most boxes use none of what the LayoutBuilder below reads the
+  // constraints for; building them in one keeps the whole subtree out of
+  // the build phase — each box's children are built during LAYOUT, one
+  // callback, closure and Element per box (specs/154: 2059 of them, 30 ms of
+  // build and 35 ms of GC inside flat-4050's layout on an iPhone). Those
+  // boxes take the direct path (specs/156). A column's stretch-or-start
+  // choice, the one constraint read left, moves into RenderFjsFlex.
+  final stretch = crossAlignment == CrossAxisAlignment.stretch;
+  if (debugFjsFlexDirectPath &&
+      !cull &&
+      !selfAligned &&
+      !growChildren &&
+      !(stretch && horizontal) &&
+      (horizontal ? style.columnGapLength : style.rowGapLength)?.isRelative != true &&
+      kidNodes.every(
+        (n) => n == null || _layoutIndependent(FjsStyle.of(n), horizontal, blockFlow: blockFlow, stretch: stretch),
+      )) {
+    final gapPx = (horizontal ? style.columnGapLength : style.rowGapLength)?.px;
+    final children = <Widget>[];
+    for (var i = 0; i < kids.length; i++) {
+      if (gapPx != null && i > 0) {
+        children.add(horizontal ? SizedBox(width: gapPx) : SizedBox(height: gapPx));
+      }
+      children.add(
+        _flexChild(
+          child: kids[i],
+          childNode: i < kidNodes.length ? kidNodes[i] : null,
+          horizontal: horizontal,
+          // under the adaptive stretch the items are built as for `start`
+          // (a shrink marker each), the marker counting only when the box
+          // does lay out as start — see FjsAdaptiveShrinkCross
+          stretches: false,
+          adaptiveShrink: stretch,
+          mainAxisMax: double.infinity,
+          blockFlow: blockFlow,
+        ),
+      );
+    }
+    return FjsFlex(
+      direction: axis,
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: style.justifyContent ?? MainAxisAlignment.start,
+      crossAxisAlignment: crossAlignment,
+      startWhenUnbounded: stretch,
+      textBaseline: TextBaseline.alphabetic,
+      cssOverflowClip: style.overflowHidden,
+      inheritClip: true,
+      children: children,
+    );
+  }
   return LayoutBuilder(
     builder: (context, constraints) {
       // A scroll view gives its content an unbounded cross axis. Flutter's
@@ -267,6 +322,37 @@ Widget buildFlex(
       );
     },
   );
+}
+
+/// Whether [_flexChild] builds the same item for [s] whatever the flex's
+/// constraints: nothing on it is sized against the main axis (a percentage,
+/// a % padding or offset, a basis, a grow, an auto margin), and — under an
+/// adaptive stretch ([stretch]) — nothing that the stretch-or-start choice
+/// wraps differently (a cross size of its own, an inline box). Out-of-flow
+/// items take none of those paths. The direct path of [buildFlex] needs
+/// every item to be one (specs/156).
+bool _layoutIndependent(FjsStyle s, bool horizontal, {required bool blockFlow, required bool stretch}) {
+  if (isOutOfFlowPosition(s.position)) return true;
+  final mainLength = horizontal ? s.widthLength : s.heightLength;
+  if (mainLength?.isRelative == true) return false;
+  final mainBound = horizontal
+      ? s.hasRelativeSpacing || s.leftLength?.isRelative == true || s.rightLength?.isRelative == true
+      : s.topLength?.isRelative == true || s.bottomLength?.isRelative == true;
+  if (mainBound) return false;
+  if (horizontal && s.paddingLengths?.hasRelative == true) return false;
+  if (s.flexBasisLength != null) return false;
+  final grow = s.flexGrow;
+  if (grow != null && grow > 0) return false;
+  if (_mainAutoMargins(s, horizontal) != null) return false;
+  if (stretch) {
+    if ((horizontal ? s.heightLength : s.widthLength) != null) return false;
+    final fitContent = s.widthFitContent && s.widthLength == null;
+    final shrinkBox =
+        (blockFlow && (s.display == 'inline-block' || s.display == 'inline' || s.display == 'inline-flex')) ||
+        (fitContent && !horizontal);
+    if (shrinkBox) return false;
+  }
+  return true;
 }
 
 /// Tags the web base stylesheet pins at `flex-shrink: 0` (web/base-css.ts:
@@ -548,6 +634,7 @@ Widget _flexChild({
   CrossAxisAlignment? crossAlign,
   int? defaultGrow,
   bool blockFlow = true,
+  bool adaptiveShrink = false,
 }) {
   if (childNode == null) {
     return defaultGrow == null
@@ -628,7 +715,9 @@ Widget _flexChild({
   // the line tight at the measured size — still stretches them.
   if (((!stretched || crossAlign != null) && crossLength == null) ||
       shrinkBox) {
-    out = FjsShrinkCross(key: key, child: out);
+    out = adaptiveShrink
+        ? FjsAdaptiveShrinkCross(key: key, child: out)
+        : FjsShrinkCross(key: key, child: out);
   }
   if (crossAlign != null && !stretched) {
     // the cross factor 1 keeps the item at its own cross size when the

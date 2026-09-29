@@ -62,9 +62,9 @@
   },
   "dependencies": {
     "@ufjs/runtime": "^0.1.7",
-    "@vue/compiler-core": "^3.4.0",
-    "@vue/compiler-sfc": "^3.4.0",
-    "@vue/shared": "^3.5.42",
+    "@vue/compiler-core": "3.6.0-rc.9",
+    "@vue/compiler-sfc": "3.6.0-rc.9",
+    "@vue/shared": "3.6.0-rc.9",
     "esbuild": "^0.23.0",
     "qrcode-generator": "^2.0.4",
     "wawoff2": "^2.0.1",

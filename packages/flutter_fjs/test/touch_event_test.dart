@@ -7,6 +7,8 @@ import 'dart:typed_data';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/node_box.dart';
 import 'package:flutter_fjs/src/ffi.dart' show FjsEvent;
 import 'package:flutter_fjs/src/mirror_tree.dart';
 import 'package:flutter_fjs/src/render/renderer.dart';
@@ -230,7 +232,7 @@ void main() {
     await tester.pumpWidget(
       _render(_treeWith('{$_box,$_listens,"id":"card"}'), log),
     );
-    final start = tester.getCenter(find.byType(Container));
+    final start = tester.getCenter(nodeBoxes);
 
     final finger = await tester.startGesture(start);
     expect(log.single.type, FjsEvent.touchStart);
@@ -307,7 +309,7 @@ void main() {
     await tester.pumpWidget(_render(tree, log));
 
     final finger = await tester.startGesture(
-      tester.getCenter(find.byType(Container).last),
+      tester.getCenter(nodeBoxes.last),
     );
     expect(log.single.type, FjsEvent.touchStart);
 
@@ -331,7 +333,7 @@ void main() {
   ) async {
     final log = <_Event>[];
     await tester.pumpWidget(_render(_nestedNodes(), log));
-    final start = tester.getCenter(find.byType(Container).last);
+    final start = tester.getCenter(nodeBoxes.last);
 
     final finger = await tester.startGesture(start);
     await finger.moveBy(const Offset(-30, 0));
@@ -360,8 +362,8 @@ void main() {
     // into offsetX/offsetY. A <canvas> hit-tests against exactly that.
     final log = <_Event>[];
     await tester.pumpWidget(_render(_treeWith('{$_box,$_listens}'), log));
-    final box = tester.getTopLeft(find.byType(Container));
-    final start = tester.getCenter(find.byType(Container));
+    final box = tester.getTopLeft(nodeBoxes);
+    final start = tester.getCenter(nodeBoxes);
 
     final finger = await tester.startGesture(start);
     expect(log.single.payload['o'], [box.dx, box.dy]);
@@ -378,7 +380,7 @@ void main() {
   ) async {
     final log = <_Event>[];
     await tester.pumpWidget(_render(_treeWith('{$_box,$_listens}'), log));
-    final start = tester.getCenter(find.byType(Container));
+    final start = tester.getCenter(nodeBoxes);
     final finger = TestPointer(1, PointerDeviceKind.touch);
     tester.binding.handlePointerEvent(finger.down(start));
     await tester.pump();
@@ -399,7 +401,7 @@ void main() {
       'event', (tester) async {
     final log = <_Event>[];
     await tester.pumpWidget(_render(_treeWith('{$_box,$_listens}'), log));
-    final center = tester.getCenter(find.byType(Container));
+    final center = tester.getCenter(nodeBoxes);
     final one = TestPointer(1, PointerDeviceKind.touch);
     final two = TestPointer(2, PointerDeviceKind.touch);
 
@@ -442,7 +444,7 @@ void main() {
     );
 
     final finger = await tester.startGesture(
-      tester.getCenter(find.byType(Container)),
+      tester.getCenter(nodeBoxes),
     );
     await finger.moveBy(const Offset(0, -120));
     await tester.pump();
@@ -474,7 +476,7 @@ void main() {
       ),
     );
 
-    final start = tester.getCenter(find.byType(Container));
+    final start = tester.getCenter(nodeBoxes);
     final finger = TestPointer(1, PointerDeviceKind.touch);
     tester.binding.handlePointerEvent(finger.down(start));
     tester.binding.handlePointerEvent(
@@ -503,7 +505,7 @@ void main() {
     );
 
     final finger = await tester.startGesture(
-      tester.getCenter(find.byType(Container)),
+      tester.getCenter(nodeBoxes),
     );
     // the first move past the threshold is what the list wins the arena
     // with; the second is the one it scrolls by
@@ -535,7 +537,7 @@ void main() {
     );
 
     final finger = await tester.startGesture(
-      tester.getCenter(find.byType(Container)),
+      tester.getCenter(nodeBoxes),
     );
     await finger.moveBy(const Offset(0, -30));
     await tester.pump();
@@ -550,7 +552,7 @@ void main() {
     await tester.pumpWidget(_render(_treeWith('{$_box}'), log));
     expect(find.byType(FjsTouchNode), findsNothing);
     final finger = await tester.startGesture(
-      tester.getCenter(find.byType(Container)),
+      tester.getCenter(nodeBoxes),
     );
     await finger.up();
     expect(log, isEmpty);
@@ -561,7 +563,7 @@ void main() {
     final tree = _treeWith('{$_box,$_listens}');
     await tester.pumpWidget(_render(tree, log));
     final finger = await tester.startGesture(
-      tester.getCenter(find.byType(Container)),
+      tester.getCenter(nodeBoxes),
     );
     log.clear();
 
@@ -586,7 +588,7 @@ void main() {
         log,
       ),
     );
-    final painted = tester.getCenter(find.byType(Container));
+    final painted = tester.getCenter(nodeBoxes);
 
     final finger = await tester.startGesture(painted);
     expect(log.single.type, FjsEvent.touchStart);
@@ -606,7 +608,7 @@ void main() {
     final log = <_Event>[];
     final tree = _treeWith('{$_box,$_listens}');
     await tester.pumpWidget(_render(tree, log));
-    final start = tester.getCenter(find.byType(Container));
+    final start = tester.getCenter(nodeBoxes);
     final finger = await tester.startGesture(start);
     log.clear();
 
@@ -631,7 +633,7 @@ void main() {
     final log = <_Event>[];
     final tree = _twoNodes();
     await tester.pumpWidget(_render(tree, log));
-    final second = tester.getCenter(find.byType(Container).last);
+    final second = tester.getCenter(nodeBoxes.last);
 
     final finger = await tester.startGesture(second);
     log.clear();
@@ -654,7 +656,7 @@ void main() {
     final log = <_Event>[];
     final tree = _twoAbsoluteNodes();
     await tester.pumpWidget(_render(tree, log));
-    final first = tester.getCenter(find.byType(Container).first);
+    final first = tester.getCenter(nodeBoxes.first);
 
     final finger = await tester.startGesture(first);
     log.clear();

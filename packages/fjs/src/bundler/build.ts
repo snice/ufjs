@@ -118,9 +118,36 @@ export function assetOutputOptions(): {
 export function flutterEsbuildPlatform(): {
   platform: 'neutral';
   mainFields: string[];
+  supported: Record<string, boolean>;
 } {
-  return { platform: 'neutral', mainFields: ['module', 'main'] };
+  return { platform: 'neutral', mainFields: ['module', 'main'], supported: { ...ENGINE_CLASS_SYNTAX } };
 }
+
+/** Class syntax past es2019 that both device engines (PrimJS, QuickJS-ng)
+ * run natively, so esbuild leaves it alone under `target: 'es2019'`.
+ *
+ * Lowered, a class field is an `Object.defineProperty` per field per
+ * construction — esbuild always uses define semantics for `.js` files, so
+ * every dependency pays it regardless of any tsconfig — about 4× a plain
+ * assignment on PrimJS, while a native field costs about the same as the
+ * assignment (specs/149). Lowered private members go through a WeakMap per
+ * access. Left out, so esbuild keeps lowering them (all checked with
+ * fjsrun):
+ *   - static fields, public and private: PrimJS throws "lexical variable is
+ *     not initialized" when an initializer names its own class
+ *     (`class Color { static WHITE = new Color() }` — spine does this; the
+ *     spec says the class binding is live by then, and QuickJS-ng agrees).
+ *     Lowered, the assignment runs after the class is defined. They run
+ *     once per class, so lowering costs nothing that matters.
+ *   - static blocks and `#x in obj`: PrimJS rejects the syntax. */
+const ENGINE_CLASS_SYNTAX: Record<string, boolean> = {
+  'class-field': true,
+  'class-private-field': true,
+  'class-private-method': true,
+  'class-private-accessor': true,
+  'class-private-static-method': true,
+  'class-private-static-accessor': true,
+};
 
 // One name per line is fine — the list only changes when node itself does.
 const BUILTIN_STUB_JS = `

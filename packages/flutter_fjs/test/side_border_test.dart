@@ -10,6 +10,8 @@ import 'package:flutter_fjs/src/render/style.dart';
 import 'package:flutter_fjs/src/render/style_parse.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/node_box.dart';
+
 FjsStyle styled(Map<String, Object?> style) => FjsStyle({'style': style});
 
 Widget box(Map<String, Object?> style, {Color? defaultBorderColor}) =>
@@ -143,7 +145,7 @@ void main() {
         }),
       );
       final decoration =
-          tester.widget<Container>(find.byType(Container)).decoration
+          tester.widget<DecoratedBox>(nodeBoxes).decoration
               as BoxDecoration;
       final border = decoration.border as Border;
       expect(border.top.color, const Color(0xFFFF0000));
@@ -166,7 +168,7 @@ void main() {
         }),
       );
       final decoration =
-          tester.widget<Container>(find.byType(Container)).decoration
+          tester.widget<DecoratedBox>(nodeBoxes).decoration
               as BoxDecoration;
       final border = decoration.border as Border;
       expect(border.top.color, const Color(0xFFCCCCCC));
@@ -221,7 +223,7 @@ void main() {
           ),
         );
         final decoration =
-            tester.widget<Container>(find.byType(Container)).decoration
+            tester.widget<DecoratedBox>(nodeBoxes).decoration
                 as BoxDecoration;
         final border = decoration.border as Border;
         expect(border.top.color, chrome);

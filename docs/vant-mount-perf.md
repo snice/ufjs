@@ -345,6 +345,9 @@ vant-form（346 元素）：
 
 ### Vue 3.6（Vapor）：对这条管线基本无效
 
+> 2026-09-28 更新（specs/148）：第 1 条已解决——fjs 用一层 DOM 外壳接上了 runtime-vapor，Vapor 组件可选用，
+> 见 [vue3.md](vue3.md#vue-vapor可选specs148)。第 2 条仍成立：vant 在 Vapor 页里走互操作，挂载成本不变。
+
 1. **Vapor 用不上。** `@vue/runtime-vapor@3.6.0-rc.9` 直接 import
    `@vue/runtime-dom`，模板实例化是 `document.createElement('template')` +
    `innerHTML` + `cloneNode`，**没有 `createRenderer` 那样的自定义渲染器入口**。

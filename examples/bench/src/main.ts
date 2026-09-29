@@ -1,6 +1,7 @@
 // fjs bench — JS engine + UI pipeline micro-benchmarks.
 // Run: fjs build && fjsrun --pump 8000 dist/bundle.js
 // Results print as JSON lines prefixed with [bench].
+import './ts-engine';
 import { h, createRoot, setText, nowMs, flush } from 'fjs';
 import { runStyleBenches } from './style';
 import { runVueBenches } from './vue-bench';

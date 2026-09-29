@@ -63,6 +63,10 @@
 // The same opcodes are switched on in three places, with no generator to keep
 // them honest: fjs-runtime's ui/ops.ts, this decoder, and the frame dump in
 // native/tools/fjsrun.cpp. They must move together.
+//
+// Opcodes 0x40 and up are reserved for the native style engine's input ops
+// (specs/150): libfjs-style consumes them inside uiOps and they never reach
+// this decoder.
 abstract final class UiOpCode {
   static const create = 1;
   static const remove = 2;

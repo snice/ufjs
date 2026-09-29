@@ -16,6 +16,8 @@ import 'package:flutter_fjs/src/render/renderer.dart';
 import 'package:flutter_fjs/src/ui_ops.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/node_box.dart';
+
 class _W {
   final List<int> b = [];
   void u8(int v) => b.add(v & 0xff);
@@ -147,7 +149,7 @@ void main() {
     );
 
     final screen = tester.view.physicalSize / tester.view.devicePixelRatio;
-    final shell = tester.getRect(find.byType(Container).first);
+    final shell = tester.getRect(nodeBoxes.first);
     expect(shell.size, screen);
     // the scrollable body takes what the two bars leave
     final body = tester.getRect(find.byType(SingleChildScrollView));
