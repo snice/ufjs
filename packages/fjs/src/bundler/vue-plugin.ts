@@ -16,6 +16,7 @@ import { pluginTableSource, type AppPlugin } from '../project/plugins.js';
 import { readConfig } from '../project/config.js';
 import { resolveModuleData, type FjsModule } from '../project/modules.js';
 import { swiperChildrenTransform } from '../template/swiper-children.js';
+import { cloneBlocksTransform } from '../template/clone-blocks.js';
 import {
   FJS_TAGS as FJS_TAG_LIST,
   FJS_COMPONENT_TAGS,
@@ -124,8 +125,9 @@ export function templateCompilerOptions({
     // check has to come FIRST, because some of them (`form`) are also HTML
     // tag names and isHTMLTag would drag them back to being elements.
     isNativeTag: (tag: string) => isNativeTagFor(tag, { web, moduleTags }),
-    // <swiper> children must be <swiper-item> (specs/051)
-    nodeTransforms: [swiperChildrenTransform],
+    // <swiper> children must be <swiper-item> (specs/051); static-structure
+    // subtrees become native clone blocks on Flutter (specs/153)
+    nodeTransforms: web ? [swiperChildrenTransform] : [swiperChildrenTransform, cloneBlocksTransform],
   };
 }
 

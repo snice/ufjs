@@ -762,6 +762,12 @@ iPhone 12，`fjs run ios --profile`：
 | 显示，147 之后 | **152–166 ms** | 2 ms | 35.5–37 | 0 | 114–127 | 282–316 ms |
 | 隐藏，145 修前 | 109–136 ms | 78–84 ms | 0 | 0 | 30–53 | 133–166 ms |
 | 隐藏，145 修后 | 52–60 ms | **1 ms** | 0 | 0 | 51–59 | 94–115 ms |
+| 显示，153 之后（VDOM） | **92–93 ms** | 3.5–3.9 ms | 0.5–0.9 | 0 | 88 | 215 ms |
+| 显示，153 之后（Vapor） | 121–144 ms | 3.0–3.3 ms | 0.5–0.6 | 0 | 117–140 | 248–265 ms |
+| 隐藏，153 之后（VDOM / Vapor） | 46 / 42–55 ms | 1.6 ms | 0 | 0 | 45 / 41–53 | 82–94 ms |
+
+153 之后改 1 / 200 / 2000 格（JS）：VDOM 32 / 45 / 76 ms，Vapor 4.7–5.9 / 16.9 / 70 ms（2026-09-29，
+样式引擎已在 libfjs-style，specs/150–153）。
 
 uni-app x 官方 iOS 数字：iPhone SE2 vapor 160.6 ms / UIKit 328.75 ms（终点是渲染指令交给系统，
 不含最后一帧 GPU；上表的「上屏」多含约一帧）。
@@ -868,6 +874,9 @@ specs/146 / 147 / 149 连续三轮之后，样式引擎在 JS 里每元素仍约
   C++ 展开成 Create / Insert / SetText 并直接登记样式。同一个格子模板实例化 2000 次 24.6 → 10.6 ms，flat-4050
   Vapor 挂载 49.4 → ~36 ms，首帧 120 → 49 KB。顺带量出外壳 `Element` 构造 17 个字段就要 1 µs（解释器下每加一个
   属性一次形状迁移），减到 8 个后逐节点路径也受益。
+- **VDOM 模板块**（specs/153）：编译期把「结构和 class 全静态、只有文字在变」的子树编成一个走 Teleport 协议的
+  vnode，挂载时一次克隆。flat-4050 VDOM 挂载 39.5 → 20.1 ms、首帧 121 → 51 KB；改 1 / 200 / 2000 格
+  14.5 / 15.3 / 25.5 → 11.1 / 12.2 / 22.6 ms（少了一半 vnode 的 diff）。vant 页几乎没有这类子树，bench:mount 持平。
 - 对拍：`__fjsNativeStyle = 'verify'` 下两个引擎同时跑、每帧逐元素比较——flat-4050、demo 全部页面
   （`demo/bench/verify-pages.ts`、`mount-verify.ts`、`mount-prewarm-verify.ts`）、hello-fjs 66 页
   （`examples/hello-fjs/bench/verify-pages.ts`）共 3 万余次比较，0 不一致。

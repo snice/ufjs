@@ -130,6 +130,13 @@ JS op 缓冲 ─┤ 结构 op（Create/Insert/Remove…）+ 样式输入 op（0x
   `W_TEMPLATE`，之后每个实例一条 `W_CLONE(模板, 首 id)`；libfjs-style 在输出帧开头写出这棵子树的 Create /
   SetProps / SetText / Insert（Dart 协议不变）并直接登记样式，JS 只建 host 与外壳节点、做渲染器记账
   （`renderer.ts` `prepareClone` / `cloneTemplate`，`vapor/dom.ts` `planClone`）。其余模板逐节点。
+- VDOM 的模板块（specs/153）：Flutter 构建的模板编译多一个 nodeTransform（`@ufjs/cli`
+  `template/clone-blocks.ts`），把「原生元素、只有静态 class（块根另可有 key）、内容要么是同类子元素要么是文字」
+  的最大子树编成一个 vnode：`createVNode(_hoisted_N, { key, t })`，`_hoisted_N = fjsTemplate(节点表)`（从 'vue'
+  shim 导入），`t` 是动态文字。`fjsTemplate` 的类型走 runtime-core 的 Teleport 协议（`__isTeleport` +
+  `process` / `move` / `remove`），整棵子树不经 mountElement：可克隆时一次 `cloneTemplate` + 动态文字
+  `setElementText`，否则按 mountElement 的顺序逐节点建（`vue/template-block.ts`）。模板根、带事件 / 绑定 /
+  指令 / 组件 / v-if / v-for 的子树不改写。
 - C++ 铸的线上 style id 从 `0x40000000` 起，不与 JS op 写入器（锚点、伪元素盒）
   的 id 冲突。
 - 宿主有 `__fjs.fns.styleAttach` 就默认走 native；`globalThis.__fjsNativeStyle`

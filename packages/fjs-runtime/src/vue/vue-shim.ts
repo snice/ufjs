@@ -34,6 +34,8 @@ import { styleEngine } from './renderer';
 import { trackTransitionClass, untrackTransitionClass, transitionClassesOf } from './transition-classes';
 export * from '@vue/runtime-core';
 export { useCssVars } from './css-vars';
+// the Flutter build's template compiler emits it (specs/153)
+export { fjsTemplate } from './template-block';
 
 // ---- <Transition> ------------------------------------------------------------
 
