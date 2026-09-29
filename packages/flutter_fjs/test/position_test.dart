@@ -19,6 +19,8 @@ import 'package:flutter_fjs/src/render/renderer.dart';
 import 'package:flutter_fjs/src/ui_ops.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/node_box.dart';
+
 class _W {
   final List<int> b = [];
   void u8(int v) => b.add(v & 0xff);
@@ -116,8 +118,7 @@ Widget _render(MirrorTree tree) => MaterialApp(
 Rect _badgeRect(WidgetTester tester) => tester.getRect(
   find.byWidgetPredicate(
     (w) =>
-        w is Container &&
-        (w.decoration as BoxDecoration?)?.color == const Color(0xFFDD524D),
+        nodeBoxColor(w) == const Color(0xFFDD524D),
   ),
 );
 
@@ -152,8 +153,7 @@ void main() {
     final avatar = tester.getRect(
       find.byWidgetPredicate(
         (w) =>
-            w is Container &&
-            (w.decoration as BoxDecoration?)?.color == const Color(0xFFEEF4FF),
+            nodeBoxColor(w) == const Color(0xFFEEF4FF),
       ),
     );
     expect(_badgeRect(tester).top, greaterThanOrEqualTo(avatar.bottom));
@@ -207,10 +207,10 @@ void main() {
   ) async {
     await tester.pumpWidget(_render(_relativeShiftTree()));
 
-    final rows = tester.widgetList<Container>(find.byType(Container));
+    final rows = tester.widgetList<DecoratedBox>(nodeBoxes);
     expect(rows.length, 2);
-    final first = tester.getRect(find.byType(Container).first);
-    final second = tester.getRect(find.byType(Container).last);
+    final first = tester.getRect(nodeBoxes.first);
+    final second = tester.getRect(nodeBoxes.last);
     // laid out as a plain column (second row right under the first), then
     // shifted 8 right / 4 down when painted
     expect(second.left, first.left + 8);
@@ -250,8 +250,7 @@ void main() {
     final overlay = tester.getRect(
       find.byWidgetPredicate(
         (w) =>
-            w is Container &&
-            (w.decoration as BoxDecoration?)?.color == const Color(0xFFDD524D),
+            nodeBoxColor(w) == const Color(0xFFDD524D),
       ),
     );
     expect(overlay.left, box.left + 100);
@@ -284,8 +283,7 @@ void main() {
     final overlay = tester.getRect(
       find.byWidgetPredicate(
         (w) =>
-            w is Container &&
-            (w.decoration as BoxDecoration?)?.color == const Color(0xFFDD524D),
+            nodeBoxColor(w) == const Color(0xFFDD524D),
       ),
     );
     expect(overlay.left, box.left + 100);
@@ -303,8 +301,8 @@ void main() {
         ),
       ),
     );
-    final first = tester.getRect(find.byType(Container).first);
-    final second = tester.getRect(find.byType(Container).last);
+    final first = tester.getRect(nodeBoxes.first);
+    final second = tester.getRect(nodeBoxes.last);
     expect(second.left, first.left + 50);
     // the layout slot is unchanged: the second row still sits right below
     expect(second.top, first.bottom);

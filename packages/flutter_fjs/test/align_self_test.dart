@@ -9,6 +9,8 @@ import 'package:flutter_fjs/src/render/renderer.dart';
 import 'package:flutter_fjs/src/ui_ops.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/node_box.dart';
+
 class _W {
   final List<int> b = [];
   void u8(int v) => b.add(v & 0xff);
@@ -77,9 +79,7 @@ Rect _box(WidgetTester tester, String hex) {
   final color = Color(int.parse('ff${hex.substring(1)}', radix: 16));
   final finder = find.byWidgetPredicate(
     (w) =>
-        w is Container &&
-        w.decoration is BoxDecoration &&
-        (w.decoration! as BoxDecoration).color == color,
+        nodeBoxColor(w) == color,
   );
   return tester.getRect(finder);
 }

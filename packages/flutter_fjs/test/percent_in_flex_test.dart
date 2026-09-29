@@ -20,6 +20,8 @@ import 'package:flutter_fjs/src/render/renderer.dart';
 import 'package:flutter_fjs/src/ui_ops.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/node_box.dart';
+
 /// Writes the op frame a page would send.
 class _W {
   final List<int> b = [];
@@ -131,7 +133,7 @@ Widget _render(
 
 Rect _colored(WidgetTester tester, Color color) => tester.getRect(
   find.byWidgetPredicate(
-    (w) => w is Container && (w.decoration as BoxDecoration?)?.color == color,
+    (w) => nodeBoxColor(w) == color,
   ),
 );
 

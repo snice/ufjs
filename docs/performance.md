@@ -774,6 +774,10 @@ UI 线程 99.6 ms，其中 LAYOUT 89 ms = 布局期 build 30（每个 flex 容�
 `RenderFjsFlex` 的 layout。显示帧 LayoutBuilder 回调 2060 → 4、UI 帧 99.6 → 87.7 ms、GC 36 → 31 ms；连同
 specs/155 的文字引用，真机 VDOM 显示 JS 77–89 ms、上屏 181–199 ms。剩下的 GC 来自每节点展开的 Widget 串。
 
+**每节点 Widget 层数**（specs/157）：节点视图自己监听信号（去掉 ListenableBuilder）、装饰盒不经 Container
+（零宽边框不再包 Padding），一格 13 → 9 个 Element。显示帧 87.7 → 80.5 ms（build 29 → 26、GC 31 → 28），隐藏帧
+30 → 23 ms；上屏 182 ms。
+
 153 之后改 1 / 200 / 2000 格（JS）：VDOM 32 / 45 / 76 ms，Vapor 4.7–5.9 / 16.9 / 70 ms（2026-09-29，
 样式引擎已在 libfjs-style，specs/150–153）。
 

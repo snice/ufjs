@@ -10,6 +10,8 @@ import 'package:flutter_fjs/src/render/style.dart';
 import 'package:flutter_fjs/src/render/style_parse.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/node_box.dart';
+
 FjsStyle styled(Map<String, Object?> style) => FjsStyle({'style': style});
 
 Widget box(Map<String, Object?> style) => Directionality(
@@ -94,7 +96,7 @@ void main() {
             .whereType<FjsDashedBorderPainter>(),
         isEmpty,
       );
-      final decorated = tester.widget<Container>(find.byType(Container));
+      final decorated = tester.widget<DecoratedBox>(nodeBoxes);
       expect(
         (decorated.decoration as BoxDecoration).border,
         Border.all(color: const Color(0xFFCCCCCC)),

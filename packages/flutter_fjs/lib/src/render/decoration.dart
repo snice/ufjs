@@ -85,6 +85,58 @@ class FjsPercentBase extends InheritedWidget {
 }
 
 /// Applies [style]'s box properties to [content].
+/// What `Container(width, height, decoration, foregroundDecoration, child)`
+/// builds, minus what it builds for nothing: Container always pads by the
+/// decoration's padding — the border's width — even when that is zero, and
+/// is an Element of its own on top. Every decorated node paid both; a
+/// 4050-element page, 8100 Elements (specs/157). Same order as Container:
+/// border padding, decoration, foreground decoration, then the size.
+Widget _decoratedBox({
+  Key? key,
+  double? width,
+  double? height,
+  required Decoration decoration,
+  Decoration? foregroundDecoration,
+  Widget? child,
+}) {
+  final tight = width != null || height != null;
+  // a childless Container expands unless its size is tight — keep its
+  // exact behaviour there, it is the rare case
+  if (child == null && !(width != null && height != null)) {
+    return Container(
+      key: key,
+      width: width,
+      height: height,
+      decoration: decoration,
+      foregroundDecoration: foregroundDecoration,
+    );
+  }
+  Widget? current = child;
+  final pad = decoration.padding;
+  if (pad != EdgeInsets.zero && pad != EdgeInsetsDirectional.zero) {
+    current = Padding(padding: pad, child: current);
+  }
+  // the key goes on the outermost widget, as it went on the Container
+  final outerIsDecoration = foregroundDecoration == null && !tight;
+  current = DecoratedBox(key: outerIsDecoration ? key : null, decoration: decoration, child: current);
+  if (foregroundDecoration != null) {
+    current = DecoratedBox(
+      key: tight ? null : key,
+      decoration: foregroundDecoration,
+      position: DecorationPosition.foreground,
+      child: current,
+    );
+  }
+  if (tight) {
+    current = ConstrainedBox(
+      key: key,
+      constraints: BoxConstraints.tightFor(width: width, height: height),
+      child: current,
+    );
+  }
+  return current;
+}
+
 Widget decorateNode(
   FjsStyle style,
   Widget content, {
@@ -362,7 +414,7 @@ Widget decorateNode(
       boxShadow: style.overflowHidden ? null : style.boxShadows,
     );
     Widget buildBox(Decoration decoration, Widget? inner) {
-      return Container(
+      return _decoratedBox(
         key: foregroundKey,
         // the animated axes move to the outer animated SizedBox — a tight
         // constraint the decorated box fills, so background/border track it

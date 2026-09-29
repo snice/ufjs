@@ -9,6 +9,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/node_box.dart';
 import 'package:flutter_fjs/src/mirror_tree.dart';
 import 'package:flutter_fjs/src/render/renderer.dart';
 import 'package:flutter_fjs/src/ui_ops.dart';
@@ -102,7 +104,7 @@ void main() {
       ),
     );
 
-    final decorated = tester.widgetList<Container>(find.byType(Container)).last;
+    final decorated = tester.widgetList<DecoratedBox>(nodeBoxes).last;
     final decoration = decorated.decoration as BoxDecoration;
     expect(decoration.border, Border.all(color: const Color(0xFFFF0000)));
   });
@@ -118,7 +120,7 @@ void main() {
       await tester.pumpWidget(
         _render(_buttonTree('{"onTap":true,"style":{$style}}')),
       );
-      final containers = tester.widgetList<Container>(find.byType(Container));
+      final containers = tester.widgetList<DecoratedBox>(nodeBoxes);
       if (containers.isEmpty) return null;
       return (containers.last.decoration as BoxDecoration?)?.border as Border?;
     }
@@ -293,9 +295,9 @@ void main() {
     );
     await tester.pump(); // the very next frame, not one kPressTimeout later
     expect(_mask, findsOneWidget);
-    final box = tester.widget<Container>(_mask);
+    final box = tester.widget<DecoratedBox>(foregroundBox(_mask));
     expect(
-      (box.foregroundDecoration as BoxDecoration).color,
+      (box.decoration as BoxDecoration).color,
       const Color(0x1A000000),
     );
     final maskSize = tester.getSize(_mask);

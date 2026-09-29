@@ -7,6 +7,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/node_box.dart';
 import 'package:flutter_fjs/src/mirror_tree.dart';
 import 'package:flutter_fjs/src/render/renderer.dart';
 import 'package:flutter_fjs/src/ui_ops.dart';
@@ -186,7 +188,7 @@ void main() {
 
     await tester.pumpWidget(_render(tree));
     final decoration =
-        tester.widget<Container>(find.byType(Container)).decoration
+        tester.widget<DecoratedBox>(nodeBoxes).decoration
             as BoxDecoration;
     // Radius.elliptical(50, 50) == Radius.circular(50)
     expect(decoration.borderRadius, BorderRadius.circular(50));

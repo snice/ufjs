@@ -8,6 +8,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/node_box.dart';
 import 'package:flutter_fjs/src/ffi.dart' show FjsEvent;
 import 'package:flutter_fjs/src/mirror_tree.dart';
 import 'package:flutter_fjs/src/render/renderer.dart';
@@ -65,7 +67,7 @@ void main() {
   testWidgets('control: @tap fires on a plain node', (tester) async {
     final log = <int>[];
     await tester.pumpWidget(_host(_tree(), log));
-    await tester.tap(find.byType(Container));
+    await tester.tap(nodeBoxes);
     await tester.pump();
     expect(log, contains(FjsEvent.tap));
   });
@@ -73,7 +75,7 @@ void main() {
   testWidgets('@tap fires on a touch-action: none node', (tester) async {
     final log = <int>[];
     await tester.pumpWidget(_host(_tree(touchActionNone: true), log));
-    await tester.tap(find.byType(Container));
+    await tester.tap(nodeBoxes);
     await tester.pump();
 
     expect(
