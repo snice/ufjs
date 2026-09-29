@@ -1,5 +1,5 @@
 <route>
-{"title": "长列表", "tag": "list-view", "group": "视图容器"}
+{"title": "长列表", "tag": "list-view", "group": "视图容器", "scroll": false}
 </route>
 
 <script setup lang="ts">
@@ -23,8 +23,8 @@ const rows = ref(
 </script>
 
 <template>
-  <view>
-    <Panel title="200 条数据" desc="切页先完成，列表组件自动按需加载">
+  <view class="page">
+    <Panel class="fill" title="200 条数据" desc="切页先完成，列表组件自动按需加载">
       <list-view class="list" :items="rows">
         <template #default="{ item: row }">
           <view :key="row.id" class="row" @tap="() => toast(row.title)">
@@ -42,8 +42,26 @@ const rows = ref(
 </template>
 
 <style scoped>
+/* 全屏填充：vh/vw 在 Flutter 侧不支持（css-compat），剩余高度只能靠 flex 链
+   逐层传递——页面根 → Panel 根（class 穿透到 .section）→ 卡片（:deep 穿透
+   Panel 的 scoped 样式）→ 列表。中间任何一层断掉，列表都会塌成内容高。 */
+.page {
+  width: 100%;
+  height: 100%;
+}
+
+.fill {
+  flex-grow: 1;
+  /* Panel 自带 margin-bottom: 0，撑满后卡片会贴住屏幕底边 */
+  /* margin-bottom: 12px; */
+}
+
+:deep(.card) {
+  flex-grow: 1;
+}
+
 .list {
-  height: 320px;
+  flex-grow: 1;
 }
 
 .row {
