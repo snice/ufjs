@@ -9,6 +9,7 @@
  *   __fjs.nowMs()
  *   __fjs.gc()                          — collect now; returns heap before/after
  *   __fjs.styleAttach/Detach/Result/Stats — libfjs-style binding (specs/150)
+ *   __fjs.styleTextRefs — uiOps takes TEXT ops + `frame.fjsText` (specs/155)
  *   __fjs.engine                        — { engineId, abiVersion }
  *   __fjs.natives.fibonacci(n)          — demo C++ JSI module
  *
@@ -125,6 +126,41 @@ static fjsengine::Value js_clear_timer(fjsengine::Context *ctx, fjsengine::Value
 
 static uint8_t *read_buffer_arg(fjsengine::Context *ctx, fjsengine::ValueConst buf, size_t *size);
 
+
+/* specs/155: the frame's text list (`frame.fjsText`, an array of strings)
+ * for its TEXT ops, as C strings borrowed for the call. */
+struct FrameTexts {
+    fjsengine::Context *ctx;
+    std::vector<fjs_style_text> list;
+    size_t bytes = 0;
+    FrameTexts(fjsengine::Context *c, fjsengine::ValueConst frame) : ctx(c) {
+        fjsengine::Value arr = fjsengine::get_property_str(ctx, frame, "fjsText");
+        if (!fjsengine::is_undefined(arr) && !fjsengine::is_exception(arr)) {
+            fjsengine::Value lv = fjsengine::get_property_str(ctx, arr, "length");
+            uint32_t n = 0;
+            if (!fjsengine::is_exception(lv)) fjsengine::to_uint32(ctx, &n, lv);
+            fjsengine::free_value(ctx, lv);
+            list.reserve(n);
+            for (uint32_t i = 0; i < n; i++) {
+                fjsengine::Value v = fjsengine::get_property_index(ctx, arr, i);
+                size_t len = 0;
+                const char *p = fjsengine::is_exception(v) ? nullptr : fjsengine::to_cstring_len(ctx, &len, v);
+                fjsengine::free_value(ctx, v);
+                /* an unreadable entry stays empty: the index must not shift */
+                list.push_back({p, p ? len : 0});
+                bytes += len;
+            }
+        }
+        fjsengine::free_value(ctx, arr);
+    }
+    ~FrameTexts() {
+        for (auto &t : list)
+            if (t.ptr) fjsengine::free_cstring(ctx, t.ptr);
+    }
+    FrameTexts(const FrameTexts &) = delete;
+    FrameTexts &operator=(const FrameTexts &) = delete;
+};
+
 static fjsengine::Value js_ui_ops(fjsengine::Context *ctx, fjsengine::ValueConst this_val, int argc,
                          fjsengine::ValueConst *argv) {
     (void)this_val;
@@ -188,7 +224,9 @@ static fjsengine::Value js_ui_ops(fjsengine::Context *ctx, fjsengine::ValueConst
                 nwords = wsize / sizeof(uint32_t);
             }
         }
-        int rc = fjs_style_process_words(vm->style.style, words, nwords, bytes, size, &out, &out_len);
+        FrameTexts texts(ctx, buf);
+        int rc = fjs_style_process_frame(vm->style.style, words, nwords, texts.list.data(), texts.list.size(),
+                                         bytes, size, &out, &out_len);
         fjsengine::free_value(ctx, wv);
         vm->style.busy = false;
         bool threw = vm->style.threw;
@@ -207,8 +245,10 @@ static fjsengine::Value js_ui_ops(fjsengine::Context *ctx, fjsengine::ValueConst
         return threw ? fjsengine::exception() : fjsengine::undefined();
     }
     if (vm->style.stripping) {
-        vm->style.stripped.resize(size);
-        size_t n = fjs_style_strip(bytes, size, vm->style.stripped.data());
+        FrameTexts texts(ctx, buf);
+        vm->style.stripped.resize(size + texts.bytes);
+        size_t n = fjs_style_strip_texts(bytes, size, texts.list.data(), texts.list.size(),
+                                         vm->style.stripped.data());
         vm->on_ui_ops(vm->style.stripped.data(), (int32_t)n);
         return fjsengine::undefined();
     }
@@ -327,6 +367,8 @@ static fjsengine::Value js_style_detach(fjsengine::Context *ctx, fjsengine::Valu
     FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
     if (vm->style.busy) return fjs_fail(vm, "styleDetach: called from inside a style callback");
     fjs::style_detach(vm);
+    /* frames already written may hold TEXT ops (specs/155): keep expanding */
+    vm->style.stripping = true;
     return fjsengine::undefined();
 }
 
@@ -638,6 +680,9 @@ bool install_natives(FJSVM *vm) {
     fjsengine::set_property_str(ctx, fns, "styleDetach", fjsengine::new_c_function(ctx, js_style_detach, "styleDetach", 0));
     fjsengine::set_property_str(ctx, fns, "styleResult", fjsengine::new_c_function(ctx, js_style_result, "styleResult", 1));
     fjsengine::set_property_str(ctx, fns, "styleStats", fjsengine::new_c_function(ctx, js_style_stats, "styleStats", 1));
+    /* specs/155: uiOps expands TEXT ops (0x4c) against `frame.fjsText` once
+     * styleAttach has routed frames through libfjs-style */
+    fjsengine::set_property_str(ctx, fns, "styleTextRefs", fjsengine::new_bool(ctx, true));
     fjsengine::set_property_str(ctx, fns, "styleClasses", fjsengine::new_c_function(ctx, js_style_classes, "styleClasses", 1));
     fjsengine::set_property_str(ctx, fns, "styleMatchedRules", fjsengine::new_c_function(ctx, js_style_matched_rules, "styleMatchedRules", 1));
 

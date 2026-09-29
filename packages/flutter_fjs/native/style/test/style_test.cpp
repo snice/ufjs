@@ -38,6 +38,7 @@ struct Frame {
     return *this;
   }
   Frame& scope(uint32_t id, uint32_t s) { return u8(0x43).u32(id).u32(s); }
+  Frame& text_ref(uint32_t id, uint32_t index) { return u8(0x4c).u32(id).u32(index); }
   Frame& rules(const Frame& table, uint8_t op = 0x47) { u8(op).u32(table.b.size()); b.insert(b.end(), table.b.begin(), table.b.end()); return *this; }
   Frame& atom(uint32_t a, const std::string& n) { return u8(0x40).u32(a).u16(n.size()).bytes(n); }
   Frame& attr(uint32_t id, uint32_t name, const std::string* v) {
@@ -501,6 +502,35 @@ void test_clone() {
 
 }  // namespace
 
+// TEXT ops reach Dart as SetText in place, with the frame's strings minus
+// undrawable control characters; the strip path writes them out too.
+void test_text_refs() {
+  Host h;
+  auto cb = h.callbacks();
+  fjs_style* s = fjs_style_create(&cb);
+  std::string raw = std::string("a\x01" "b\tc\x7f") + "\xe4\xb8\xad";  // tab kept, CJK kept
+  fjs_style_text texts[] = {{"12", 2}, {raw.data(), raw.size()}, {"", 0}};
+  Frame f;
+  f.create(1, "text").text_ref(1, 0).insert(0, 1, 0).create(2, "text").text_ref(2, 1).text_ref(1, 2).insert(0, 2, 1);
+  const uint8_t* out = nullptr;
+  size_t len = 0;
+  CHECK(fjs_style_process_frame(s, nullptr, 0, texts, 3, f.b.data(), f.b.size(), &out, &len) == 0);
+  Frame expect;
+  expect.create(1, "text").text(1, "12").insert(0, 1, 0).create(2, "text").text(2, "ab\tc\xe4\xb8\xad").text(1, "").insert(0, 2, 1);
+  CHECK(std::vector<uint8_t>(out, out + len) == expect.b);
+
+  // stripping (a detached instance): same bytes
+  std::vector<uint8_t> stripped(f.b.size() + 2 + raw.size());
+  size_t n = fjs_style_strip_texts(f.b.data(), f.b.size(), texts, 3, stripped.data());
+  CHECK(std::vector<uint8_t>(stripped.begin(), stripped.begin() + n) == expect.b);
+
+  // an index past the list is a malformed frame
+  Frame bad;
+  bad.create(3, "text").text_ref(3, 9);
+  CHECK(fjs_style_process_frame(s, nullptr, 0, texts, 3, bad.b.data(), bad.b.size(), &out, &len) == -1);
+  fjs_style_destroy(s);
+}
+
 int main() {
   test_passthrough_and_list();
   test_sibling_scope_and_class_change();
@@ -509,6 +539,7 @@ int main() {
   test_append_and_bad_frame();
   test_words();
   test_clone();
+  test_text_refs();
   if (g_failures) {
     std::fprintf(stderr, "fjs-style-test: %d failure(s)\n", g_failures);
     return 1;

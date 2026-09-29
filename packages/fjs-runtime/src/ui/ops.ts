@@ -37,6 +37,9 @@ export const enum UiOp {
   StyleRulesAppend = 0x49,
   StyleSeedChain = 0x4a,
   StyleSeedCompute = 0x4b,
+  // specs/155: u32 id, u32 index into the frame's `fjsText` — a SetText the
+  // host expands (only once the host said `styleTextRefs`)
+  StyleText = 0x4c,
 }
 
 /** How many interned styles the peer is asked to remember at once. The style
@@ -222,7 +225,28 @@ export class OpWriter {
     return this;
   }
 
+  /** Set once the host expands TEXT ops (libfjs-style attached and the host
+   * says `styleTextRefs`). Encoding a string byte by byte — plus the
+   * drawableText scan — was ~1.1 µs of a 1.4 µs SetText under the
+   * interpreter; handing the string over as it is costs an array push, and
+   * the host writes the bytes Dart gets (specs/155). */
+  textRefs = false;
+  private texts: string[] = [];
+
   setText(id: number, text: string): this {
+    if (this.textRefs) {
+      this.op1(UiOp.StyleText, id, 4);
+      const buf = this.buf;
+      let p = this.len;
+      const index = this.texts.length;
+      buf[p++] = index & 0xff;
+      buf[p++] = (index >>> 8) & 0xff;
+      buf[p++] = (index >>> 16) & 0xff;
+      buf[p++] = (index >>> 24) & 0xff;
+      this.len = p;
+      this.texts.push(text);
+      return this;
+    }
     this.op1(UiOp.SetText, id, 0);
     this.str(drawableText(text), true);
     return this;
@@ -610,11 +634,16 @@ export class OpWriter {
   reset(): void {
     this.len = 0;
     this.wlen = 0;
+    if (this.texts.length !== 0) this.texts = [];
   }
 
   toUint8Array(): Uint8Array {
     const frame = this.buf.slice(0, this.len);
     if (this.wlen !== 0) (frame as Uint8Array & { fjsStyle?: Uint32Array }).fjsStyle = this.words.slice(0, this.wlen);
+    if (this.texts.length !== 0) {
+      (frame as Uint8Array & { fjsText?: string[] }).fjsText = this.texts;
+      this.texts = [];
+    }
     return frame;
   }
 

@@ -86,6 +86,10 @@ interface FjsNativeFns {
   /** Counters since the last reset (`reset` resets after reading); null when
    * not attached. */
   styleStats?(reset?: boolean): FjsNativeStyleStats | null;
+  /** specs/155: once styleAttach has run, uiOps expands TEXT ops (0x4c:
+   * u32 id, u32 index) against the frame's `fjsText` string array — set
+   * frames stop encoding text themselves. Absent on older hosts. */
+  styleTextRefs?: boolean;
 }
 
 interface FjsNativeStyleResult {

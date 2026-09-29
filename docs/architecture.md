@@ -137,6 +137,9 @@ JS op 缓冲 ─┤ 结构 op（Create/Insert/Remove…）+ 样式输入 op（0x
   `process` / `move` / `remove`），整棵子树不经 mountElement：可克隆时一次 `cloneTemplate` + 动态文字
   `setElementText`，否则按 mountElement 的顺序逐节点建（`vue/template-block.ts`）。模板根、带事件 / 绑定 /
   指令 / 组件 / v-if / v-for 的子树不改写。
+- 文字引用（specs/155）：libfjs-style 挂上之后，`setText` 不再把字符串逐字节写进帧，而是写 `TEXT(id, 下标)`
+  （0x4c），字符串放进随帧的 `fjsText` 数组；natives 把它们转成 C 字符串交给 `fjs_style_process_frame`，
+  libfjs-style 在字节流原位展开成 SetText 并滤掉 Flutter 画不了的控制字符。Dart 收到的字节不变；strip 路径同样展开。
 - C++ 铸的线上 style id 从 `0x40000000` 起，不与 JS op 写入器（锚点、伪元素盒）
   的 id 冲突。
 - 宿主有 `__fjs.fns.styleAttach` 就默认走 native；`globalThis.__fjsNativeStyle`

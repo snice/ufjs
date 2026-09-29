@@ -8,7 +8,7 @@ import { DISABLED_CLASS, camelize, normalizeValue, parseInlineCss, parseStyleshe
 import { registerFontFace, type FontFaceDecl } from './font-face';
 import type { KeyframesDecl } from './animation';
 import { NativeStyleBackend, type TemplateNodeSpec } from './native-style';
-import { setOpSink } from '../host';
+import { getWriter, setOpSink } from '../host';
 
 /** The viewport assumed before the host reports one. `fjsrun` never gets a
  * viewport event and web never feeds this engine (real CSS there), so the
@@ -807,6 +807,12 @@ export class StyleEngine {
       fns,
     );
     if (this.rules.length > 0 || this.pseudoRules !== undefined) this.native.sendRules();
+    // every later frame goes through libfjs-style (or, once it has detached,
+    // the host's strip): texts can ride as they are (specs/155).
+    // `globalThis.__fjsTextRefs = false` keeps the byte encoding (A/B runs)
+    if (fns.styleTextRefs === true && (globalThis as { __fjsTextRefs?: boolean }).__fjsTextRefs !== false) {
+      getWriter().textRefs = true;
+    }
     this.nativeOnly = !verify;
     if (verify) {
       this.native.verifying = true;

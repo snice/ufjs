@@ -248,6 +248,28 @@ void put_u32(std::vector<uint8_t>& out, uint32_t v) {
   out.push_back(static_cast<uint8_t>(v >> 24));
 }
 
+// What the runtime's drawableText strips: control characters Flutter
+// cannot draw. All ASCII, so never part of a multi-byte UTF-8 sequence —
+// a byte filter is exact.
+inline bool drawable_byte(uint8_t b) {
+  return !(b <= 0x08 || b == 0x0b || b == 0x0c || (b >= 0x0e && b <= 0x1f) || b == 0x7f);
+}
+
+// Writes the SetText a TEXT op stands for at `out` (room for 9 + t.len
+// bytes) and returns the bytes written.
+size_t write_text(uint8_t* out, uint32_t id, const fjs_style_text& t) {
+  const auto* src = reinterpret_cast<const uint8_t*>(t.ptr);
+  uint8_t* p = out + 9;
+  for (size_t i = 0; i < t.len; i++) {
+    if (drawable_byte(src[i])) *p++ = src[i];
+  }
+  auto n = static_cast<uint32_t>(p - out - 9);
+  out[0] = 5;  // kOpSetText
+  for (int k = 0; k < 4; k++) out[1 + k] = static_cast<uint8_t>(id >> (8 * k));
+  for (int k = 0; k < 4; k++) out[5 + k] = static_cast<uint8_t>(n >> (8 * k));
+  return static_cast<size_t>(p - out);
+}
+
 }  // namespace
 
 struct fjs_style {
@@ -295,6 +317,9 @@ struct fjs_style {
   std::vector<uint32_t> walk;
   fjs_style_stats stats{};
   bool failed = false;
+  // the current frame's text list (TEXT ops)
+  const fjs_style_text* texts = nullptr;
+  size_t ntexts = 0;
 
   // ---- tree ------------------------------------------------------------------
 
@@ -1402,6 +1427,20 @@ struct fjs_style {
     while (r.p < r.end) {
       const uint8_t* start = r.p;
       uint8_t code = r.u8();
+      if (code == FJS_STYLE_OP_TEXT) {
+        uint32_t id = r.u32();
+        uint32_t index = r.u32();
+        if (!r.ok || index >= ntexts) {
+          strip(in, len);
+          return -1;
+        }
+        out.insert(out.end(), copy_from, start);
+        size_t at = out.size();
+        out.resize(at + 9 + texts[index].len);
+        out.resize(at + write_text(out.data() + at, id, texts[index]));
+        copy_from = r.p;
+        continue;
+      }
       bool copy = true;
       if (!op(r, code, copy)) {
         strip(in, len);
@@ -1424,19 +1463,33 @@ struct fjs_style {
   // the style input ops, as far as it parses. Styles written by this
   // frame's flush are dropped with it.
   void strip(const uint8_t* in, size_t len) {
-    out.resize(len);
-    out.resize(fjs_style_strip(in, len, out.data()));
+    size_t room = len;
+    for (size_t i = 0; i < ntexts; i++) room += texts[i].len;
+    out.resize(room);
+    out.resize(fjs_style_strip_texts(in, len, texts, ntexts, out.data()));
   }
 };
 
 extern "C" {
 
 size_t fjs_style_strip(const uint8_t* in, size_t len, uint8_t* out) {
+  return fjs_style_strip_texts(in, len, nullptr, 0, out);
+}
+
+size_t fjs_style_strip_texts(const uint8_t* in, size_t len, const fjs_style_text* texts, size_t ntexts,
+                             uint8_t* out) {
   Reader r{in, in + len};
   size_t n = 0;
   while (r.p < r.end) {
     const uint8_t* start = r.p;
     uint8_t code = r.u8();
+    if (code == FJS_STYLE_OP_TEXT) {
+      uint32_t id = r.u32();
+      uint32_t index = r.u32();
+      if (!r.ok || index >= ntexts) return n;
+      n += write_text(out + n, id, texts[index]);
+      continue;
+    }
     switch (code) {
       case kOpCreate: r.u32(); r.skip(r.u16()); break;
       case kOpRemove: r.skip(4); break;
@@ -1484,10 +1537,19 @@ int fjs_style_process(fjs_style* style, const uint8_t* in, size_t len, const uin
 
 int fjs_style_process_words(fjs_style* style, const uint32_t* words, size_t nwords, const uint8_t* in, size_t len,
                             const uint8_t** out, size_t* out_len) {
+  return fjs_style_process_frame(style, words, nwords, nullptr, 0, in, len, out, out_len);
+}
+
+int fjs_style_process_frame(fjs_style* style, const uint32_t* words, size_t nwords, const fjs_style_text* texts,
+                            size_t ntexts, const uint8_t* in, size_t len, const uint8_t** out, size_t* out_len) {
   *out = nullptr;
   *out_len = 0;
   if (style->failed) return -3;
+  style->texts = texts;
+  style->ntexts = ntexts;
   int rc = style->process(words, nwords, in, len);
+  style->texts = nullptr;
+  style->ntexts = 0;
   if (rc != 0) {
     style->failed = true;
     *out = style->out.data();

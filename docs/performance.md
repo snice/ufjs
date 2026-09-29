@@ -881,6 +881,9 @@ specs/146 / 147 / 149 连续三轮之后，样式引擎在 JS 里每元素仍约
 - **VDOM 模板块**（specs/153）：编译期把「结构和 class 全静态、只有文字在变」的子树编成一个走 Teleport 协议的
   vnode，挂载时一次克隆。flat-4050 VDOM 挂载 39.5 → 20.1 ms、首帧 121 → 51 KB；改 1 / 200 / 2000 格
   14.5 / 15.3 / 25.5 → 11.1 / 12.2 / 22.6 ms（少了一半 vnode 的 diff）。vant 页几乎没有这类子树，bench:mount 持平。
+- **文字走引用**（specs/155）：一次 setText 1.36 µs 里，`drawableText` 的正则 0.45、逐字节写 1–2 个字符 0.64——
+  解释器下循环本身就贵。改成字符串随帧交给 host（数组 push + 9 字节 op），C++ 展开成同样的 SetText：flat-4050 VDOM
+  挂载 20.3 → 17.7 ms，改 2000 格 VDOM 22.6 → 20.1、Vapor 21.2 → 18.5 ms。
 - 对拍：`__fjsNativeStyle = 'verify'` 下两个引擎同时跑、每帧逐元素比较——flat-4050、demo 全部页面
   （`demo/bench/verify-pages.ts`、`mount-verify.ts`、`mount-prewarm-verify.ts`）、hello-fjs 66 页
   （`examples/hello-fjs/bench/verify-pages.ts`）共 3 万余次比较，0 不一致。

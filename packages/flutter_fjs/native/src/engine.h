@@ -140,6 +140,9 @@ inline Value get_global_object(Context *ctx) { return JS_GetGlobalObject(ctx); }
 inline Value get_property_str(Context *ctx, ValueConst obj, const char *prop) {
     return JS_GetPropertyStr(ctx, obj, prop);
 }
+inline Value get_property_index(Context *ctx, ValueConst obj, uint32_t index) {
+    return JS_GetPropertyUint32(ctx, obj, index);
+}
 inline int set_property_str(Context *ctx, ValueConst obj, const char *prop, Value val) {
     /* consumes val on both engines */
     return JS_SetPropertyStr(ctx, obj, prop, val);
@@ -286,6 +289,9 @@ inline void compute_memory_usage(Runtime *rt, MemoryUsage *s) { LEPUS_ComputeMem
 inline Value get_global_object(Context *ctx) { return LEPUS_GetGlobalObject(ctx); }
 inline Value get_property_str(Context *ctx, ValueConst obj, const char *prop) {
     return LEPUS_GetPropertyStr(ctx, obj, prop);
+}
+inline Value get_property_index(Context *ctx, ValueConst obj, uint32_t index) {
+    return LEPUS_GetPropertyUint32(ctx, obj, index);
 }
 inline int set_property_str(Context *ctx, ValueConst obj, const char *prop, Value val) {
     return LEPUS_SetPropertyStr(ctx, obj, prop, val);

@@ -108,7 +108,19 @@ enum {
   FJS_STYLE_OP_RULES_APPEND = 0x49,
   FJS_STYLE_OP_SEED_CHAIN = 0x4a,
   FJS_STYLE_OP_SEED_COMPUTE = 0x4b,
+  // TEXT  u32 id, u32 index — a SetText whose string is the frame's
+  // index-th text (fjs_style_process_frame): the host hands its strings over
+  // as they are instead of encoding each into the frame (specs/155). Written
+  // to Dart in place as SetText, minus the control characters Flutter cannot
+  // draw (U+0000–0008, 000B, 000C, 000E–001F, 007F).
+  FJS_STYLE_OP_TEXT = 0x4c,
 };
+
+// One string of a frame's text list: UTF-8, not NUL-terminated.
+typedef struct fjs_style_text {
+  const char* ptr;
+  size_t len;
+} fjs_style_text;
 
 // ---- the word stream (host -> libfjs-style) ---------------------------------
 //
@@ -250,6 +262,15 @@ size_t fjs_style_strip(const uint8_t* in, size_t len, uint8_t* out);
 // fjs_style_process with a word stream (FJS_STYLE_W_*) consumed first.
 int fjs_style_process_words(fjs_style* style, const uint32_t* words, size_t nwords, const uint8_t* in, size_t len,
                             const uint8_t** out, size_t* out_len);
+
+// fjs_style_process_words with the frame's text list for its TEXT ops.
+int fjs_style_process_frame(fjs_style* style, const uint32_t* words, size_t nwords, const fjs_style_text* texts,
+                            size_t ntexts, const uint8_t* in, size_t len, const uint8_t** out, size_t* out_len);
+
+// fjs_style_strip that also writes TEXT ops out as SetText. `out` needs room
+// for `len` plus the length of every text (and may not be `in`).
+size_t fjs_style_strip_texts(const uint8_t* in, size_t len, const fjs_style_text* texts, size_t ntexts,
+                             uint8_t* out);
 
 // The host result id an element's style currently comes from (0: none yet).
 uint32_t fjs_style_result_of(const fjs_style* style, uint32_t element);
