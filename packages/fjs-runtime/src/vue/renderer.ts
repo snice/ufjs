@@ -11,7 +11,7 @@ import {
   createRenderer,
   type RendererOptions,
 } from '@vue/runtime-core';
-import { adoptElement, allocIds, create, forgetHandlers, forgetElementStyle, insert, remove, setHoverStyle, setText, setProps, setConstProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setConnectedResolver, setOffsetParentResolver, setParentResolver, setAttributeSink, currentTapDispatch, type Element, type EventPayload } from '../ui/element';
+import { adoptElement, allocIds, create, forgetHandlers, forgetHandlersOf, forgetElementStyles, insert, remove, setHoverStyle, setText, setProps, setConstProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setConnectedResolver, setOffsetParentResolver, setParentResolver, setAttributeSink, currentTapDispatch, type Element, type EventPayload } from '../ui/element';
 import { transitionClassesOf } from './transition-classes';
 import { lastPointer } from '../ui/geometry';
 import { hasNativeHost, host, invokeHost, registerPreFlush } from '../host';
@@ -888,34 +888,50 @@ function trackInsert(parent: HostNode, child: HostNode, index: number) {
 }
 
 /** Drops the engine/renderer state for `id` and everything under it. The
- * native side needs no help — one Remove op takes the subtree with it. */
+ * native side needs no help — one Remove op takes the subtree with it
+ * (libfjs-style's Remove forgets the subtree's style state too, so the
+ * engine is told `removed`: no FORGET word per element).
+ *
+ * Runs once per element of the subtree, so the maps most pages leave empty
+ * are only touched when they hold something: under the interpreter each
+ * Map call costs more than the size check (specs/158). */
 function forgetSubtree(id: number) {
+  // whether each rarely-used map holds anything, read once for the walk
+  const active = hadActiveStyle.size !== 0;
+  const overlay = appOverlayElements.size !== 0;
+  const defaults = htmlDefaults.size !== 0;
+  const values = textValues.size !== 0;
+  const placeholders = placeholderStyled.size !== 0;
+  const once = onceFired.size !== 0;
+  const ids: number[] = [];
   const stack = [id];
   while (stack.length) {
     const current = stack.pop()!;
+    ids.push(current);
     const kids = childrenOf.get(current);
     if (kids) for (let i = 0; i < kids.length; i++) stack.push(kids[i]);
     // the root's own parent/child bookkeeping is trackRemove's job
     if (current !== id) {
       parentOf.delete(current);
-      childrenOf.delete(current);
+      if (kids) childrenOf.delete(current);
     }
     elementsById.delete(current);
-    hadActiveStyle.delete(current);
-    appOverlayElements.delete(current);
-    htmlDefaults.delete(current);
-    textValues.delete(current);
-    placeholderStyled.delete(current);
-    if (onceFired.size) for (const key of onceFired) if (key.startsWith(`${current}:`)) onceFired.delete(key);
-    forgetElementStyle(current);
-    // event handlers too, and for the same reason the engine state goes:
-    // Vue names only the subtree root, so nothing else would ever drop the
-    // descendants'. A handler closes over its component's render scope, so
-    // one leftover `@tap` keeps its whole page — every element, every
-    // reactive object — alive for as long as the app runs.
-    forgetHandlers(current);
-    styleEngine.forget(current);
+    if (active) hadActiveStyle.delete(current);
+    if (overlay) appOverlayElements.delete(current);
+    if (defaults) htmlDefaults.delete(current);
+    if (values) textValues.delete(current);
+    if (placeholders) placeholderStyled.delete(current);
+    if (once) for (const key of onceFired) if (key.startsWith(`${current}:`)) onceFired.delete(key);
   }
+  // one call each for the whole subtree rather than three per element
+  forgetElementStyles(ids);
+  // event handlers too, and for the same reason the engine state goes:
+  // Vue names only the subtree root, so nothing else would ever drop the
+  // descendants'. A handler closes over its component's render scope, so
+  // one leftover `@tap` keeps its whole page — every element, every
+  // reactive object — alive for as long as the app runs.
+  forgetHandlersOf(ids);
+  styleEngine.forgetRemoved(ids);
 }
 
 function trackRemove(child: HostNode) {
@@ -1094,8 +1110,10 @@ function dropElement(child: HostNode): void {
   const parentId = parentOf.get(child.id);
   // pseudo-element boxes of the subtree are real mirror nodes the shadow
   // lists never tracked — drop them explicitly or they outlive their
-  // element (constitution V: silent leaks are still leaks).
-  const stack = [child.id];
+  // element (constitution V: silent leaks are still leaks). A walk of the
+  // whole subtree for two maps that are usually empty: skipped then
+  // (specs/158 — 4050 elements a flat-4050 hide).
+  const stack = modalMasks.size !== 0 || pseudoBoxes.size !== 0 ? [child.id] : [];
   while (stack.length) {
     const current = stack.pop()!;
     modalMasks.delete(current);

@@ -325,6 +325,26 @@ export class NativeStyleBackend {
     this.writer.styleForget(id);
   }
 
+  /** The elements of a subtree whose Remove op follows in this frame.
+   * libfjs-style's Remove drops the subtree's style state itself
+   * (remove_deep), so no FORGET word — one per element of a hidden page —
+   * only the JS-side records, each map checked once (specs/158). */
+  forgetRemoved(ids: readonly number[]): void {
+    const records = this.disableable.size !== 0 || this.disabledOn.size !== 0 || this.inlines.size !== 0 || this.pseudoApplied.size !== 0;
+    const pending = this.pId;
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      if (records) {
+        this.disableable.delete(id);
+        this.disabledOn.delete(id);
+        this.inlines.delete(id);
+        this.pseudoApplied.delete(id);
+      }
+      if (id === pending) this.pId = 0;
+    }
+    this.commit();
+  }
+
   computedOf(id: number): Record<string, unknown> | undefined {
     flushNow();
     const r = this.fns.styleResult?.(id) ?? 0;

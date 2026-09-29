@@ -1548,11 +1548,26 @@ export class StyleEngine {
     };
   }
 
+  /** Every element of a subtree whose Remove op the host gets:
+   * libfjs-style forgets them there, so no FORGET word per element; the TS
+   * engine (when it runs) forgets them one by one (specs/158). */
+  forgetRemoved(ids: readonly number[]): void {
+    if (this.native !== undefined) {
+      this.native.forgetRemoved(ids);
+      if (this.nativeOnly) return;
+    }
+    for (let i = 0; i < ids.length; i++) this.forgetTs(ids[i]);
+  }
+
   forget(id: number): void {
     if (this.native !== undefined) {
       this.native.forget(id);
       if (this.nativeOnly) return;
     }
+    this.forgetTs(id);
+  }
+
+  private forgetTs(id: number): void {
     // the id may still sit in dirtyList; recompute skips ids with no state
     const s = this.states.get(id);
     if (!s) return;

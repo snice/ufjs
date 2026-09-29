@@ -232,7 +232,7 @@ export function forgetHandlers(nodeId: number): void {
   // Only the types this node registered (nodeEventTypes above) — never a
   // scan of the registry, which holds every handler in the app and would
   // make teardown slower the longer the app has run.
-  const types = nodeEventTypes.get(nodeId);
+  const types = nodeEventTypes.size !== 0 ? nodeEventTypes.get(nodeId) : undefined;
   if (types !== undefined) {
     for (let i = 0; i < types.length; i++) {
       const key = handlerKey(nodeId, types[i]);
@@ -241,10 +241,41 @@ export function forgetHandlers(nodeId: number): void {
     }
     nodeEventTypes.delete(nodeId);
   }
-  fieldNames.delete(nodeId);
-  fieldFormTypes.delete(nodeId);
-  fieldValues.delete(nodeId);
-  scrollOffsets.delete(nodeId);
+  // runs for every element of a removed subtree (specs/158): the maps most
+  // elements never enter are checked by size first
+  if (fieldNames.size) fieldNames.delete(nodeId);
+  if (fieldFormTypes.size) fieldFormTypes.delete(nodeId);
+  if (fieldValues.size) fieldValues.delete(nodeId);
+  if (scrollOffsets.size) scrollOffsets.delete(nodeId);
+}
+
+/** forgetHandlers for every element of a removed subtree, the emptiness
+ * of each map checked once (specs/158). */
+export function forgetHandlersOf(ids: readonly number[]): void {
+  const events = nodeEventTypes.size !== 0;
+  const fields = fieldNames.size !== 0 || fieldFormTypes.size !== 0 || fieldValues.size !== 0;
+  const scrolls = scrollOffsets.size !== 0;
+  if (!events && !fields && !scrolls) return;
+  for (let k = 0; k < ids.length; k++) {
+    const nodeId = ids[k];
+    if (events) {
+      const types = nodeEventTypes.get(nodeId);
+      if (types !== undefined) {
+        for (let i = 0; i < types.length; i++) {
+          const key = handlerKey(nodeId, types[i]);
+          eventHandlers.delete(key);
+          domListeners.delete(key);
+        }
+        nodeEventTypes.delete(nodeId);
+      }
+    }
+    if (fields) {
+      fieldNames.delete(nodeId);
+      fieldFormTypes.delete(nodeId);
+      fieldValues.delete(nodeId);
+    }
+    if (scrolls) scrollOffsets.delete(nodeId);
+  }
 }
 
 export function registerWorkerHandler(
@@ -757,7 +788,12 @@ export function setElementStyleBridge(bridge: ElementStyleBridge | null): void {
 /** Drops an element's fallback style record; the renderer calls this when it
  * tears down a subtree so removed elements do not pin their last write. */
 export function forgetElementStyle(id: number): void {
-  fallbackStyles.delete(id);
+  if (fallbackStyles.size) fallbackStyles.delete(id);
+}
+
+export function forgetElementStyles(ids: readonly number[]): void {
+  if (!fallbackStyles.size) return;
+  for (let i = 0; i < ids.length; i++) fallbackStyles.delete(ids[i]);
 }
 
 function readStyleRecord(id: number): Record<string, unknown> | undefined {
