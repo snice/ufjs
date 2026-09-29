@@ -132,6 +132,13 @@ FJSVM *fjs_vm_create(void) {
         delete vm;
         return nullptr;
     }
+    if (!fjs::obj::install(vm)) {
+        fjs::set_error(vm, "object ABI class registration failed");
+        fjsengine::free_context(vm->ctx);
+        fjsengine::free_runtime(vm->rt);
+        delete vm;
+        return nullptr;
+    }
     return vm;
 }
 
@@ -141,6 +148,9 @@ void fjs_vm_destroy(FJSVM *vm) {
     for (auto &t : vm->timers) fjsengine::free_value(vm->ctx, t.callback);
     vm->timers.clear();
     fjs::style_detach(vm);
+    /* the hidden roots object and every callback / pending promise it holds
+     * dies with the context; drop our reference first */
+    fjs::obj::teardown(vm);
     fjsengine::clear_rejections(vm->ctx, &vm->rejections);
     fjsengine::free_context(vm->ctx);
     fjsengine::free_runtime(vm->rt);
@@ -368,6 +378,11 @@ int32_t fjs_vm_pump(FJSVM *vm, int64_t now_ms_) {    if (!vm) return -1;
         std::string out = "[fjs] unhandled promise rejection: " + msg;
         log_line(vm, FJS_LOG_ERROR, out.c_str(), (int32_t)out.size());
     }
+
+    /* 4) spec 159: Dart objects whose JS proxies the GC collected during
+     * the timers and jobs above — tell the host now, at a call boundary,
+     * never from inside a collection pass. */
+    fjs::obj::flush_pending_releases(vm);
     return executed;
 }
 
@@ -407,6 +422,22 @@ int32_t fjs_vm_dispatch_event(FJSVM *vm, int32_t node_id, int32_t event_type,
 const char *fjs_last_error(FJSVM *vm) {
     if (vm) return vm->last_error;
     return t_error_buf;
+}
+
+/* ---- object ABI (spec 159): the host's way back into JS ---------------- */
+
+int32_t fjs_vm_call_callback(FJSVM *vm, int64_t cb_id, int32_t argc,
+                             const FJSValue *args, FJSValue *out) {
+    return fjs::obj::call_callback(vm, cb_id, argc, args, out);
+}
+
+int32_t fjs_vm_settle_promise(FJSVM *vm, int64_t call_id, int32_t ok,
+                              const FJSValue *value) {
+    return fjs::obj::settle_promise(vm, call_id, ok, value);
+}
+
+int32_t fjs_vm_release_callback(FJSVM *vm, int64_t cb_id) {
+    return fjs::obj::release_callback(vm, cb_id);
 }
 
 int32_t fjs_compile_bundle(FJSVM *vm, const uint8_t *src, int32_t len,

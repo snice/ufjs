@@ -19,7 +19,7 @@
 extern "C" {
 #endif
 
-#define FJS_ABI_VERSION 2
+#define FJS_ABI_VERSION 3
 
 /* Engine identity. Must match the header inside .fjsbundle files produced
  * by `fjs build --bytecode`. See docs/toolchain.md for the lockstep rule. */
@@ -124,6 +124,33 @@ enum {
     FJS_T_INT32   = 2,
     FJS_T_FLOAT64 = 3,
     FJS_T_STRING  = 4, /* u.s = utf8 pointer, valid only during the call */
+    /* Structured object ABI (FJS_ABI_VERSION 3, spec 159). The plain
+     * __fjs.fns.invokeHost never produces or accepts these — only the rich
+     * __fjs.fns.objectCall path does, so the v1/v2 scalar contract stays
+     * frozen for existing host modules. */
+    FJS_T_HANDLE  = 5, /* u.j = Dart object handle (the registry lives in the
+                          host's ObjectBridge; ids are monotonic, stale ones
+                          must miss loudly, never alias — same discipline as
+                          the byte handles below) */
+    /* u.j = callback id. Sign splits the two directions: j > 0 is a JS
+       function the engine dup'd into its hidden-root table (the host calls
+       it back through fjs_vm_call_callback); j < 0 means -j is a host
+       closure id (the engine wraps it as a JS function whose call funnels
+       back through fjs.object.callback). */
+    FJS_T_CALLBACK = 6,
+    FJS_T_PENDING  = 7, /* u.j = async call id; the host returned a Future
+                           and will settle it later via
+                           fjs_vm_settle_promise(call_id, ok, value) */
+    FJS_T_METHOD   = 8, /* reply-only, for fjs.object.get: the member is a
+                           method, not a field — JS gets a cached bound
+                           function. Carries no payload; the handle and member
+                           name come from the request itself. */
+    /* u.s = utf8 JSON text, same lifetime rules as FJS_T_STRING. Reply-only
+       on the rich path: the host's List/Map answers arrive as JSON and the
+       engine materializes them as real JS arrays/objects (JSON.parse), so
+       the generated d.ts type IS the runtime type. The frozen invokeHost
+       path keeps encoding lists/maps as plain strings. */
+    FJS_T_JSON     = 9,
 };
 
 /*
@@ -135,7 +162,7 @@ enum {
  *    duration of the callback.
  *  - host -> JS (out param of fjs_invoke_host): the host must malloc() the
  *    utf8 buffer and the engine free()s it after conversion.
- * Layout (64-bit): tag@0 i@4 d@8 s@16 len@24, size 32.
+ * Layout (64-bit): tag@0 i@4 d@8 s@16 len@24 j@32, size 40.
  */
 typedef struct FJSValue {
     int32_t tag;
@@ -143,7 +170,8 @@ typedef struct FJSValue {
     double  d;          /* FJS_T_FLOAT64 */
     const char *s;      /* FJS_T_STRING */
     int32_t len;        /* byte length when tag == FJS_T_STRING */
-    int32_t _pad;       /* keep 8-byte alignment */
+    int32_t _pad;
+    int64_t j;          /* FJS_T_HANDLE / FJS_T_CALLBACK / FJS_T_PENDING */
 } FJSValue;
 
 /* ---- embedder callbacks (all synchronous, same thread as VM) -------- */
@@ -286,6 +314,38 @@ void fjs_handle_bytes(FJSVM *vm, int64_t id,
                       const uint8_t **data, int32_t *len);
 
 void fjs_handle_release(FJSVM *vm, int64_t id);
+
+/* ---- object ABI (FJS_ABI_VERSION 3, spec 159) ------------------------- */
+/*
+ * The reverse direction of fjs_invoke_host: the host reaching back into JS.
+ * Same threading contract as everything else — UI thread, synchronous.
+ *
+ * Callback ids follow the FJS_T_CALLBACK sign convention: positive ids name
+ * JS functions the engine holds (converted from arguments a JS caller
+ * passed); negative ids name host closures, which the host invokes directly
+ * — it owns them — so only positive ids are accepted here.
+ */
+
+/* Calls the JS callback registered under cb_id with rich-converted args and
+ * writes the return value into *out (out strings: malloc'ed by the engine,
+ * free()d by the host after conversion — the mirror of fjs_invoke_host).
+ * Returns 0 ok; -1 on unknown id, JS exception (message via
+ * fjs_last_error), or reentry limit. */
+int32_t fjs_vm_call_callback(FJSVM *vm, int64_t cb_id, int32_t argc,
+                             const FJSValue *args, FJSValue *out);
+
+/* Settles the promise object that a FJS_T_PENDING return created for
+ * call_id: resolves it when ok is nonzero, otherwise rejects with *value.
+ * The pending promise's microtasks are drained (pumped) before returning,
+ * like fjs_vm_dispatch_event. Returns 0 ok; -1 when call_id is unknown
+ * (already settled, or the VM was rebuilt) or the settle call threw. */
+int32_t fjs_vm_settle_promise(FJSVM *vm, int64_t call_id, int32_t ok,
+                              const FJSValue *value);
+
+/* Drops the engine's strong reference to the JS callback registered under
+ * cb_id. Returns 0 ok, -1 unknown id. The JS object becomes collectable;
+ * calling the callback after this is a loud error, never an alias. */
+int32_t fjs_vm_release_callback(FJSVM *vm, int64_t cb_id);
 
 /* ---- .fjsbundle format ---------------------------------------------- */
 /*

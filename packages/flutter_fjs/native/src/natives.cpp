@@ -6,6 +6,8 @@
  *   __fjs.setInterval(cb, ms) / clearInterval(id)
  *   __fjs.uiOps(u8ArrayOrArrayBuffer)   — batched UI op buffer -> host
  *   __fjs.invokeHost(name, ...args)     — synchronous host-module call (JSI)
+ *   __fjs.objectCall(op, ...args)       — rich object ABI (spec 159): Dart
+ *                                         objects / callbacks cross tagged
  *   __fjs.nowMs()
  *   __fjs.gc()                          — collect now; returns heap before/after
  *   __fjs.styleAttach/Detach/Result/Stats — libfjs-style binding (specs/150)
@@ -476,10 +478,58 @@ static fjsengine::Value js_invoke_host(fjsengine::Context *ctx, fjsengine::Value
     fjsengine::free_cstring(ctx, name);
 
     if (rc != 0) {
-        fjs::fjs_free_abi_value(vm, &out);
-        return fjs_fail(vm, "host module call failed"); /* host sets details */
+        /* v3 (spec 159): the host may put the failure message into out —
+         * surface it as the exception text. The old generic line hid every
+         * Dart-side detail from the JS developer (constitution V). */
+        std::string msg = "host module call failed";
+        if (out.tag == FJS_T_STRING && out.s) {
+            msg += ": ";
+            msg += out.s;
+            std::free((void *)out.s); /* host-malloc'ed, plain-free contract */
+        }
+        return fjs_fail(vm, msg.c_str());
     }
     return fjs::from_fjs_value(vm, &out); /* consumes malloc'ed strings */
+}
+
+/* ---- object ABI (spec 159) -----------------------------------------------
+ *
+ * The rich-value sibling of invokeHost. Proxies flow as FJS_T_HANDLE, JS
+ * functions as FJS_T_CALLBACK, so Dart objects and callbacks cross without
+ * serialization. The op is validated against an allowlist — everything else
+ * must keep using the scalar invokeHost, whose conversion contract is
+ * frozen at v1/v2 semantics for existing host modules. */
+
+static bool object_op_allowed(const char *op) {
+    static const char *kOps[] = {
+        "construct", "invoke", "get", "set", "release", "callback",
+    };
+    for (const char *k : kOps) {
+        if (std::strcmp(op, k) == 0) return true;
+    }
+    return false;
+}
+
+static fjsengine::Value js_object_call(fjsengine::Context *ctx, fjsengine::ValueConst this_val,
+                              int argc, fjsengine::ValueConst *argv) {
+    (void)this_val;
+    FJSVM *vm = (FJSVM *)fjsengine::get_context_opaque(ctx);
+    if (argc < 1 || !fjsengine::is_string(argv[0]))
+        return fjs_fail(vm, "objectCall(op, ...args): op required");
+    size_t op_len = 0;
+    const char *op = fjsengine::to_cstring_len(ctx, &op_len, argv[0]);
+    if (!op) return fjsengine::exception();
+    if (!object_op_allowed(op)) {
+        fjsengine::free_cstring(ctx, op);
+        return fjs_fail(vm, "objectCall: unknown op (see fjs.object.*)");
+    }
+    if (!vm->on_invoke_host) {
+        fjsengine::free_cstring(ctx, op);
+        return fjs_fail(vm, "no host module handler installed");
+    }
+    fjsengine::Value ret = fjs::obj::dispatch_op(vm, op, 0, nullptr, argc - 1, argv + 1);
+    fjsengine::free_cstring(ctx, op);
+    return ret;
 }
 
 /* ---- binary handles (spec 038) -------------------------------------------
@@ -669,6 +719,7 @@ bool install_natives(FJSVM *vm) {
     fjsengine::set_property_str(ctx, fns, "clearInterval", fjsengine::new_c_function(ctx, js_clear_timer, "clearInterval", 1));
     fjsengine::set_property_str(ctx, fns, "uiOps", fjsengine::new_c_function(ctx, js_ui_ops, "uiOps", 1));
     fjsengine::set_property_str(ctx, fns, "invokeHost", fjsengine::new_c_function(ctx, js_invoke_host, "invokeHost", 1));
+    fjsengine::set_property_str(ctx, fns, "objectCall", fjsengine::new_c_function(ctx, js_object_call, "objectCall", 1));
     fjsengine::set_property_str(ctx, fns, "handleBytes", fjsengine::new_c_function(ctx, js_handle_bytes, "handleBytes", 1));
     fjsengine::set_property_str(ctx, fns, "readHandleBytes", fjsengine::new_c_function(ctx, js_read_handle_bytes, "readHandleBytes", 1));
     fjsengine::set_property_str(ctx, fns, "releaseHandle", fjsengine::new_c_function(ctx, js_release_handle, "releaseHandle", 1));

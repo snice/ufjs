@@ -47,6 +47,11 @@ export type {
 export { invokeHost, nowMs, gc, engineInfo, setTimeout, setInterval, clearTimeout, clearInterval, toast, setToastHandler, hasNativeHost, setOpSink } from './host';
 // Promise-shaped host module calls (spec 039); rejects without a native host
 export { invokeHostAsync } from './host-async';
+// Dart object modules (spec 159): registerDartModuleStub backs the same
+// dartModule() calls with TS implementations on the web
+export { dartModule, registerDartModuleStub, hasDartModuleStub, hasDartObjectSupport } from './dart-bridge';
+// the augmentation point generated .d.ts files merge into (specs/160)
+export type { FjsObjectModules } from './dart-bridge';
 export { Worker } from './worker';
 export { fetch, FjsHeaders as Headers, FjsResponse as Response, FjsAbortController as AbortController } from './net/fetch';
 export type { FjsRequestInit as RequestInit, FjsHeadersInit as HeadersInit, FjsAbortSignal as AbortSignal } from './net/fetch';

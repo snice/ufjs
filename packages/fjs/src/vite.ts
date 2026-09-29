@@ -5,6 +5,7 @@ import { pagesFor, routeTableSource, writeRouteTypes } from './project/pages.js'
 import { pluginTableSource, pluginsFor } from './project/plugins.js';
 import { writeAssetTypes } from './project/assets.js';
 import { WORKERS_DIR, bundleWorker, workerFileForUrl, writeWorkers } from './project/workers.js';
+import { writeAutoimportTypes } from './project/autoimport.js';
 import {
   moduleAliases,
   moduleDataDir,
@@ -149,6 +150,7 @@ export function fjs(): VitePlugin {
       // a module's own build step, before anything imports what it writes
       await runModulePrepare(root, 'web', modules);
       writeModuleTypes(root, modules);
+      writeAutoimportTypes(root);
       nativeTags = widgetNativeTags(modules, 'web');
       const runtime = runtimeDir();
       return {
@@ -335,6 +337,7 @@ export function fjs(): VitePlugin {
       // list, and its API surface is part of the generated types
       if (ctx.file.includes(`${path.sep}src${path.sep}modules${path.sep}`)) {
         writeModuleTypes(root);
+        writeAutoimportTypes(root);
         const mod = ctx.server.moduleGraph.getModuleById(VIRTUAL_PLUGINS);
         if (mod) ctx.server.moduleGraph.invalidateModule(mod);
       }

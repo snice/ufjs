@@ -495,7 +495,31 @@ web（`fjs dev --web`）收到任何变更仍是整页刷新。行为见
 - ✅ 未消费句柄的驻留策略（VM 销毁清算）登记在
   [jsi-and-native-modules.md](jsi-and-native-modules.md)
 
-通用对象的结构化传递（Worker 结构化克隆、dispatchEvent 结构化载荷）顺延。
+通用对象的结构化传递在 spec 159 落成了对象 ABI（见下节）；Worker 的
+结构化克隆与 dispatchEvent 结构化载荷仍顺延。
+
+## 对象 ABI：Dart 对象作为一等 JS 值（已完成 2026-09）
+
+`specs/159-dart-object-abi/`，roadmap 原文的「structured object handles」
+（`value.cpp` 降级注释里挂了很多年的那一项）落成，形态是 **tagged
+FJSValue + 隐藏全局根**，不是 C++ 指针 HostObject（宿主在 Dart、拿不到
+C++ 指针的同一约束）：
+
+- ✅ `FJS_ABI_VERSION 3`：`FJSValue` 32→40 字节，新 tag HANDLE / CALLBACK
+  （符号即方向）/ PENDING / METHOD；invokeHost 标量契约冻结不动
+- ✅ `__fjs.fns.objectCall(op, …)`（JS→Dart，汇入同一个 trampoline）+
+  `fjs_vm_call_callback / settle_promise / release_callback`（Dart→JS）
+- ✅ 生命周期：句柄单调不复用、GC finalizer 只入队泵边界 flush、引擎不持
+  有跨 GC 的 JSValue（隐藏全局根）、重入上限、stale 响亮抛错
+- ✅ Dart SPI `FjsObjectModule`（construct/invoke/get/set/dispose，
+  `engine.objects.registerModule`），Future 自动变 Promise，Function 自动
+  变回调
+- ✅ JS 侧 `dartModule()` + `registerDartModuleStub()` web 替身；demo
+  dart-objects 页两端同源（mmkv 形状，Dart 半边走 fjsAttachHost）
+- ✅ Dart API 自动生成（Lucent 阶段 10，specs/160-object-codegen）：
+  `fjs.autoimport: ['mmkv']` → analyzer 工具包 dump 公开 API → 自动生成
+  Dart 适配器 + TS 类型；手写适配器仍可用于精细控制（同名注册优先）；
+  `dart:xxx` 虚拟 ES 模块仍是后续 spec
 
 ## 异步宿主调用（已完成 2026-09）
 

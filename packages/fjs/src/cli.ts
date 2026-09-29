@@ -29,6 +29,7 @@ import { evalCommand, logCommand } from './commands/inspect.js';
 import { debugCommand } from './commands/debug.js';
 import { doctorCommand } from './commands/doctor.js';
 import { lintCommand } from './commands/lint.js';
+import { autoimportCommand } from './commands/autoimport.js';
 import { typesCommand } from './commands/types.js';
 import { runCommand } from './commands/run.js';
 
@@ -258,6 +259,9 @@ async function main() {
       break;
     case 'types':
       typesCommand(argv);
+      break;
+    case 'autoimport':
+      autoimportCommand(argv);
       break;
     case 'modules':
       modulesCommand(argv);

@@ -1,0 +1,20 @@
+name: fjs_introspect
+description: >-
+  Dumps a pub package's public Dart API as JSON for `fjs autoimport`
+  (specs/160-object-codegen). Run inside the Flutter host after `pub get`;
+  the generated host then binds the package's API to the fjs object ABI.
+version: 0.1.0
+
+executables:
+  fjs_introspect:
+
+environment:
+  sdk: ^3.5.4
+
+dependencies:
+  # The element model here is Element2 (the legacy Element API is gone in
+  # this line of analyzers); porting across majors is deliberate work, so
+  # one major at a time — see specs/160 troubleshooting.
+  analyzer: ^14.0.0
+  args: ^2.4.2
+  path: ^1.8.3

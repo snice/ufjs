@@ -393,3 +393,117 @@ npm i @ufjs/iconmind
   `loadFlutterAsset` 的 manifest 键。`@ufjs/webview` 会用 `demo.html` 查找文件，再把
   `?q=1` / `#…` 恢复到页面 URL，因此页面仍可读取参数；其它模块若直接调用
   `loadFlutterAsset`，仍必须自行把文件键和 URL 参数分开。
+
+## 对象模块：把 Dart 对象暴露给 JS（spec 159）
+
+host 模块是「JS 调一个 Dart 函数」；对象模块是「JS 持有一个 Dart 对象」。
+实现 `FjsObjectModule` 并注册到 `engine.objects`：
+
+```dart
+class StorageModule extends FjsObjectModule {
+  @override
+  Object? construct(String className, List<Object?> args) =>
+      className == 'Bucket' ? Bucket(args[0] as String) : null;
+
+  @override
+  Object? invoke(Object instance, String member, List<Object?> args) {
+    final bucket = instance as Bucket;
+    switch (member) {
+      case 'get':    return bucket.get(args[0] as String);      // 返回 Future → JS 侧是 Promise
+      case 'clear':  return bucket.clear();                     // 返回 null → undefined
+      default: throw StateError('no member "$member"');
+    }
+  }
+
+  @override
+  Object? get(Object instance, String member) =>
+      member == 'size' ? (instance as Bucket).count
+                       : FjsMethod.instance;   // 默认：所有成员都是方法
+
+  @override
+  void set(Object instance, String member, Object? value) { … }
+  @override
+  void dispose(Object instance) => (instance as Bucket).close();
+}
+
+engine.objects.registerModule('storage', StorageModule());
+```
+
+```ts
+import { dartModule } from 'fjs';
+const storage = dartModule<StorageModule>('storage');
+const bucket = storage.Bucket('cache');
+await bucket.get('key');      // Dart Future 自动是 Promise
+```
+
+### SPI 规则
+
+- **无反射**：编译期 Dart 拿不到成员表，adapter 就是成员表本身。
+  `get` 返回 `FjsMethod.instance` 表示「该成员是方法」（默认），返回
+  其他值则是字段值。
+- **值语义**（两侧对着写，`object_bridge.dart` 的 `writeValue` 与
+  `object_abi.cpp` 的 `write_out_value`）：标量直通；`List`/`Map` 按 v1
+  规则过 JSON 串；`Function` 变成 JS 可调用（宿主闭包）；`Future` 变
+  pending promise（结算推迟到微任务，遵守「invokeHost 栈内不许回派」）；
+  其余对象自动注册句柄（已注册的复用同一句柄）。回调参数是 `FjsCallback`，
+  像普通函数一样调用。
+- **生命周期**：JS 代理被 GC 或 JS 调 `release` 时 `dispose` 被调；engine
+  reset 后全部句柄作废，迟到调用响亮报错。
+- **web 替身**：模块包（或宿主 app）用
+  `registerDartModuleStub(name, tsImpl)` 注册同名 TS 实现，业务代码不改
+  一行跑两端（iconmind 的 web 组件同款模式）。autoimport 的生成物与手写
+  模块可并存，同名注册优先——demo 的 dart-objects 页
+  （`demo/src/pages/basic/dart-objects.vue`）就是纯 autoimport：mmkv 全靠
+  生成适配器，web 端按差异表响亮报错。
+
+## autoimport：配置一个 pub 包，自动绑定（specs/160）
+
+对象模块的适配器是纯机械分发——它只做「成员名 → 真方法」。`fjs autoimport`
+把这层自动化了：对接一个**现成的 pub 包**（mmkv、shared_preferences 这类
+Flutter 插件），宿主 package.json 配一行：
+
+```json
+{ "fjs": { "autoimport": ["mmkv"] } }
+```
+
+`fjs run` / `fjs autoimport` 会：
+
+1. 宿主 pubspec 写入 `mmkv` 依赖（只有业务包——dump 工具**不进宿主依赖
+   图**，见下）并 `flutter pub get`；
+2. 物化独立工具包 `.fjs/autoimport-tool/`（fjs_introspect，analyzer 实现），
+   在它自己的依赖图里 `dart pub get` + `dart run fjs_introspect`，把每个包
+   的公开 API dump 成 `.fjs/autoimport/<pkg>.api.json`（按 autoimport 清单 +
+   pubspec.lock 哈希缓存，`--force` 强制重 dump）；
+3. 生成宿主 `lib/fjs_objects.dart`（`FjsObjectModule` 适配器 +
+   `fjsRegisterObjects(engine)`，autolink 自动接线）与项目
+   `src/fjs-objects.d.ts`（类型声明合并进 `FjsObjectModules`）。
+
+JS 侧直接用：
+
+```ts
+import { dartModule } from 'fjs';
+
+const mmkv = dartModule('mmkv');   // 键名编译期校验、返回类型完整
+const kv = mmkv.MMKV('config');    // 构造器
+kv.encodeString('k', 'v');
+kv.decodeString('k');              // String? → string | null
+```
+
+### 规则与边界
+
+- **公开 API 面**：主库 export 链上的顶层类与函数；类成员取无名构造、
+  静态方法、实例方法、公开 getter/setter/字段。静态方法与顶层函数摊平为
+  模块级可调用（`mmkv.defaultNameSpace()`），与类名冲突时 `类$成员` 消歧。
+- **可绑定的生成，不可绑定的列出**：跨不了 ABI 的成员（BuildContext、
+  枚举、Uint8List、函数体复杂签名……）跳过并在构建输出里逐条列原因——
+  对第三方包这是常态，看到清单即知哪些能力要手写模块补充（specs/159 的
+  `FjsObjectModule` 与本机制可自由混用，同名模块手写注册优先）。
+- **类型映射**：见 specs/160-object-codegen §4（int→number 带 float64 安全
+  转换、`T?`→`| null`、Future→Promise、命名参数→可选参数、函数参数→回调）。
+- **web 端**：autoimport 的包是 Flutter 插件，web 无宿主也**不生成替身**
+  ——浏览器里本就没有这个包的实现，`dartModule('mmkv')` 会 warnOnce 后
+  throw（宪法 V）。要两端同源的能力请按上文手写 `FjsObjectModule` +
+  `registerDartModuleStub`（同名注册优先于 autoimport 的生成物）。
+- **troubleshooting**：工具包的 analyzer 对 Dart SDK 有下限（当前
+  ^3.11），SDK 太旧时工具 `dart pub get` 会响亮失败；`fjs autoimport
+  --force` 重算缓存；dump 与真实包内容漂移（改包不换版本）也用它兜底。

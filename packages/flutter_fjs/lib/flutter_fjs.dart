@@ -31,6 +31,10 @@ export 'src/widgets/route_anchor.dart' show FjsRouteAnchor;
 export 'src/log.dart' show FjsLogLevel;
 export 'src/ui_ops.dart' show UiOpCode;
 export 'src/registry/host.dart' show HostRegistry, HostResult;
+// the object-ABI SPI (spec 159): implement FjsObjectModule and register it
+// on engine.objects to expose Dart objects to JS
+export 'src/registry/object_bridge.dart'
+    show ObjectBridge, FjsObjectModule, FjsMethod, FjsCallback;
 export 'src/registry/component.dart' show ComponentRegistry, ComponentBuilder;
 // the node a ComponentBuilder is handed: props, text and children ids. Part
 // of the public surface because writing a builder means reading it.
