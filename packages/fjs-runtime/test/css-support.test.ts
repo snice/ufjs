@@ -189,19 +189,24 @@ describe('tags.json / component-tags.json ↔ vue-global.d.ts', () => {
   const pascal = (tag: string) =>
     tag.replace(/(^|-)(\w)/g, (_, __: string, c: string) => c.toUpperCase());
 
-  /** Keys of the `GlobalComponents` interface in the runtime's ambient
-   * types — hand-written, so this is the guard. */
+  /** Keys of the tag entries in the runtime's ambient types — hand-written,
+   * so this is the guard. specs/164 moved the entries into the module-level
+   * `FjsGlobalComponents` interface (the declare-module block only extends
+   * it, and its header comment mentions the declare text verbatim — anchor
+   * on the interface, not on `declare module`). */
   function globalComponentKeys(): Set<string> {
     const text = readFileSync(src('vue-global.d.ts'), 'utf8');
-    const start = text.indexOf("declare module 'vue' {");
+    const start = text.indexOf('export interface FjsGlobalComponents {');
     expect(start).toBeGreaterThan(0);
-    const block = text.slice(start, text.indexOf('}', text.indexOf('{', start)));
+    const block = text.slice(start, text.indexOf('\n}', start));
     const keys = new Set<string>();
     // one entry per line: `  view: FjsComponent<...>;` / `  'x-y': ...`
     for (const m of block.matchAll(/^\s+('?)[\w-]+\1\s*:/gm)) {
       const line = m[0].trim().replace(/:$/, '');
       keys.add(line.replace(/^'|'$/g, ''));
     }
+    // the vue augmentation must still reach the entries
+    expect(text).toMatch(/interface GlobalComponents extends FjsGlobalComponents/);
     return keys;
   }
 
