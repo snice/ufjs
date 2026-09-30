@@ -92,6 +92,12 @@ class _FjsListViewState extends State<FjsListView> {
       child: ListView.builder(
         scrollDirection: widget.style.scrollDirection,
         itemCount: widget.items.length,
+        // ScrollView auto-pads a null-padding sliver with MediaQuery.padding,
+        // so a list outside <safe-area> would open with the status-bar inset
+        // as a blank first row — a Flutter-only inset no other platform
+        // renders. Safe area is the explicit <safe-area> tag here (three-end
+        // parity), so the viewport itself never pads on its own.
+        padding: EdgeInsets.zero,
         // The JS virtual-list window replaces its leading/trailing spacers
         // and rows as the offset changes. Give Sliver stable node keys so it
         // relocates existing render boxes instead of retaining them by their
