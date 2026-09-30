@@ -452,6 +452,10 @@ CLI 在构建期读这个开关（扫入口源码），runtime 在挂载期执�
   机制整段不进图。
 - **全局组件**走 `components` 选项（Flutter 端内置 fjs 组件集自动带上）；`useRoute` /
   `useRouter` 在无 Vue 实例时有模块级回退，页面照常用。
+- **fjs 标签在 vapor 模板里两端一致地编译成原生元素**（view/text/image…——web 后端
+  createElement 出的就是同一批自定义元素，样式来自 base-css，手势走后端 on()）；
+  `form` / `picker` / `list-view` / `textarea` 等组件标签仍走组件解析，纯 vapor 的 web 应用
+  用它们会得到明确的 resolveComponent 报错（vdom interop 才挂得起）。
 - **代价（有意为之，都写进了 spec）**：`setup(app)` / `applyPlugins` 没有 Vue app 可跑，
   pinia 之类不生效；web 端 Vapor 页内嵌 VDOM 组件（vant）不可用——web 的 vdom 互操作依赖
   runtime-dom 的渲染器，这正是这个模式要省掉的东西（Flutter 端互操作照旧可用，代价只是

@@ -1,38 +1,27 @@
 // The web Vapor backend core (specs/166 split): the node primitives over
 // the DOM — gestures, template cloning, styles — and the `fjs/vapor`
-// helper surface, with NO Vue renderer anywhere. The VDOM interop (vant et
-// al, the compile-time wrapper's adopt path) lives in web-interop.ts and
-// wires itself onto [domBackend]; `vapor/web.ts` re-exports both, and
-// `vapor/web-pure.ts` (the enableVapor alias) ships this module alone so
-// runtime-core's renderer engine never enters a pure-vapor bundle.
-// The same helper
-// surface as the Flutter entry, with the node primitives over the DOM. A
-// template instance is a real `cloneNode(true)` subtree of `<view>` /
-// `<text>` custom elements — the same elements the web adapter's VDOM
-// components render — and `tap` / `longPress` reproduce GestureDetector
-// through the same pointer dance the adapter uses
-// (web/components/gestures.ts): the click that follows a fired long press is
-// swallowed, and a tap fires per registered ancestor because the native
-// click bubbles through each of them.
+// helper surface, with NO Vue renderer anywhere. A template instance is a
+// real `cloneNode(true)` subtree of `<view>` / `<text>` custom elements —
+// the same elements the web adapter's VDOM components render — and `tap` /
+// `longPress` reproduce GestureDetector through the same pointer dance the
+// adapter uses (web/components/gestures.ts): the click that follows a fired
+// long press is swallowed, and a tap fires per registered ancestor because
+// the native click bubbles through each of them.
 //
 // Styles are plain CSS here — classes land on the element and the cascade
 // is the browser's; the inline-style merge keeps the record-per-host
-// semantics the two ends share. `export * from 'vue'` is the REAL vue on
-// web (the web pin plugin resolves it), so VDOM interop components run on
-// the same reactivity the Vapor helpers use.
-import { effect, stop as stopRunner, type ReactiveEffectRunner } from '@vue/reactivity';
-import { isOn } from '@vue/shared';
-import { createRenderer, h } from 'vue';
+// semantics the two ends share. The vue surface rides `export * from
+// '@vue/runtime-core'` — the standalone package, so the page's `ref` and
+// this runtime's effects share one reactivity system. The VDOM interop
+// (vant et al, the wrapper's adopt path) lives in web-interop.ts, which
+// wires `mountVdomComponent` onto [domBackend]; `vapor/web.ts` re-exports
+// both, and `vapor/web-pure.ts` (the enableVapor alias) ships this module
+// alone so the renderer engine never enters a pure-vapor bundle.
 import {
   type HostNode,
-  blockOf,
   type Block,
   type TemplateDef,
-  type VaporAppContext,
   type VaporBackend,
-  type VaporComponent,
-  disposeBlock,
-  mountVaporComponentForAdopt,
   setVaporBackend,
 } from './runtime';
 // ---- gestures -----------------------------------------------------------------

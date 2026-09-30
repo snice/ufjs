@@ -132,3 +132,27 @@ typecheck（含 vapor-app 的 vue-tsc）全绿。
 - 编译器拆分后 vapor 产物与 3.6 compileScript 语义对拍（既有 10 条编译测试 + demo
   vant/vapor 互操作 + bench 三方对拍）全过；sourcemap 的模板段映射不再产出（脚本段保留，
   DevTools 容忍，原 vite 路径即如此）。
+
+## 8. 二次修复（web 实测暴露，2026-10-01）
+
+浏览器实测 `examples/vapor-app` 抓到三个问题：
+
+1. **vite resolveId 在 enableVapor 下放行了 plugin-vue**（真 bug）：`resolveId` 对 vapor
+   SFC 返回 `null`（本意是「无 wrapper」），落进 plugin-vue 的编译——其产物从 `'vue'` import
+   `useCssVars`，而 enableVapor 的 `vue` 钉在 runtime-core 上没有该导出，页面白屏。修复：
+   enableVapor 分支直接路由到 `\0fjs-vapor-sfc:` 虚拟模块（自研编译器），只是不生成 wrapper。
+2. **纯 vapor 壳从未启动 vue-router**：install() 才会做初始导航并注册 history 监听，纯 vapor
+   应用没有 Vue app 可装——打开 `/#/about` 显示 `/`，浏览器返回键无效。修复：mount() 复刻
+   install 的启动 push（`router.options.history.location`），首个导航完成即 markAsReady。
+3. **example 缺 vite.config.ts 与根 index.html**（我的遗漏）：`dev:web` 无插件可用、dev server
+   404。已按 racing 的形状补齐。
+
+**顺手统一了 vapor 的 tag 判定（两端同源）**：vapor 模板里 fjs 标签（view/text/image…）在
+web 上原先编成组件、走 resolveComponent——那只在「vapor 页挂在 VDOM app 里、组件表由
+installFjsWeb 注册」的前提下成立，纯 vapor 壳没有组件表。改为两端一致：fjs 标签编译成
+**原生元素**（web 后端 document.createElement 出的就是同一批自定义元素，样式来自
+base-css、手势走后端 on()；Flutter 端规则不变），组件标签（form/picker/list-view/textarea
+等）仍走组件解析。vite dev 实测：vapor-app 首页渲染/点击/v-if/v-for/导航/浏览器返回/状态
+保留全通；`fjs build --web` 产物同口径全通且 runtime-dom/createRenderer 仍为 0；demo
+vant/vapor 互操作页（vite）渲染与点击正常；flutter 端 vapor-check 复测全过
+（runtime 879 / cli 449）。

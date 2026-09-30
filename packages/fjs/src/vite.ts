@@ -321,11 +321,12 @@ export function fjs(): VitePlugin {
       // import(<abs>)`), so absolute ids resolve as themselves — relative
       // ids keep the importer-relative resolution (specs/165). The
       // wrapper's own `import __vapor from <file>` lands on the compiled
-      // SFC module instead — plugin-vue must never compile a vapor SFC,
-      // its output targets the official runtime-vapor contract the own
-      // runtime does not implement. Under enableVapor the router mounts
-      // vapor pages natively and there are no VDOM importers — the
-      // redirect is off (specs/166), the virtual SFC compile stays on.
+      // SFC module instead — plugin-vue must never compile a vapor SFC:
+      // its output imports useCssVars from 'vue', which the enableVapor
+      // runtime-core pin does not carry (and its vdom shape is useless
+      // here). Under enableVapor the router mounts vapor pages natively —
+      // no wrapper — but the SFC still compiles through the own compiler
+      // (specs/166): the virtual id routes there directly.
       if (id.endsWith('.vue') && importer) {
         const bare = id.split('?')[0];
         const file = bare.startsWith('.')
@@ -335,8 +336,7 @@ export function fjs(): VitePlugin {
             : null;
         if (file && fs.existsSync(file) && isVaporSfcFile(file, readConfig(root).vapor?.libs !== false)) {
           if (importer.startsWith('\0fjs-vapor-wrapper:')) return '\0fjs-vapor-sfc:' + file;
-          if (enableVapor) return null;
-          return '\0fjs-vapor-wrapper:' + file;
+          return enableVapor ? '\0fjs-vapor-sfc:' + file : '\0fjs-vapor-wrapper:' + file;
         }
       }
       return null;

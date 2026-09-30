@@ -190,6 +190,18 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
       }
       app = createVaporApp(Shell, appContext);
       app.mount(host as never);
+      // vue-router starts its initial navigation — which honors the URL the
+      // page was opened at and registers the history (back/forward)
+      // listeners — only inside install(), and a pure-vapor app never
+      // installs it on a Vue app. Replicate the start: install does exactly
+      // this push when it runs (the history instance rides the public
+      // router options).
+      const history = (
+        vueRouter as unknown as { options: { history?: { location: string } } }
+      ).options.history;
+      if (history && vueRouter.currentRoute.value.matched.length === 0) {
+        void vueRouter.push(history.location).catch(() => undefined);
+      }
     },
   };
 }

@@ -67,8 +67,23 @@ export function isNativeTagFor(
 
 /** Template options for a Vapor SFC. compiler-vapor has its own transform
  * pipeline, so the VDOM-side nodeTransforms (swiper children) do not apply;
- * static hoisting is a VDOM notion. The tag split is the same as the VDOM
- * build's. */
+ * static hoisting is a VDOM notion.
+ *
+ * The tag rule is the SAME on both platforms and differs from the VDOM
+ * build's web branch: a Vapor template's fjs tags compile as NATIVE
+ * elements — the Flutter backend clones `<view>`/`<text>` element trees
+ * directly and the web backend creates the same custom elements
+ * (document.createElement), with events and props flowing through the
+ * backend's own on()/setAttr. The web VDOM path has to resolve them as
+ * components only because its renderer maps tag names onto the adapter's
+ * component implementations; the vapor backend has no such layer, and a
+ * resolveComponent("view") in a pure-vapor app (enableVapor, no component
+ * table) would be unresolvable. The component-backed tags (`form`,
+ * `picker`, `list-view`, `textarea`, …) stay components: their behavior
+ * lives in real component code on both platforms, so a pure-vapor page
+ * using one needs the vdom interop (or throws the plain resolveComponent
+ * error in enableVapor mode). [moduleTags] adds the widget tags a module's
+ * Flutter side renders. */
 export function vaporCompilerOptions({
   web = false,
   moduleTags = new Set<string>(),
@@ -76,7 +91,16 @@ export function vaporCompilerOptions({
   web?: boolean;
   moduleTags?: Set<string>;
 }): Record<string, unknown> {
-  return { isNativeTag: (tag: string) => isNativeTagFor(tag, { web, moduleTags }) };
+  void web;
+  return {
+    isNativeTag: (tag: string) =>
+      !FLUTTER_COMPONENT_TAGS.has(tag) &&
+      (moduleTags.has(tag) ||
+        FJS_TAGS.has(tag) ||
+        isHTMLTag(tag) ||
+        isSVGTag(tag) ||
+        isMathMLTag(tag)),
+  };
 }
 
 /** Parse-time options for EVERY SFC parse in the esbuild build. tagType —
