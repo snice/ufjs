@@ -10,6 +10,7 @@ import {
   type RouteRecordRaw,
   type Router as VueRouter,
 } from 'vue-router';
+import { getCurrentInstance } from '@vue/runtime-core';
 import { Matcher } from './match';
 import { startPreloadQueue } from './preload-queue';
 import { whenSettled } from './settled';
@@ -186,9 +187,18 @@ export function useRouter(): Router {
   return active;
 }
 
-/** vue-router's own useRoute: reactive, and correct inside a page that is
- * not the currently active one (kept-alive views). */
-export const useRoute = vueUseRoute as unknown as () => RouteLocation;
+/** vue-router's own useRoute inside a component; outside one (a vapor page's
+ * setup, enableVapor mode) it reads the active router's current route — the
+ * same ref vue-router keeps, so a vapor renderEffect tracking `.value` sees
+ * every navigation. A kept-alive VDOM view keeps the inject path. */
+export function useRoute(): RouteLocation {
+  if (getCurrentInstance()) return vueUseRoute() as unknown as RouteLocation;
+  const current = active?.vueRouter.currentRoute.value;
+  if (!current) {
+    throw new Error('useRoute(): no router — call createFjsApp first');
+  }
+  return current as unknown as RouteLocation;
+}
 
 /** No-op on web: page components are imported by the generated route
  * table instead of registering themselves from a chunk. */

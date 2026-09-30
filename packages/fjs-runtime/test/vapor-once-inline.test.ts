@@ -2,19 +2,20 @@
 // output: a key-only text becomes repeatTemplate; a prop read becomes the
 // live batch (repeatTemplateLive, effect per cell in the runtime); a
 // dynamic list stays createFor.
-import { compileScript, parse } from '@vue/compiler-sfc';
 import { describe, expect, it } from 'vitest';
-import { inlineVaporOnce } from '../src/vapor/once-inline';
+import { compileVaporSfc } from '../src/vapor/sfc-compiler';
+
+let seq = 0;
 
 function vapor(source: string): string {
-  const { descriptor, errors } = parse(source, { filename: 't.vue' });
-  if (errors.length) throw errors[0];
-  const { content } = compileScript(descriptor, {
-    id: 'data-v-x',
-    inlineTemplate: true,
-    templateOptions: { compilerOptions: { isNativeTag: (t: string) => t === 'view' || t === 'text' } },
+  const res = compileVaporSfc(source, {
+    file: `once-inline-t${seq++}.vue`,
+    id: 'data-v-once',
+    web: false,
+    moduleTags: new Set(),
   });
-  return inlineVaporOnce(content);
+  if ('errors' in res) throw new Error(res.errors.map((e) => e.text).join('\n'));
+  return res.code;
 }
 
 describe('inlineVaporOnce', () => {

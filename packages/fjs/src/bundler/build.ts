@@ -29,6 +29,8 @@ import {
   vuePinPlugin,
   vaporWrapperPlugin,
   webPinPlugin,
+  webPureVaporPinPlugin,
+  usesEnableVapor,
   pagesPlugin,
   pluginsPlugin,
   sharedBare,
@@ -533,6 +535,7 @@ async function bundleSingle(
   const entry = path.resolve(opts.entry ?? 'src/main.ts');
   const modules = scanModules(root);
   const appHooks = await loadViteAppHooks(root);
+  const enableVapor = usesEnableVapor(root, entry);
   // single bundle: every page is imported straight into it
   const plugins = [
     nodeBuiltinStubs(),
@@ -541,9 +544,13 @@ async function bundleSingle(
     vueSfcPlugin({
       nativeTags: widgetNativeTags(modules, 'app'),
       sourceMap: opts.sourcemap === true,
+      enableVapor,
     }),
     vuePinPlugin(),
-    vaporWrapperPlugin(),
+    // enableVapor (specs/166): pages mount natively through the vapor
+    // runtime — a VDOM module importing a Vapor SFC is a configuration
+    // error and gets no wrapper
+    ...(enableVapor ? [] : [vaporWrapperPlugin()]),
     viteAppHooksPlugin(appHooks),
     srcAliasPlugin(root),
     moduleDataPlugin(root, modules),
@@ -711,7 +718,7 @@ async function appModuleGraph(
       pluginsPlugin(pluginsFor(root, 'app'), fjsModules),
       vueSfcPlugin({ nativeTags: widgetNativeTags(fjsModules, 'app') }),
       vuePinPlugin(),
-      vaporWrapperPlugin(),
+      ...(usesEnableVapor(root, entry) ? [] : [vaporWrapperPlugin()]),
       viteAppHooksPlugin(appHooks),
       srcAliasPlugin(root),
       moduleDataPlugin(root, fjsModules),
@@ -779,6 +786,7 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
 
   // 1) which of the app's modules belong in the shared chunk
   const appModules = await appModuleGraph(entry, root, pages, modules);
+  const enableVapor = usesEnableVapor(root, entry);
   // an fjs module is shared by name like any other stateful library: page
   // chunks import 'test', the shared chunk owns the one instance of it
   const shared = [...sharedBare(root), ...moduleNames(modules)];
@@ -789,11 +797,13 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
     vueSfcPlugin({
       nativeTags: widgetNativeTags(modules, 'app'),
       sourceMap: opts.sourcemap === true,
+      enableVapor,
     }),
     // --pages' page chunks import Vapor SFCs as readily as the main bundle
     // does: without the wrapper here, a Vapor component inside a VDOM page
-    // compiles bare and runtime-core (3.5, no interop) renders it as nothing
-    vaporWrapperPlugin(),
+    // compiles bare and runtime-core (3.5, no interop) renders it as nothing.
+    // Under enableVapor there are no VDOM pages to do the importing.
+    ...(enableVapor ? [] : [vaporWrapperPlugin()]),
     viteAppHooksPlugin(appHooks),
     sharedStubPlugin(appModules, shared),
     srcAliasPlugin(root),
@@ -826,9 +836,10 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
       vueSfcPlugin({
         nativeTags: widgetNativeTags(modules, 'app'),
         sourceMap: opts.sourcemap === true,
+        enableVapor,
       }),
       vuePinPlugin(),
-      vaporWrapperPlugin(),
+      ...(enableVapor ? [] : [vaporWrapperPlugin()]),
       viteAppHooksPlugin(appHooks),
       srcAliasPlugin(root),
       moduleDataPlugin(root, modules),
@@ -1009,6 +1020,7 @@ async function buildWeb(opts: BuildOptions, outDir: string): Promise<BuildResult
   fs.rmSync(webOut, { recursive: true, force: true });
   fs.mkdirSync(webOut, { recursive: true });
 
+  const enableVapor = usesEnableVapor(root, entry);
   const result = await esbuild.build({
     entryPoints: [entry],
     bundle: true,
@@ -1021,14 +1033,20 @@ async function buildWeb(opts: BuildOptions, outDir: string): Promise<BuildResult
     target: 'es2020',
     platform: 'browser',
     minify: opts.minify,
-    alias: { ...webAliases(), ...moduleAliases(root, webModules) },
+    alias: { ...webAliases(enableVapor), ...moduleAliases(root, webModules) },
     plugins: [
       nodeBuiltinStubs(),
       pagesPlugin(pagesFor(root, 'web'), 'web', false),
       pluginsPlugin(pluginsFor(root, 'web'), webModules, 'web'),
-      vueSfcPlugin({ web: true, nativeTags: widgetNativeTags(webModules, 'web') }),
-      vaporWrapperPlugin(),
-      webPinPlugin(),
+      vueSfcPlugin({
+        web: true,
+        nativeTags: widgetNativeTags(webModules, 'web'),
+        enableVapor,
+      }),
+      ...(enableVapor ? [] : [vaporWrapperPlugin()]),
+      // enableVapor: `vue` pins to runtime-core — runtime-dom (the DOM
+      // vdom renderer) must not be reachable from a pure-vapor bundle
+      ...(enableVapor ? [webPureVaporPinPlugin()] : [webPinPlugin()]),
       srcAliasPlugin(root),
       moduleDataPlugin(root, webModules),
     ],

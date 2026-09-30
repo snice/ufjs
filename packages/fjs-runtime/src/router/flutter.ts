@@ -32,6 +32,8 @@ import {
 } from '@vue/runtime-core';
 // createApp here is the fjs custom renderer's, not runtime-dom's
 import { createApp as createVueApp, flutterRoot, releaseRoot, styleEngine } from '../vue/renderer';
+// enableVapor (specs/166): a vapor page mounts through the own runtime
+import { createVaporApp, isVaporComponent, type VaporAppContext } from '../vapor/runtime';
 import type { StyleSnapshot } from '../css/style';
 import { remove, setProps, registerSystemHandler, type Element } from '../ui/element';
 import { hasNativeHost, invokeHost } from '../host';
@@ -121,7 +123,9 @@ interface PageEntry {
   location: RouteLocation;
   route: RouteLocation; // reactive copy handed to the page
   root: Element | null;
-  app: App | null;
+  /** the page's app — a Vue app (vdom page) or `{ unmount }` (a vapor page,
+   * enableVapor mode, specs/166); teardown only ever unmounts */
+  app: { unmount: () => void } | null;
   /** The route's push transition is over (or there never was one), so the
    * page may do work that would have janked the animation. */
   settled: boolean;
@@ -135,6 +139,15 @@ export interface FlutterRouterOptions extends RouterOptions {
   rootTag?: string;
   /** Hook to configure every page's Vue app (plugins, error handler). */
   onCreateApp?: (app: App) => void;
+  /** specs/166: every page is a Vapor SFC — pages mount through the vapor
+   * runtime (`createVaporApp` into the page root) instead of a per-page
+   * Vue app, and the compile-time wrapper is not generated. `onCreateApp`
+   * does not run (there is no Vue app); global components resolve through
+   * [vaporComponents] instead. */
+  enableVapor?: boolean;
+  /** Global components (plus the built-in fjs component set the app entry
+   * adds) a vapor page's `resolveComponent` can name. */
+  vaporComponents?: Record<string, unknown>;
   /** Page transition. The names in `TRANSITIONS` ('fjs-fade',
    * 'fjs-slide', 'fjs-slide-up', 'fjs-zoom') are native page routes here
    * and the matching CSS families on web, so the same name animates the
@@ -485,6 +498,32 @@ class FlutterRouter implements Router {
     setProps(root, { __navKey: entry.key });
     entry.root = root;
 
+    // enableVapor (specs/166): a Vapor page mounts through the own runtime —
+    // no per-page Vue app, no provides (the module-level router/route
+    // fallbacks serve it), no shell wrapping unless the shell is vapor too
+    const vaporContext = this.vaporAppContext();
+    if (this.options.enableVapor && page && isVaporComponent(page)) {
+      if (!entry.settled && entry.settleTimer === null) {
+        entry.settleTimer = setTimeout(() => this.markSettled(entry, true), SETTLE_FALLBACK_MS);
+      }
+      // the page's useRoute() reads this while its setup runs (no Vue
+      // instance → the module fallback); it holds the reactive copy, so a
+      // later navigation mutating it stays live for mounted pages too
+      activeNativeRoute = entry.route;
+      try {
+        const vaporApp = createVaporApp(page, vaporContext);
+        entry.app = vaporApp;
+        vaporApp.mount(root);
+      } finally {
+        activeNativeRoute = null;
+      }
+      Object.assign(this.currentRoute, entry.location);
+      if (this.preloadArmed && !this.preloadQueue) {
+        this.subscribeSettled(entry, () => this.startPreloadQueue());
+      }
+      return;
+    }
+
     const shell = this.options.shell;
     const content = () => (page ? h(page) : h('view'));
     const app = createVueApp({
@@ -512,6 +551,14 @@ class FlutterRouter implements Router {
     if (this.preloadArmed && !this.preloadQueue) {
       this.subscribeSettled(entry, () => this.startPreloadQueue());
     }
+  }
+
+  /** The VaporAppContext a native-mounted vapor page resolves global
+   * components against. A null context makes `resolveComponent` throw its
+   * "import it and use the imported name" error, which stays the right
+   * answer for an enableVapor app that registers nothing. */
+  private vaporAppContext(): VaporAppContext {
+    return { components: this.options.vaporComponents ?? {} };
   }
 
   /** Build-time style capture (specs/119): mounts every static route in
@@ -694,8 +741,16 @@ export function onPageSettled(cb: () => void): void {
   router.subscribeSettled(entry, cb);
 }
 
+/** The route of the page currently being natively mounted (enableVapor):
+ * a vapor setup has no Vue instance to inject through, so useRoute() reads
+ * this instead of the router-wide currentRoute — which is still the
+ * PREVIOUS page's while this one mounts. Holds the entry's reactive copy,
+ * so reads stay live after the mount returns. */
+let activeNativeRoute: RouteLocation | null = null;
+
 /** The route of the page the calling component belongs to. */
 export function useRoute(): RouteLocation {
+  if (!getCurrentInstance() && activeNativeRoute) return activeNativeRoute;
   const fallback = active?.currentRoute ?? blankLocation();
   return injectOr<RouteLocation>(ROUTE_KEY, fallback);
 }

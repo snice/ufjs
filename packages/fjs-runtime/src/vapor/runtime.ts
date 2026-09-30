@@ -12,6 +12,7 @@ import {
   emptyBlock,
   insertBlock,
   removeBlock,
+  renderEffect,
   setHostReactivity,
   takeInsertionState,
   withScope as hostWithScope,
@@ -19,6 +20,7 @@ import {
   type HostNode,
   type Slots,
 } from './host';
+import { discardCssVarsBucket, popAndApplyCssVars, pushCssVarsBucket } from './css-vars';
 
 // the reactivity seam, bound before any helper can run (module init)
 setHostReactivity({
@@ -80,6 +82,8 @@ function isVaporComponent(comp: unknown): comp is VaporComponent {
   return !!comp && typeof comp === 'object'
     && ((comp as VaporComponent).__vapor === true || (comp as VaporComponent).__fjsVapor === true);
 }
+
+export { isVaporComponent };
 
 export function resolveComponent(name: string): unknown {
   const resolved = currentAppContext?.components[name];
@@ -155,11 +159,20 @@ function mountVaporComponent(
   const savedContext = currentAppContext;
   currentAppContext = appContext;
   let block: Block;
+  // useVaporCssVars registrations made during setup land in this bucket and
+  // are applied (inside the scope, so they die with the component) once the
+  // block exists — specs/166. A throwing setup discards its bucket: a leak
+  // would attach this component's vars to the NEXT mounted one.
+  pushCssVarsBucket();
   try {
     block = withScope(scope, () => blockOf(comp.setup?.(props, ctx) ?? emptyBlock()), slots);
-  } finally {
+  } catch (e) {
+    discardCssVarsBucket();
     currentAppContext = savedContext;
+    throw e;
   }
+  withScope(scope, () => popAndApplyCssVars(block, (fn) => renderEffect(fn)));
+  currentAppContext = savedContext;
   if (!block.scopes) block.scopes = [];
   block.scopes.push(scope);
   return block;
@@ -193,7 +206,14 @@ export function createComponent(
     if (typeof v === 'function') Object.defineProperty(props, k, { get: v as () => unknown, enumerable: true });
     else props[k] = v;
   }
-  return be().mountVdomComponent(comp as Record<string, unknown>, props, slots, parent, anchor);
+  const interop = be().mountVdomComponent;
+  if (!interop) {
+    throw new Error(
+      '[fjs vapor] a VDOM component reached a pure-vapor app — the enableVapor web build ships no vdom machinery (specs/166). ' +
+        'Import it in a vapor page of a non-enableVapor app, or drop enableVapor.',
+    );
+  }
+  return interop(comp as Record<string, unknown>, props, slots, parent, anchor);
 }
 
 export function createComponentWithFallback(
@@ -250,11 +270,16 @@ export function createVaporApp(comp: VaporComponent, appContext: VaporAppContext
   const savedContext = currentAppContext;
   currentAppContext = appContext;
   let block: Block | null = null;
+  pushCssVarsBucket();
   try {
     block = withScope(scope, () => blockOf(comp.setup?.({}, { emit: () => {}, slots: {}, attrs: {}, expose: () => {} })));
-  } finally {
+  } catch (e) {
+    discardCssVarsBucket();
     currentAppContext = savedContext;
+    throw e;
   }
+  withScope(scope, () => popAndApplyCssVars(block as Block, (fn) => renderEffect(fn)));
+  currentAppContext = savedContext;
   return {
     mount: (container: HostNode) => insertBlock(block as Block, container, null),
     unmount: () => {

@@ -16,6 +16,7 @@ import {
   prepareClone,
   registerAdoptHook,
   render,
+  styleEngine,
   type CloneNode,
   type ClonePlan,
 } from '../vue/renderer';
@@ -312,6 +313,14 @@ setVaporBackend({
       ],
     };
     return block;
+  },
+
+  // <style> v-bind() on a Vapor component (specs/166): the vars ride the
+  // style engine's inline-custom-props channel — the same one the VDOM
+  // useCssVars feeds — so inheritance down the subtree is the engine's job
+  setCssVars(host, vars) {
+    const id = (host as { id?: number }).id;
+    if (typeof id === 'number') styleEngine.setInlineCustomProps(id, vars);
   },
 });
 

@@ -1,32 +1,28 @@
 {
-  "name": "racing",
+  "name": "vapor-app",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "fjs dev",
     "dev:web": "vite --host 0.0.0.0",
     "build": "fjs build",
-    "build:bytecode": "fjs build --bytecode",
-    "build:web": "vite build",
-    "build:release": "fjs build --release",
-    "build:apk": "fjs build --pages --release --apk",
-    "run:android": "fjs run android",
-    "run:ios": "fjs run ios",
+    "build:web": "fjs build --web",
+    "build:vite": "vite build",
+    "check": "fjs build check/main.ts --out dist/check && ../../packages/flutter_fjs/native/build-native/fjsrun --pump 200 dist/check/app/bundle.js",
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@ufjs/webgl": "workspace:*",
-    "three": "0.170.0",
     "vue": "3.5.43"
   },
   "devDependencies": {
-    "@types/three": "0.170.0",
     "@ufjs/cli": "workspace:*",
     "@ufjs/runtime": "workspace:*",
     "@vitejs/plugin-vue": "^6.0.3",
-    "@vue/runtime-core": "3.5.43",
     "typescript": "^5.9.3",
     "vite": "^8.2.2",
     "vue-tsc": "^3.3.11"
+  },
+  "fjs": {
+    "styleSnapshot": false
   }
 }

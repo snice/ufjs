@@ -13,6 +13,10 @@ export { adoptVaporComponent, mountAdoptNodes, releaseAdopt } from './interop';
 // exports (those need a VDOM currentInstance, which Vapor code never has)
 export { resolveComponent, useSlots, type Slots } from './runtime';
 
+// <style> v-bind() on a Vapor page (specs/166): the compiler names this
+// helper in the useCssVars call it injects for vapor SFCs
+export { useVaporCssVars } from './css-vars';
+
 // the flutter backend must be registered before any helper runs: compiled
 // SFCs call template() at module level, and this entry is their import. The
 // adopt hook (VDOM pages embedding Vapor components) comes with it.

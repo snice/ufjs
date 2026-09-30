@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import * as esbuild from 'esbuild';
 import { describe, expect, it } from 'vitest';
-import { isAutoVapor, isVaporSfcFile, sharedBare, usesVapor, vaporWrapperModule, vueSfcPlugin, vuePinPlugin, vaporWrapperPlugin } from '../src/bundler/vue-plugin';
+import { isAutoVapor, isVaporSfcFile, sharedBare, usesVapor, usesEnableVapor, vaporWrapperModule, vueSfcPlugin, vuePinPlugin, vaporWrapperPlugin } from '../src/bundler/vue-plugin';
 
 const VDOM = `<script setup lang="ts">
 const n: number = 1
@@ -145,5 +145,62 @@ describe('Vapor wrapper (a VDOM module importing a Vapor SFC)', () => {
     expect(sharedBare(plain)).not.toContain('fjs/vapor');
     expect(usesVapor(vapor)).toBe(true);
     expect(sharedBare(vapor)).toContain('fjs/vapor');
+  });
+});
+
+describe('enableVapor (specs/166)', () => {
+  it('usesEnableVapor reads the flag off the app entry', () => {
+    const dir = project({
+      'src/main.ts': "import { createFjsApp } from 'fjs/app';\ncreateFjsApp({ enableVapor: true, routes: [] });",
+      'src/other.ts': 'const enableVapor = { true: 1 };',
+    });
+    expect(usesEnableVapor(dir, 'src/main.ts')).toBe(true);
+    expect(usesEnableVapor(dir, 'src/other.ts')).toBe(false);
+    expect(usesEnableVapor(dir)).toBe(true); // default entry src/main.ts
+  });
+
+  it('the wrapper plugin is skipped: a vapor import compiles bare (the router mounts it)', async () => {
+    const dir = project({ 'Kid.vue': VAPOR, 'entry.ts': "import Kid from './Kid.vue'; export default Kid;" });
+    const withWrapper = await esbuild.build({
+      entryPoints: [path.join(dir, 'entry.ts')],
+      absWorkingDir: dir, bundle: true, write: false, format: 'esm',
+      external: ['vue', 'fjs/vue', 'fjs/vapor'],
+      plugins: [vueSfcPlugin({}), vaporWrapperPlugin()],
+      logLevel: 'silent',
+    });
+    expect(withWrapper.outputFiles[0].text).toContain('fjs-vapor-root');
+    const pure = await esbuild.build({
+      entryPoints: [path.join(dir, 'entry.ts')],
+      absWorkingDir: dir, bundle: true, write: false, format: 'esm',
+      external: ['vue', 'fjs/vue', 'fjs/vapor'],
+      plugins: [vueSfcPlugin({ enableVapor: true })],
+      logLevel: 'silent',
+    });
+    const js = pure.outputFiles[0].text;
+    expect(js).not.toContain('fjs-vapor-root');
+    expect(js).not.toContain('adoptVaporComponent');
+    // the page still compiles as a vapor component the router can mount
+    expect(js).toContain('__vapor');
+    expect(js).toContain('template(');
+  });
+
+  it('an enableVapor app names its VDOM SFCs — they would mount as nothing', async () => {
+    const dir = project({ 'Page.vue': VDOM, 'entry.ts': "import Page from './Page.vue'; export default Page;" });
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (m: string) => warns.push(m);
+    try {
+      await esbuild.build({
+        entryPoints: [path.join(dir, 'entry.ts')],
+        absWorkingDir: dir, bundle: true, write: false, format: 'esm',
+        external: ['vue', 'fjs/vue', 'fjs/vapor'],
+        plugins: [vueSfcPlugin({ enableVapor: true })],
+        logLevel: 'silent',
+      });
+    } finally {
+      console.warn = orig;
+    }
+    expect(warns.join('\n')).toContain('Page.vue');
+    expect(warns.join('\n')).toContain('no vapor attribute');
   });
 });

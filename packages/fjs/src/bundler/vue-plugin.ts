@@ -8,82 +8,41 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'esbuild';
 import { parse, compileScript, compileTemplate, compileStyle } from '@vue/compiler-sfc';
-import { inlineVaporOnce } from '../../../fjs-runtime/src/vapor/once-inline';
 import { inlineFontFaces } from './font-face';
 import { expandFlexDefault } from '../../../fjs-runtime/src/web/css-compat.js';
-import { isHTMLTag, isSVGTag, isMathMLTag } from '@vue/shared';
 import { routeTableSource, type PageRoute, type Platform } from '../project/pages.js';
 import { pluginTableSource, type AppPlugin } from '../project/plugins.js';
 import { readConfig } from '../project/config.js';
 import { resolveModuleData, type FjsModule } from '../project/modules.js';
 import { swiperChildrenTransform } from '../template/swiper-children.js';
 import { cloneBlocksTransform } from '../template/clone-blocks.js';
+import { compileVaporSfc, isVaporDescriptor } from '../../../fjs-runtime/src/vapor/sfc-compiler';
 import {
-  FJS_TAGS as FJS_TAG_LIST,
-  FJS_COMPONENT_TAGS,
-} from '../../../fjs-runtime/src/tags.js';
+  isAutoVapor,
+  isNativeTagFor,
+  sfcParseOptions,
+  vaporCompilerOptions,
+  webIsNativeTag,
+} from '../../../fjs-runtime/src/vapor/sfc-tags';
 
-/** Tags the fjs runtime provides. On web they must compile as components
- * (several — text, image, switch — are otherwise native SVG/HTML tags);
- * on Flutter they pass through to the custom renderer verbatim. */
-const FJS_TAGS = new Set<string>(FJS_TAG_LIST);
-
-/** fjs tags the FLUTTER path implements as Vue components rather than as
- * host elements, so the compiler has to resolve them (see
- * fjs-runtime/src/components/). `list-view` feeds a Dart builder; `form`
- * collects its fields from the JS shadow tree; `picker` is pure
- * orchestration over `modal` + `picker-view` (constitution VII). */
-// `textarea` and `form` are real HTML tag names, so they only stay components
-// because the isNativeTag check below asks this set FIRST. Get that order
-// wrong and the page renders nothing, without an error.
-//
-// The list itself lives in fjs-runtime/src/component-tags.json because the
-// Volar plugin (CommonJS) needs the same one — the IDE decides "element or
-// component?" separately from the build, and a mismatch shows up as bogus
-// DOM types on an fjs component.
-const FLUTTER_COMPONENT_TAGS = new Set<string>(FJS_COMPONENT_TAGS);
-
-/** Web `isNativeTag`: the fjs tags must NOT be native, so the compiler emits
- * resolveComponent() and they reach the DOM adapter. Several of them (text,
- * image, switch, view are SVG; input, button, progress are HTML) are real
- * tags, so compiler-dom's default would render them verbatim — the element
- * shows up in the DOM, `@tap` becomes a listener for a DOM event named
- * "tap", and nothing works. Shared with the Vite plugin, which has to hand
- * this to @vitejs/plugin-vue. */
-export function webIsNativeTag(tag: string): boolean {
-  // The component guard belongs HERE, not only in the callers: this function
-  // is the web half of the decision and is called from vite.ts as well, and
-  // `textarea` is both an fjs component and a real HTML tag.
-  return (
-    !FLUTTER_COMPONENT_TAGS.has(tag) &&
-    !FJS_TAGS.has(tag) &&
-    (isHTMLTag(tag) || isSVGTag(tag) || isMathMLTag(tag))
-  );
-}
-
-/** The tag decision the SFC compiler is given, as a function so a test can
- * ask it directly. Getting it wrong is SILENT — a component compiled as an
- * element renders nothing and reports no error — which is why the order
- * below is spelled out and pinned by test/vue-plugin.test.ts. */
-export function isNativeTagFor(
-  tag: string,
-  options: { web?: boolean; moduleTags?: Set<string> } = {},
-): boolean {
-  const { web = false, moduleTags = new Set<string>() } = options;
-  // FIRST: a tag this runtime implements as a component is never native.
-  // Some of them (`form`, `textarea`) are also HTML tag names, and
-  // isHTMLTag below would drag them back to being elements.
-  if (FLUTTER_COMPONENT_TAGS.has(tag)) return false;
-  if (moduleTags.has(tag)) return true;
-  if (web) return webIsNativeTag(tag);
-  return (
-    FJS_TAGS.has(tag) || isHTMLTag(tag) || isSVGTag(tag) || isMathMLTag(tag)
-  );
-}
+// the tag decision + vapor option builders live in the runtime's
+// src/vapor/sfc-tags.ts (specs/166); re-exported so the existing import
+// surface (vite.ts, tests) is unchanged
+export {
+  isAutoVapor,
+  isNativeTagFor,
+  sfcParseOptions,
+  vaporCompilerOptions,
+  webIsNativeTag,
+};
 
 export interface SfcOptions {
   /** Web target: real scoped CSS + fjs tags compiled as components. */
   web?: boolean;
+  /** specs/166: the app declared `enableVapor: true` — a plain (VDOM) SFC
+   * under src is a configuration error (the router mounts vapor natively
+   * and would render a vdom page as nothing), so each one is named. */
+  enableVapor?: boolean;
   /** Extra tags to compile as elements rather than components: the widget
    * tags the modules' Flutter side renders (see widgetNativeTags). */
   nativeTags?: readonly string[];
@@ -132,49 +91,8 @@ export function templateCompilerOptions({
   };
 }
 
-/** Template options for a Vapor SFC. compiler-vapor has its own transform
- * pipeline, so the VDOM-side nodeTransforms (swiper children) do not apply;
- * static hoisting is a VDOM notion. The tag split is the same as the VDOM
- * build's. */
-export function vaporCompilerOptions({
-  web = false,
-  moduleTags = new Set<string>(),
-}: {
-  web?: boolean;
-  moduleTags?: Set<string>;
-}): Record<string, unknown> {
-  return { isNativeTag: (tag: string) => isNativeTagFor(tag, { web, moduleTags }) };
-}
-
-/** Parse-time options for EVERY SFC parse in the esbuild build. tagType —
- * element vs component — is decided by the PARSER (sfc.parse's
- * templateParseOptions), not by the later template compile: compiler-sfc's
- * compileScript only forwards templateOptions.compilerOptions to the vapor
- * transform, which cannot retroactively re-tag. Without this, an fjs tag
- * with only component children (`<scroll-view>` around a van-* row) parses
- * as a component and the emitted code resolves it on the app context at
- * runtime — where nothing registers built-in tags. Passing it for VDOM SFCs
- * too is harmless: the same predicate decides their template compile. */
-export function sfcParseOptions({
-  web = false,
-  moduleTags = new Set<string>(),
-}: {
-  web?: boolean;
-  moduleTags?: Set<string>;
-} = {}): Record<string, unknown> {
-  return { templateParseOptions: { isNativeTag: (tag: string) => isNativeTagFor(tag, { web, moduleTags }) } };
-}
-
-/** A library's SFC (under node_modules) is compiled as Vapor when all it
- * has is `<script setup>` — the only script form Vapor supports — unless
- * the app sets `fjs.vapor.libs: false` (specs/148). */
-export function isAutoVapor(
-  file: string,
-  descriptor: { script: unknown; scriptSetup: unknown },
-  libs: boolean,
-): boolean {
-  return libs && file.split(path.sep).includes('node_modules') && !!descriptor.scriptSetup && !descriptor.script;
-}
+/** Parse-time options for EVERY SFC parse live in sfc-tags.ts (specs/166),
+ * re-exported above. */
 
 const vaporSfcCache = new Map<string, boolean>();
 
@@ -189,7 +107,7 @@ export function isVaporSfcFile(file: string, libs: boolean): boolean {
   let hit = false;
   try {
     const { descriptor } = parse(fs.readFileSync(file, 'utf8'), { filename: path.basename(file), ...sfcParseOptions() });
-    hit = descriptor.vapor === true || isAutoVapor(file, descriptor, libs);
+    hit = isVaporDescriptor(descriptor) || isAutoVapor(file, descriptor, libs);
   } catch {
     hit = false;
   }
@@ -238,9 +156,10 @@ export default __dc({
 
 const VAPOR_WRAPPER_NS = 'fjs-vapor-wrapper';
 
-/** Compiles a Vapor SFC into a finished module over the own runtime — the
- * same compile shape as vueSfcPlugin's vapor branch (inlineTemplate, the
- * `from 'vue'` rewrite, style registration, scope id). The vite path serves
+/** Compiles a Vapor SFC into a finished module over the own runtime —
+ * `compileVaporSfc` (specs/166) does parse + script (compiler-sfc@3.5) and
+ * the template (compiler-vapor) splice; this adds the `from 'vue'` rewrite,
+ * `__sfc__` conversion and per-platform style attach. The vite path serves
  * vapor SFCs through this under a virtual id instead of letting plugin-vue
  * compile them: plugin-vue's vapor output targets the official runtime-vapor
  * contract — setup returns the bindings object with the template in a
@@ -253,39 +172,22 @@ export async function compileVaporSfcModule(
 ): Promise<{ code: string; scriptMappings?: string } | { errors: { text: string }[] }> {
   const source = fs.readFileSync(file, 'utf8');
   const filename = path.basename(file);
-  const parseOpts = sfcParseOptions(opts);
-  let { descriptor, errors } = parse(source, { filename, ...parseOpts });
-  if (errors.length) {
-    return { errors: errors.map((e) => ({ text: String(e.message ?? e) })) };
-  }
-  if (!descriptor.vapor) {
-    // an auto-vapor library SFC reached through the wrapper: reparse with
-    // the flag, exactly like vueSfcPlugin does
-    ({ descriptor, errors } = parse(
-      source.replace(/<script(\s[^>]*)?\ssetup\b/, (m) => `${m} vapor`),
-      { filename, ...parseOpts },
-    ));
-    if (errors.length) {
-      return { errors: errors.map((e) => ({ text: String(e.message ?? e) })) };
-    }
-  }
-  // stable per-file scope id, computed like vueSfcPlugin's (relative to the
-  // build root so the same checkout hashes identically everywhere)
+  // stable per-file scope id (relative to the build root so the same
+  // checkout hashes identically everywhere)
   let rel = path.relative(opts.root, file);
   if (rel.startsWith('..')) rel = file;
   const id = 'data-v-' + createHash('md5').update(rel).digest('hex').slice(0, 8);
-  const compiled = compileScript(descriptor, {
-    id,
-    inlineTemplate: true,
-    templateOptions: { compilerOptions: vaporCompilerOptions({ web: opts.web, moduleTags: opts.moduleTags }) },
+  const compiled = compileVaporSfc(source, { file, id, web: opts.web, moduleTags: opts.moduleTags });
+  if ('errors' in compiled) return compiled;
+  const { descriptor } = parse(source, {
+    filename,
+    ...sfcParseOptions(opts),
   });
-  let code = inlineVaporOnce(compiled.content).replace(/(\bfrom\s*)(['"])vue\2/g, "$1'fjs/vapor'");
-  if (code.includes('export default')) {
-    code = code.replace(/export default/, 'const __sfc__ =');
-  } else if (!code.includes('const __sfc__')) {
-    code = 'const __sfc__ = {};\n' + code;
+  let code = compiled.code.replace(/(\bfrom\s*)(['"])vue\2/g, "$1'fjs/vapor'");
+  // compileVaporSfc already produced `const __sfc__ = …` + `export default __sfc__`
+  if (!code.includes('const __sfc__')) {
+    code = 'const __sfc__ = {};\n' + code + '\nexport default __sfc__;';
   }
-  code += '\nexport default __sfc__;';
   // <style> blocks, same split as vueSfcPlugin: web keeps real CSS through
   // injectStyle, the app build feeds the style engine via registerStyles
   const shortId = id.replace(/^data-v-/, '');
@@ -325,7 +227,7 @@ export async function compileVaporSfcModule(
   if (styles.some((s) => s.scoped)) {
     code += `\n__sfc__.__scopeId = ${JSON.stringify(id)};`;
   }
-  return { code, scriptMappings: compiled.map?.mappings };
+  return { code, scriptMappings: compiled.scriptMappings };
 }
 
 /** esbuild side of the wrapper: a `.vue` import that resolves to a Vapor
@@ -395,6 +297,8 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
   const web = options.web === true;
   const sourceMap = options.sourceMap === true;
   const moduleTags = new Set(options.nativeTags ?? []);
+  const enableVapor = options.enableVapor === true;
+  const warnedVdom = new Set<string>();
   return {
     name: 'fjs-vue-sfc',
     setup(build) {
@@ -435,10 +339,18 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
         // `<script setup>`-only SFC. Re-parsed from the edited source rather
         // than flagged on the descriptor: compiler-sfc caches descriptors by
         // source, and the flag would leak into anything sharing it.
-        if (!descriptor.vapor && isAutoVapor(args.path, descriptor, vaporLibs(build))) {
+        if (!isVaporDescriptor(descriptor) && isAutoVapor(args.path, descriptor, vaporLibs(build))) {
           ({ descriptor, errors } = parse(source.replace(/<script(\s[^>]*)?\ssetup\b/, (m) => `${m} vapor`), { filename, ...sfcParseOptions({ web, moduleTags }) }));
         }
-        const vapor = descriptor.vapor === true;
+        const vapor = isVaporDescriptor(descriptor);
+        if (enableVapor && !vapor && !warnedVdom.has(args.path) && !args.path.includes('node_modules')) {
+          warnedVdom.add(args.path);
+          console.warn(
+            `[fjs] ${filename}: enableVapor is on but this SFC has no vapor attribute — ` +
+              'the router mounts pages natively and a VDOM page renders as nothing. ' +
+              'Add `vapor` to its <script setup> or drop enableVapor.',
+          );
+        }
 
         // stable per-file scope id for scoped styles (relative to the build
         // root so the same checkout hashes identically everywhere)
@@ -455,22 +367,20 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
 
         if (vapor) {
           // Vapor has no render function to attach: the template compiles
-          // into setup() itself (inline), against the Vapor runtime helpers
-          const compiled = compileScript(descriptor, {
-            id,
-            inlineTemplate: true,
-            templateOptions: { compilerOptions: vaporCompilerOptions({ web, moduleTags }) },
-          });
+          // into setup() itself (inline), against the Vapor runtime helpers.
+          // parse + script + template splice are one step in the runtime's
+          // sfc-compiler.ts (specs/166 — stable compiler-sfc, the codegen
+          // from @vue/compiler-vapor).
+          const compiledVapor = compileVaporSfc(source, { file: args.path, id, web, moduleTags });
+          if ('errors' in compiledVapor) return { errors: compiledVapor.errors };
           // The helpers a Vapor module imports — generated and the page's
           // own — come from `fjs/vapor` (specs/161): the own runtime over the
           // element API on Flutter and over the DOM on web, plus the 'vue'
-          // shim's exports. The web build used to keep real vue here for
-          // runtime-vapor; with the own runtime both ends rewrite alike. The
-          // entry leaves runtime-core's full export surface to the shim, so
-          // a `--pages` build's shared chunk does not carry the vapor
-          // runtime for apps without a Vapor component.
-          scriptCode = inlineVaporOnce(compiled.content).replace(/(\bfrom\s*)(['"])vue\2/g, "$1'fjs/vapor'");
-          scriptMappings = compiled.map?.mappings;
+          // shim's exports. The entry leaves runtime-core's full export
+          // surface to the shim, so a `--pages` build's shared chunk does
+          // not carry the vapor runtime for apps without a Vapor component.
+          scriptCode = compiledVapor.code.replace(/(\bfrom\s*)(['"])vue\2/g, "$1'fjs/vapor'");
+          scriptMappings = compiledVapor.scriptMappings;
         } else if (descriptor.script || descriptor.scriptSetup) {
           const compiled = compileScript(descriptor, { id });
           scriptCode = compiled.content;
@@ -484,8 +394,10 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
         // `export default` and `const __sfc__ =` are both 14 characters, so
         // this rewrite does not move any column the script map recorded.
         // The other branch inserts a line, which the map has to follow.
+        // (A vapor module already carries the conversion + marker + final
+        // export from the compiler — vapor-sfc.ts owns that shape.)
         let scriptLineShift = 0;
-        if (code.includes('export default')) {
+        if (!vapor && code.includes('export default')) {
           code = code.replace(/export default/, 'const __sfc__ =');
         } else if (!code.includes('const __sfc__')) {
           code = 'const __sfc__ = {};\n' + code;
@@ -544,7 +456,9 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
           templateMappings = tpl.map?.mappings;
           templateStartLine = countNewlines(code) + 2;
           code += `\n${templateCode}\n__sfc__.render = render;\nexport default __sfc__;`;
-        } else {
+        } else if (!vapor) {
+          // a vapor module already ends with `export default __sfc__`
+          // (vapor-sfc.ts stamps the marker there); nothing to append
           code += '\nexport default __sfc__;';
         }
 
@@ -789,6 +703,27 @@ export function sharedBare(root = process.cwd()): string[] {
 
 const vaporUse = new Map<string, boolean>();
 
+const enableVaporUse = new Map<string, boolean>();
+
+/** specs/166: whether the app entry declares `enableVapor: true` in its
+ * `createFjsApp` call — the "this app is all-Vapor" switch. A static scan
+ * of the entry source, the same shape as usesVapor; the build reads it to
+ * skip the compile-time wrapper (pages mount natively) and, on web, to pin
+ * `vue` to the runtime-core shim so runtime-dom never enters the bundle. */
+export function usesEnableVapor(root: string, entry?: string): boolean {
+  const file = path.resolve(root, entry ?? 'src/main.ts');
+  const cached = enableVaporUse.get(file);
+  if (cached !== undefined) return cached;
+  let hit = false;
+  try {
+    hit = /enableVapor\s*:\s*true/.test(fs.readFileSync(file, 'utf8'));
+  } catch {
+    // no readable entry: not declared
+  }
+  enableVaporUse.set(file, hit);
+  return hit;
+}
+
 /** Whether the app has a Vapor component (specs/148): its own
  * `<script setup vapor>` under src/, or — with fjs.vapor.libs on — a direct
  * dependency that ships `.vue` files. A `--pages` build then shares
@@ -893,17 +828,45 @@ export function sharedStubPlugin(
   };
 }
 
+/** enableVapor's web pin (specs/166): `vue` resolves to the runtime-core
+ * dist — NOT the vue package, whose entry is runtime-dom. Nothing in a
+ * pure-vapor app may touch the DOM renderer: the shell is vapor, pages are
+ * vapor, and vue-router only needs runtime-core's reactivity and component
+ * APIs (it is never installed on a Vue app here). */
+export function webPureVaporPinPlugin(): Plugin {
+  return {
+    name: 'fjs-web-pure-vapor-pin',
+    setup(build) {
+      const nm = path.join(runtimeDir(), 'node_modules');
+      const pinned: Record<string, string> = {
+        vue: path.join(nm, '@vue', 'runtime-core', 'dist', 'runtime-core.esm-bundler.js'),
+        'vue-router': path.join(nm, 'vue-router', 'dist', 'vue-router.mjs'),
+      };
+      build.onResolve({ filter: /^(vue|vue-router)$/ }, (args) => {
+        const target = pinned[args.path];
+        if (!target || !fs.existsSync(target)) return undefined;
+        return { path: fs.realpathSync(target) };
+      });
+    },
+  };
+}
+
 /** Resolve aliases for a web build: the fjs specifiers point at the DOM
- * implementations (vue-router-backed router, DOM tag components). */
-export function webAliases(): Record<string, string> {
+ * implementations (vue-router-backed router, DOM tag components). Under
+ * enableVapor (specs/166) `fjs/app` is the pure-vapor shell: the vdom
+ * shell's `createApp`/`Transition` imports cannot even resolve against the
+ * runtime-core pin, so it must stay out of the graph entirely. */
+export function webAliases(enableVapor = false): Record<string, string> {
   const root = runtimeDir();
   return withPackageAliases({
     fjs: path.join(root, 'src', 'index.ts'),
     'fjs/vue': path.join(root, 'src', 'vue', 'index.ts'),
     'fjs/web': path.join(root, 'src', 'web', 'index.ts'),
     'fjs/router': path.join(root, 'src', 'router', 'web.ts'),
-    'fjs/app': path.join(root, 'src', 'app', 'web.ts'),
-    'fjs/vapor': path.join(root, 'src', 'vapor', 'web.ts'),
+    'fjs/app': path.join(root, 'src', 'app', enableVapor ? 'web-vapor.ts' : 'web.ts'),
+    // enableVapor: the interop-free vapor surface — no createRenderer, no
+    // adopt machinery, no runtime-core renderer engine in the bundle
+    'fjs/vapor': path.join(root, 'src', 'vapor', enableVapor ? 'web-pure.ts' : 'web.ts'),
   });
 }
 

@@ -23,6 +23,19 @@ export interface FjsAppOptions extends FlutterRouterOptions {
   setup?: (app: App) => void;
   /** Web only: mount target. Ignored here. */
   el?: string | unknown;
+  /** specs/166: every page is a Vapor SFC. Pages mount through the vapor
+   * runtime directly — no per-page Vue app, no compile-time wrapper (the
+   * CLI reads this option at build time and skips it). `setup` and
+   * [plugins] get no Vue app to run against and do not apply; global
+   * component resolution goes through [components] plus the built-in fjs
+   * component set. */
+  enableVapor?: boolean;
+  /** Global components (enableVapor): what a vapor page's
+   * `resolveComponent` may name. The built-in fjs components
+   * (canvas/list-view/form/picker/rich-text/textarea/defer) are always
+   * included — they replace what onCreateApp registered on the Vue app in
+   * the vdom path. */
+  components?: Record<string, unknown>;
 }
 
 export interface FjsApp {
@@ -33,6 +46,23 @@ export interface FjsApp {
 export function createFjsApp(options: FjsAppOptions): FjsApp {
   const router = createRouter({
     ...options,
+    // enableVapor (specs/166): the built-in component set — what onCreateApp
+    // registers on each page's Vue app in the vdom path — resolves through
+    // the vapor app context instead, alongside the app's own components
+    ...(options.enableVapor
+      ? {
+          vaporComponents: {
+            canvas: createFjsCanvas('inner-canvas'),
+            'list-view': FjsListView,
+            form: FjsForm,
+            picker: FjsPicker,
+            'rich-text': FjsRichText,
+            textarea: FjsTextarea,
+            defer: FjsDefer,
+            ...options.components,
+          },
+        }
+      : {}),
     onCreateApp(app) {
       // the surface is the `inner-canvas` ELEMENT here; on web the same
       // factory is pointed at the web adapter's component

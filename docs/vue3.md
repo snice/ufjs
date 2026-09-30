@@ -423,12 +423,42 @@ SFC、TSX / 渲染函数写的库编不了 Vapor，走互操作。
 - Vapor 组件里的 `<Transition>` / `<Teleport>` / `<KeepAlive>`：还没接。
 - 动态 `<component :is>` 换组件、动态 slot 名：只做静态求值。
 - `defineVaporCustomElement`、SSR hydration：不支持。
-- Vue 版本：**编译器**需要 3.6（`@vue/compiler-sfc@3.6.0-rc.9`，CLI 的构建期依赖，不进应用包）；
-  **运行时**用 stable 3.5（workspace 与 `fjs create` 模板钉 `^3.5.42`）。3.6 转 stable 后升级
-  编译器即可，运行时不动。
+- Vue 版本：**编译器**主体是 stable 3.5（`@vue/compiler-sfc@3.5.43`，parse + script-setup 的
+  transform 也是它）；只有 vapor SFC 的**模板代码生成**用 `@vue/compiler-vapor@3.6.0-rc.9` 直调
+  （specs/166，`fjs-runtime/src/vapor/sfc-compiler.ts` 自己做 SFC 拼装——vapor 属性、`__returned__`
+  尾巴、`__vapor` 标记、v-bind CSS 变量都按 3.6 的产物形状拼）。这是全仓唯一的 3.6 产物，
+  纯构建期依赖，不进任何应用包；**运行时**全部 stable 3.5（workspace 与 `fjs create` 模板钉
+  `^3.5.43`）。3.6 转 stable 后升级 `@vue/compiler-vapor` 即可，其余不动。
 
 **包体**：没有 Vapor 组件的应用不带 Vapor 运行时（`--pages` 构建也只在用到时才进共享 chunk）；
 带 Vapor 组件的应用比 specs/148 时代小（不再打包 runtime-vapor 与外壳）。
+
+### 全 Vapor 应用：`createFjsApp({ enableVapor: true })`（specs/166）
+
+一个应用全部页面都是 Vapor SFC 时，在入口声明一次：
+
+```ts
+createFjsApp({ enableVapor: true, routes: [...], ... });
+```
+
+CLI 在构建期读这个开关（扫入口源码），runtime 在挂载期执行它。语义：
+
+- **页面原生挂载**：不再生成编译期 wrapper——Flutter 路由的 `mount()` 直接
+  `createVaporApp(page)` 挂进页面根，没有每页一个 Vue app、没有收养；web 壳本身也是 vapor
+  （`createVaporApp` 起根，vue-router 只当导航驱动，不装到任何 Vue app 上）。
+- **web 不打 runtime-dom**：`vue` 别名到 runtime-core dist（`vue` 包的入口是 runtime-dom，
+  纯 vapor 应用碰不到 DOM 渲染器）；`fjs/app` 别名到纯 vapor 壳（`app/web-vapor.ts`）、
+  `fjs/vapor` 别名到无 interop 面（`vapor/web-pure.ts`）——vdom 渲染引擎、wrapper、adopt
+  机制整段不进图。
+- **全局组件**走 `components` 选项（Flutter 端内置 fjs 组件集自动带上）；`useRoute` /
+  `useRouter` 在无 Vue 实例时有模块级回退，页面照常用。
+- **代价（有意为之，都写进了 spec）**：`setup(app)` / `applyPlugins` 没有 Vue app 可跑，
+  pinia 之类不生效；web 端 Vapor 页内嵌 VDOM 组件（vant）不可用——web 的 vdom 互操作依赖
+  runtime-dom 的渲染器，这正是这个模式要省掉的东西（Flutter 端互操作照旧可用，代价只是
+  包体）。web 壳比 vdom 壳简单：visited 页常驻 LRU 缓存（默认 16）不按历史栈销毁、无进场
+  过场动画。
+- 参考实现：`examples/vapor-app`（`pnpm run check` 是 fjsrun 断言 harness，
+  `pnpm run build:web` 后 bundle 无 runtime-dom / wrapper / createRenderer 痕迹）。
 
 ## 不可用 / 注意
 

@@ -186,14 +186,21 @@ export interface VaporBackend {
   /** A VDOM component mounted at this spot of a Vapor tree (vant et al).
    * Returns the block whose removal unmounts it. `slots` are the Vapor slot
    * functions the parent passed; the backend bridges them to the VDOM
-   * component's slot contract. */
-  mountVdomComponent(
+   * component's slot contract. Optional: the pure-vapor web surface
+   * (specs/166) omits it, and createComponent then rejects VDOM components
+   * with a plain error. */
+  mountVdomComponent?(
     comp: Record<string, unknown>,
     props: Record<string, unknown>,
     slots: Slots,
     parent: HostNode | null,
     anchor: HostNode | null,
   ): Block;
+  /** v-bind() in CSS (specs/166): write the useVaporCssVars variable map
+   * onto [host] as inline custom properties. Optional — a backend without
+   * it silently drops the vars. Keys are custom-property names (engine
+   * convention, `--` implied), values their current values. */
+  setCssVars?(host: HostNode, vars: Record<string, unknown>): void;
 }
 
 let backend: VaporBackend | null = null;
