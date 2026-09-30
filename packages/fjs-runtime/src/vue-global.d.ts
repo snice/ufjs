@@ -450,7 +450,15 @@ type FjsCanvasComponent = {
   } & FjsCanvasApi;
 };
 
-interface FjsGlobalComponents {
+/** Exported so a consumer project can augment ITS OWN vue copy: the
+ * `declare module 'vue'` block below binds to the vue instance *this package*
+ * resolves (^3.5), and module augmentation never crosses copies — an app that
+ * pins another version (demo / hello-fjs pin 3.6.0-rc.x for the vapor pages)
+ * kept an empty GlobalComponents and every tag went TS2339 under
+ * strictTemplates. The consumer-side shape is
+ * `declare module 'vue' { interface GlobalComponents extends FjsGlobalComponents {} }`
+ * (specs/164). */
+export interface FjsGlobalComponents {
   view: FjsComponent<FjsContainerProps>;
   View: FjsComponent<FjsContainerProps>;
   text: FjsComponent<FjsContainerProps>;
