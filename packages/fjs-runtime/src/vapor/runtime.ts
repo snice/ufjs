@@ -967,7 +967,9 @@ export function createFor(
       withScope(listScope, () => {
         const src = source();
         const count = typeof src === 'number' ? src : src.length;
-        const value = (i: number): unknown => (typeof src === 'number' ? i : src[i]);
+        // v-for="r in N" iterates r = 1..N (the index param stays 0-based) —
+        // getItem's item box is the VALUE, so the number source is i + 1
+        const value = (i: number): unknown => (typeof src === 'number' ? i + 1 : src[i]);
         for (let i = 0; i < count; i++) {
           const v = value(i);
           const key = getKey ? getKey(v, i) : i;
@@ -1024,7 +1026,8 @@ export function createFor(
   const run = (): void => {
           const src = source();
           const count = typeof src === 'number' ? src : src.length;
-          const value = (i: number): unknown => (typeof src === 'number' ? i : src[i]);
+          // number source: item is the VALUE (1..N), same as the ONCE path
+          const value = (i: number): unknown => (typeof src === 'number' ? i + 1 : src[i]);
 
           if (getKey == null) {
             // non-keyed: the same-length prefix updates in place (the
@@ -1157,7 +1160,7 @@ export function repeatTemplate(
   const asElement = def.nodes[textIdx].kind !== 'text';
   const rootIdx = def.nodes[0].children[0];
   for (let i = 0; i < count; i++) {
-    const v = typeof src === 'number' ? i : src[i];
+    const v = typeof src === 'number' ? i + 1 : src[i];
     const key = getKey ? getKey(v, i) : i;
     const hosts = copies[i];
     const text = textAt({ value: v }, { value: key });
@@ -1167,6 +1170,82 @@ export function repeatTemplate(
     if (parent) be().attach(hosts[rootIdx], parent, slot);
   }
   if (!anchorPlaced && parent) be().attach(anchor, parent, null);
+  return listBlock;
+}
+
+/** The reactive twin of repeatTemplate: same structural cell (one template,
+ * one text write — inlineVaporOnce only asks for the shape), but the text
+ * expression may read anything (the flat-4050 grid reads its slot of the
+ * `vals` prop), so each cell keeps one renderEffect on a single list scope.
+ * What is still saved against a plain ONCE createFor is the per-cell
+ * template machinery: the clones run as one batch and there is no per-cell
+ * TplNode / child / txt / blockOf — the effect's first run IS the initial
+ * write. ONCE items never drop on their own, so one scope covers teardown:
+ * the enclosing subtree removal takes the hosts, stopping the scope stops
+ * every effect. */
+export function repeatTemplateLive(
+  tpl: CompiledTemplate,
+  source: () => number | unknown[],
+  textAt: (item: { value: unknown }, key: { value: unknown }) => unknown,
+  getKey?: (item: unknown, index: number) => unknown,
+  flags = 0,
+): Block {
+  const def = tpl.def;
+  const textIdx = def ? repeatTextIndex(def) : null;
+  if ((flags & FOR_ONCE) === 0 || def == null || textIdx == null) {
+    // Degenerate shape: per-cell instances, but the write the compiled
+    // renderEffect used to do must stay reactive — re-create it here.
+    return createFor(
+      source,
+      (item, key) => {
+        const n = tpl();
+        const target = n.def.nodes[n.idx].inline || n.def.nodes[n.idx].kind === 'text' ? n : txt(child(n));
+        renderEffect(() => setText(target, textAt(item, key)));
+        return n;
+      },
+      getKey,
+      flags,
+    );
+  }
+  const { parent, anchor: before } = takeInsertionState();
+  const anchor = be().createAnchor('for');
+  const listBlock: Block & { nodes: HostNode[]; scopes: EffectScope[]; cleanups: (() => void)[] } = { nodes: [anchor], scopes: [], cleanups: [] };
+  let slot: HostNode | null = anchor;
+  let anchorPlaced = !parent;
+  if (parent && before != null) {
+    be().attach(anchor, parent, before);
+    anchorPlaced = true;
+  } else if (parent) {
+    slot = null;
+  }
+  const src = source();
+  const count = typeof src === 'number' ? src : src.length;
+  const copies = count > 0 ? be().instantiateMany(def, count, tpl.html) : [];
+  const asElement = def.nodes[textIdx].kind !== 'text';
+  const rootIdx = def.nodes[0].children[0];
+  const owner = currentScope;
+  withScope(owner, () => {
+    const listScope = new EffectScope();
+    listBlock.scopes.push(listScope);
+    withScope(listScope, () => {
+      for (let i = 0; i < count; i++) {
+        const v = typeof src === 'number' ? i + 1 : src[i];
+        const key = getKey ? getKey(v, i) : i;
+        // hoisted boxes: one allocation per cell, reused by every re-run
+        const item = { value: v };
+        const k = { value: key };
+        const host = copies[i][textIdx];
+        renderEffect(() => {
+          const s = textAt(item, k);
+          const text = s == null ? '' : String(s);
+          if (asElement) be().setElementText(host, text);
+          else be().setText(host, text);
+        });
+        if (parent) be().attach(copies[i][rootIdx], parent, slot);
+      }
+      if (!anchorPlaced && parent) be().attach(anchor, parent, null);
+    });
+  });
   return listBlock;
 }
 

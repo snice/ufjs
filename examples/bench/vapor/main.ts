@@ -134,6 +134,18 @@ async function main(): Promise<void> {
     await measureMount('vdom ', vdomShow);
     await measureMount('vapor', vaporShow);
   }
+
+  // the live grid (cell text reads the vals prop): mount cost of the path a
+  // real page pays — the update loop below reuses this instance
+  const liveShow = ref(false);
+  const liveVals = reactive(Array.from({ length: CELLS }, (_, i) => i));
+  createVaporApp(defineVaporComponent({
+    setup: () => createComponent(LiveVapor, { show: () => liveShow.value, vals: () => liveVals }),
+  })).mount(flutterRoot());
+  await drain();
+  for (let round = 0; round < 2; round++) {
+    await measureMount('vaporLive', liveShow);
+  }
   // specs/161 mount analysis: one mount with exclusive zones, then the same
   // operations in tight loops. The loop above stays unprofiled.
   gc();
@@ -191,14 +203,11 @@ async function main(): Promise<void> {
     setup: () => () => h(LiveVdom, { show: true, vals: vdomVals }),
   })).mount(flutterRoot());
   await drain();
-  const vaporVals = reactive(Array.from({ length: CELLS }, (_, i) => i));
-  createVaporApp(defineVaporComponent({
-    setup: () => createComponent(LiveVapor, { show: () => true, vals: () => vaporVals }),
-  })).mount(flutterRoot());
+  liveShow.value = true;
   await drain();
   for (let round = 0; round < 2; round++) {
     await measureUpdate('vdom ', vdomVals);
-    await measureUpdate('vapor', vaporVals);
+    await measureUpdate('vapor', liveVals);
   }
 }
 

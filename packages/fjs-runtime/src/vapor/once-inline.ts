@@ -335,7 +335,17 @@ function matchCell(body: string): Cell | null {
   return { tpl, expr, locals };
 }
 
-function tryRepeat(rep: string, args: string[]): string | null {
+interface RepeatHit {
+  call: string;
+  expr: string;
+  allowed: Set<string>;
+}
+
+/** The structural half of both repeat rewrites: the body is one template +
+ * one text write of the loop variable. [call] is the finished
+ * `repeatTemplate[Live](...)` source; the static path additionally runs
+ * exprSafe over [expr]. */
+function parseRepeat(rep: string, args: string[]): RepeatHit | null {
   const block = args[1];
   if (block == null) return null;
   const arrow = splitArrow(block.trim());
@@ -344,10 +354,27 @@ function tryRepeat(rep: string, args: string[]): string | null {
   if (!cell) return null;
   const allowed = new Set(paramNames(arrow.params));
   for (const name of cell.locals) allowed.add(name);
-  if (!exprSafe(cell.expr, allowed)) return null;
   const key = (args[2] ?? 'undefined').trim();
   const flags = (args[3] ?? '0').trim();
-  return `${rep}(${cell.tpl}, ${args[0].trim()}, ${arrow.params} => (${cell.expr}), ${key}, ${flags})`;
+  return {
+    call: `${rep}(${cell.tpl}, ${args[0].trim()}, ${arrow.params} => (${cell.expr}), ${key}, ${flags})`,
+    expr: cell.expr,
+    allowed,
+  };
+}
+
+function tryRepeat(rep: string, args: string[]): string | null {
+  const hit = parseRepeat(rep, args);
+  if (!hit || !exprSafe(hit.expr, hit.allowed)) return null;
+  return hit.call;
+}
+
+/** Same cell shape, but the expression may read anything (a prop, a ref):
+ * the runtime wraps it in one renderEffect per cell, so correctness needs
+ * only the structural match, not a closed identifier set — every identifier
+ * the compiler emitted already exists in this module's scope. */
+function tryRepeatLive(rep: string, args: string[]): string | null {
+  return parseRepeat(rep, args)?.call ?? null;
 }
 
 function tryInline(local: string, args: string[]): string | null {
@@ -372,9 +399,8 @@ function tryInline(local: string, args: string[]): string | null {
   return `${local}(${args[0].trim()}, ${arrow.params} => {\n${next.join('\n')}\n}, ${key}, ${flags})`;
 }
 
-function transformRegion(code: string, start: number, end: number): { text: string; repeat: string | null } {
+function transformRegion(code: string, start: number, end: number, names: Set<string>): string {
   let text = '';
-  let repeat: string | null = null;
   let i = start;
   while (i < end) {
     const hit = nextHelper(code, i, end, 'createFor');
@@ -392,39 +418,52 @@ function transformRegion(code: string, start: number, end: number): { text: stri
     const local = code.slice(hit.identStart, hit.identEnd);
     const argTexts = parsed.args.map((a, idx) => {
       if (idx !== 1) return code.slice(a.start, a.end);
-      const inner = transformRegion(code, a.start, a.end);
-      if (inner.repeat) repeat = inner.repeat;
-      return inner.text;
+      return transformRegion(code, a.start, a.end, names);
     });
     const once = (flagValue(argTexts[3]) & FOR_ONCE) !== 0;
     let emitted: string | null = null;
     if (once) {
       const rep = repeatName(local);
       emitted = tryRepeat(rep, argTexts);
-      if (emitted) repeat = rep;
-      else emitted = tryInline(local, argTexts);
+      if (emitted) {
+        names.add(rep);
+      } else {
+        // static-unsafe cell: the reactive batch instead. A set, not one
+        // name — sibling lists can need both imports.
+        const live = `${rep}Live`;
+        emitted = tryRepeatLive(live, argTexts);
+        if (emitted) names.add(live);
+      }
+      if (!emitted) emitted = tryInline(local, argTexts);
     }
     text += emitted ?? `${local}(${argTexts.join(',')})`;
     i = parsed.end;
   }
-  return { text, repeat };
+  return text;
 }
 
-function ensureImport(code: string, local: string): string {
-  const imported = local === 'repeatTemplate' ? 'repeatTemplate' : `repeatTemplate as ${local}`;
+function ensureImports(code: string, locals: Iterable<string>): string {
+  const wanted = [...locals].map((local) => ({
+    local,
+    base: local.endsWith('Live') ? 'repeatTemplateLive' : 'repeatTemplate',
+  }));
   const re = /import\s*\{([^}]*)\}\s*from\s*(['"])(vue|fjs\/vapor)\2/g;
   let replaced = false;
   return code.replace(re, (full, spec: string) => {
-    if (replaced || !spec.includes('createFor') || spec.includes('repeatTemplate')) return full;
+    if (replaced || !spec.includes('createFor')) return full;
+    const pending = wanted.filter((w) => !spec.includes(w.base));
+    if (pending.length === 0) return full;
     replaced = true;
     const body = spec.trim().replace(/,\s*$/, '');
-    return full.replace(spec, `${body}, ${imported}`);
+    const add = pending.map((w) => (w.local === w.base ? w.base : `${w.base} as ${w.local}`)).join(', ');
+    return full.replace(spec, `${body}, ${add}`);
   });
 }
 
 /** Rewrites ONCE v-for cells in compiler-vapor output. No-op when the
  * source has no such list. */
 export function inlineVaporOnce(code: string): string {
-  const { text, repeat } = transformRegion(code, 0, code.length);
-  return repeat ? ensureImport(text, repeat) : text;
+  const names = new Set<string>();
+  const text = transformRegion(code, 0, code.length, names);
+  return names.size > 0 ? ensureImports(text, names) : text;
 }

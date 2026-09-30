@@ -1,6 +1,7 @@
 // The ONCE-cell rewrite (once-inline.ts) against real compiler-vapor
-// output: a key-only text becomes repeatTemplate; a prop read stays an
-// effect; a dynamic list stays createFor.
+// output: a key-only text becomes repeatTemplate; a prop read becomes the
+// live batch (repeatTemplateLive, effect per cell in the runtime); a
+// dynamic list stays createFor.
 import { compileScript, parse } from '@vue/compiler-sfc';
 import { describe, expect, it } from 'vitest';
 import { inlineVaporOnce } from '../src/vapor/once-inline';
@@ -39,7 +40,7 @@ defineProps<{ show: boolean }>();
     expect(code).toContain('_createFor(');
   });
 
-  it('keeps an effect that reads a prop inside a static v-for', () => {
+  it('sends a prop-reading cell to the live batch', () => {
     const code = vapor(`<script setup vapor lang="ts">
 defineProps<{ n: number }>();
 </script>
@@ -48,8 +49,27 @@ defineProps<{ n: number }>();
     <text v-for="i in 3" :key="i">{{ n }}</text>
   </view>
 </template>`);
-    expect(code).toContain('_renderEffect');
-    expect(code).not.toContain('repeatTemplate');
+    expect(code).toContain('repeatTemplateLive as _repeatTemplateLive');
+    expect(code).toContain('_repeatTemplateLive(');
+    // the per-cell effect moved into the runtime call (recreated there per
+    // cell — see the runtime test that updates it)
+    expect(code).not.toMatch(/_renderEffect\(/);
+    expect(code).not.toContain('repeatTemplate as _repeatTemplate');
+    expect(code).not.toContain('_repeatTemplate(');
+  });
+
+  it('imports both repeat helpers when sibling lists need each', () => {
+    const code = vapor(`<script setup vapor lang="ts">
+defineProps<{ vals: number[] }>();
+</script>
+<template>
+  <view>
+    <text v-for="i in 2" :key="i" class="a">{{ i }}</text>
+    <text v-for="i in 2" :key="i" class="b">{{ vals[i] }}</text>
+  </view>
+</template>`);
+    expect(code).toContain('repeatTemplate as _repeatTemplate');
+    expect(code).toContain('repeatTemplateLive as _repeatTemplateLive');
   });
 
   it('leaves a dynamic list on createFor', () => {
