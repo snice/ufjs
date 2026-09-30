@@ -230,16 +230,125 @@ export default __dc({
 
 const VAPOR_WRAPPER_NS = 'fjs-vapor-wrapper';
 
+/** Compiles a Vapor SFC into a finished module over the own runtime — the
+ * same compile shape as vueSfcPlugin's vapor branch (inlineTemplate, the
+ * `from 'vue'` rewrite, style registration, scope id). The vite path serves
+ * vapor SFCs through this under a virtual id instead of letting plugin-vue
+ * compile them: plugin-vue's vapor output targets the official runtime-vapor
+ * contract — setup returns the bindings object with the template in a
+ * separate `render` and an `expose` ctx — which the own runtime does not
+ * implement (specs/165). Sourcemaps are the esbuild side's debugger story;
+ * vite dev tolerates script-only mappings being absent. */
+export async function compileVaporSfcModule(
+  file: string,
+  opts: { web: boolean; moduleTags: Set<string>; root: string },
+): Promise<{ code: string; scriptMappings?: string } | { errors: { text: string }[] }> {
+  const source = fs.readFileSync(file, 'utf8');
+  const filename = path.basename(file);
+  const parseOpts = sfcParseOptions(opts);
+  let { descriptor, errors } = parse(source, { filename, ...parseOpts });
+  if (errors.length) {
+    return { errors: errors.map((e) => ({ text: String(e.message ?? e) })) };
+  }
+  if (!descriptor.vapor) {
+    // an auto-vapor library SFC reached through the wrapper: reparse with
+    // the flag, exactly like vueSfcPlugin does
+    ({ descriptor, errors } = parse(
+      source.replace(/<script(\s[^>]*)?\ssetup\b/, (m) => `${m} vapor`),
+      { filename, ...parseOpts },
+    ));
+    if (errors.length) {
+      return { errors: errors.map((e) => ({ text: String(e.message ?? e) })) };
+    }
+  }
+  // stable per-file scope id, computed like vueSfcPlugin's (relative to the
+  // build root so the same checkout hashes identically everywhere)
+  let rel = path.relative(opts.root, file);
+  if (rel.startsWith('..')) rel = file;
+  const id = 'data-v-' + createHash('md5').update(rel).digest('hex').slice(0, 8);
+  const compiled = compileScript(descriptor, {
+    id,
+    inlineTemplate: true,
+    templateOptions: { compilerOptions: vaporCompilerOptions({ web: opts.web, moduleTags: opts.moduleTags }) },
+  });
+  let code = inlineVaporOnce(compiled.content).replace(/(\bfrom\s*)(['"])vue\2/g, "$1'fjs/vapor'");
+  if (code.includes('export default')) {
+    code = code.replace(/export default/, 'const __sfc__ =');
+  } else if (!code.includes('const __sfc__')) {
+    code = 'const __sfc__ = {};\n' + code;
+  }
+  code += '\nexport default __sfc__;';
+  // <style> blocks, same split as vueSfcPlugin: web keeps real CSS through
+  // injectStyle, the app build feeds the style engine via registerStyles
+  const shortId = id.replace(/^data-v-/, '');
+  const styles = descriptor.styles.filter(
+    (s) => !s.lang || s.lang === 'css' || s.lang === 'postcss',
+  );
+  for (const s of descriptor.styles) {
+    if (!styles.includes(s)) {
+      console.warn(`[fjs] ${filename}: <style lang="${s.lang}"> needs a preprocessor — skipped`);
+    }
+  }
+  if (styles.length && opts.web) {
+    code += `\nimport { injectStyle as __fjsInjectStyle } from 'fjs/web';`;
+    for (const s of styles) {
+      const style = compileStyle({
+        source: s.content,
+        filename: file,
+        id,
+        scoped: s.scoped === true,
+      });
+      if (style.errors.length) {
+        return { errors: style.errors.map((e) => ({ text: String(e) })) };
+      }
+      code += `\n__fjsInjectStyle(${JSON.stringify(id + (s.scoped ? '-s' : '-g'))}, ${JSON.stringify(style.code)});`;
+    }
+  } else {
+    code += `\nimport { registerStyles as __fjsRegisterStyles } from 'fjs/vue';`;
+    for (const s of styles) {
+      const css = await inlineFontFaces(
+        descriptor.cssVars.length ? rewriteCssVBind(s.content, shortId) : s.content,
+        path.dirname(file),
+      );
+      const scope = s.scoped ? id : null;
+      code += `\n__fjsRegisterStyles(${scope === null ? 'null' : JSON.stringify(scope)}, ${JSON.stringify(css)}, ${JSON.stringify(styleSheetHash(scope, css))});`;
+    }
+  }
+  if (styles.some((s) => s.scoped)) {
+    code += `\n__sfc__.__scopeId = ${JSON.stringify(id)};`;
+  }
+  return { code, scriptMappings: compiled.map?.mappings };
+}
+
 /** esbuild side of the wrapper: a `.vue` import that resolves to a Vapor
- * SFC lands on a virtual wrapper module instead of the SFC itself. */
+ * SFC lands on a virtual wrapper module instead of the SFC itself. The
+ * route table (inline `require(<abs>)`) and the `--pages` chunk entry
+ * (`import Page from <abs>`, both generatedEntry stdin modules with no
+ * importer) are the sites every routed vapor page actually mounts through —
+ * specs/165 — so absolute paths resolve as themselves and relative ones
+ * fall back to `resolveDir` when there is no importer. The wrapper's own
+ * `import __vapor from <file>` must reach the SFC (plugin-vue / the .vue
+ * onLoad compile it), hence the namespace guard. */
 export function vaporWrapperPlugin(): Plugin {
   return {
     name: 'fjs-vapor-wrapper',
     setup(build) {
       const libs = readConfig(build.initialOptions.absWorkingDir ?? process.cwd()).vapor?.libs !== false;
       build.onResolve({ filter: /\.vue$/ }, (args) => {
-        if (!args.path.startsWith('.') || !args.importer) return undefined;
-        const file = path.resolve(path.dirname(args.importer), args.path);
+        // a vapor SFC used AS the entry mounts however its host mounts it —
+        // only imports get the wrapper
+        if (args.kind === 'entry-point') return undefined;
+        if (args.importer.startsWith(VAPOR_WRAPPER_NS + ':')) return undefined;
+        let file: string | undefined;
+        if (args.path.startsWith('.')) {
+          const base = args.importer ? path.dirname(args.importer) : args.resolveDir;
+          if (!base) return undefined;
+          file = path.resolve(base, args.path);
+        } else if (path.isAbsolute(args.path)) {
+          file = args.path;
+        } else {
+          return undefined;
+        }
         if (!fs.existsSync(file)) return undefined;
         if (!isVaporSfcFile(file, libs)) return undefined;
         return { path: VAPOR_WRAPPER_NS + ':' + file, namespace: VAPOR_WRAPPER_NS };

@@ -14,6 +14,7 @@
 // web (the web pin plugin resolves it), so VDOM interop components run on
 // the same reactivity the Vapor helpers use.
 import { effect, stop as stopRunner, type ReactiveEffectRunner } from '@vue/reactivity';
+import { isOn } from '@vue/shared';
 import { createRenderer, h } from 'vue';
 import {
   type HostNode,
@@ -243,13 +244,19 @@ const domBackend: VaporBackend = {
         cursor = child;
       }
     };
+    // Vapor slots → the VDOM slot contract, same shape as the flutter
+    // backend: the slot renders an `fjs-vapor-slot` placeholder whose
+    // createElement fills the slot block's hosts into a wrapper. A slot fn
+    // returning raw DOM would be normalized into a `[object DocumentFragment]`
+    // text node by runtime-core (specs/165).
     const vdomSlots: Record<string, () => unknown> = {};
     for (const name in slots) {
       const renderSlot = slots[name];
-      vdomSlots[name] = (): unknown => {
-        const frag = document.createDocumentFragment();
-        for (const node of blockOf(renderSlot()).nodes) frag.appendChild(node as Node);
-        return frag;
+      const id = ++slotSeq;
+      slotRenders.set(id, renderSlot);
+      vdomSlots[name] = () => {
+        slotPending = id;
+        return h('fjs-vapor-slot', { 'data-fjs-slot': String(id), style: { display: 'contents' } });
       };
     }
     let alive = true;
@@ -307,10 +314,32 @@ function flushVdom(): void {
   }
 }
 
+// ---- slot bridging (a Vapor slot into a VDOM component) -----------------------
+
+const slotRenders = new Map<number, () => unknown>();
+let slotSeq = 0;
+/** set by the createElement call, consumed immediately after */
+let slotPending: number | null = null;
+
 let vdomRender: (vnode: unknown, container: Element) => void;
 {
   const { render } = createRenderer<Node, Node>({
-    createElement: (tag) => document.createElement(tag),
+    createElement: (tag) => {
+      if (tag === 'fjs-vapor-slot') {
+        // set by the slot function, consumed here — one placeholder at a time
+        const id = slotPending;
+        slotPending = null;
+        const wrapper = document.createElement('div');
+        const renderSlot = id === null ? null : slotRenders.get(id);
+        if (renderSlot) {
+          // the slot block belongs to the child's tree: removing the
+          // wrapper (an ordinary element to the VDOM) takes it with it
+          for (const node of blockOf(renderSlot()).nodes) wrapper.appendChild(node as Node);
+        }
+        return wrapper;
+      }
+      return document.createElement(tag);
+    },
     createText: (text) => document.createTextNode(text),
     createComment: (text) => document.createComment(text),
     setText: (node, text) => {
@@ -330,9 +359,16 @@ let vdomRender: (vnode: unknown, container: Element) => void;
     nextSibling: (node) => node.nextSibling,
     querySelector: (sel) => document.querySelector(sel),
     patchProp: (el, key, prev, next) => {
-      void prev;
       if (key === 'class') (el as Element).className = String(next ?? '');
       else if (key === 'style') (el as HTMLElement).style.cssText = String(next ?? '');
+      else if (isOn(key)) {
+        // a custom renderer's patchProp owns event binding — without this
+        // an on* prop lands as a stringified attribute and never fires
+        // (vant's clicks, specs/165)
+        const name = key.slice(2).toLowerCase();
+        if (typeof prev === 'function') (el as Element).removeEventListener(name, prev);
+        if (typeof next === 'function') (el as Element).addEventListener(name, next);
+      }
       else if (next == null || next === false) (el as Element).removeAttribute(key);
       else (el as Element).setAttribute(key, next === true ? '' : String(next));
     },
@@ -388,8 +424,89 @@ export function releaseAdopt(id: number): void {
 export function enableVapor(): void {}
 
 // Compiled vapor imports template / createFor / repeatTemplate from this
-// module on web (vue-plugin's webAliases point fjs/vapor here).
-export * from './runtime';
+// module on web (vue-plugin's webAliases point fjs/vapor here). The rest of
+// the vue surface rides `export * from '@vue/runtime-core'` — NOT 'vue':
+// vite prebundles vue with reactivity INLINED, so vue's `ref` and this
+// runtime's `effect` (@vue/reactivity, the seam runtime.ts binds) would be
+// two reactive systems and a page's `taps.value++` would never reach its
+// renderEffect. @vue/runtime-core is the standalone package the shim pins on
+// the esbuild side — same reactivity copy, so both platforms are shaped
+// alike: the VDOM side (wrapper, vant, this module's own renderer) stays on
+// 'vue', the Vapor side on the standalone packages, and the only crossings
+// are getter-thunk props, DOM slots and plain handler calls (specs/165).
+// The runtime's names are re-exported EXPLICITLY, not with a second star:
+// runtime-core exports same-named helpers (resolveComponent, useSlots), and
+// two colliding star exports are silently dropped by ESM while an explicit
+// re-export shadows the star.
+export * from '@vue/runtime-core';
+export {
+  TemplateInstance,
+  TplNode,
+  __perfNow,
+  __prof,
+  __profOn,
+  __vaporMicro,
+  __zoneEnter,
+  __zoneExit,
+  be,
+  blockOf,
+  blockRoot,
+  child,
+  createAssetComponent,
+  createComponent,
+  createComponentWithFallback,
+  createDynamicComponent,
+  createFor,
+  createForSlots,
+  createIf,
+  createSlot,
+  createVaporApp,
+  defineVaporComponent,
+  delegateEvents,
+  disposeBlock,
+  emptyBlock,
+  insertBlock,
+  insertZoneName,
+  mountVaporComponentForAdopt,
+  next,
+  normalizeSlots,
+  nthChild,
+  off,
+  on,
+  once,
+  removeBlock,
+  renderEffect,
+  repeatTemplate,
+  repeatTemplateLive,
+  resolveComponent,
+  setAttr,
+  setClass,
+  setClassName,
+  setHostReactivity,
+  setInsertionState,
+  setProp,
+  setStyle,
+  setText,
+  setVaporBackend,
+  show,
+  takeInsertionState,
+  template,
+  txt,
+  useSlots,
+  withScope,
+} from './runtime';
+export type {
+  Block,
+  CompiledTemplate,
+  HostNode,
+  HostReactivity,
+  Slots,
+  TemplateDef,
+  TemplateNode,
+  VaporAppContext,
+  VaporBackend,
+  VaporComponent,
+} from './runtime';
 // compiled text interpolations import this helper by name; the runtime only
 // imports it for its own use, and the flutter entry gets it from vue-shim
 export { toDisplayString } from '@vue/shared';

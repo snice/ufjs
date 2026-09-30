@@ -56,7 +56,12 @@ function withScope<T>(scope: EffectScope | null, fn: () => T, slots: Slots | nul
 export interface VaporComponent {
   name?: string;
   props?: Record<string, { default?: unknown }> | string[];
-  setup?: (props: Record<string, unknown>, ctx: { emit: (name: string, ...args: unknown[]) => void; slots: Slots }) => unknown;
+  setup?: (props: Record<string, unknown>, ctx: {
+    emit: (name: string, ...args: unknown[]) => void;
+    slots: Slots;
+    attrs: Record<string, unknown>;
+    expose: () => void;
+  }) => unknown;
   /** compiler-vapor stamps this on every compiled SFC component */
   __vapor?: true;
   __fjsVapor?: true;
@@ -141,6 +146,11 @@ function mountVaporComponent(
       if (typeof handler === 'function') (handler as (...a: unknown[]) => void)(...args);
     },
     slots,
+    // the vite path's compiled setup destructures these (plugin-vue always
+    // emits `{ expose: __expose }` for vapor); expose is a no-op — the own
+    // runtime has no devtools instance to expose onto
+    attrs: {},
+    expose: () => {},
   };
   const savedContext = currentAppContext;
   currentAppContext = appContext;
@@ -241,7 +251,7 @@ export function createVaporApp(comp: VaporComponent, appContext: VaporAppContext
   currentAppContext = appContext;
   let block: Block | null = null;
   try {
-    block = withScope(scope, () => blockOf(comp.setup?.({}, { emit: () => {}, slots: {} })));
+    block = withScope(scope, () => blockOf(comp.setup?.({}, { emit: () => {}, slots: {}, attrs: {}, expose: () => {} })));
   } finally {
     currentAppContext = savedContext;
   }

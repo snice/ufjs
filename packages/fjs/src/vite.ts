@@ -16,7 +16,8 @@ import {
   writeModuleTypes,
   type FjsModule,
 } from './project/modules.js';
-import { isNativeTagFor, isVaporSfcFile, runtimeDir, vaporWrapperModule } from './bundler/vue-plugin.js';
+import { isNativeTagFor, isVaporSfcFile, runtimeDir, vaporWrapperModule, compileVaporSfcModule } from './bundler/vue-plugin.js';
+import { transform } from 'esbuild';
 import { readConfig } from './project/config.js';
 import { swiperChildrenTransform } from './template/swiper-children.js';
 import { copyLocalDir, copyModuleDataForWeb, HTML_DIR } from './bundler/build.js';
@@ -50,6 +51,7 @@ interface ResolvedViteConfig {
 }
 
 interface ViteServer {
+  ws: { send(data: unknown): void };
   moduleGraph: {
     getModuleById(id: string): unknown;
     invalidateModule(mod: unknown): void;
@@ -72,6 +74,7 @@ interface ViteMiddlewareResponse {
 }
 
 interface ViteDevServer {
+  ws: { send(data: unknown): void };
   middlewares: {
     use(handler: (
       req: ViteMiddlewareRequest,
@@ -89,7 +92,7 @@ interface VitePlugin {
   configureServer(server: ViteDevServer): void;
   writeBundle(options: { dir?: string }): void | Promise<void>;
   resolveId(id: string, importer?: string): string | null;
-  load(id: string): string | null;
+  load(id: string): string | null | Promise<string | null>;
   transform(code: string, id: string): string | null;
   handleHotUpdate(ctx: HotUpdateContext): Promise<void>;
 }
@@ -292,18 +295,52 @@ export function fjs(): VitePlugin {
         return resolveModuleData(root, modules, importer, id);
       }
       // a VDOM module importing a Vapor SFC gets the compile-time wrapper
-      // (specs/161 §3.2): the \0 prefix keeps plugin-vue from touching it
-      if (importer && id.startsWith('.') && id.endsWith('.vue')) {
-        const file = path.resolve(path.dirname(importer.split('?')[0]), id.split('?')[0]);
-        if (fs.existsSync(file) && isVaporSfcFile(file, readConfig(root).vapor?.libs !== false)) {
+      // (specs/161 §3.2): the \0 prefix keeps plugin-vue from touching it.
+      // The route table imports pages by absolute path (`component: () =>
+      // import(<abs>)`), so absolute ids resolve as themselves — relative
+      // ids keep the importer-relative resolution (specs/165). The
+      // wrapper's own `import __vapor from <file>` lands on the compiled
+      // SFC module instead — plugin-vue must never compile a vapor SFC,
+      // its output targets the official runtime-vapor contract the own
+      // runtime does not implement.
+      if (id.endsWith('.vue') && importer) {
+        const bare = id.split('?')[0];
+        const file = bare.startsWith('.')
+          ? path.resolve(path.dirname(importer.split('?')[0]), bare)
+          : path.isAbsolute(bare)
+            ? bare
+            : null;
+        if (file && fs.existsSync(file) && isVaporSfcFile(file, readConfig(root).vapor?.libs !== false)) {
+          if (importer.startsWith('\0fjs-vapor-wrapper:')) return '\0fjs-vapor-sfc:' + file;
           return '\0fjs-vapor-wrapper:' + file;
         }
       }
       return null;
     },
-    load(id) {
+    async load(id) {
       if (id.startsWith('\0fjs-vapor-wrapper:')) {
         return vaporWrapperModule(id.slice('\0fjs-vapor-wrapper:'.length));
+      }
+      if (id.startsWith('\0fjs-vapor-sfc:')) {
+        const file = id.slice('\0fjs-vapor-sfc:'.length);
+        const res = await compileVaporSfcModule(file, {
+          web: true,
+          moduleTags: new Set(nativeTags),
+          root,
+        });
+        if ('errors' in res) {
+          // vite reports a load failure through a thrown error
+          throw new Error('[fjs] vapor SFC compile failed:\n' + res.errors.map((e) => e.text).join('\n'));
+        }
+        // compileScript emits TS (the SFC says lang="ts"); the esbuild build
+        // transpiles after the plugin, vite never sees this id — do it here
+        const js = await transform(res.code, {
+          loader: 'ts',
+          format: 'esm',
+          target: 'esnext',
+          sourcefile: file,
+        });
+        return js.code;
       }
       if (VUE_ROUTE_BLOCK_RE.test(id)) return 'export default {}';
       if (id === VIRTUAL_PLUGINS) {
@@ -330,6 +367,13 @@ export function fjs(): VitePlugin {
       return PLAIN_CSS_RE.test(id) ? expandFlexDefault(code) : null;
     },
     async handleHotUpdate(ctx) {
+      // a vapor SFC compiles under a virtual id (\0fjs-vapor-sfc:) that no
+      // module-graph node owns, so vite cannot invalidate it — a full reload
+      // is the honest update (specs/165)
+      if (isVaporSfcFile(ctx.file, readConfig(root).vapor?.libs !== false)) {
+        ctx.server.ws.send({ type: 'full-reload' });
+        return;
+      }
       // an edit can change what a module generates — the icons a page names,
       // the strings it translates — so the hooks run again before the reload
       if (ctx.file.includes(`${path.sep}src${path.sep}`) && modules.some((m) => m.prepare)) {
