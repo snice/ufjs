@@ -141,6 +141,12 @@ export interface VaporBackend {
    * instantiate. The Flutter backend clones them in one pass (a static
    * v-for cell is this, thousands of times); the web backend cloneNodes. */
   instantiateMany(def: TemplateDef, count: number, html: string): unknown[][];
+  /** specs/162: the whole list in one op — [count] clones, every root
+   * inserted under parent before anchor (null = append) and, when textIdx
+   * is set, texts[i] written into copy i's text node. Returns null when the
+   * backend cannot batch (no native clone plan) — the caller then falls
+   * back to instantiateMany + per-cell attach/write. */
+  cloneList?(def: TemplateDef, count: number, parent: HostNode, anchor: HostNode | null, textIdx: number | null, texts: readonly string[] | null, html: string): unknown[][] | null;
   /** A bare-text template instance (a text run with no element around it). */
   instantiateBareText(text: string): HostNode;
   /** An invisible placeholder (v-if / v-for / empty slot anchor). */
@@ -1156,18 +1162,33 @@ export function repeatTemplate(
   }
   const src = source();
   const count = typeof src === 'number' ? src : src.length;
-  const copies = count > 0 ? be().instantiateMany(def, count, tpl.html) : [];
   const asElement = def.nodes[textIdx].kind !== 'text';
   const rootIdx = def.nodes[0].children[0];
-  for (let i = 0; i < count; i++) {
-    const v = typeof src === 'number' ? i + 1 : src[i];
-    const key = getKey ? getKey(v, i) : i;
-    const hosts = copies[i];
-    const text = textAt({ value: v }, { value: key });
-    const s = text == null ? '' : String(text);
-    if (asElement) be().setElementText(hosts[textIdx], s);
-    else be().setText(hosts[textIdx], s);
-    if (parent) be().attach(hosts[rootIdx], parent, slot);
+  // one op for the whole list (specs/162): the initial texts ride with the
+  // clone. The expressions themselves stay JS — the loop below only turns
+  // them into strings; a backend that cannot batch returns null and every
+  // cell pays instantiate + write + attach as before.
+  const texts: string[] | null = count > 0 ? new Array(count) : null;
+  if (texts !== null) {
+    for (let i = 0; i < count; i++) {
+      const v = typeof src === 'number' ? i + 1 : src[i];
+      const text = textAt({ value: v }, { value: getKey ? getKey(v, i) : i });
+      texts[i] = text == null ? '' : String(text);
+    }
+  }
+  let copies: unknown[][] | null = null;
+  if (count > 0 && parent) {
+    copies = be().cloneList?.(def, count, parent, anchorPlaced ? anchor : null, textIdx, texts, tpl.html) ?? null;
+  }
+  if (copies === null) {
+    copies = count > 0 ? be().instantiateMany(def, count, tpl.html) : [];
+    for (let i = 0; i < count; i++) {
+      const hosts = copies[i];
+      const s = texts![i];
+      if (asElement) be().setElementText(hosts[textIdx], s);
+      else be().setText(hosts[textIdx], s);
+      if (parent) be().attach(hosts[rootIdx], parent, slot);
+    }
   }
   if (!anchorPlaced && parent) be().attach(anchor, parent, null);
   return listBlock;
@@ -1220,9 +1241,16 @@ export function repeatTemplateLive(
   }
   const src = source();
   const count = typeof src === 'number' ? src : src.length;
-  const copies = count > 0 ? be().instantiateMany(def, count, tpl.html) : [];
   const asElement = def.nodes[textIdx].kind !== 'text';
   const rootIdx = def.nodes[0].children[0];
+  // the list in one op (specs/162), roots inserted by the engine; texts
+  // stay per-cell — the effects own them
+  const copies =
+    count > 0 && parent
+      ? (be().cloneList?.(def, count, parent, anchorPlaced ? anchor : null, null, null, tpl.html) ?? null)
+      : null;
+  const needAttach = copies === null;
+  const cells = copies === null ? (count > 0 ? be().instantiateMany(def, count, tpl.html) : []) : copies;
   const owner = currentScope;
   withScope(owner, () => {
     const listScope = new EffectScope();
@@ -1234,14 +1262,14 @@ export function repeatTemplateLive(
         // hoisted boxes: one allocation per cell, reused by every re-run
         const item = { value: v };
         const k = { value: key };
-        const host = copies[i][textIdx];
+        const host = cells[i][textIdx];
         renderEffect(() => {
           const s = textAt(item, k);
           const text = s == null ? '' : String(s);
           if (asElement) be().setElementText(host, text);
           else be().setText(host, text);
         });
-        if (parent) be().attach(copies[i][rootIdx], parent, slot);
+        if (needAttach && parent) be().attach(cells[i][rootIdx], parent, slot);
       }
       if (!anchorPlaced && parent) be().attach(anchor, parent, null);
     });

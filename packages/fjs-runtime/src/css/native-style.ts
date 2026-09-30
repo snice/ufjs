@@ -543,6 +543,28 @@ export class NativeStyleBackend {
     scheduleFlush();
   }
 
+  /** CLONE_MANY (specs/162): count instances of a registered template in
+   * one op. The engine expands each copy, overrides `textNode`'s static
+   * text with texts[i] (0xffffffff = no override, texts must be null), and
+   * inserts every root under `parent` — before `anchor` (0 = append) — in
+   * deferred ops at the end of the frame, so parent/anchor may be created
+   * by later ops of the same frame. */
+  cloneMany(template: number, first: number, count: number, parent: number, anchor: number, textNode: number, texts: readonly string[] | null): void {
+    const words: number[] = [9, template, first, count, parent, anchor, textNode, texts === null ? 0 : texts.length];
+    if (texts !== null) {
+      for (const v of texts) {
+        const b = utf8Encode(v);
+        words.push(b.length);
+        for (let i = 0; i < b.length; i += 4) {
+          words.push((b[i] | ((b[i + 1] ?? 0) << 8) | ((b[i + 2] ?? 0) << 16) | ((b[i + 3] ?? 0) << 24)) >>> 0);
+        }
+      }
+    }
+    this.commit();
+    this.writer.styleTemplate(words);
+    scheduleFlush();
+  }
+
   // ---- build-time snapshot (specs/119) ---------------------------------------
 
   /** One snapshot chain: StyleEngine's chain key suffix — `tag \1 classes

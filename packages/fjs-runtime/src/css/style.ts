@@ -873,6 +873,13 @@ export class StyleEngine {
     this.native!.clone(template, first);
   }
 
+  /** specs/162: count instances in one op — the engine also inserts every
+   * root under `parent` before `anchor` (0 = append) and overrides
+   * `textNode`'s static text per copy (0xffffffff = none, texts null). */
+  cloneMany(template: number, first: number, count: number, parent: number, anchor: number, textNode: number, texts: readonly string[] | null): void {
+    this.native!.cloneMany(template, first, count, parent, anchor, textNode, texts);
+  }
+
   resetStats(): void {
     this.native?.resetStats();
     this.counters = { recompute: 0, computeHit: 0, computeMiss: 0, matchHit: 0, matchMiss: 0, applied: 0, flushMs: 0, flushes: 0, markMs: 0, markCalls: 0, markVisited: 0 };

@@ -129,6 +129,31 @@ const domBackend: VaporBackend = {
     return all;
   },
 
+  // specs/162: the DOM twin of the native CLONE_MANY — cloneNode per copy
+  // (never one op), then the same semantics: roots before the anchor in
+  // order, texts[i] into copy i's text node.
+  cloneList(def, count, parent, anchor, textIdx, texts, html) {
+    if (count === 0) return [];
+    const roots = def.nodes[0].children;
+    if (roots.length !== 1) throw new Error('[fjs vapor] a template must have exactly one root element');
+    const all: unknown[][] = new Array(count);
+    for (let i = 0; i < count; i++) {
+      const hosts: unknown[] = [];
+      const frag = templateOf(def, html).content.cloneNode(true) as DocumentFragment;
+      fill(def, hosts, roots[0], frag.firstChild as Node);
+      all[i] = hosts;
+    }
+    for (let i = 0; i < count; i++) {
+      (parent as Node).insertBefore(all[i][roots[0]] as Node, (anchor ?? null) as Node | null);
+    }
+    if (textIdx !== null && texts !== null) {
+      for (let i = 0; i < count; i++) {
+        (all[i][textIdx] as { textContent: string }).textContent = texts[i];
+      }
+    }
+    return all;
+  },
+
   instantiateBareText(text) {
     return document.createTextNode(text);
   },
@@ -365,3 +390,6 @@ export function enableVapor(): void {}
 // Compiled vapor imports template / createFor / repeatTemplate from this
 // module on web (vue-plugin's webAliases point fjs/vapor here).
 export * from './runtime';
+// compiled text interpolations import this helper by name; the runtime only
+// imports it for its own use, and the flutter entry gets it from vue-shim
+export { toDisplayString } from '@vue/shared';

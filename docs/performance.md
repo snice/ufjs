@@ -840,13 +840,25 @@ scope），挂载 VDOM 18.3 / 自研 Vapor **12.6 ms**；更新不变，改 1 �
 **格子读 prop 的静态列表（`repeatTemplateLive`，2026-09-30）**：结构仍是「一模板 + 一文本」但
 表达式读了 prop/ref 的格子（真实页面的 GridVapor 就是），编译期收成 `repeatTemplateLive`——
 同一批克隆，每格一个 renderEffect（首个列表级 scope，效果的首跑即初次写文本）。离线
-flat-4050（bench 的 FlatLiveVapor）挂载 35 → **30.3 ms**；每格 clone（`instantiateMany` 仍是
-N 次 styleClone op）约 9 ms、per-cell effect 机制约 18 ms 是剩余大头。再往下两步：
-`styleCloneN`（一帧克隆 N 份，op 协议两端同改，省的是编码与应用侧循环——`clone` 不是同步过桥，
-收益有限）；或每行一个 effect（50 个代替 2000 个，挂载估再省 13–16 ms，代价是改 1 格要重写
-一整行 40 格文本，更新换挂载，未立项）。同一轮修复：数字源 `v-for="r in N"` 的 item 此前是
-0 基（VDOM 是 1..N），静态格子只读 index 掩住了它——格子一读 `r`（`vals[(r-1)*40+i]`）首行
-即空、整体错位一行；已按 Vue 语义改 1..N 并加 parity 用例。
+flat-4050（bench 的 FlatLiveVapor）挂载 35 → **30.3 ms**。真机（iPhone，hello-fjs 4050 页，
+profile）复测：Vapor 挂载 85.6–108.4 ms（中位 ~92，与 VDOM 88–92 持平），更新不变（改 1 格
+3.2–4.7、200 格 17–20、2000 格 63–71 ms，首按一次 106 ms 是冷启离群）。
+
+**批量执行下 native（`W_CLONE_MANY`，specs/162，2026-09-30）**：整张静态列表一个字 op——
+libfjs-style 循环展开 N 份、帧末按 anchor 落 root 插入、（静态变体）首写文本随 op 走；
+Dart 只见普通 op，零改动。宿主从每格 3 次 op（clone/insert/text）变成整表 1 次。离线
+flat-4050（原生样式）：静态挂载 12.4 → **10.2 ms**、Live 30.3 → **26.4 ms**，帧体积
+47.8KB → **3.8KB**（静态）/ 21.8KB（Live）——op 编码与派发省掉，剩余大头是 JS 侧逐格
+host 记账（adoptElement/track/映射表，静态约 7 ms）与 per-cell effect（Live 约 18 ms）；
+更新路径不变（0.0 / 1.7 / 16.7 ms）。真机（iPhone，hello-fjs 4050 页，profile）复测：
+Vapor 挂载 75.6–103.7 ms（中位 ~87，VDOM 91.7–113.6）、帧流量 21KB vs VDOM 47KB；更新
+**1.1–1.2 ms 改 1 格**（VDOM 59.6–61.9，约 50x）、200 格 4.7–18.4、2000 格 32.3–67.1
+（中位 ~48，VDOM 37.5–83）——双峰是测量窗口里的 GC 停顿，非回退。再往下的选项：批量
+格子的轻量记账（跳过非 root/text 节点的包装与映射）、每行一个 effect（50 个代替 2000 个，
+挂载估再省 13–16 ms，代价是改 1 格重写整行文本，更新换挂载）——均未立项。同一轮
+（specs/161 侧）修复：数字源 `v-for="r in N"` 的 item 此前 0 基（VDOM 是 1..N），静态格子
+只读 index 掩住了它，格子一读 `r` 首行即空、整体错位一行；已按 Vue 语义改 1..N 并加
+parity 用例（ba98359）。
 
 **官方 runtime-vapor 的历史数字（specs/148 阶段 0，已被上者取代）**：`examples/bench/vapor/` 用 Vue 3.6.0-rc.9，把同一个
 `Flat4050.vue` 分别以 VDOM（fjs 渲染器）和 Vapor（官方 runtime-vapor 跑在一层落到同一套 nodeOps 的 DOM 外壳上）

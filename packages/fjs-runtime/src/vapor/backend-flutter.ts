@@ -6,6 +6,7 @@ import { effect, stop as stopRunner, type ReactiveEffectRunner } from '@vue/reac
 import type { HostNode } from '../vue/renderer';
 import {
   childElementIds,
+  cloneListMany,
   cloneReady,
   cloneTemplate,
   cloneTemplateMany,
@@ -143,6 +144,34 @@ setVaporBackend({
       all[i] = hosts;
     }
     void html;
+    return all;
+  },
+
+  // specs/162: the whole list in one CLONE_MANY op. textIdx is a def index;
+  // the op speaks plan indices, so a folded text node (not in the plan)
+  // means this def cannot batch — null sends the caller down the per-cell
+  // path. The parent/anchor are passed through as is: the engine resolves
+  // the anchor's index at the end of the frame, so they may be created by
+  // later ops of the same mount.
+  cloneList(def, count, parent, anchor, textIdx, texts, html) {
+    void html;
+    if (count === 0) return [];
+    const { plan, defToPlan } = planOf(def);
+    if (plan === null || !cloneReady()) return null;
+    let textPlanIdx: number | null = null;
+    if (textIdx !== null) {
+      const mapped = defToPlan.get(textIdx);
+      if (mapped === undefined) return null;
+      textPlanIdx = mapped;
+    }
+    const copies = cloneListMany(plan, count, parent as HostNode, (anchor ?? null) as HostNode | null, textPlanIdx, texts);
+    const all: unknown[][] = new Array(count);
+    for (let i = 0; i < count; i++) {
+      const hosts: unknown[] = [];
+      hosts[0] = undefined;
+      for (const [defIdx, planIdx] of defToPlan) hosts[defIdx] = copies[i][planIdx];
+      all[i] = hosts;
+    }
     return all;
   },
 

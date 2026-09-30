@@ -1533,19 +1533,12 @@ export function prepareClone(nodes: CloneNode[]): ClonePlan | null {
   return template === 0 ? null : { template, nodes, descriptors };
 }
 
-/** Reused across clones: the caller reads it before cloning again. */
-const cloneHosts: HostNode[] = [];
-
-/** One instance of a prepared template: the host elements in template order,
- * with the bookkeeping createElement / createText / createComment and insert
- * would have done. The root is not attached. The array is reused by the next
- * clone — read it right away. */
-export function cloneTemplate(plan: ClonePlan): readonly HostNode[] {
+/** cloneTemplate's per-node host bookkeeping for one copy whose ids start
+ * at [first]: adoptElement + the renderer maps + payload records. Used by
+ * cloneTemplate and cloneListMany alike. */
+function fillCloneHosts(plan: ClonePlan, first: number, hosts: HostNode[]): void {
   const { nodes, descriptors } = plan;
   const n = nodes.length;
-  const first = allocIds(n);
-  styleEngine.cloneTemplate(plan.template, first);
-  const hosts = cloneHosts;
   hosts.length = n;
   for (let k = 0; k < n; k++) {
     const node = nodes[k];
@@ -1565,27 +1558,46 @@ export function cloneTemplate(plan: ClonePlan): readonly HostNode[] {
       else list.push(el.id);
     }
   }
+}
+
+/** The TS engine's mirror of what libfjs-style expanded — verify mode only
+ * (the native engine keeps its first registration, so repeats are no-ops
+ * there). Registers the copy's elements and recomputes their styles. */
+function verifyCloneRegistration(plan: ClonePlan, first: number): void {
+  const { nodes, descriptors } = plan;
+  for (let k = 0; k < nodes.length; k++) {
+    const node = nodes[k];
+    if (node.kind === 'anchor') continue;
+    const id = first + k;
+    if (node.kind === 'text') {
+      styleEngine.ensure(id, 'text', undefined, true);
+      continue;
+    }
+    styleEngine.ensure(id, node.tag, descriptors[k]!.defaultStyle);
+    if (node.scope !== null) styleEngine.addScope(id, node.scope);
+    if (node.classes !== null) styleEngine.setClasses(id, node.classes);
+  }
+  for (let k = 1; k < nodes.length; k++) {
+    styleEngine.recomputeSubtree(first + k);
+    styleEngine.noteStructureChange(first + nodes[k].parent);
+  }
+}
+
+/** Reused across clones: the caller reads it before cloning again. */
+const cloneHosts: HostNode[] = [];
+
+/** One instance of a prepared template: the host elements in template order,
+ * with the bookkeeping createElement / createText / createComment and insert
+ * would have done. The root is not attached. The array is reused by the next
+ * clone — read it right away. */
+export function cloneTemplate(plan: ClonePlan): readonly HostNode[] {
+  const first = allocIds(plan.nodes.length);
+  styleEngine.cloneTemplate(plan.template, first);
+  const hosts = cloneHosts;
+  fillCloneHosts(plan, first, hosts);
   devtoolsStructuralVersion.value++;
   if (!nativeStyle) {
-    // verify mode: the TS engine never sees what libfjs-style expanded —
-    // register the same elements with it (libfjs-style keeps its first
-    // registration, so the repeats are no-ops there)
-    for (let k = 0; k < n; k++) {
-      const node = nodes[k];
-      if (node.kind === 'anchor') continue;
-      const id = first + k;
-      if (node.kind === 'text') {
-        styleEngine.ensure(id, 'text', undefined, true);
-        continue;
-      }
-      styleEngine.ensure(id, node.tag, descriptors[k]!.defaultStyle);
-      if (node.scope !== null) styleEngine.addScope(id, node.scope);
-      if (node.classes !== null) styleEngine.setClasses(id, node.classes);
-    }
-    for (let k = 1; k < n; k++) {
-      styleEngine.recomputeSubtree(first + k);
-      styleEngine.noteStructureChange(first + nodes[k].parent);
-    }
+    verifyCloneRegistration(plan, first);
   }
   return hosts;
 }
@@ -1597,6 +1609,30 @@ export function cloneTemplate(plan: ClonePlan): readonly HostNode[] {
 export function cloneTemplateMany(plan: ClonePlan, count: number): HostNode[][] {
   const out: HostNode[][] = new Array(count);
   for (let i = 0; i < count; i++) out[i] = cloneTemplate(plan).slice();
+  return out;
+}
+
+/** specs/162: count copies in ONE op — libfjs-style expands them, inserts
+ * every root under `parent` before `anchor` (null = append) at the end of
+ * the frame, and, when textIdx is set, writes texts[i] into copy i's text
+ * node instead of the template's static text. The roots join the renderer's
+ * maps through trackInsert, exactly what a per-cell insert() would have
+ * done. Only for native clones (the caller checks the plan). */
+export function cloneListMany(plan: ClonePlan, count: number, parent: HostNode, anchor: HostNode | null, textIdx: number | null, texts: readonly string[] | null): HostNode[][] {
+  const n = plan.nodes.length;
+  const first = allocIds(n * count);
+  styleEngine.cloneMany(plan.template, first, count, parent.id, anchor === null ? 0 : anchor.id, textIdx ?? 0xffffffff, texts);
+  const out: HostNode[][] = new Array(count);
+  for (let i = 0; i < count; i++) {
+    const hosts: HostNode[] = [];
+    fillCloneHosts(plan, first + i * n, hosts);
+    out[i] = hosts;
+    trackInsert(parent, hosts[0], 0x7fffffff);
+  }
+  devtoolsStructuralVersion.value++;
+  if (!nativeStyle) {
+    for (let i = 0; i < count; i++) verifyCloneRegistration(plan, first + i * n);
+  }
   return out;
 }
 

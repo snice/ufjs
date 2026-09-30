@@ -151,6 +151,16 @@ typedef struct fjs_style_text {
 //             front of the output frame, and the styled nodes register as
 //             EL does. The root is left unattached — the host inserts it.
 //             Dart sees ordinary ops (specs/152).
+//  9 CLONE_MANY templateId, firstId, count, parent, anchor, textNode,
+//             nTexts, text[len+words] * nTexts            (specs/162)
+//             count instances of one template in a single op: per-copy
+//             CLONE expansion, then the root inserted under `parent` —
+//             before `anchor` (0 = append, index taken at expansion time and
+//             advanced per copy). `textNode` is a template node index whose
+//             own static text is suppressed; copy i gets nTexts[i] as a
+//             SetText instead (0xffffffff = no override, then nTexts must
+//             be 0 and no strings follow). The host allocates ids
+//             firstId .. firstId + count * nNodes - 1.
 enum {
   FJS_STYLE_W_EL = 1,
   FJS_STYLE_W_CLASSES = 2,
@@ -160,6 +170,7 @@ enum {
   FJS_STYLE_W_RESTYLE = 6,
   FJS_STYLE_W_TEMPLATE = 7,
   FJS_STYLE_W_CLONE = 8,
+  FJS_STYLE_W_CLONE_MANY = 9,
 };
 
 // Wire style ids libfjs-style mints start here, so they never collide with
