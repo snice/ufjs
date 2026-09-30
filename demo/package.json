@@ -35,6 +35,7 @@
     "vue-tsc": "^3.3.11"
   },
   "fjs": {
+    "styleSnapshot": false,
     "packages": [
       "pinia"
     ],
