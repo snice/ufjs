@@ -145,6 +145,109 @@ describe('Vapor on fjs: parity with the VDOM renderer', () => {
     expect(snapshot(roots.vapor)).toEqual(snapshot(roots.vdom));
   });
 
+  it('mounts a static v-for with the same text as VDOM', async () => {
+    // numeric literal: compiler sets ONCE. Item/key stay plain values and
+    // the list is appended, not moved into place.
+    const source = `
+<script setup>
+const x = 1
+</script>
+<template>
+  <view class="page">
+    <text v-for="(_, i) in 3" :key="i" class="n">{{ i }}</text>
+  </view>
+</template>`;
+    await recordTexts();
+    const roots: number[] = [];
+    for (const vapor of [false, true]) {
+      const sfc = compileSfc(source, { vapor, runtime: vue as unknown as Record<string, unknown> });
+      const root = r.flutterRoot();
+      if (vapor) vue.createVaporApp(sfc.component as never).mount(root);
+      else r.createApp(vue.defineComponent({ setup: () => () => vue.h(sfc.component as never) })).mount(root);
+      roots.push(root.id);
+    }
+    await settle();
+    expect(snapshot(roots[1])).toEqual(snapshot(roots[0]));
+    const textsOf = (id: number): string[] => {
+      const out: string[] = [];
+      const walk = (n: number) => {
+        const t = textOf(n);
+        if (t) out.push(t);
+        for (const k of r.childElementIds(n)) walk(k);
+      };
+      walk(id);
+      return out;
+    };
+    expect(textsOf(roots[1])).toEqual(['0', '1', '2']);
+  });
+
+  it('mounts a static view>text cell the way flat-4050 does', async () => {
+    const source = `
+<script setup>
+const x = 1
+</script>
+<template>
+  <view>
+    <view v-for="r in 2" :key="r" class="row">
+      <view v-for="(_, i) in 2" :key="i" class="cell">
+        <text class="tiny">{{ i }}</text>
+      </view>
+    </view>
+  </view>
+</template>`;
+    await recordTexts();
+    const sfc = compileSfc(source, { vapor: true, runtime: vue as unknown as Record<string, unknown> });
+    const root = r.flutterRoot();
+    vue.createVaporApp(sfc.component as never).mount(root);
+    await settle();
+    const textsOf = (id: number): string[] => {
+      const out: string[] = [];
+      const walk = (n: number) => {
+        const t = textOf(n);
+        if (t) out.push(t);
+        for (const k of r.childElementIds(n)) walk(k);
+      };
+      walk(id);
+      return out;
+    };
+    expect(textsOf(root.id)).toEqual(['0', '1', '0', '1']);
+  });
+
+  it('updates a prop read inside a static v-for', async () => {
+    // ONCE list (numeric source) whose text is NOT the loop variable: the
+    // effect has to stay, on the list's one scope, and re-run when the prop
+    // changes. The key-only cell above must not have swallowed this.
+    const source = `
+<script setup>
+defineProps(['n'])
+</script>
+<template>
+  <view>
+    <text v-for="i in 3" :key="i" class="n">{{ n }}</text>
+  </view>
+</template>`;
+    await recordTexts();
+    const sfc = compileSfc(source, { vapor: true, runtime: vue as unknown as Record<string, unknown> });
+    const root = r.flutterRoot();
+    const s = vue.reactive({ n: 1 });
+    vue.createVaporApp(vue.defineVaporComponent({ setup: () => vue.createComponent(sfc.component as never, { n: () => s.n }) })).mount(root);
+    await settle();
+    const textsOf = (id: number): string[] => {
+      const out: string[] = [];
+      const walk = (n: number) => {
+        const t = textOf(n);
+        if (t) out.push(t);
+        for (const k of r.childElementIds(n)) walk(k);
+      };
+      walk(id);
+      return out;
+    };
+    expect(textsOf(root.id)).toEqual(['1', '1', '1']);
+    s.n = 2;
+    await settle();
+    expect(textsOf(root.id)).toEqual(['2', '2', '2']);
+  });
+
   it('stays equal through v-if, keyed v-for and binding updates', async () => {
     const shared = { items: [{ id: 1, name: 'a' }, { id: 2, name: 'b' }, { id: 3, name: 'c' }], show: true, label: 'hi', on: false, w: 10 };
     await recordTexts();

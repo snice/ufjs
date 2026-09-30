@@ -8,9 +8,9 @@
 //   update            FlatLive.vue: each cell's text reads its own slot of a
 //                     reactive array; bump 1 / 200 / 2000 slots and flush
 import { defineComponent, h, reactive, ref } from 'vue';
-import { createComponent, createVaporApp, defineVaporComponent } from 'fjs/vapor';
+import { __profOn, __vaporMicro, createComponent, createVaporApp, defineVaporComponent } from 'fjs/vapor';
 import { createApp, flutterRoot, styleEngine } from 'fjs/vue';
-import { create, createRoot, flush, insert, nowMs, remove, setOpSink } from 'fjs';
+import { create, createRoot, flush, gc, insert, nowMs, remove, setOpSink } from 'fjs';
 import FlatVdom from '../src/Flat4050.vue';
 import FlatVapor from './Flat4050Vapor.vue';
 import LiveVdom from './FlatLive.vue';
@@ -134,6 +134,55 @@ async function main(): Promise<void> {
     await measureMount('vdom ', vdomShow);
     await measureMount('vapor', vaporShow);
   }
+  // specs/161 mount analysis: one mount with exclusive zones, then the same
+  // operations in tight loops. The loop above stays unprofiled.
+  gc();
+  const prof = (globalThis as { __fjsVaporProf?: Record<string, number> }).__fjsVaporProf;
+  if (prof) for (const k of Object.keys(prof)) prof[k] = 0;
+  styleEngine.resetStats();
+  __profOn(true);
+  const tSync = nowMs();
+  vaporShow.value = true;
+  const sync = nowMs() - tSync;
+  await drain();
+  const wall = nowMs() - tSync;
+  __profOn(false);
+  const flushMs = styleEngine.stats.flushMs;
+  vaporShow.value = false;
+  await drain();
+  const micro = __vaporMicro();
+  if (prof) {
+    const inside = micro.calInside ?? 0;
+    const pairs = Object.keys(prof)
+      .filter((k) => !k.endsWith('N') && k !== 'cal' && prof[k + 'N'] != null)
+      .reduce((n, k) => n + (prof[k + 'N'] ?? 0), 0);
+    let zoned = 0;
+    const parts: string[] = [];
+    for (const k of Object.keys(prof).sort()) {
+      if (k.endsWith('N') || k === 'cal') continue;
+      const n = prof[k + 'N'] ?? 0;
+      const net = prof[k] - n * inside;
+      zoned += net;
+      parts.push(`${k} ${net.toFixed(1)}/${n}`);
+    }
+    const clock = pairs * 2 * (micro.nowCall ?? 0);
+    console.log(
+      `[prof] sync ${sync.toFixed(1)} wall ${wall.toFixed(1)} flush ${flushMs.toFixed(1)} zoned ${zoned.toFixed(1)} clock~${clock.toFixed(1)} (mount is the microtask; compare wall to the unprofiled median)`,
+    );
+    console.log(`[prof] ${parts.join('  ')}`);
+    console.log(
+      `[prof] counts fast ${prof.fastN ?? 0} slow ${prof.slowN ?? 0} child ${prof.childN ?? 0}`,
+    );
+  }
+  const ms = (k: string): string => (micro[k] ?? 0).toFixed(1);
+  console.log(
+    `[micro] N=2000  scope ${ms('scope')}  scopeRun ${ms('scopeRun')}  refs ${ms('refs')}  fxEmpty ${ms('fxEmpty')}  fxTrack ${ms('fxTrack')}  display ${ms('display')}  cellTpl ${ms('cellTpl')}  walk ${ms('walk')}  block ${ms('block')}  cursors ${ms('cursors')}  setText ${ms('setText')}  keyedGlue ${ms('keyedGlue')}  reorderScan ${ms('reorderScan')}  fastIns ${ms('fastIns')}  slowOnce ${ms('slowOnce')}  slowTwice ${ms('slowTwice')}`,
+  );
+  console.log(
+    `[micro] once-cell layers  host ${ms('layerHost')}  +text ${ms('layerText')}  +effect ${ms('layerFx')}  +scope ${ms('layerFull')}   (50×40, create inside the timer)`,
+  );
+  console.log(`[micro] now() ${(micro.nowCall ?? 0) * 1000}µs  empty zone ${(micro.calPair ?? 0) * 1000}µs (inside ${(micro.calInside ?? 0) * 1000}µs)`);
+  gc();
 
   console.log(`[vapor] element API create+insert, same tree  ${stats(elementFloor())} ms`);
 

@@ -824,12 +824,14 @@ uni-app x 官方 iOS 数字：iPhone SE2 vapor 160.6 ms / UIKit 328.75 ms（终�
 **Vue Vapor：自研运行时（specs/161，2026-09-30 起）**：`fjs/vapor` 是 fjs 自己的实现
 （runtime.ts 直连元素 API，Flutter 走 libfjs-style 原生克隆、web 走 DOM 后端），运行时回
 `vue@^3.5` stable，编译器（构建期依赖）仍是 3.6。specs/148 的官方 runtime-vapor + DOM 外壳
-已删除。flat-4050 离线（TS 引擎模式）：VDOM 挂载 18.0 / 自研 Vapor 46.5 ms；改 1 格
+已删除。flat-4050 离线（TS 引擎模式，优化前）：VDOM 挂载 18.0 / 自研 Vapor 46.5 ms；改 1 格
 11.7 → **0.0 ms**、200 格 12.7 → **1.9 ms**、2000 格 21.3 → **19.1 ms**。真机（iPhone 12，
-profile）：显示 JS 129.3–154.5 ms（官方 runtime-vapor 同口径 119.5–122.7——per-item 块记账
+profile，同一版）：显示 JS 129.3–154.5 ms（官方 runtime-vapor 同口径 119.5–122.7——per-item 块记账
 省不掉，详见 specs/161 §8），隐藏 21.3 ms（官方 46–55），改 1 格 **1.0–5.8 ms**（VDOM
-41.2–56.4）、200 格 **8.9–26.1**、2000 格 **59.4**。**Vapor 的价值在更新路径，挂载慢是已知
-取舍**（版本自由换的）。
+41.2–56.4）、200 格 **8.9–26.1**、2000 格 **59.4**。原生样式（`fjsrun --frames`，2026-09-30）：
+ONCE 且文本只读循环变量的格子在编译期收成 `repeatTemplate`（一批克隆，不建 per-cell effect /
+scope），挂载 VDOM 18.3 / 自研 Vapor **12.6 ms**；更新不变，改 1 格 **0.0**、200 格 **1.7**、
+2000 格 **17.2 ms**。
 
 **官方 runtime-vapor 的历史数字（specs/148 阶段 0，已被上者取代）**：`examples/bench/vapor/` 用 Vue 3.6.0-rc.9，把同一个
 `Flat4050.vue` 分别以 VDOM（fjs 渲染器）和 Vapor（官方 runtime-vapor 跑在一层落到同一套 nodeOps 的 DOM 外壳上）

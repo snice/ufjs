@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'esbuild';
 import { parse, compileScript, compileTemplate, compileStyle } from '@vue/compiler-sfc';
+import { inlineVaporOnce } from '../../../fjs-runtime/src/vapor/once-inline';
 import { inlineFontFaces } from './font-face';
 import { expandFlexDefault } from '../../../fjs-runtime/src/web/css-compat.js';
 import { isHTMLTag, isSVGTag, isMathMLTag } from '@vue/shared';
@@ -351,7 +352,7 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
           // entry leaves runtime-core's full export surface to the shim, so
           // a `--pages` build's shared chunk does not carry the vapor
           // runtime for apps without a Vapor component.
-          scriptCode = compiled.content.replace(/(\bfrom\s*)(['"])vue\2/g, "$1'fjs/vapor'");
+          scriptCode = inlineVaporOnce(compiled.content).replace(/(\bfrom\s*)(['"])vue\2/g, "$1'fjs/vapor'");
           scriptMappings = compiled.map?.mappings;
         } else if (descriptor.script || descriptor.scriptSetup) {
           const compiled = compileScript(descriptor, { id });

@@ -116,6 +116,19 @@ const domBackend: VaporBackend = {
     fill(def, hosts, roots[0], frag.firstChild as Node);
   },
 
+  instantiateMany(def, count, html) {
+    const all: unknown[][] = new Array(count);
+    for (let i = 0; i < count; i++) {
+      const hosts: unknown[] = [];
+      const frag = templateOf(def, html).content.cloneNode(true) as DocumentFragment;
+      const roots = def.nodes[0].children;
+      if (roots.length !== 1) throw new Error('[fjs vapor] a template must have exactly one root element');
+      fill(def, hosts, roots[0], frag.firstChild as Node);
+      all[i] = hosts;
+    }
+    return all;
+  },
+
   instantiateBareText(text) {
     return document.createTextNode(text);
   },
@@ -348,3 +361,7 @@ export function releaseAdopt(id: number): void {
 
 /** specs/148's enableVapor, kept a no-op for the CLI injection. */
 export function enableVapor(): void {}
+
+// Compiled vapor imports template / createFor / repeatTemplate from this
+// module on web (vue-plugin's webAliases point fjs/vapor here).
+export * from './runtime';

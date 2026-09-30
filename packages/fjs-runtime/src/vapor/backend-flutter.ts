@@ -8,6 +8,7 @@ import {
   childElementIds,
   cloneReady,
   cloneTemplate,
+  cloneTemplateMany,
   elementById,
   nodeOps,
   patchProp,
@@ -20,6 +21,9 @@ import {
 import { h } from '../vue/vue-shim';
 import {
   blockOf,
+  __zoneEnter,
+  __zoneExit,
+  insertZoneName,
   type Block,
   type TemplateDef,
   type VaporBackend,
@@ -98,19 +102,48 @@ function instantiateFallback(def: TemplateDef, hosts: unknown[]): void {
 
 setVaporBackend({
   instantiate(def, hosts, _html) {
-    const g = globalThis as { __inst?: number };
-    g.__inst = (g.__inst ?? 0) + 1;
+    const profiling = (globalThis as { __fjsVaporProfOn?: boolean }).__fjsVaporProfOn === true;
+    if (profiling) __zoneEnter('plan');
     const { plan, defToPlan } = planOf(def);
+    if (profiling) __zoneExit('plan');
     if (plan !== null && cloneReady()) {
       // libfjs-style expands the clone and returns the hosts in PLAN order,
       // root unattached (specs/152) — remap onto def index space for the
       // walkers
       const out = cloneTemplate(plan);
       hosts[0] = undefined;
+      if (profiling) __zoneEnter('remap');
       for (const [defIdx, planIdx] of defToPlan) hosts[defIdx] = out[planIdx];
+      if (profiling) __zoneExit('remap');
       return;
     }
+    if (profiling) __zoneEnter('fallback');
     instantiateFallback(def, hosts);
+    if (profiling) __zoneExit('fallback');
+  },
+
+  instantiateMany(def, count, html) {
+    if (count === 0) return [];
+    const { plan, defToPlan } = planOf(def);
+    if (plan !== null && cloneReady()) {
+      const copies = cloneTemplateMany(plan, count);
+      const all: unknown[][] = new Array(count);
+      for (let i = 0; i < count; i++) {
+        const hosts: unknown[] = [];
+        hosts[0] = undefined;
+        for (const [defIdx, planIdx] of defToPlan) hosts[defIdx] = copies[i][planIdx];
+        all[i] = hosts;
+      }
+      return all;
+    }
+    const all: unknown[][] = new Array(count);
+    for (let i = 0; i < count; i++) {
+      const hosts: unknown[] = [];
+      instantiateFallback(def, hosts);
+      all[i] = hosts;
+    }
+    void html;
+    return all;
   },
 
   instantiateBareText(text) {
@@ -124,6 +157,13 @@ setVaporBackend({
   },
 
   attach(host, parent, anchor) {
+    if ((globalThis as { __fjsVaporProfOn?: boolean }).__fjsVaporProfOn === true) {
+      const z = insertZoneName();
+      __zoneEnter(z);
+      nodeOps.insert(host as never, parent as never, anchor as never);
+      __zoneExit(z);
+      return;
+    }
     nodeOps.insert(host as never, parent as never, anchor as never);
   },
 

@@ -7,6 +7,7 @@
 // which the runtime carries as a build-time devDependency.
 import { compileScript, parse } from 'vue/compiler-sfc';
 import { compileScript as compileScriptV36, parse as parseV36 } from '@vue/compiler-sfc';
+import { inlineVaporOnce } from '../../src/vapor/once-inline';
 
 const FJS_TAGS = new Set(['view', 'text', 'image', 'button', 'input', 'scroll-view', 'swiper', 'swiper-item']);
 
@@ -29,7 +30,7 @@ export function compileSfc(
   const scopeId = `data-v-t${seq++}`;
   const compilerOptions = { isNativeTag: (t: string) => FJS_TAGS.has(t), hoistStatic: false };
   const { content } = compiler.compileScript(descriptor, { id: scopeId, inlineTemplate: true, templateOptions: { compilerOptions } });
-  const body = content
+  const body = (vapor ? inlineVaporOnce(content) : content)
     .replace(/import\s*\{([^}]*)\}\s*from\s*['"]vue['"];?/g, (_, spec: string) => `const {${spec.replace(/\s+as\s+/g, ': ')}} = __vue;`)
     .replace(/import\s+(\w+)\s+from\s*['"]([^'"]+)['"];?/g, (_, name: string, from: string) => `const ${name} = __imports[${JSON.stringify(from)}];`)
     .replace('export default', 'return');

@@ -30,10 +30,78 @@
 // compiler-dom's SVG tag table contains `view` (SVG has a <view> element),
 // so every fjs `<view>` template is mis-tagged SVG (ns=1) — the old shell
 // never used the argument and neither do we.
-import { EffectScope, effect, shallowRef } from '@vue/reactivity';
-import { camelize, normalizeClass, toHandlerKey } from '@vue/shared';
+import { EffectScope, effect, shallowRef, stop as stopRunner } from '@vue/reactivity';
+import { camelize, normalizeClass, toDisplayString, toHandlerKey } from '@vue/shared';
 
 // ---- backend seam ---------------------------------------------------------------
+
+/** TEMP profiling (specs/161 mount analysis). Off unless the bench turns it
+ * on for a single mount — the hot path only reads the flag. Exclusive time:
+ * a nested region pauses its parent. `nameN` is the call count. */
+export const __prof: Record<string, number> = {};
+const __hasPerf = typeof performance !== 'undefined' && typeof performance.now === 'function';
+const __now = (): number => (__hasPerf ? (performance as { now(): number }).now() : Date.now());
+/** Same clock, exported for the backends' profiling blocks. */
+export const __perfNow = __now;
+let __on = false;
+interface ProfFrame { name: string; t0: number }
+const __stack: ProfFrame[] = [];
+export function __profOn(on: boolean): void {
+  __on = on;
+  (globalThis as { __fjsVaporProfOn?: boolean }).__fjsVaporProfOn = on;
+  if (!on) __stack.length = 0;
+}
+export function __zoneEnter(name: string): void {
+  if (!__on) return;
+  const now = __now();
+  const n = __stack.length;
+  if (n !== 0) {
+    const top = __stack[n - 1];
+    __prof[top.name] = (__prof[top.name] ?? 0) + (now - top.t0);
+  }
+  __stack.push({ name, t0: now });
+  __prof[name + 'N'] = (__prof[name + 'N'] ?? 0) + 1;
+}
+export function __zoneExit(name: string): void {
+  if (!__on) return;
+  const top = __stack.pop();
+  if (!top || top.name !== name) {
+    if (top) __stack.push(top);
+    return;
+  }
+  const now = __now();
+  __prof[name] = (__prof[name] ?? 0) + (now - top.t0);
+  const n = __stack.length;
+  if (n !== 0) __stack[n - 1].t0 = now;
+}
+function __bump(name: string): void {
+  if (__on) __prof[name] = (__prof[name] ?? 0) + 1;
+}
+/** Which insert the backend's attach should charge: the keyed list inserts
+ * every item twice (once while building, once in the reorder walk). */
+let insertZone = 'insert';
+export function insertZoneName(): string {
+  return insertZone;
+}
+function withInsertZone<T>(name: string, fn: () => T): T {
+  const prev = insertZone;
+  insertZone = name;
+  try {
+    return fn();
+  } finally {
+    insertZone = prev;
+  }
+}
+/** renderEffect tag, so a v-for's effect is not mixed with the per-cell text
+ * effects it runs. Nested renderEffect calls see the default again. */
+let fxTag = 'fx';
+(globalThis as Record<string, unknown>).__fjsVaporProf = __prof;
+(globalThis as Record<string, unknown>).__fjsVaporProfOn = false;
+(globalThis as Record<string, unknown>).__fjsVaporZone = {
+  enter: __zoneEnter,
+  exit: __zoneExit,
+  bump: __bump,
+};
 
 /** What a template parse produced, shared by every instance of it. */
 export interface TemplateDef {
@@ -69,6 +137,10 @@ export interface VaporBackend {
    * backend clones through an HTMLTemplateElement; the Flutter backend
    * ignores it). */
   instantiate(def: TemplateDef, hosts: unknown[], html: string): void;
+  /** [count] instances, each a hosts array in the same index space as
+   * instantiate. The Flutter backend clones them in one pass (a static
+   * v-for cell is this, thousands of times); the web backend cloneNodes. */
+  instantiateMany(def: TemplateDef, count: number, html: string): unknown[][];
   /** A bare-text template instance (a text run with no element around it). */
   instantiateBareText(text: string): HostNode;
   /** An invisible placeholder (v-if / v-for / empty slot anchor). */
@@ -327,26 +399,51 @@ export class TplNode {
 
 // ---- template() ----------------------------------------------------------------
 
+/** What `template()` returns. `def` is how repeatTemplate clones a static
+ * v-for without calling the factory once per item; null for a bare text
+ * template, which has nothing to clone in bulk. */
+export interface CompiledTemplate {
+  (): TplNode;
+  def: TemplateDef | null;
+  html: string;
+}
+
+function asTemplate(fn: () => TplNode, def: TemplateDef | null, html: string): CompiledTemplate {
+  const f = fn as CompiledTemplate;
+  f.def = def;
+  f.html = html;
+  return f;
+}
+
 /** `template(html, flags, ns)`: parses once, instantiates per call. flags
  * bit 0 marks the component's single root and bit 1 a fully-static template
  * — neither changes our behavior (every instance still gets its own hosts). */
-export function template(html: string, flags = 0, ns?: number): () => TplNode {
+export function template(html: string, flags = 0, ns?: number): CompiledTemplate {
   void flags;
   void ns;
   // a bare text template ("主要"): a fresh bare text node per instance
   if (html[0] !== '<') {
-    return () => {
-      const inst = new TemplateInstance({ nodes: [{ kind: 'text', tag: 'text', parent: -1, children: [], inline: false, raw: html, classes: null, scope: null }] });
+    const bare: TemplateDef = { nodes: [{ kind: 'text', tag: 'text', parent: -1, children: [], inline: false, raw: html, classes: null, scope: null }] };
+    return asTemplate(() => {
+      const inst = new TemplateInstance(bare);
       inst.hosts[0] = be().instantiateBareText(html);
       return new TplNode(inst, 0);
-    };
+    }, null, html);
   }
   const def = parseTemplateHtml(html);
-  return () => {
+  return asTemplate(() => {
+    if (!__on) {
+      const inst = new TemplateInstance(def);
+      be().instantiate(def, inst.hosts, html);
+      return new TplNode(inst, 1);
+    }
+    __zoneEnter('tpl');
     const inst = new TemplateInstance(def);
     be().instantiate(def, inst.hosts, html);
-    return new TplNode(inst, 1);
-  };
+    const node = new TplNode(inst, 1);
+    __zoneExit('tpl');
+    return node;
+  }, def, html);
 }
 
 // ---- walkers ---------------------------------------------------------------------
@@ -354,6 +451,7 @@ export function template(html: string, flags = 0, ns?: number): () => TplNode {
 /** The i-th child of a template node. The compiler counts every kind; the
  * inline fold keeps text children only where they are not element content. */
 export function child(node: TplNode, i = 0): TplNode {
+  __bump('childN');
   const idx = node.def.nodes[node.idx].children[i];
   if (idx == null) throw new Error(`[fjs vapor] child(${i}) is outside the template`);
   return new TplNode(node.inst, idx);
@@ -386,8 +484,15 @@ export function txt(node: TplNode): TplNode {
 export function setText(node: TplNode, value: unknown): void {
   const text = value == null ? '' : String(value);
   const n = node.def.nodes[node.idx];
+  if (!__on) {
+    if (n.kind === 'text') be().setText(node.host, text);
+    else be().setElementText(node.host, text);
+    return;
+  }
+  __zoneEnter('text');
   if (n.kind === 'text') be().setText(node.host, text);
   else be().setElementText(node.host, text);
+  __zoneExit('text');
 }
 
 /** The compiler hands class bindings through as arrays / objects
@@ -497,7 +602,8 @@ function enqueue(run: () => void, alive: () => boolean): void {
 export function renderEffect(fn: () => unknown): void {
   const scope = currentScope;
   let alive = true;
-  const runner = effect(fn, {
+  let runner: () => unknown = () => {};
+  const opts = {
     scheduler: () =>
       enqueue(
         () => (scope ? withScope(scope, () => runner()) : runner()),
@@ -506,8 +612,25 @@ export function renderEffect(fn: () => unknown): void {
     onStop: () => {
       alive = false;
     },
-  });
-  void runner;
+  };
+  if (!__on) {
+    runner = effect(fn, opts);
+    return;
+  }
+  const tag = fxTag;
+  __zoneEnter(tag);
+  runner = effect(() => {
+    const prev = fxTag;
+    fxTag = 'fx';
+    __zoneEnter(tag + 'Body');
+    try {
+      return fn();
+    } finally {
+      __zoneExit(tag + 'Body');
+      fxTag = prev;
+    }
+  }, opts);
+  __zoneExit(tag);
 }
 
 // ---- component context -------------------------------------------------------------------
@@ -717,6 +840,8 @@ export function createIf(condition: () => unknown, positive?: () => unknown, neg
     }
   };
   const owner = currentScope;
+  const savedFx = fxTag;
+  fxTag = 'ifFx';
   withScope(
     owner,
     () => {
@@ -738,6 +863,7 @@ export function createIf(condition: () => unknown, positive?: () => unknown, neg
       });
     },
   );
+  fxTag = savedFx;
   // an enclosing removal stops the branch scope and runs its cleanups after
   // the hosts are gone (removeBlock orders nodes, scopes, then cleanups)
   frag.cleanups.push(() => {
@@ -759,33 +885,130 @@ interface ForItem {
   block: Block;
 }
 
+/** Compiler bit: the v-for source is a static expression or v-once, so the
+ * list is built once and item/key never change (compiler-vapor genForFlags). */
+const FOR_ONCE = 4;
+
+/** Keyed list: after new items have been appended and removals dropped, the
+ * DOM is already in wanted order when every surviving item kept its relative
+ * order and every fresh item is a suffix. The backwards move is only for a
+ * real reorder (unshift, reverse, insert in the middle). */
+function forOutOfOrder(prev: readonly ForItem[], wanted: readonly ForItem[], fresh: ReadonlySet<ForItem>): boolean {
+  const still = new Set<ForItem>();
+  for (let i = 0; i < wanted.length; i++) {
+    if (!fresh.has(wanted[i])) still.add(wanted[i]);
+  }
+  let si = 0;
+  let passedFresh = false;
+  for (let i = 0; i < wanted.length; i++) {
+    const w = wanted[i];
+    if (fresh.has(w)) {
+      passedFresh = true;
+      continue;
+    }
+    if (passedFresh) return true;
+    while (si < prev.length && !still.has(prev[si])) si++;
+    if (si >= prev.length || prev[si] !== w) return true;
+    si++;
+  }
+  return false;
+}
+
 /** v-for over a count or an array. Items mount before a private anchor in
  * item order; a keyed diff reorders with plain inserts (attach is a move for
  * already-attached hosts) and drops go through the backend's subtree removal.
  * FAST_REMOVE only says the compiler proved items are single nodes — the
- * general removal is correct either way. */
+ * general removal is correct either way.
+ *
+ * The anchor is what later insertions sit in front of. On the initial fill of
+ * a list that is itself being appended, items go on with a null anchor (the
+ * renderer's fast append) and the anchor is placed after them — inserting
+ * each item before an anchor that is already the last child, then moving
+ * every item to where it already was, is the whole mount cost of a static
+ * keyed list. */
 export function createFor(
   source: () => number | unknown[],
   getItem: (item: { value: unknown }, key: { value: unknown }) => unknown,
   getKey?: (item: unknown, index: number) => unknown,
   flags = 0,
 ): Block {
-  void flags;
+  const once = (flags & FOR_ONCE) !== 0;
   const { parent, anchor: before } = takeInsertionState();
   const anchor = be().createAnchor('for');
-  if (parent) be().attach(anchor, parent, before);
   const listBlock: Block & { nodes: HostNode[]; scopes: EffectScope[]; cleanups: (() => void)[] } = { nodes: [anchor], scopes: [], cleanups: [] };
   let items: ForItem[] = [];
+  // null = append. A list inserted at the end defers its anchor so the
+  // initial fill hits the fast path; afterwards new items insert before it.
+  let slot: HostNode | null = anchor;
+  let anchorPlaced = !parent;
+  if (parent && before != null) {
+    be().attach(anchor, parent, before);
+    anchorPlaced = true;
+  } else if (parent) {
+    slot = null;
+  }
+  const ensureAnchor = (): void => {
+    if (anchorPlaced || !parent) return;
+    be().attach(anchor, parent, null);
+    slot = anchor;
+    anchorPlaced = true;
+  };
+  // ONCE: the compiler proved the source never changes (a numeric literal,
+  // v-once, a literal const). Items are never removed on their own, so one
+  // scope for the whole list replaces a per-item EffectScope — that scope
+  // is created inside the caller's run, and the v-if / component that owns
+  // the list stops it. Item and key are plain boxes: nothing writes them,
+  // and a text effect that only read them was inlined at compile time.
+  if (once) {
+    const owner = currentScope;
+    withScope(owner, () => {
+      const listScope = new EffectScope();
+      listBlock.scopes.push(listScope);
+      withScope(listScope, () => {
+        const src = source();
+        const count = typeof src === 'number' ? src : src.length;
+        const value = (i: number): unknown => (typeof src === 'number' ? i : src[i]);
+        for (let i = 0; i < count; i++) {
+          const v = value(i);
+          const key = getKey ? getKey(v, i) : i;
+          const block = blockOf(getItem({ value: v }, { value: key }));
+          if (parent) insertBlock(block, parent, slot);
+        }
+        ensureAnchor();
+      });
+    });
+    return listBlock;
+  }
+  const box = (v: unknown): { value: unknown } => shallowRef(v);
 
   const buildItem = (value: unknown, key: unknown): ForItem => {
+    if (!__on) {
+      const scope = new EffectScope();
+      const item = box(value);
+      const keyRef = box(key);
+      const block = withScope(scope, () => blockOf(getItem(item, keyRef)));
+      if (!block.scopes) block.scopes = [];
+      block.scopes.push(scope);
+      if (parent) insertBlock(block, parent, slot);
+      return { key, item, keyRef, scope, block };
+    }
+    __zoneEnter('item');
+    __zoneEnter('scope');
     const scope = new EffectScope();
-    const item = shallowRef(value);
-    const keyRef = shallowRef(key);
+    __zoneExit('scope');
+    __zoneEnter('refs');
+    const item = box(value);
+    const keyRef = box(key);
+    __zoneExit('refs');
+    __zoneEnter('body');
     const block = withScope(scope, () => blockOf(getItem(item, keyRef)));
+    __zoneExit('body');
     if (!block.scopes) block.scopes = [];
     block.scopes.push(scope);
-    if (parent) insertBlock(block, parent, anchor);
-    return { key, item, keyRef, scope, block };
+    if (parent) withInsertZone('ins1', () => insertBlock(block, parent, slot));
+    const rec = { key, item, keyRef, scope, block };
+    __zoneExit('item');
+    return rec;
   };
   const dropItem = (it: ForItem): void => {
     removeBlock(it.block);
@@ -796,10 +1019,9 @@ export function createFor(
   };
 
   const owner = currentScope;
-  withScope(
-    owner,
-    () => {
-      renderEffect(() => {
+  const savedFx = fxTag;
+  fxTag = 'forFx';
+  const run = (): void => {
           const src = source();
           const count = typeof src === 'number' ? src : src.length;
           const value = (i: number): unknown => (typeof src === 'number' ? i : src[i]);
@@ -817,15 +1039,18 @@ export function createFor(
             for (let k = items.length - 1; k >= count; k--) dropItem(items[k]);
             if (items.length > count) items.length = count;
             syncScopes();
+            ensureAnchor();
             return;
           }
 
-          // keyed: match by key, then walk the wanted order backwards
-          // re-inserting each item before the right cursor — every host ends
-          // up in item order
+          // keyed: match by key. New items are inserted at `slot` (the end,
+          // in front of the anchor). A backwards move runs only when that
+          // left them out of wanted order.
+          const prev = items;
           const kept = new Map<unknown, ForItem>();
-          for (const it of items) kept.set(it.key, it);
+          for (const it of prev) kept.set(it.key, it);
           const wanted: ForItem[] = [];
+          const fresh = new Set<ForItem>();
           const used = new Set<unknown>();
           for (let i = 0; i < count; i++) {
             const key = getKey(value(i), i);
@@ -836,25 +1061,112 @@ export function createFor(
               existing.keyRef.value = key;
               wanted.push(existing);
             } else {
-              wanted.push(buildItem(value(i), key));
+              const built = buildItem(value(i), key);
+              fresh.add(built);
+              wanted.push(built);
             }
           }
-          for (const it of items) {
+          for (const it of prev) {
             if (!used.has(it.key)) dropItem(it);
           }
           items = wanted;
           syncScopes();
-          let cursor: HostNode | null = anchor;
-          for (let i = items.length - 1; i >= 0; i--) {
-            const block = items[i].block;
-            for (let k = block.nodes.length - 1; k >= 0; k--) {
-              be().attach(block.nodes[k], parent as HostNode, cursor);
-            }
-            cursor = block.nodes[0];
+          ensureAnchor();
+          if (parent && forOutOfOrder(prev, wanted, fresh)) {
+            const hostParent = parent;
+            let cursor: HostNode | null = anchor;
+            const reorder = (): void => {
+              for (let i = items.length - 1; i >= 0; i--) {
+                const block = items[i].block;
+                for (let k = block.nodes.length - 1; k >= 0; k--) {
+                  be().attach(block.nodes[k], hostParent, cursor);
+                }
+                cursor = block.nodes[0];
+              }
+            };
+            if (__on) withInsertZone('ins2', reorder);
+            else reorder();
           }
-      });
-    },
-  );
+  };
+  withScope(owner, () => {
+    renderEffect(run);
+  });
+  fxTag = savedFx;
+  return listBlock;
+}
+
+/** The dynamic text node of a template whose only dynamic part is one
+ * inline text: the root itself (`<text>{{ i }}</text>`) or its first child
+ * (`<view><text>{{ i }}</text></view>`). Anything else is not a cell the
+ * batch cloner knows how to fill. */
+function repeatTextIndex(def: TemplateDef): number | null {
+  const root = def.nodes[0]?.children[0];
+  if (root == null) return null;
+  const rn = def.nodes[root];
+  if (rn.inline || rn.kind === 'text') return root;
+  if (rn.children.length === 1) {
+    const c = rn.children[0];
+    const cn = def.nodes[c];
+    if (cn && (cn.inline || cn.kind === 'text')) return c;
+  }
+  return null;
+}
+
+/** A static v-for whose body is one template plus one text write of the
+ * loop variable (compiler-vapor emits a per-cell renderEffect for that;
+ * inlineVaporOnce rewrites it here). One batch of clones, one text write
+ * each, no per-cell effect and no per-cell scope — that effect only existed
+ * to track a value ONCE promises never changes. A body that reads anything
+ * else stays on createFor. */
+export function repeatTemplate(
+  tpl: CompiledTemplate,
+  source: () => number | unknown[],
+  textAt: (item: { value: unknown }, key: { value: unknown }) => unknown,
+  getKey?: (item: unknown, index: number) => unknown,
+  flags = 0,
+): Block {
+  const def = tpl.def;
+  const textIdx = def ? repeatTextIndex(def) : null;
+  if ((flags & FOR_ONCE) === 0 || def == null || textIdx == null) {
+    return createFor(
+      source,
+      (item, key) => {
+        const n = tpl();
+        const target = n.def.nodes[n.idx].inline || n.def.nodes[n.idx].kind === 'text' ? n : txt(child(n));
+        setText(target, textAt(item, key));
+        return n;
+      },
+      getKey,
+      flags,
+    );
+  }
+  const { parent, anchor: before } = takeInsertionState();
+  const anchor = be().createAnchor('for');
+  const listBlock: Block & { nodes: HostNode[]; scopes: EffectScope[]; cleanups: (() => void)[] } = { nodes: [anchor], scopes: [], cleanups: [] };
+  let slot: HostNode | null = anchor;
+  let anchorPlaced = !parent;
+  if (parent && before != null) {
+    be().attach(anchor, parent, before);
+    anchorPlaced = true;
+  } else if (parent) {
+    slot = null;
+  }
+  const src = source();
+  const count = typeof src === 'number' ? src : src.length;
+  const copies = count > 0 ? be().instantiateMany(def, count, tpl.html) : [];
+  const asElement = def.nodes[textIdx].kind !== 'text';
+  const rootIdx = def.nodes[0].children[0];
+  for (let i = 0; i < count; i++) {
+    const v = typeof src === 'number' ? i : src[i];
+    const key = getKey ? getKey(v, i) : i;
+    const hosts = copies[i];
+    const text = textAt({ value: v }, { value: key });
+    const s = text == null ? '' : String(text);
+    if (asElement) be().setElementText(hosts[textIdx], s);
+    else be().setText(hosts[textIdx], s);
+    if (parent) be().attach(hosts[rootIdx], parent, slot);
+  }
+  if (!anchorPlaced && parent) be().attach(anchor, parent, null);
   return listBlock;
 }
 
@@ -937,4 +1249,201 @@ export function mountVaporComponentForAdopt(
 export function disposeBlock(block: Block): void {
   for (const scope of block.scopes ?? []) scope.stop();
   for (const cleanup of block.cleanups ?? []) cleanup();
+}
+
+/** TEMP: isolated costs of the flat-4050 mount, N = 2000 cells, same engine
+ * as the profiled mount. The trees it creates are removed before return. */
+export function __vaporMicro(): Record<string, number> {
+  const N = 2000;
+  const out: Record<string, number> = {};
+  const time = (name: string, fn: () => void): void => {
+    const t0 = __now();
+    fn();
+    out[name] = __now() - t0;
+  };
+  const scopes: EffectScope[] = new Array(N);
+  time('scope', () => {
+    for (let i = 0; i < N; i++) scopes[i] = new EffectScope();
+  });
+  time('scopeRun', () => {
+    for (let i = 0; i < N; i++) scopes[i].run(() => undefined);
+  });
+  for (const s of scopes) s.stop();
+  time('refs', () => {
+    for (let i = 0; i < N; i++) {
+      shallowRef(i);
+      shallowRef(i);
+    }
+  });
+  const runners: Array<ReturnType<typeof effect>> = new Array(N);
+  time('fxEmpty', () => {
+    for (let i = 0; i < N; i++) runners[i] = effect(() => undefined);
+  });
+  for (const r of runners) stopRunner(r);
+  time('fxTrack', () => {
+    for (let i = 0; i < N; i++) {
+      const r = shallowRef(i);
+      runners[i] = effect(() => {
+        void r.value;
+      });
+    }
+  });
+  for (const r of runners) stopRunner(r);
+  time('display', () => {
+    for (let i = 0; i < N; i++) toDisplayString(i);
+  });
+  const cell = template('<view data-v-x class=cell><text data-v-x class=tiny> ');
+  const nodes: TplNode[] = new Array(N);
+  time('cellTpl', () => {
+    for (let i = 0; i < N; i++) nodes[i] = cell();
+  });
+  const one = nodes[0];
+  time('walk', () => {
+    for (let i = 0; i < N; i++) txt(child(one));
+  });
+  time('block', () => {
+    for (let i = 0; i < N; i++) blockOf(one);
+  });
+  time('cursors', () => {
+    const inst = one.inst;
+    for (let i = 0; i < N * 2; i++) new TplNode(inst, 1);
+  });
+  const textNode = txt(child(one));
+  time('setText', () => {
+    for (let i = 0; i < N; i++) setText(textNode, i);
+  });
+  for (const n of nodes) be().remove(n.host);
+  time('keyedGlue', () => {
+    for (let row = 0; row < 50; row++) {
+      const kept = new Map<number, number>();
+      const used = new Set<number>();
+      const wanted: number[] = [];
+      for (let i = 0; i < 40; i++) {
+        if (kept.has(i) && !used.has(i)) {
+          used.add(i);
+          wanted.push(kept.get(i) as number);
+        } else wanted.push(i);
+      }
+      void wanted;
+    }
+  });
+  time('reorderScan', () => {
+    for (let row = 0; row < 50; row++) {
+      const siblings: number[] = [];
+      for (let i = 0; i < 41; i++) siblings.push(i);
+      let cursor = 40;
+      for (let i = 39; i >= 0; i--) {
+        const at = siblings.indexOf(i);
+        if (at >= 0) siblings.splice(at, 1);
+        const ai = siblings.indexOf(cursor);
+        siblings.splice(ai < 0 ? siblings.length : ai, 0, i);
+        cursor = i;
+      }
+    }
+  });
+  // Insert-only, nodes built outside the timer. `twice` is what keyed
+  // createFor does on first mount: append-before-anchor, then move every
+  // item before the anchor again.
+  const rowT = template('<view class=row>');
+  const forest = (): { rows: TplNode[]; cells: TplNode[][] } => {
+    const rows: TplNode[] = [];
+    const cells: TplNode[][] = [];
+    for (let r = 0; r < 50; r++) {
+      rows.push(rowT());
+      const xs: TplNode[] = [];
+      for (let i = 0; i < 40; i++) xs.push(cell());
+      cells.push(xs);
+    }
+    return { rows, cells };
+  };
+  const timeIns = (mode: 'fast' | 'once' | 'twice'): number => {
+    const holder = template('<view>')();
+    const { rows, cells } = forest();
+    const anchors: HostNode[] = [];
+    for (let r = 0; r < 50; r++) anchors.push(be().createAnchor('for'));
+    const t0 = __now();
+    for (let r = 0; r < 50; r++) {
+      be().attach(rows[r].host, holder.host, null);
+      if (mode === 'fast') {
+        for (let i = 0; i < 40; i++) be().attach(cells[r][i].host, rows[r].host, null);
+      } else {
+        be().attach(anchors[r], rows[r].host, null);
+        for (let i = 0; i < 40; i++) be().attach(cells[r][i].host, rows[r].host, anchors[r]);
+        if (mode === 'twice') {
+          let cursor = anchors[r];
+          for (let i = 39; i >= 0; i--) {
+            be().attach(cells[r][i].host, rows[r].host, cursor);
+            cursor = cells[r][i].host;
+          }
+        }
+      }
+    }
+    const dt = __now() - t0;
+    be().remove(holder.host);
+    return dt;
+  };
+  out.fastIns = timeIns('fast');
+  out.slowOnce = timeIns('once');
+  out.slowTwice = timeIns('twice');
+  // The ONCE cell, layered, 50×40, nodes created inside the timer (what the
+  // mount actually does). Each layer adds one piece of the compiled callback.
+  const layer = (mode: 'host' | 'text' | 'fx' | 'full'): number => {
+    const holder = template('<view>')();
+    const runners: Array<ReturnType<typeof effect>> = [];
+    const scopes: EffectScope[] = [];
+    const t0 = __now();
+    for (let r = 0; r < 50; r++) {
+      const row = rowT();
+      be().attach(row.host, holder.host, null);
+      for (let i = 0; i < 40; i++) {
+        if (mode === 'host') {
+          be().attach(cell().host, row.host, null);
+        } else if (mode === 'text') {
+          const n = cell();
+          setText(txt(child(n)), toDisplayString(i));
+          be().attach(n.host, row.host, null);
+        } else if (mode === 'fx') {
+          const n = cell();
+          const x = txt(child(n));
+          const key = { value: i };
+          runners.push(effect(() => setText(x, toDisplayString(key.value))));
+          be().attach(n.host, row.host, null);
+        } else {
+          const scope = new EffectScope();
+          scopes.push(scope);
+          const key = { value: i };
+          const block = scope.run(() => {
+            const n = cell();
+            const x = txt(child(n));
+            effect(() => setText(x, toDisplayString(key.value)));
+            return blockOf(n);
+          }) as Block;
+          be().attach(block.nodes[0], row.host, null);
+        }
+      }
+    }
+    const dt = __now() - t0;
+    for (const s of scopes) s.stop();
+    for (const rn of runners) stopRunner(rn);
+    be().remove(holder.host);
+    return dt;
+  };
+  out.layerHost = layer('host');
+  out.layerText = layer('text');
+  out.layerFx = layer('fx');
+  out.layerFull = layer('full');
+  const nCal = 20000;
+  let t0 = __now();
+  for (let i = 0; i < nCal; i++) __now();
+  out.nowCall = (__now() - t0) / nCal;
+  __profOn(true);
+  t0 = __now();
+  for (let i = 0; i < nCal; i++) {
+    __zoneEnter('cal');
+    __zoneExit('cal');
+  }
+  out.calPair = (__now() - t0) / nCal;
+  out.calInside = (__prof.cal ?? 0) / (__prof.calN || 1);
+  __profOn(false);
+  return out;
 }

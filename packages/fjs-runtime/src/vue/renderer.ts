@@ -1590,6 +1590,16 @@ export function cloneTemplate(plan: ClonePlan): readonly HostNode[] {
   return hosts;
 }
 
+/** [count] instances. cloneTemplate reuses one array, so each copy is taken
+ * before the next clone overwrites it. The bookkeeping is the same per
+ * node; the caller is a static v-for that would otherwise pay a JS call
+ * around every two-node clone. */
+export function cloneTemplateMany(plan: ClonePlan, count: number): HostNode[][] {
+  const out: HostNode[][] = new Array(count);
+  for (let i = 0; i < count; i++) out[i] = cloneTemplate(plan).slice();
+  return out;
+}
+
 // Handles for parentNode/nextSibling: Vue only reads identity/ordering from
 // them, so a minimal Element-shaped object is enough.
 function makeHandle(id: number): HostNode {
