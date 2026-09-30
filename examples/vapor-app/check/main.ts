@@ -7,7 +7,7 @@ import './preload';
 import { flushNow, setOpSink } from 'fjs';
 import { createFjsApp } from 'fjs/app';
 import { definePage } from 'fjs/router';
-import Home from '../src/pages/home.vue';
+import Home from '../src/pages/index.vue';
 import About from '../src/pages/about.vue';
 
 /** QuickJS has no TextDecoder — ASCII/UTF-8 decode by hand (demo
@@ -123,7 +123,6 @@ async function main(): Promise<void> {
     throw new Error(why);
   };
   console.log(`[vapor-app] tree: ${JSON.stringify(tree)}`);
-  console.log(`[vapor-app] dbg: parents=${JSON.stringify([...parentOf])} texts=${JSON.stringify([...texts])} tags=${JSON.stringify([...tags])}`);
   if (!tree.includes('vapor home')) fail('home title missing');
   if (!tree.includes('3')) fail('count text missing');
   if (!tree.includes('a (0)') || !tree.includes('c (2)')) fail('v-for rows missing');

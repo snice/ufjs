@@ -156,3 +156,25 @@ base-css、手势走后端 on()；Flutter 端规则不变），组件标签（fo
 保留全通；`fjs build --web` 产物同口径全通且 runtime-dom/createRenderer 仍为 0；demo
 vant/vapor 互操作页（vite）渲染与点击正常；flutter 端 vapor-check 复测全过
 （runtime 879 / cli 449）。
+
+## 9. 三次修复（iOS 模拟器实测，2026-10-01）
+
+`fjs run ios` 空白。根因**不是 enableVapor**——是 example 的 main.ts 违反了 Flutter 端应用
+契约：路由写成了内联数组（`routes: [{ component: Home }, …]`），而 split/dev 构建的页面加载
+依赖生成路由表（`import { routes } from 'fjs/pages'`）携带的 per-route chunk 元数据与
+`definePageLoader` 注册。内联 routes 下 chunk 为空（"(inline)"）、注册表为空，设备报
+`no page registered for /`。修复：main.ts 改用生成路由表，home.vue 更名 index.vue（生成
+规则 `index.vue → /`）。demo/hello-fjs 一直就是这么写的——这正是一开始就该照抄的形状。
+
+**设备实测（iPhone 17 模拟器，`fjs run ios`，primjs，libfjs-style 原生克隆路径首次跑通
+enableVapor）**：shared 870 KB + bundle 2.1 KB + `pages/index.js` 5.3 KB，`mounted key=0
+chunk=index in 39ms`，0 js:error；页面渲染完整（标题/计数/v-if/v-for）；交互生效——点击
+计数递增、每点追加一行、**`v-bind()` CSS 在 n>5 时计数变红（原生样式引擎 + vapor cssVars
+联动）**；hot reload（改 index.vue → chunk 重建 → `reloaded page index`）生效。/about chunk
+预载 eval 正常（推送路由的挂载代码与首页同路径；idb 不可用未做程序化点击，页面里有
+"go /about →" 入口可手动验证）。此前的 check harness 是 TS 引擎，这次补上了原生引擎的
+实物验证。
+
+**运维注**：被杀掉的 `fjs run` 会留下僵尸 dev server 占着 38900，下次 run 探到端口存活就
+复用，设备表现为连不上（connection refused 重试）。先 `lsof -ti :38900 | xargs kill -9` 再
+跑。
