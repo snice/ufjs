@@ -21,6 +21,7 @@ import { devtoolsSlots, devtoolsStructuralVersion } from '../devtools-hooks';
 import { emitsFor } from '../event-emits';
 
 type HostNode = Element;
+export type { HostNode };
 
 // ---- viewport (@media) ------------------------------------------------------
 //
@@ -1190,13 +1191,47 @@ function unshell(node: HostNode): HostNode {
   return (node as unknown as { $fjsShell?: true }).$fjsShell
     ? (node as unknown as { toHost(): HostNode }).toHost()
     : node;
-}
-
-// Exported for the Vapor DOM shell (vapor/dom.ts, specs/148): it routes
+}// Exported for the Vapor DOM shell (vapor/dom.ts, specs/148): it routes
 // every node operation through these, so both render paths share the style
 // engine and element bookkeeping.
+
+// ---- Vapor adoption hook (specs/161 §3.2) ------------------------------------
+
+/** A VDOM page embedding a Vapor component renders an `fjs-vapor-root`
+ * placeholder; the vapor interop (src/vapor/interop.ts) registers these two
+ * callbacks so createElement can hand back the already-built Vapor root and
+ * patchProp can leave adopted hosts alone. Kept as a hook, not an import:
+ * renderer → vapor would close a cycle, and non-Vapor apps must never load
+ * the interop module. */
+interface AdoptHook {
+  createElement(tag: string): HostNode | null;
+  isAdopted(el: HostNode): boolean;
+}
+/* eslint-disable */
+const adoptHooks: AdoptHook[] = [];
+
+export function registerAdoptHook(hook: AdoptHook): void {
+  adoptHooks.push(hook);
+}
+
+/** createElement / patchProp consult the chain: the first hook that claims
+ * the tag (or the node) wins. Both registrations — the VDOM-page adoption
+ * (vapor/interop.ts) and the slot bridge (backend-flutter.ts) — live here. */
+export function adoptCreateElement(tag: string): HostNode | null {
+  for (const hook of adoptHooks) {
+    const el = hook.createElement(tag);
+    if (el) return el;
+  }
+  return null;
+}
+
+export function adoptIsMarked(el: HostNode): boolean {
+  return adoptHooks.some((hook) => hook.isAdopted(el));
+}
 export const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
   createElement: (rawTag) => {
+    const adopted = adoptCreateElement(rawTag);
+    if (adopted) return adopted;
     const d = tagDescriptor(rawTag);
     const el = create(d.tag);
     // What this tag emits on web (specs/104). Only fjs tags have entries in
@@ -1759,6 +1794,9 @@ export const patchProp: RendererOptions<HostNode, HostNode>['patchProp'] = (
   prevValue,
   nextValue,
 ) => {
+  // an adopted Vapor root is managed by the Vapor runtime: the placeholder
+  // vnode's own props carry nothing the element should get
+  if (adoptIsMarked(el)) return;
   // class first, before camelize's map lookup: it is the one prop every
   // styled element patches on mount
   const prop = key === 'class' ? key : camelize(key);

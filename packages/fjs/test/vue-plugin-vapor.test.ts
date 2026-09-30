@@ -1,14 +1,15 @@
-// Vue Vapor SFCs in fjs builds (specs/148). A component opts in with
+// Vapor SFCs in fjs builds (specs/161). A component opts in with
 // `<script setup vapor>`; a library's `<script setup>`-only SFC under
 // node_modules is compiled as Vapor automatically (fjs.vapor.libs: false
-// turns that off). A Vapor module must also switch the interop on at module
-// evaluation — enableVapor() — or a VDOM page cannot mount it.
+// turns that off). A Vapor module's helpers come from fjs/vapor (the own
+// runtime); a VDOM module importing a Vapor SFC is redirected to the
+// compile-time wrapper.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import * as esbuild from 'esbuild';
 import { describe, expect, it } from 'vitest';
-import { isAutoVapor, prepareVaporSfcSource, sharedBare, usesVapor, vueSfcPlugin, vuePinPlugin } from '../src/bundler/vue-plugin';
+import { isAutoVapor, isVaporSfcFile, sharedBare, usesVapor, vaporWrapperModule, vueSfcPlugin, vuePinPlugin, vaporWrapperPlugin } from '../src/bundler/vue-plugin';
 
 const VDOM = `<script setup lang="ts">
 const n: number = 1
@@ -36,20 +37,20 @@ async function compiled(dir: string, file: string): Promise<string> {
     write: false,
     format: 'esm',
     external: ['vue', 'fjs/vue', 'fjs/vapor'],
-    plugins: [vueSfcPlugin({})],
+    plugins: [vueSfcPlugin({}), vaporWrapperPlugin()],
     logLevel: 'silent',
   });
   return res.outputFiles[0].text;
 }
 
 describe('Vapor SFC compile', () => {
-  it('<script setup vapor> compiles to a Vapor component that enables the interop', async () => {
+  it('<script setup vapor> compiles to a Vapor component over the own runtime', async () => {
     const dir = project({ 'A.vue': VAPOR });
     const js = await compiled(dir, 'A.vue');
     expect(js).toContain('defineVaporComponent');
     expect(js).toContain('template(');
     expect(js).not.toContain('createElementBlock');
-    expect(js).toMatch(/enableVapor[\s\S]*__fjsEnableVapor\(\)/);
+    expect(js).not.toContain('enableVapor');
     // scoped CSS still reaches the style engine, and the scope id the
     // template stamps is the one registered
     const scope = /__fjsRegisterStyles\("(data-v-[0-9a-f]+)"/.exec(js)?.[1];
@@ -95,8 +96,8 @@ describe('Vapor SFC compile', () => {
     expect(isAutoVapor(path.join('x', 'src', 'C.vue'), { script: null, scriptSetup: {} }, true)).toBe(false);
   });
 
-  it('pins runtime-dom to the fjs shim and hands runtime-vapor the DOM shell', async () => {
-    const dir = project({ 'entry.ts': "export { template } from '@vue/runtime-vapor';" });
+  it('pins one physical copy of the runtime packages; nothing pulls runtime-vapor', async () => {
+    const dir = project({ 'entry.ts': "import { ref } from 'vue'; export default ref(0);" });
     const res = await esbuild.build({
       entryPoints: [path.join(dir, 'entry.ts')],
       bundle: true,
@@ -107,22 +108,42 @@ describe('Vapor SFC compile', () => {
       logLevel: 'silent',
     });
     const inputs = Object.keys(res.metafile!.inputs);
-    expect(inputs.some((f) => f.endsWith(path.join('src', 'vue', 'runtime-dom-shim.ts')))).toBe(true);
-    expect(inputs.some((f) => f.endsWith(path.join('src', 'vapor', 'dom.ts')))).toBe(true);
-    expect(inputs.some((f) => /runtime-dom\.esm-bundler\.js$/.test(f))).toBe(false);
+    expect(inputs.some((f) => f.endsWith('runtime-core.esm-bundler.js'))).toBe(true);
+    expect(inputs.some((f) => f.includes('runtime-vapor'))).toBe(false);
+    expect(inputs.some((f) => f.endsWith('runtime-dom.esm-bundler.js'))).toBe(false);
   });
 });
 
-describe('Vite (web dev) source preparation', () => {
-  it('adds the module-level enableVapor call to a Vapor SFC, matching its script lang', () => {
-    const out = prepareVaporSfcSource(VAPOR, '/app/src/A.vue', true)!;
-    expect(out).toMatch(/^<script lang="ts">\nimport \{ enableVapor as __fjsEnableVapor \} from 'fjs\/vapor';/);
-    expect(out).toContain('<script setup vapor lang="ts">');
+describe('Vapor wrapper (a VDOM module importing a Vapor SFC)', () => {
+  it('redirects the import to a generated wrapper and leaves VDOM imports alone', async () => {
+    const dir = project({ 'Page.vue': VDOM, 'Kid.vue': VAPOR, 'entry.ts': "import Kid from './Kid.vue'; import Page from './Page.vue'; export { Kid, Page };" });
+    const js = await compiled(dir, 'entry.ts');
+    // Kid went through the wrapper (adopts a vapor block, renders the
+    // placeholder); Page compiled as a VDOM component as usual
+    expect(js).toContain('adoptVaporComponent');
+    expect(js).toContain('fjs-vapor-root');
+    expect(js).toContain('createElementBlock');
+    expect((js.match(/adoptVaporComponent/g) ?? []).length).toBe(1);
   });
 
-  it('marks a library SFC as Vapor, and leaves VDOM SFCs untouched', () => {
-    expect(prepareVaporSfcSource(VDOM, '/app/node_modules/ui/B.vue', true)).toContain('<script setup vapor lang="ts">');
-    expect(prepareVaporSfcSource(VDOM, '/app/node_modules/ui/B.vue', false)).toBeNull();
-    expect(prepareVaporSfcSource(VDOM, '/app/src/A.vue', true)).toBeNull();
+  it('isVaporSfcFile judges by parse; the wrapper module references the SFC path', () => {
+    const dir = project({ 'Kid.vue': VAPOR, 'Plain.vue': VDOM });
+    expect(isVaporSfcFile(path.join(dir, 'Kid.vue'), true)).toBe(true);
+    expect(isVaporSfcFile(path.join(dir, 'Plain.vue'), true)).toBe(false);
+    const mod = vaporWrapperModule(path.join(dir, 'Kid.vue'));
+    expect(mod).toContain('adoptVaporComponent');
+    expect(mod).toContain('mountAdoptNodes');
+    expect(mod).toContain('releaseAdopt');
+    expect(mod).toContain('fjs-vapor-root');
+    expect(mod).toContain(JSON.stringify(path.join(dir, 'Kid.vue')));
+  });
+
+  it('a --pages build still shares fjs/vapor only when the app has a Vapor component', () => {
+    const plain = project({ 'src/A.vue': VDOM });
+    const vapor = project({ 'src/pages/B.vue': VAPOR });
+    expect(usesVapor(plain)).toBe(false);
+    expect(sharedBare(plain)).not.toContain('fjs/vapor');
+    expect(usesVapor(vapor)).toBe(true);
+    expect(sharedBare(vapor)).toContain('fjs/vapor');
   });
 });

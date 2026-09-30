@@ -308,9 +308,9 @@ IntersectionObserver）——这是项目对单个库的 opt-in，runtime 仍然
 demo 里实测：about 页加一行 `storeToRefs` 后，`dist/app/pages/about.js` 从 1738 B 涨到
 4707 B；登记 `fjs.shared` 后回到 1848 B，`shared.js` 只多 1.6 KB。
 
-`fjs/vapor`（Vue Vapor 的运行时与 DOM 外壳，specs/148）不用手动登记：应用里有 Vapor 组件时
+`fjs/vapor`（自研 Vapor 运行时，specs/161）不用手动登记：应用里有 Vapor 组件时
 （`src/` 下有 `<script setup vapor>`，或开着 `fjs.vapor.libs` 且某个直接依赖发了 `.vue` 文件），
-构建自动把它放进共享 chunk，保证整个 VM 只有一份 runtime-vapor；没有就不带。
+构建自动把它放进共享 chunk，保证整个 VM 只有一份；没有就不带。
 
 ### Vue Vapor：`fjs.vapor`
 

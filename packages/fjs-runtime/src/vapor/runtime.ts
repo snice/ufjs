@@ -1,0 +1,940 @@
+// The fjs Vapor runtime (specs/161): the functions a compiler-vapor SFC
+// imports, implemented directly over fjs nodes — no vnodes, no
+// runtime-vapor, no DOM shell (specs/148's dom.ts is gone).
+//
+// Why a second runtime next to the VDOM renderer: compiled Vapor code is
+// straight-line node construction (template clone + walks + effects), and
+// runtime-vapor paid for that through two intermediaries — a shell object
+// per node and per-item block/ref bookkeeping (specs/148 §8.3: ~32 ms of the
+// 4050 page's mount against VDOM's 18). Here the template instance IS the
+// fjs node (native-cloned by libfjs-style on Flutter, cloneNode on web) and
+// the block model below is the entire bookkeeping.
+//
+// The node primitives live behind VaporBackend (setVaporBackend): on
+// Flutter they are the renderer's nodeOps / patchProp (op frames → Dart,
+// backend-flutter.ts); on web they are the DOM plus the web adapter's press
+// gestures (src/vapor/web.ts). Everything above the primitives — template
+// parsing, walker shape, blocks, v-if / v-for, components, slots — is
+// shared, so a compiled page runs unchanged on both ends (constitution I).
+//
+// Scope, so nobody expects runtime-vapor's full surface:
+// - covered: what this repo's compiled SFCs import — template + walks,
+//   text/class/style/attr/prop writes, events, v-if, keyed and plain v-for,
+//   slots (static names), component mounts both Vapor and VDOM-interop.
+// - not: Transition / Teleport / KeepAlive inside Vapor, element v-model
+//   (vant's v-model is component props/events), dynamic <component :is>,
+//   dynamic slot names, SSR. Anything uncovered throws — a wrong tree is
+//   worse than an error (constitution V).
+//
+// One quirk worth writing down: template()'s `ns` argument is IGNORED.
+// compiler-dom's SVG tag table contains `view` (SVG has a <view> element),
+// so every fjs `<view>` template is mis-tagged SVG (ns=1) — the old shell
+// never used the argument and neither do we.
+import { EffectScope, effect, shallowRef } from '@vue/reactivity';
+import { camelize, normalizeClass, toHandlerKey } from '@vue/shared';
+
+// ---- backend seam ---------------------------------------------------------------
+
+/** What a template parse produced, shared by every instance of it. */
+export interface TemplateDef {
+  /** 0 is a virtual root; the template's own nodes from 1, pre-order */
+  nodes: TemplateNode[];
+}
+
+export interface TemplateNode {
+  kind: 'element' | 'text' | 'anchor' | 'folded';
+  tag: string;
+  /** index into the same list; -1 for top-level nodes */
+  parent: number;
+  children: number[];
+  /** element whose only child is a text: the text is the element's own
+   * content on both ends (the child is folded out of the shape) */
+  inline: boolean;
+  /** the folded inline text / bare text / anchor label, as the template has it */
+  raw: string;
+  classes: string | null;
+  scope: string | null;
+}
+
+/** The platform's node shape: on Flutter an element-API element, on web a
+ * DOM node. Vapor code only ever holds it opaquely. */
+export type HostNode = unknown;
+
+/** The primitives the shared machinery needs. Kept to what compiled pages
+ * exercise — this is a Vapor backend, not a general DOM. */
+export interface VaporBackend {
+  /** One instance of a parsed template: fills hosts[1..n-1] in def order
+   * (def.nodes is pre-order), with the template root UNATTACHED — the
+   * enclosing block inserts it. `html` is the template source (the web
+   * backend clones through an HTMLTemplateElement; the Flutter backend
+   * ignores it). */
+  instantiate(def: TemplateDef, hosts: unknown[], html: string): void;
+  /** A bare-text template instance (a text run with no element around it). */
+  instantiateBareText(text: string): HostNode;
+  /** An invisible placeholder (v-if / v-for / empty slot anchor). */
+  createAnchor(label: string): HostNode;
+  attach(host: HostNode, parent: HostNode, anchor: HostNode | null): void;
+  /** The current child at [index] (setInsertionState's appendIndex form
+   * resolves to it once, at block creation) — null past the end. */
+  childAt(parent: HostNode, index: number): HostNode | null;
+  remove(host: HostNode): void;
+  /** element-content text ({{ }} on an element) vs a bare text node */
+  setElementText(host: HostNode, text: string): void;
+  setText(host: HostNode, text: string): void;
+  setClasses(host: HostNode, value: string): void;
+  /** inline style with DOM merge semantics: keys in `prev` not in `next` are
+   * dropped; a component root's own :style and a fallthrough one patch the
+   * same node independently */
+  patchStyle(host: HostNode, prev: Record<string, unknown> | null, next: Record<string, unknown>): void;
+  setAttr(host: HostNode, key: string, value: unknown): void;
+  /** `onTap` / `onClick` style keys; the backend owns the event shape
+   * (string payloads on Flutter, the press gestures on web). */
+  on(host: HostNode, key: string, handler: unknown): void;
+  off(host: HostNode, key: string): void;
+  /** A VDOM component mounted at this spot of a Vapor tree (vant et al).
+   * Returns the block whose removal unmounts it. `slots` are the Vapor slot
+   * functions the parent passed; the backend bridges them to the VDOM
+   * component's slot contract. */
+  mountVdomComponent(
+    comp: Record<string, unknown>,
+    props: Record<string, unknown>,
+    slots: Slots,
+    parent: HostNode | null,
+    anchor: HostNode | null,
+  ): Block;
+}
+
+let backend: VaporBackend | null = null;
+
+export function setVaporBackend(b: VaporBackend): void {
+  if (backend) throw new Error('[fjs vapor] backend set twice');
+  backend = b;
+}
+
+function be(): VaporBackend {
+  if (!backend) throw new Error('[fjs vapor] no backend set — import fjs/vapor, not vapor/runtime directly');
+  return backend;
+}
+
+// ---- blocks --------------------------------------------------------------------
+
+/** A mounted unit of template output: the hosts to insert/remove as one,
+ * the scopes created for it (an effect made inside a for item must die with
+ * the item), and cleanups. Nested content (an if-anchor inside an item's
+ * root) is NOT listed — it leaves with the root through the backend's
+ * subtree removal. */
+export interface Block {
+  nodes: readonly HostNode[];
+  scopes?: EffectScope[];
+  cleanups?: (() => void)[];
+}
+
+const emptyBlock = (): Block => ({ nodes: [] });
+
+/** What setup() may return: a template node, a bare host, a block, a list,
+ * nothing (a component that renders only anchors). */
+export function blockOf(node: unknown): Block {
+  if (node instanceof TplNode) return { nodes: [node.host] };
+  if (Array.isArray(node)) return { nodes: node.map(hostOf) };
+  if (node && typeof node === 'object' && Array.isArray((node as Block).nodes)) {
+    const b = node as Block;
+    return { nodes: b.nodes, scopes: b.scopes, cleanups: b.cleanups };
+  }
+  if (node && typeof node === 'object') return { nodes: [node as HostNode] };
+  if (node == null || node === false) return emptyBlock();
+  throw new Error(`[fjs vapor] setup returned something that is not a block: ${typeof node}`);
+}
+
+/** Inserts a block's hosts before [anchor] (appends when null). */
+export function insertBlock(block: Block, parent: HostNode, anchor: HostNode | null): void {
+  for (const node of block.nodes) be().attach(node, parent, anchor);
+}
+
+/** Removes a block's hosts and tears down everything created for it. */
+export function removeBlock(block: Block): void {
+  for (const node of block.nodes) be().remove(node);
+  for (const scope of block.scopes ?? []) scope.stop();
+  for (const cleanup of block.cleanups ?? []) cleanup();
+}
+
+// ---- insertion state -------------------------------------------------------------
+
+/** Where the next block lands: compiled code calls setInsertionState right
+ * before createIf / createFor / createComponent; the construct consumes (and
+ * clears) it. A template instance itself is never auto-inserted — it joins
+ * the tree when its enclosing block does. */
+let insertionParent: HostNode | null = null;
+let insertionAnchor: HostNode | null = null;
+
+export function setInsertionState(parent: unknown, anchor?: unknown): void {
+  const p = hostOf(parent);
+  insertionParent = p;
+  // the compiler's appendIndex form: a NUMBER means "before the current
+  // child at that index" — resolve it once, here, while the siblings are
+  // exactly as the compiler saw them
+  if (typeof anchor === 'number') {
+    insertionAnchor = be().childAt(p, anchor);
+  } else {
+    insertionAnchor = anchor == null ? null : hostOf(anchor);
+  }
+}
+
+function takeInsertionState(): { parent: HostNode | null; anchor: HostNode | null } {
+  const state = { parent: insertionParent, anchor: insertionAnchor };
+  insertionParent = insertionAnchor = null;
+  return state;
+}
+
+/** Template nodes, blocks and bare hosts all flow through compiled code;
+ * every helper boundary unwraps. */
+function hostOf(node: unknown): HostNode {
+  if (node instanceof TplNode) return node.host;
+  if (node && typeof node === 'object' && Array.isArray((node as Block).nodes)) return blockRoot(node as Block);
+  if (node && typeof node === 'object') return node as HostNode;
+  throw new Error(`[fjs vapor] not a node: ${String(node)}`);
+}
+
+export function blockRoot(block: Block): HostNode {
+  if (block.nodes.length !== 1) throw new Error('[fjs vapor] expected a single-root block');
+  return block.nodes[0];
+}
+
+// ---- templates ---------------------------------------------------------------------
+
+/** Parsed once per template string, kept for the module's life: the shape
+ * the compiled walkers assume. Instantiation is the backend's. */
+const templateDefs = new Map<string, TemplateDef>();
+
+function parseTemplateHtml(html: string): TemplateDef {
+  const cached = templateDefs.get(html);
+  if (cached) return cached;
+
+  const nodes: TemplateNode[] = [{ kind: 'element', tag: '#root', parent: -1, children: [], inline: false, raw: '', classes: null, scope: null }];
+  const stack: number[] = [0];
+  const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
+  const ENTITIES: Record<string, string> = { lt: '<', gt: '>', amp: '&', quot: '"', '#39': "'", nbsp: ' ' };
+  const decode = (s: string) => s.replace(/&(lt|gt|amp|quot|#39|nbsp);/g, (_, e: string) => ENTITIES[e]);
+  let i = 0;
+
+  const addNode = (node: Omit<TemplateNode, 'children' | 'parent'>): number => {
+    const parent = stack[stack.length - 1];
+    const idx = nodes.length;
+    nodes.push({ ...node, parent, children: [] });
+    nodes[parent].children.push(idx);
+    return idx;
+  };
+
+  while (i < html.length) {
+    if (html.startsWith('<!--', i)) {
+      const end = html.indexOf('-->', i);
+      addNode({ kind: 'anchor', tag: 'view', inline: false, raw: html.slice(i + 4, end), classes: null, scope: null });
+      i = end + 3;
+    } else if (html.startsWith('<!', i)) {
+      const end = html.indexOf('>', i);
+      addNode({ kind: 'anchor', tag: 'view', inline: false, raw: html.slice(i + 2, end), classes: null, scope: null });
+      i = end + 1;
+    } else if (html.startsWith('</', i)) {
+      const end = html.indexOf('>', i);
+      const name = html.slice(i + 2, end).trim();
+      while (stack.length > 1 && nodes[stack.pop() as number].tag !== name);
+      i = end + 1;
+    } else if (html[i] === '<') {
+      const m = /^<([a-zA-Z][\w-]*)/.exec(html.slice(i, i + 64));
+      if (!m) throw new Error(`[fjs vapor] cannot parse template at ${i}: ${html}`);
+      const tag = m[1];
+      i += m[0].length;
+      const attrs: [string, string][] = [];
+      const attr = /^\s*([^\s=>/]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/;
+      for (;;) {
+        const a = attr.exec(html.slice(i));
+        if (!a) break;
+        attrs.push([a[1], decode(a[2] ?? a[3] ?? a[4] ?? '')]);
+        i += a[0].length;
+      }
+      while (html[i] === ' ') i++;
+      const selfClosing = html[i] === '/';
+      i = html.indexOf('>', i) + 1;
+      let classes: string | null = null;
+      let scope: string | null = null;
+      for (const [k, v] of attrs) {
+        if (k === 'class') classes = v;
+        else if (v === '' && k.startsWith('data-v-') && scope === null) scope = k;
+        // no other attribute lands in the shape: a template carries class +
+        // scope and nothing else, which is exactly what a native clone
+        // replays; anything else must come out of the parse as a rejection
+      }
+      const idx = addNode({ kind: 'element', tag, inline: false, raw: '', classes, scope });
+      if (!selfClosing && !VOID.has(tag)) stack.push(idx);
+    } else {
+      const end = html.indexOf('<', i);
+      const text = decode(html.slice(i, end < 0 ? html.length : end));
+      if (text) addNode({ kind: 'text', tag: 'text', inline: false, raw: text, classes: null, scope: null });
+      i = end < 0 ? html.length : end;
+    }
+  }
+
+  // fold "element whose only child is a text" into an inline element: on
+  // both ends that text is the element's own content, and the compiler
+  // addresses it through txt(el) — the text child must vanish from the
+  // walker shape or every later child() index is off by one. Mixed text
+  // folds the same way: the compiler replaces a whole text run with one
+  // placeholder.
+  for (let k = 1; k < nodes.length; k++) {
+    const n = nodes[k];
+    if (n.kind !== 'element' || n.children.length !== 1) continue;
+    const only = nodes[n.children[0]];
+    if (only.kind !== 'text') continue;
+    n.inline = true;
+    n.raw = only.raw;
+    n.children = [];
+    // the text node itself stays in the list (indices are load-bearing for
+    // parents) but is marked so no backend ever instantiates it
+    only.kind = 'folded';
+    only.parent = k;
+  }
+
+  const def: TemplateDef = { nodes };
+  templateDefs.set(html, def);
+  return def;
+}
+
+/** One instance of a template: hosts aligned with def.nodes by index (0 =
+ * the virtual root, unused). The shape is static, so only this varies. */
+export class TemplateInstance {
+  hosts: unknown[] = [];
+  constructor(public def: TemplateDef) {}
+  host(idx: number): HostNode {
+    const host = this.hosts[idx];
+    if (!host) throw new Error(`[fjs vapor] template node ${idx} was not instantiated`);
+    return host;
+  }
+}
+
+/** A walker cursor: one node of one instance. Compiled code threads these
+ * through child / txt / next and hands them to every write helper. */
+export class TplNode {
+  constructor(
+    public inst: TemplateInstance,
+    public idx: number,
+  ) {}
+  get host(): HostNode {
+    return this.inst.host(this.idx);
+  }
+  get def(): TemplateDef {
+    return this.inst.def;
+  }
+}
+
+// ---- template() ----------------------------------------------------------------
+
+/** `template(html, flags, ns)`: parses once, instantiates per call. flags
+ * bit 0 marks the component's single root and bit 1 a fully-static template
+ * — neither changes our behavior (every instance still gets its own hosts). */
+export function template(html: string, flags = 0, ns?: number): () => TplNode {
+  void flags;
+  void ns;
+  // a bare text template ("主要"): a fresh bare text node per instance
+  if (html[0] !== '<') {
+    return () => {
+      const inst = new TemplateInstance({ nodes: [{ kind: 'text', tag: 'text', parent: -1, children: [], inline: false, raw: html, classes: null, scope: null }] });
+      inst.hosts[0] = be().instantiateBareText(html);
+      return new TplNode(inst, 0);
+    };
+  }
+  const def = parseTemplateHtml(html);
+  return () => {
+    const inst = new TemplateInstance(def);
+    be().instantiate(def, inst.hosts, html);
+    return new TplNode(inst, 1);
+  };
+}
+
+// ---- walkers ---------------------------------------------------------------------
+
+/** The i-th child of a template node. The compiler counts every kind; the
+ * inline fold keeps text children only where they are not element content. */
+export function child(node: TplNode, i = 0): TplNode {
+  const idx = node.def.nodes[node.idx].children[i];
+  if (idx == null) throw new Error(`[fjs vapor] child(${i}) is outside the template`);
+  return new TplNode(node.inst, idx);
+}
+
+export function nthChild(node: TplNode, i: number): TplNode {
+  return child(node, i);
+}
+
+export function next(node: TplNode): TplNode {
+  const n = node.def.nodes[node.idx];
+  const siblings = node.def.nodes[n.parent].children;
+  const at = siblings.indexOf(node.idx);
+  if (at < 0 || at + 1 >= siblings.length) throw new Error('[fjs vapor] next() walked off the template');
+  return new TplNode(node.inst, siblings[at + 1]);
+}
+
+/** The text position of an element: the text IS the element's content, so
+ * txt() returns the node itself and setText picks the write. */
+export function txt(node: TplNode): TplNode {
+  const n = node.def.nodes[node.idx];
+  if (n.kind === 'anchor') throw new Error('[fjs vapor] txt() on an anchor');
+  if (n.kind === 'text') return node;
+  if (!n.inline) throw new Error('[fjs vapor] txt() on an element without inline text');
+  return node;
+}
+
+// ---- element writes ----------------------------------------------------------------
+
+export function setText(node: TplNode, value: unknown): void {
+  const text = value == null ? '' : String(value);
+  const n = node.def.nodes[node.idx];
+  if (n.kind === 'text') be().setText(node.host, text);
+  else be().setElementText(node.host, text);
+}
+
+/** The compiler hands class bindings through as arrays / objects
+ * (`["title", { on }]`) — normalizeClass is what the write needs. */
+export function setClass(node: TplNode, value: unknown): void {
+  be().setClasses(node.host, value == null ? '' : normalizeClass(value as never));
+}
+
+export function setClassName(node: TplNode, value: string): void {
+  setClass(node, value);
+}
+
+/** DOM merge semantics against what this element already has — the applied
+ * record kept per host, so a second writer (component root + fallthrough)
+ * merges instead of replacing. */
+const styleRecords = new WeakMap<object, Record<string, unknown>>();
+
+export function setStyle(node: TplNode, value: Record<string, unknown>): void {
+  const current = styleRecords.get(node.host as object) ?? null;
+  const merged: Record<string, unknown> = { ...current };
+  for (const k in value) {
+    const v = value[k];
+    if (v == null || v === '') delete merged[k];
+    else merged[k] = v;
+  }
+  be().patchStyle(node.host, current, merged);
+  styleRecords.set(node.host as object, merged);
+}
+
+export function setAttr(node: TplNode, key: string, value: unknown): void {
+  be().setAttr(node.host, key, value);
+}
+
+export function setProp(node: TplNode, key: string, value: unknown): void {
+  setAttr(node, key, value);
+}
+
+/** v-show / the `show` helper: one inline-layer key, like runtime-dom's
+ * vShow — everything else stays with the cascade. */
+export function show(node: TplNode, value: unknown): void {
+  const current = styleRecords.get(node.host as object) ?? null;
+  const next = { ...current };
+  if (value) delete next.display;
+  else next.display = 'none';
+  be().patchStyle(node.host, current, next);
+  styleRecords.set(node.host as object, next);
+}
+
+// ---- events --------------------------------------------------------------------------
+
+export function on(node: TplNode | HostNode, event: string, handler: unknown, options?: { once?: boolean }): void {
+  const host = node instanceof TplNode ? node.host : node;
+  const key = toHandlerKey(camelize(event));
+  const wrapped = options?.once
+    ? (...args: unknown[]) => {
+        be().off(host, key);
+        (handler as (...a: unknown[]) => void)(...args);
+      }
+    : handler;
+  be().on(host, key, wrapped);
+}
+
+export function off(node: TplNode | HostNode, event: string): void {
+  const host = node instanceof TplNode ? node.host : node;
+  be().off(host, toHandlerKey(camelize(event)));
+}
+
+export function once(node: TplNode | HostNode, event: string, handler: unknown): void {
+  on(node, event, handler, { once: true });
+}
+
+/** Vapor delegates some events off the document; here every event registers
+ * on its node. Compiled code calls this at module level, so it stays
+ * importable and does nothing. */
+export function delegateEvents(..._names: string[]): void {}
+
+// ---- effects ---------------------------------------------------------------------------
+
+interface QueuedEffect {
+  run: () => void;
+  alive: () => boolean;
+}
+
+const queue: QueuedEffect[] = [];
+let queued = false;
+
+function enqueue(run: () => void, alive: () => boolean): void {
+  queue.push({ run, alive });
+  if (!queued) {
+    queued = true;
+    Promise.resolve().then(() => {
+      queued = false;
+      for (const { run, alive } of queue.splice(0)) {
+        // a scope stopped between trigger and flush must not write into
+        // hosts that no longer exist — onStop() flips `alive`
+        if (alive()) run();
+      }
+    });
+  }
+}
+
+/** Tracks what fn reads and re-runs it — batched over a microtask, the
+ * scheduling runtime-vapor uses — when any of it changes. Runs fn once now;
+ * call inside withScope so the first run (and anything it constructs) lands
+ * in the enclosing scope. Neither 3.5 nor 3.6 exposes ReactiveEffect's
+ * active flag, so liveness goes through onStop. */
+export function renderEffect(fn: () => unknown): void {
+  const scope = currentScope;
+  let alive = true;
+  const runner = effect(fn, {
+    scheduler: () =>
+      enqueue(
+        () => (scope ? withScope(scope, () => runner()) : runner()),
+        () => alive,
+      ),
+    onStop: () => {
+      alive = false;
+    },
+  });
+  void runner;
+}
+
+// ---- component context -------------------------------------------------------------------
+
+/** Where a component resolves its global components (`<van-switch>` compiles
+ * to resolveComponent): the mounting VDOM app's context, handed down by the
+ * compile-time wrapper. A pure Vapor app has none — it imports everything. */
+export interface VaporAppContext {
+  components: Record<string, unknown>;
+}
+let currentAppContext: VaporAppContext | null = null;
+let currentSlots: Slots | null = null;
+let currentScope: EffectScope | null = null;
+
+/** Runs fn with [scope] as the enclosing one. ReactiveEffect registers into
+ * Vue's own activeEffectScope, which only scope.run() sets — so every place
+ * that constructs effects must go through here (createIf / createFor / a
+ * component's setup). Slots ride along: slot content renders while a child
+ * mounts but belongs to the slot functions the parent passed. */
+function withScope<T>(scope: EffectScope | null, fn: () => T, slots: Slots | null = null): T {
+  const savedScope = currentScope;
+  const savedSlots = currentSlots;
+  currentScope = scope;
+  currentSlots = slots ?? savedSlots;
+  try {
+    return scope ? (scope.run(fn) as T) : fn();
+  } finally {
+    currentScope = savedScope;
+    currentSlots = savedSlots;
+  }
+}
+
+export interface VaporComponent {
+  name?: string;
+  props?: Record<string, { default?: unknown }> | string[];
+  setup?: (props: Record<string, unknown>, ctx: { emit: (name: string, ...args: unknown[]) => void; slots: Slots }) => unknown;
+  /** compiler-vapor stamps this on every compiled SFC component */
+  __vapor?: true;
+  __fjsVapor?: true;
+}
+
+export type Slots = Record<string, (...args: unknown[]) => unknown>;
+
+/** Stamps the marker createComponent dispatches on. In-place: the compiled
+ * module holds one object and identity is load-bearing. */
+export function defineVaporComponent<T extends VaporComponent>(options: T): T {
+  options.__fjsVapor = true;
+  return options;
+}
+
+/** The 3.6 SFC compiler stamps `__vapor: true` on the component object
+ * itself; `__fjsVapor` covers hand-written defineVaporComponent options. */
+function isVaporComponent(comp: unknown): comp is VaporComponent {
+  return !!comp && typeof comp === 'object'
+    && ((comp as VaporComponent).__vapor === true || (comp as VaporComponent).__fjsVapor === true);
+}
+
+export function resolveComponent(name: string): unknown {
+  const resolved = currentAppContext?.components[name];
+  if (resolved) return resolved;
+  throw new Error(`[fjs vapor] component <${name}> is not registered on the app — import it and use the imported name instead`);
+}
+
+/** The dynamic-component entry (`<van-switch>` in a Vapor template compiles
+ * to this): same contract as createComponent — resolves the name on the app
+ * context and mounts, consuming the insertion state. Extra positional args
+ * the compiler appends (single-root / once flags, appContext…) are ignored:
+ * the general path below is correct for them. */
+export function createAssetComponent(
+  name: string,
+  rawProps?: Record<string, unknown>,
+  rawSlots?: Slots | (() => unknown),
+): Block {
+  return createComponent(resolveComponent(name), rawProps, rawSlots);
+}
+
+/** Props for a mounted component: getters evaluated on read, so an effect
+ * reading `props.x` tracks whatever the getter read. Event handlers arrive
+ * as plain functions and read as themselves; declared defaults fill in when
+ * no getter exists. */
+function makeProps(getters: Record<string, unknown> | undefined, comp: VaporComponent): Record<string, unknown> {
+  const props: Record<string, unknown> = {};
+  const declared = Array.isArray(comp.props) ? null : comp.props ?? null;
+  const keys = Array.isArray(comp.props) ? comp.props : declared ? Object.keys(declared) : [];
+  const names = new Set([...(getters ? Object.keys(getters) : []), ...keys]);
+  for (const key of names) {
+    const value = getters?.[key];
+    if (typeof value === 'function') {
+      // reactive binding: evaluated on read, so the reader tracks what the
+      // closure read. A function PROP (an event handler, `onClick`) cannot
+      // be told apart from a getter here — both arrive as functions — and
+      // a getter returning the handler works the same for readers.
+      Object.defineProperty(props, key, { get: value as () => unknown, enumerable: true });
+      continue;
+    }
+    // a static value the compiler folded (class="page" on a component tag);
+    // a declared default fills in when the parent passed nothing
+    if (value !== undefined) {
+      props[key] = value;
+      continue;
+    }
+    const fallback = declared?.[key]?.default;
+    props[key] = typeof fallback === 'function' ? (fallback as () => unknown)() : fallback;
+  }
+  return props;
+}
+
+function mountVaporComponent(
+  comp: VaporComponent,
+  rawProps: Record<string, unknown> | undefined,
+  rawSlots: Slots | undefined,
+  appContext: VaporAppContext | null,
+): Block {
+  const scope = new EffectScope();
+  const props = makeProps(rawProps, comp);
+  const slots = rawSlots ?? {};
+  const ctx = {
+    emit: (name: string, ...args: unknown[]) => {
+      const handler = props[toHandlerKey(camelize(name))];
+      if (typeof handler === 'function') (handler as (...a: unknown[]) => void)(...args);
+    },
+    slots,
+  };
+  const savedContext = currentAppContext;
+  currentAppContext = appContext;
+  let block: Block;
+  try {
+    block = withScope(scope, () => blockOf(comp.setup?.(props, ctx) ?? emptyBlock()), slots);
+  } finally {
+    currentAppContext = savedContext;
+  }
+  if (!block.scopes) block.scopes = [];
+  block.scopes.push(scope);
+  return block;
+}
+
+/** The compiler's single-slot optimization passes the default slot as a
+ * BARE FUNCTION; the general form is `{ name: fn }`. Normalize here so every
+ * consumer sees the object. */
+export function normalizeSlots(rawSlots?: Slots | (() => unknown)): Slots {
+  if (rawSlots == null) return {};
+  return typeof rawSlots === 'function' ? { default: rawSlots as () => unknown } : rawSlots;
+}
+
+export function createComponent(
+  comp: unknown,
+  rawProps?: Record<string, unknown>,
+  rawSlots?: Slots | (() => unknown),
+): Block {
+  const slots = normalizeSlots(rawSlots);
+  const { parent, anchor } = takeInsertionState();
+  if (isVaporComponent(comp)) {
+    const block = mountVaporComponent(comp, rawProps, slots, currentAppContext);
+    if (parent) insertBlock(block, parent, anchor);
+    return block;
+  }
+  // a VDOM component (vant, or any render-function component) mounts through
+  // the backend's own renderer and lands here as a block — specs/161 §3.2
+  const props: Record<string, unknown> = {};
+  for (const k in rawProps ?? {}) {
+    const v = (rawProps as Record<string, unknown>)[k];
+    if (typeof v === 'function') Object.defineProperty(props, k, { get: v as () => unknown, enumerable: true });
+    else props[k] = v;
+  }
+  return be().mountVdomComponent(comp as Record<string, unknown>, props, slots, parent, anchor);
+}
+
+export function createComponentWithFallback(
+  comp: unknown,
+  rawProps?: Record<string, unknown>,
+  rawSlots?: Slots | (() => unknown),
+): Block {
+  return createComponent(typeof comp === 'string' ? resolveComponent(comp) : comp, rawProps, rawSlots);
+}
+
+export function createDynamicComponent(
+  getComp: () => unknown,
+  rawProps?: Record<string, unknown>,
+  rawSlots?: Slots,
+): Block {
+  // evaluated once: a true dynamic swap needs keyed-fragment plumbing that
+  // no page in this repo uses yet
+  return createComponentWithFallback(getComp(), rawProps, rawSlots);
+}
+
+// ---- v-if ---------------------------------------------------------------------------
+
+/** A v-if position: an invisible anchor holds the spot; each branch renders
+ * into a fresh scope whose effects die with the branch. `flags` carry the
+ * compiler's shape / keyed-index / once hints — the general path is correct
+ * for all of them, so they are not read. */
+export function createIf(condition: () => unknown, positive?: () => unknown, negative?: () => unknown, flags = 1): Block {
+  void flags;
+  const { parent, anchor: before } = takeInsertionState();
+  const anchor = be().createAnchor('if');
+  if (parent) be().attach(anchor, parent, before);
+  const frag: Block & { nodes: HostNode[]; scopes: EffectScope[]; cleanups: (() => void)[] } = { nodes: [anchor], scopes: [], cleanups: [] };
+  let current: { scope: EffectScope; cleanups: (() => void)[] } | null = null;
+  const teardown = (): void => {
+    for (let i = frag.nodes.length - 1; i >= 1; i--) be().remove(frag.nodes[i]);
+    frag.nodes.length = 1;
+    if (current) {
+      current.scope.stop();
+      for (const cleanup of current.cleanups) cleanup();
+      current = null;
+      frag.scopes.length = 0;
+    }
+  };
+  const owner = currentScope;
+  withScope(
+    owner,
+    () => {
+      renderEffect(() => {
+        teardown();
+        const branchScope = new EffectScope();
+        let branch: Block;
+        try {
+          branch = withScope(branchScope, () => blockOf(condition() ? positive?.() : negative?.()));
+        } catch (e) {
+          branchScope.stop();
+          throw e;
+        }
+        if (parent) insertBlock(branch, parent, anchor);
+        frag.nodes.push(...branch.nodes);
+        for (const scope of branch.scopes ?? []) frag.scopes.push(scope);
+        frag.scopes.push(branchScope);
+        current = { scope: branchScope, cleanups: branch.cleanups ? [...branch.cleanups] : [] };
+      });
+    },
+  );
+  // an enclosing removal stops the branch scope and runs its cleanups after
+  // the hosts are gone (removeBlock orders nodes, scopes, then cleanups)
+  frag.cleanups.push(() => {
+    current?.scope.stop();
+    for (const cleanup of current?.cleanups ?? []) cleanup();
+  });
+  return frag;
+}
+
+// ---- v-for ----------------------------------------------------------------------------
+
+const FAST_REMOVE = 1;
+
+interface ForItem {
+  key: unknown;
+  item: { value: unknown };
+  keyRef: { value: unknown };
+  scope: EffectScope;
+  block: Block;
+}
+
+/** v-for over a count or an array. Items mount before a private anchor in
+ * item order; a keyed diff reorders with plain inserts (attach is a move for
+ * already-attached hosts) and drops go through the backend's subtree removal.
+ * FAST_REMOVE only says the compiler proved items are single nodes — the
+ * general removal is correct either way. */
+export function createFor(
+  source: () => number | unknown[],
+  getItem: (item: { value: unknown }, key: { value: unknown }) => unknown,
+  getKey?: (item: unknown, index: number) => unknown,
+  flags = 0,
+): Block {
+  void flags;
+  const { parent, anchor: before } = takeInsertionState();
+  const anchor = be().createAnchor('for');
+  if (parent) be().attach(anchor, parent, before);
+  const listBlock: Block & { nodes: HostNode[]; scopes: EffectScope[]; cleanups: (() => void)[] } = { nodes: [anchor], scopes: [], cleanups: [] };
+  let items: ForItem[] = [];
+
+  const buildItem = (value: unknown, key: unknown): ForItem => {
+    const scope = new EffectScope();
+    const item = shallowRef(value);
+    const keyRef = shallowRef(key);
+    const block = withScope(scope, () => blockOf(getItem(item, keyRef)));
+    if (!block.scopes) block.scopes = [];
+    block.scopes.push(scope);
+    if (parent) insertBlock(block, parent, anchor);
+    return { key, item, keyRef, scope, block };
+  };
+  const dropItem = (it: ForItem): void => {
+    removeBlock(it.block);
+    it.scope.stop();
+  };
+  const syncScopes = (): void => {
+    listBlock.scopes = items.map((it) => it.scope);
+  };
+
+  const owner = currentScope;
+  withScope(
+    owner,
+    () => {
+      renderEffect(() => {
+          const src = source();
+          const count = typeof src === 'number' ? src : src.length;
+          const value = (i: number): unknown => (typeof src === 'number' ? i : src[i]);
+
+          if (getKey == null) {
+            // non-keyed: the same-length prefix updates in place (the
+            // item/key writes trigger each item's own effects); grow and
+            // shrink at the tail
+            let i = 0;
+            for (; i < Math.min(items.length, count); i++) {
+              items[i].item.value = value(i);
+              items[i].keyRef.value = i;
+            }
+            for (; i < count; i++) items.push(buildItem(value(i), i));
+            for (let k = items.length - 1; k >= count; k--) dropItem(items[k]);
+            if (items.length > count) items.length = count;
+            syncScopes();
+            return;
+          }
+
+          // keyed: match by key, then walk the wanted order backwards
+          // re-inserting each item before the right cursor — every host ends
+          // up in item order
+          const kept = new Map<unknown, ForItem>();
+          for (const it of items) kept.set(it.key, it);
+          const wanted: ForItem[] = [];
+          const used = new Set<unknown>();
+          for (let i = 0; i < count; i++) {
+            const key = getKey(value(i), i);
+            const existing = kept.get(key);
+            if (existing && !used.has(key)) {
+              used.add(key);
+              existing.item.value = value(i);
+              existing.keyRef.value = key;
+              wanted.push(existing);
+            } else {
+              wanted.push(buildItem(value(i), key));
+            }
+          }
+          for (const it of items) {
+            if (!used.has(it.key)) dropItem(it);
+          }
+          items = wanted;
+          syncScopes();
+          let cursor: HostNode | null = anchor;
+          for (let i = items.length - 1; i >= 0; i--) {
+            const block = items[i].block;
+            for (let k = block.nodes.length - 1; k >= 0; k--) {
+              be().attach(block.nodes[k], parent as HostNode, cursor);
+            }
+            cursor = block.nodes[0];
+          }
+      });
+    },
+  );
+  return listBlock;
+}
+
+export function createForSlots(
+  _rawSource: unknown,
+  _renderSlot: unknown,
+  _getName: unknown,
+  _getKey: unknown,
+): never {
+  throw new Error('[fjs vapor] dynamic slot lists (createForSlots) are not supported');
+}
+
+// ---- slots ------------------------------------------------------------------------------
+
+/** A slot position: renders the slot the parent passed, or the fallback
+ * block. Slot content belongs to the CHILD's scope (it dies with the child)
+ * but reads the parent's reactive state through the slot closure. */
+export function createSlot(name = 'default', _rawProps?: unknown, fallback?: () => unknown): Block {
+  const { parent, anchor } = takeInsertionState();
+  const render = currentSlots?.[name] ?? fallback;
+  if (!render) {
+    if (!parent) return emptyBlock();
+    const anchorHost = be().createAnchor('slot');
+    if (parent) be().attach(anchorHost, parent, anchor);
+    return { nodes: [anchorHost] };
+  }
+  const block = blockOf(render());
+  if (parent) insertBlock(block, parent, anchor);
+  return block;
+}
+
+export function useSlots(): Slots {
+  return currentSlots ?? {};
+}
+
+// ---- app mount ---------------------------------------------------------------------------
+
+/** Mounts a Vapor component as the root of a Vapor app (bench, tests): the
+ * block lands in [container]; unmount tears everything down. */
+export function createVaporApp(comp: VaporComponent, appContext: VaporAppContext | null = null): {
+  mount: (container: HostNode) => void;
+  unmount: () => void;
+} {
+  const scope = new EffectScope();
+  const savedContext = currentAppContext;
+  currentAppContext = appContext;
+  let block: Block | null = null;
+  try {
+    block = withScope(scope, () => blockOf(comp.setup?.({}, { emit: () => {}, slots: {} })));
+  } finally {
+    currentAppContext = savedContext;
+  }
+  return {
+    mount: (container: HostNode) => insertBlock(block as Block, container, null),
+    unmount: () => {
+      if (block) removeBlock(block);
+      scope.stop();
+      block = null;
+    },
+  };
+}
+
+/** The compile-time wrapper's entry (VDOM page embedding a Vapor component,
+ * specs/161 §3.2): the block is built but NOT inserted — the wrapper's
+ * placeholder host adopts it, and unmount() tears it down. */
+export function mountVaporComponentForAdopt(
+  comp: VaporComponent,
+  rawProps: Record<string, unknown> | undefined,
+  appContext: VaporAppContext | null,
+): { block: Block; unmount: () => void } {
+  const block = mountVaporComponent(comp, rawProps, undefined, appContext);
+  return {
+    block,
+    unmount: () => removeBlock(block),
+  };
+}
+
+/** Stops a block's scopes and cleanups WITHOUT removing its hosts — the
+ * adopt paths (VDOM owns the placeholder host) dispose this way. */
+export function disposeBlock(block: Block): void {
+  for (const scope of block.scopes ?? []) scope.stop();
+  for (const cleanup of block.cleanups ?? []) cleanup();
+}

@@ -1,8 +1,12 @@
 // Compiles an SFC string in the test, the way the CLI does for Flutter
-// builds (vue-plugin.ts): VDOM with hoistStatic off, or Vapor (specs/148).
+// builds (vue-plugin.ts): VDOM with hoistStatic off, or Vapor (specs/161).
 // The module's `import { … } from 'vue'` lines become a destructure of the
-// runtime object the test passes in.
+// runtime object the test passes in. The VDOM path compiles with the
+// workspace vue (3.5, what the runtime ships against); the Vapor path needs
+// the 3.6 compiler — only @vue/compiler-sfc knows `<script setup vapor>` —
+// which the runtime carries as a build-time devDependency.
 import { compileScript, parse } from 'vue/compiler-sfc';
+import { compileScript as compileScriptV36, parse as parseV36 } from '@vue/compiler-sfc';
 
 const FJS_TAGS = new Set(['view', 'text', 'image', 'button', 'input', 'scroll-view', 'swiper', 'swiper-item']);
 
@@ -18,12 +22,13 @@ export function compileSfc(
   source: string,
   { vapor, runtime, imports = {} }: { vapor: boolean; runtime: Record<string, unknown>; imports?: Record<string, unknown> },
 ): CompiledSfc {
+  const compiler = vapor ? { parse: parseV36, compileScript: compileScriptV36 } : { parse, compileScript };
   const text = vapor ? source.replace('<script setup', '<script setup vapor') : source;
-  const { descriptor, errors } = parse(text, { filename: `t${seq}.vue` });
+  const { descriptor, errors } = compiler.parse(text, { filename: `t${seq}.vue` });
   if (errors.length) throw errors[0];
   const scopeId = `data-v-t${seq++}`;
   const compilerOptions = { isNativeTag: (t: string) => FJS_TAGS.has(t), hoistStatic: false };
-  const { content } = compileScript(descriptor, { id: scopeId, inlineTemplate: true, templateOptions: { compilerOptions } });
+  const { content } = compiler.compileScript(descriptor, { id: scopeId, inlineTemplate: true, templateOptions: { compilerOptions } });
   const body = content
     .replace(/import\s*\{([^}]*)\}\s*from\s*['"]vue['"];?/g, (_, spec: string) => `const {${spec.replace(/\s+as\s+/g, ': ')}} = __vue;`)
     .replace(/import\s+(\w+)\s+from\s*['"]([^'"]+)['"];?/g, (_, name: string, from: string) => `const ${name} = __imports[${JSON.stringify(from)}];`)

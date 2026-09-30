@@ -16,7 +16,7 @@ import {
   writeModuleTypes,
   type FjsModule,
 } from './project/modules.js';
-import { isNativeTagFor, prepareVaporSfcSource, runtimeDir } from './bundler/vue-plugin.js';
+import { isNativeTagFor, isVaporSfcFile, runtimeDir, vaporWrapperModule } from './bundler/vue-plugin.js';
 import { readConfig } from './project/config.js';
 import { swiperChildrenTransform } from './template/swiper-children.js';
 import { copyLocalDir, copyModuleDataForWeb, HTML_DIR } from './bundler/build.js';
@@ -291,9 +291,20 @@ export function fjs(): VitePlugin {
       if (id.startsWith('fjs/data/') && importer) {
         return resolveModuleData(root, modules, importer, id);
       }
+      // a VDOM module importing a Vapor SFC gets the compile-time wrapper
+      // (specs/161 §3.2): the \0 prefix keeps plugin-vue from touching it
+      if (importer && id.startsWith('.') && id.endsWith('.vue')) {
+        const file = path.resolve(path.dirname(importer.split('?')[0]), id.split('?')[0]);
+        if (fs.existsSync(file) && isVaporSfcFile(file, readConfig(root).vapor?.libs !== false)) {
+          return '\0fjs-vapor-wrapper:' + file;
+        }
+      }
       return null;
     },
     load(id) {
+      if (id.startsWith('\0fjs-vapor-wrapper:')) {
+        return vaporWrapperModule(id.slice('\0fjs-vapor-wrapper:'.length));
+      }
       if (VUE_ROUTE_BLOCK_RE.test(id)) return 'export default {}';
       if (id === VIRTUAL_PLUGINS) {
         return pluginTableSource(pluginsFor(root, 'web'), scanModules(root), 'web');
@@ -313,10 +324,6 @@ export function fjs(): VitePlugin {
     // with that rule, and NutUI's <view>s rely on it. A raw scss block is
     // skipped for the same reason: its nesting would fool the rule scanner.
     transform(code, id) {
-      // Vapor SFCs (specs/148): see prepareVaporSfcSource
-      if (id.endsWith('.vue')) {
-        return prepareVaporSfcSource(code, id, readConfig(root).vapor?.libs !== false);
-      }
       if (VUE_STYLE_BLOCK_RE.test(id)) {
         return rewriteFjsCss(code, { flexDefault: !/[&?]lang\.(?!css\b)/.test(id) });
       }

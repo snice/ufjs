@@ -145,6 +145,25 @@ export function vaporCompilerOptions({
   return { isNativeTag: (tag: string) => isNativeTagFor(tag, { web, moduleTags }) };
 }
 
+/** Parse-time options for EVERY SFC parse in the esbuild build. tagType —
+ * element vs component — is decided by the PARSER (sfc.parse's
+ * templateParseOptions), not by the later template compile: compiler-sfc's
+ * compileScript only forwards templateOptions.compilerOptions to the vapor
+ * transform, which cannot retroactively re-tag. Without this, an fjs tag
+ * with only component children (`<scroll-view>` around a van-* row) parses
+ * as a component and the emitted code resolves it on the app context at
+ * runtime — where nothing registers built-in tags. Passing it for VDOM SFCs
+ * too is harmless: the same predicate decides their template compile. */
+export function sfcParseOptions({
+  web = false,
+  moduleTags = new Set<string>(),
+}: {
+  web?: boolean;
+  moduleTags?: Set<string>;
+} = {}): Record<string, unknown> {
+  return { templateParseOptions: { isNativeTag: (tag: string) => isNativeTagFor(tag, { web, moduleTags }) } };
+}
+
 /** A library's SFC (under node_modules) is compiled as Vapor when all it
  * has is `<script setup>` — the only script form Vapor supports — unless
  * the app sets `fjs.vapor.libs: false` (specs/148). */
@@ -156,25 +175,80 @@ export function isAutoVapor(
   return libs && file.split(path.sep).includes('node_modules') && !!descriptor.scriptSetup && !descriptor.script;
 }
 
-/** The Vite (web dev) side of the same rules: plugin-vue compiles the SFC,
- * so the source itself is edited before it gets there — `vapor` added to a
- * library's `<script setup>`, and a module-level enableVapor() call (as the
- * esbuild build appends) placed in a plain `<script>`, the only part of a
- * Vapor SFC that runs at module evaluation. Returns null for a VDOM SFC. */
-export function prepareVaporSfcSource(source: string, file: string, libs: boolean): string | null {
-  let { descriptor } = parse(source, { filename: path.basename(file) });
-  if (!descriptor.vapor) {
-    if (!isAutoVapor(file, descriptor, libs)) return null;
-    source = source.replace(/<script(\s[^>]*)?\ssetup\b/, (m) => `${m} vapor`);
-    ({ descriptor } = parse(source, { filename: path.basename(file) }));
+const vaporSfcCache = new Map<string, boolean>();
+
+/** Whether [file] is a Vapor SFC: an explicit `<script setup vapor>`, or —
+ * with fjs.vapor.libs on — a node_modules SFC with only `<script setup>`
+ * (specs/148's auto-vapor, judged with the compiler's parse). Resolution
+ * time, so a VDOM module importing a Vapor component can be redirected to
+ * its wrapper before anything compiles. */
+export function isVaporSfcFile(file: string, libs: boolean): boolean {
+  const cached = vaporSfcCache.get(file);
+  if (cached !== undefined) return cached;
+  let hit = false;
+  try {
+    const { descriptor } = parse(fs.readFileSync(file, 'utf8'), { filename: path.basename(file), ...sfcParseOptions() });
+    hit = descriptor.vapor === true || isAutoVapor(file, descriptor, libs);
+  } catch {
+    hit = false;
   }
-  const enable = `import { enableVapor as __fjsEnableVapor } from 'fjs/vapor';\n__fjsEnableVapor();\n`;
-  if (descriptor.script) {
-    const at = descriptor.script.loc.start.offset;
-    return source.slice(0, at) + '\n' + enable + source.slice(at);
-  }
-  const lang = descriptor.scriptSetup?.lang;
-  return `<script${lang ? ` lang="${lang}"` : ''}>\n${enable}</script>\n` + source;
+  vaporSfcCache.set(file, hit);
+  return hit;
+}
+
+/** The wrapper around a Vapor component imported from a VDOM module
+ * (specs/161 §3.2): runtime-core 3.5 has no Vapor interop interface, so the
+ * crossing is compile-time. The wrapper mounts the block via fjs/vapor's
+ * adoption and renders an `fjs-vapor-root` placeholder — intercepted by the
+ * renderer's adopt hook on Flutter, `display: contents` on web, so the
+ * Vapor nodes join the VDOM tree as ordinary hosts. props / attrs and
+ * `on*` listeners flow through as getters; `v-model` rides along as
+ * `modelValue` + `onUpdate:modelValue`. The generated code is identical on
+ * both platforms. */
+export function vaporWrapperModule(file: string): string {
+  return `
+import { adoptVaporComponent as __adopt, mountAdoptNodes as __mountAdopt, releaseAdopt as __release } from 'fjs/vapor';
+import { defineComponent as __dc, getCurrentInstance as __gci, h as __h, onBeforeUnmount as __obu, onMounted as __om } from 'vue';
+import __vapor from ${JSON.stringify(file)};
+export default __dc({
+  name: __vapor.name ? __vapor.name + 'Wrapper' : undefined,
+  props: __vapor.props,
+  setup(__props, { attrs: __attrs }) {
+    const __getters = {};
+    for (const __k of new Set([...Object.keys(__props), ...Object.keys(__attrs)])) {
+      __getters[__k] = () => __props[__k] ?? __attrs[__k];
+    }
+    const __a = __adopt(__vapor, __getters, __gci()?.appContext ?? null);
+    __om(() => __mountAdopt(__a.id, __gci()));
+    __obu(() => __release(__a.id));
+    return () => __h('fjs-vapor-root', { 'data-fjs-vapor': String(__a.id), style: { display: 'contents' } });
+  },
+});
+`;
+}
+
+const VAPOR_WRAPPER_NS = 'fjs-vapor-wrapper';
+
+/** esbuild side of the wrapper: a `.vue` import that resolves to a Vapor
+ * SFC lands on a virtual wrapper module instead of the SFC itself. */
+export function vaporWrapperPlugin(): Plugin {
+  return {
+    name: 'fjs-vapor-wrapper',
+    setup(build) {
+      const libs = readConfig(build.initialOptions.absWorkingDir ?? process.cwd()).vapor?.libs !== false;
+      build.onResolve({ filter: /\.vue$/ }, (args) => {
+        if (!args.path.startsWith('.') || !args.importer) return undefined;
+        const file = path.resolve(path.dirname(args.importer), args.path);
+        if (!fs.existsSync(file)) return undefined;
+        if (!isVaporSfcFile(file, libs)) return undefined;
+        return { path: VAPOR_WRAPPER_NS + ':' + file, namespace: VAPOR_WRAPPER_NS };
+      });
+      build.onLoad({ filter: /.*/, namespace: VAPOR_WRAPPER_NS }, (args) => {
+        const file = args.path.slice(VAPOR_WRAPPER_NS.length + 1);
+        return { contents: vaporWrapperModule(file), resolveDir: path.dirname(file), loader: 'js' };
+      });
+    },
+  };
 }
 
 function vaporLibs(build: { initialOptions: { absWorkingDir?: string } }): boolean {
@@ -235,7 +309,7 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
       build.onLoad({ filter: /\.vue$/, namespace: 'file' }, async (args) => {
         const source = fs.readFileSync(args.path, 'utf8');
         const filename = path.basename(args.path);
-        let { descriptor, errors } = parse(source, { filename });
+        let { descriptor, errors } = parse(source, { filename, ...sfcParseOptions({ web, moduleTags }) });
         if (errors.length) {
           return { errors: errors.map((e) => ({ text: String(e.message ?? e) })) };
         }
@@ -244,7 +318,7 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
         // than flagged on the descriptor: compiler-sfc caches descriptors by
         // source, and the flag would leak into anything sharing it.
         if (!descriptor.vapor && isAutoVapor(args.path, descriptor, vaporLibs(build))) {
-          ({ descriptor, errors } = parse(source.replace(/<script(\s[^>]*)?\ssetup\b/, (m) => `${m} vapor`), { filename }));
+          ({ descriptor, errors } = parse(source.replace(/<script(\s[^>]*)?\ssetup\b/, (m) => `${m} vapor`), { filename, ...sfcParseOptions({ web, moduleTags }) }));
         }
         const vapor = descriptor.vapor === true;
 
@@ -270,13 +344,14 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
             templateOptions: { compilerOptions: vaporCompilerOptions({ web, moduleTags }) },
           });
           // The helpers a Vapor module imports — generated and the page's
-          // own — come from `fjs/vapor`: the 'vue' shim plus runtime-vapor.
-          // The shim itself leaves runtime-vapor out, so a `--pages` build's
-          // shared chunk (which exports the whole 'vue' namespace) does not
-          // carry it for apps without a Vapor component.
-          scriptCode = web
-            ? compiled.content
-            : compiled.content.replace(/(\bfrom\s*)(['"])vue\2/g, "$1'fjs/vapor'");
+          // own — come from `fjs/vapor` (specs/161): the own runtime over the
+          // element API on Flutter and over the DOM on web, plus the 'vue'
+          // shim's exports. The web build used to keep real vue here for
+          // runtime-vapor; with the own runtime both ends rewrite alike. The
+          // entry leaves runtime-core's full export surface to the shim, so
+          // a `--pages` build's shared chunk does not carry the vapor
+          // runtime for apps without a Vapor component.
+          scriptCode = compiled.content.replace(/(\bfrom\s*)(['"])vue\2/g, "$1'fjs/vapor'");
           scriptMappings = compiled.map?.mappings;
         } else if (descriptor.script || descriptor.scriptSetup) {
           const compiled = compileScript(descriptor, { id });
@@ -399,12 +474,6 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
         if (styles.some((s) => s.scoped)) {
           code += `\n__sfc__.__scopeId = ${JSON.stringify(id)};`;
         }
-        if (vapor) {
-          // installs the VDOM ⇄ Vapor interop on the app(s) the first time a
-          // Vapor component loads (fjs-runtime src/vapor/index.ts, web.ts)
-          code += `\nimport { enableVapor as __fjsEnableVapor } from 'fjs/vapor';\n__fjsEnableVapor();`;
-        }
-
         // esbuild 0.23's onLoad cannot take a `map` (the flag is rejected).
         // The compiled module is what esbuild's own map calls "original";
         // rememberSfcMap lets stampDebuggerMap rebase those lines onto the
@@ -467,35 +536,15 @@ export function vuePinPlugin(): Plugin {
     setup(build) {
       const dist = (pkg: string, file: string) =>
         resolveDist(pkg, file);
-      const vaporDist = dist('@vue/runtime-vapor', 'runtime-vapor.esm-bundler.js');
       const pinned: Record<string, string> = {
         vue: path.join(runtimeDir(), 'src', 'vue', 'vue-shim.ts'),
         '@vue/runtime-core': dist('@vue/runtime-core', 'runtime-core.esm-bundler.js'),
         '@vue/reactivity': dist('@vue/reactivity', 'reactivity.esm-bundler.js'),
         '@vue/shared': dist('@vue/shared', 'shared.esm-bundler.js'),
-        // Vapor (specs/148): runtime-vapor is the real one; the runtime-dom
-        // it imports is the fjs shim (runtime-core + helpers over the Vapor
-        // DOM shell) — the real one needs a global `document` at load
-        '@vue/runtime-vapor': vaporDist,
-        '@vue/runtime-dom': path.join(runtimeDir(), 'src', 'vue', 'runtime-dom-shim.ts'),
       };
-      build.onResolve({ filter: /^(vue|@vue\/(runtime-core|reactivity|shared|runtime-vapor|runtime-dom))$/ }, (args) => {
+      build.onResolve({ filter: /^(vue|@vue\/(runtime-core|reactivity|shared))$/ }, (args) => {
         const target = pinned[args.path];
         return target ? { path: target } : undefined;
-      });
-      // runtime-vapor reads `document`, `Node`, `Element`… as globals. They
-      // are the shell's classes, imported into this one module rather than
-      // installed on globalThis, where they would flip every library that
-      // checks `typeof document` onto its browser path.
-      const shell = path.join(runtimeDir(), 'src', 'vapor', 'dom.ts');
-      build.onLoad({ filter: /runtime-vapor\.esm-bundler\.js$/ }, (args) => {
-        if (args.path !== vaporDist) return undefined;
-        return {
-          contents: `import { document, Node, Element, Text, Comment, HTMLElement, SVGElement, DocumentFragment } from ${JSON.stringify(shell)};\n`
-            + fs.readFileSync(args.path, 'utf8'),
-          resolveDir: path.dirname(args.path),
-          loader: 'js',
-        };
       });
     },
   };

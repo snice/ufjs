@@ -21,3 +21,4 @@ export { useCssVars } from './css-vars';
 export { measureTextBlock } from '../ui/geometry';
 export type { Element } from '../ui/element';
 export type { GlobalPointerDown } from './renderer';
+export { childElementIds, elementTag } from './renderer';

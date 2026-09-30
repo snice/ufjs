@@ -239,25 +239,22 @@ importers:
   packages/fjs-runtime:
     dependencies:
       '@vue/reactivity':
-        specifier: 3.6.0-rc.9
-        version: 3.6.0-rc.9
+        specifier: ^3.5.42
+        version: 3.5.42
       '@vue/runtime-core':
-        specifier: 3.6.0-rc.9
-        version: 3.6.0-rc.9
-      '@vue/runtime-vapor':
-        specifier: 3.6.0-rc.9
-        version: 3.6.0-rc.9(@vue/runtime-dom@3.6.0-rc.9)
+        specifier: ^3.5.42
+        version: 3.5.42
       '@vue/shared':
-        specifier: 3.6.0-rc.9
-        version: 3.6.0-rc.9
+        specifier: ^3.5.42
+        version: 3.5.42
       vue:
-        specifier: 3.6.0-rc.9
-        version: 3.6.0-rc.9(typescript@5.9.3)
+        specifier: ^3.5.42
+        version: 3.5.42(typescript@5.9.3)
       vue-router:
         specifier: ^4.5.0
-        version: 4.6.4(vue@3.6.0-rc.9(typescript@5.9.3))
+        version: 4.6.4(vue@3.5.42(typescript@5.9.3))
     devDependencies:
-      '@vue/runtime-dom':
+      '@vue/compiler-sfc':
         specifier: 3.6.0-rc.9
         version: 3.6.0-rc.9
       happy-dom:
@@ -5524,11 +5521,6 @@ snapshots:
     dependencies:
       '@vue/devtools-api': 6.6.4
       vue: 3.5.42(typescript@7.0.2)
-
-  vue-router@4.6.4(vue@3.6.0-rc.9(typescript@5.9.3)):
-    dependencies:
-      '@vue/devtools-api': 6.6.4
-      vue: 3.6.0-rc.9(typescript@5.9.3)
 
   vue-tsc@3.3.11(typescript@5.9.3):
     dependencies:

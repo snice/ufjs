@@ -765,6 +765,11 @@ iPhone 12，`fjs run ios --profile`：
 | 显示，153 之后（VDOM） | **92–93 ms** | 3.5–3.9 ms | 0.5–0.9 | 0 | 88 | 215 ms |
 | 显示，153 之后（Vapor） | 121–144 ms | 3.0–3.3 ms | 0.5–0.6 | 0 | 117–140 | 248–265 ms |
 | 隐藏，153 之后（VDOM / Vapor） | 46 / 42–55 ms | 1.6 ms | 0 | 0 | 45 / 41–53 | 82–94 ms |
+| 显示，158 之后（VDOM） | **87.9–91.4 ms** | 3.1–4.1 ms | 0.5–1.0 | 0 | 83.8–87.5 | 181.7–198.6 ms |
+| 显示，158 之后（Vapor） | 119.5–122.7 ms | 3.0–3.3 ms | 0.5–0.7 | 0 | 115.6–119 | 215.1–215.7 ms |
+| 隐藏，158 之后（VDOM / Vapor） | 21–36 / 46.2–55.1 ms | 1.3–2.1 ms | 0 | 0 | — | 65.6–98.5 ms |
+
+（「158 之后」= 2026-09-30 复测，specs/149–158 全部落地后，同机多次取样；离群值不计入区间。）
 
 **JS 之后的上屏链路**（specs/154，`packages/flutter_fjs/tool/frame-timeline.mjs` 录 VM timeline）：显示那一帧
 UI 线程 99.6 ms，其中 LAYOUT 89 ms = 布局期 build 30（每个 flex 容器的子节点在 `LayoutBuilder` 里建，一格一次）
@@ -779,7 +784,17 @@ specs/155 的文字引用，真机 VDOM 显示 JS 77–89 ms、上屏 181–199 
 30 → 23 ms；上屏 182 ms。
 
 153 之后改 1 / 200 / 2000 格（JS）：VDOM 32 / 45 / 76 ms，Vapor 4.7–5.9 / 16.9 / 70 ms（2026-09-29，
-样式引擎已在 libfjs-style，specs/150–153）。
+样式引擎已在 libfjs-style，specs/150–153）。2026-09-30 复测：VDOM 30.8–61.4 / 56.6–65.2 / 63.2 ms，
+Vapor 2.4–2.9 / 18.3–23.3 / 81.9 ms（单次）——改 1 / 200 格 Vapor 领先一个数量级，改 2000 格两边都进
+设备 GC 噪声区，样本不足以分先后。
+
+**显示帧的两半（2026-09-30，frame-timeline）**：JS 之前 VDOM 88 / Vapor 120 ms；JS 之后那一帧
+VDOM 83.6 / **Vapor 82.8 ms——Flutter 侧两条路径完全一致**（镜像树同构），构成 BUILD ~46–50
+（内嵌 Scavenge 18.7–22.1，扣除后 build ~24–32）+ 纯布局 24.5–28.3 + PAINT ~6.5；隐藏帧
+22.7–24.7 ms（FINALIZE TREE ~15）；raster 最长 17.0 ms（一个 vsync），不是瓶颈。与 specs/157 的
+80.5 ms 在噪声内。**渲染瓶颈没有单项大头：build、GC、纯布局各约 25 ms，继续压要三线并进。**
+Vapor 挂载比 VDOM 慢的 32 ms 全在 JS（拆账见 specs/148 §8.3：外壳对象 ~10、runtime-vapor
+per-item 块/scope ~15、逐格 renderEffect 比克隆块的 text 贵一倍 ~8）。
 
 uni-app x 官方 iOS 数字：iPhone SE2 vapor 160.6 ms / UIKit 328.75 ms（终点是渲染指令交给系统，
 不含最后一帧 GPU；上表的「上屏」多含约一帧）。
@@ -806,7 +821,17 @@ uni-app x 官方 iOS 数字：iPhone SE2 vapor 160.6 ms / UIKit 328.75 ms（终�
 3.4 ms + recompute 自身 2.8 ms 的地板，开了结构规则再多约 11 ms 的首尾位 / 邻居签名计算；Vue + 元素层
 约 115 ms。op 编码是下一个方向，没有立项。
 
-**Vue Vapor 试过，不划算（specs/148 阶段 0）**：`examples/bench/vapor/` 用 Vue 3.6.0-rc.9，把同一个
+**Vue Vapor：自研运行时（specs/161，2026-09-30 起）**：`fjs/vapor` 是 fjs 自己的实现
+（runtime.ts 直连元素 API，Flutter 走 libfjs-style 原生克隆、web 走 DOM 后端），运行时回
+`vue@^3.5` stable，编译器（构建期依赖）仍是 3.6。specs/148 的官方 runtime-vapor + DOM 外壳
+已删除。flat-4050 离线（TS 引擎模式）：VDOM 挂载 18.0 / 自研 Vapor 46.5 ms；改 1 格
+11.7 → **0.0 ms**、200 格 12.7 → **1.9 ms**、2000 格 21.3 → **19.1 ms**。真机（iPhone 12，
+profile）：显示 JS 129.3–154.5 ms（官方 runtime-vapor 同口径 119.5–122.7——per-item 块记账
+省不掉，详见 specs/161 §8），隐藏 21.3 ms（官方 46–55），改 1 格 **1.0–5.8 ms**（VDOM
+41.2–56.4）、200 格 **8.9–26.1**、2000 格 **59.4**。**Vapor 的价值在更新路径，挂载慢是已知
+取舍**（版本自由换的）。
+
+**官方 runtime-vapor 的历史数字（specs/148 阶段 0，已被上者取代）**：`examples/bench/vapor/` 用 Vue 3.6.0-rc.9，把同一个
 `Flat4050.vue` 分别以 VDOM（fjs 渲染器）和 Vapor（官方 runtime-vapor 跑在一层落到同一套 nodeOps 的 DOM 外壳上）
 挂载，同一份 runtime-core、同一个样式引擎。离线挂载 VDOM **65.5 ms**、Vapor **81.5 ms**，卸载 8.2 / 9.5 ms。
 逐段计时：两边的宿主工作（建元素、scope、class、insert、文本）都约 32 ms，flush 都约 18.5 ms；VDOM 的
@@ -898,8 +923,11 @@ specs/146 / 147 / 149 连续三轮之后，样式引擎在 JS 里每元素仍约
 
 ## 已知热点（优化路线）
 
-按 2026-09-03 那轮真机/模拟器实测重排过：
+按 2026-09-03 那轮真机/模拟器实测重排过（**2026-09-30 增补**见第一条）：
 
+- **4050 显示帧，2026-09-30 复盘**：JS 段 VDOM 88 / Vapor 120 ms；之后的一帧 build（扣 GC）
+  ~25–32 + GC ~19–22 + 纯布局 ~25–28，三块均衡无单项大头，raster 一帧封顶。Vapor 与 VDOM 的
+  Flutter 侧完全相同，差值全在 JS（specs/148 §8.3）。
 - **第三方组件库页面的首开**：CSS 规则全集常驻（demo 注册 639 条）× 每个
   新元素签名的线性扫，vant 页首开 200–400 ms，且卸载即逐出缓存、重开重付。
   **2026-09 已修**：specs/075 索引把匹配从 ~240 ms 压到 7.2 ms；specs/076
