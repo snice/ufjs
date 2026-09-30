@@ -209,7 +209,7 @@ export function isVaporSfcFile(file: string, libs: boolean): boolean {
 export function vaporWrapperModule(file: string): string {
   return `
 import { adoptVaporComponent as __adopt, mountAdoptNodes as __mountAdopt, releaseAdopt as __release } from 'fjs/vapor';
-import { defineComponent as __dc, getCurrentInstance as __gci, h as __h, onBeforeUnmount as __obu, onMounted as __om } from 'vue';
+import { defineComponent as __dc, getCurrentInstance as __gci, h as __h, onBeforeUnmount as __obu } from 'vue';
 import __vapor from ${JSON.stringify(file)};
 export default __dc({
   name: __vapor.name ? __vapor.name + 'Wrapper' : undefined,
@@ -220,9 +220,17 @@ export default __dc({
       __getters[__k] = () => __props[__k] ?? __attrs[__k];
     }
     const __a = __adopt(__vapor, __getters, __gci()?.appContext ?? null);
-    __om(() => __mountAdopt(__a.id, __gci()));
     __obu(() => __release(__a.id));
-    return () => __h('fjs-vapor-root', { 'data-fjs-vapor': String(__a.id), style: { display: 'contents' } });
+    // the element ref fires at commit time — web keeps pages in a
+    // <KeepAlive> whose clone/transition path can eat component-level
+    // mounted hooks (specs/165: home → other vant page → back → vapor
+    // mounted the wrapper but never ran onMounted, leaving the placeholder
+    // empty); a commit-time ref does not depend on that machinery
+    return () => __h('fjs-vapor-root', {
+      'data-fjs-vapor': String(__a.id),
+      style: { display: 'contents' },
+      ref: (__el) => { if (__el) __mountAdopt(__a.id, __el); },
+    });
   },
 });
 `;

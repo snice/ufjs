@@ -172,6 +172,16 @@ export function fjs(): VitePlugin {
             { find: /^fjs\/web$/, replacement: path.join(runtime, 'src', 'web', 'index.ts') },
             { find: /^fjs\/vue$/, replacement: path.join(runtime, 'src', 'vue', 'index.ts') },
             { find: /^fjs\/vapor$/, replacement: path.join(runtime, 'src', 'vapor', 'web.ts') },
+            // ONE runtime-core for the whole web app — the shim's 3.5
+            // standalone, exactly what the esbuild --web build pins
+            // (vuePinPlugin). Left alone, vite prebundles '@vue/runtime-core'
+            // as a single dep entry shared by vue 3.6 (the demo's version)
+            // and the fjs runtime's 3.5.42 — whichever version wins, the
+            // other's instances cross into it and die (`instance.scope.on is
+            // not a function` on unmount, dead lifecycle hooks, split
+            // reactivity) — specs/165. vue 3.5.42 here is the same copy
+            // fjs-runtime links, so realpath dedupe yields a single graph.
+            { find: /^vue$/, replacement: path.join(runtime, 'node_modules', 'vue', 'dist', 'vue.runtime.esm-bundler.js') },
             { find: /^fjs$/, replacement: path.join(runtime, 'src', 'index.ts') },
           ],
         },

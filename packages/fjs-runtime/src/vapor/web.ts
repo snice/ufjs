@@ -402,14 +402,19 @@ export function adoptVaporComponent(
   return { id };
 }
 
-/** The wrapper's onMounted: [instance] is the wrapper's component instance —
- * its `$el` is the placeholder element. */
-export function mountAdoptNodes(id: number, instance?: unknown): void {
+/** The wrapper's commit-time ref: [target] is the placeholder element (web);
+ * an instance object also works (older call shape). Re-fires are no-ops —
+ * the nodes are already under the placeholder. */
+export function mountAdoptNodes(id: number, target: unknown): void {
   const adopt = adopts.get(id);
   if (!adopt) return;
-  const el = ((instance as { proxy?: { $el?: HTMLElement } } | undefined)?.proxy?.$el ?? null) as HTMLElement | null;
-  adopt.el = el;
+  const el = target instanceof Element
+    ? (target as HTMLElement)
+    : (((target as { proxy?: { $el?: HTMLElement } } | undefined)?.proxy?.$el ?? null) as HTMLElement | null);
   if (!el) throw new Error('[fjs vapor] vapor-root placeholder did not mount');
+  const first = adopt.block.nodes[0] as Node | undefined;
+  if (first && first.parentNode === el) return;
+  adopt.el = el;
   for (const node of adopt.block.nodes) el.appendChild(node as Node);
 }
 

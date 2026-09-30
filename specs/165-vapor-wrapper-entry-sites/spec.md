@@ -54,8 +54,28 @@ SFC」，三类导入点自然落网：
 
 1. esbuild `vaporWrapperPlugin.onResolve`：importer 为空时用 `args.resolveDir`
    （generatedEntry 的 StdinOptions.resolveDir）；绝对路径直接取自身；guard
-   wrapper 虚拟模块自身的 `import __vapor from <abs>` 防递归。
+   wrapper 虚拟模块自身的 `import __vapor` 防递归。
 2. vite `resolveId`：新增绝对路径分支（路由表动态 import），同样的防递归 guard。
-3. vite 新增一个 `enforce: 'post'` 的小插件，对 vapor SFC 模块做
-   `from 'vue'` → `from 'fjs/vapor'` 改写（与 esbuild 同一正则、同一语义）——
-   必须在 plugin-vue 编译输出之后跑，所以不能挂在 'pre' 的主插件上。
+3. vite 新增虚拟模块 `\0fjs-vapor-sfc:`，由 `compileVaporSfcModule`（CLI 自己
+   的 vapor 编译 + esbuild ts 转译）出码——plugin-vue 不再编译 vapor SFC，
+   其产物面向官方 runtime-vapor 契约（setup 返回 bindings、独立 render、
+   expose），自研 runtime 不实现。
+
+## 4. 二次修复（首验后用户实测暴露）
+
+1. **wrapper 生命周期不可靠**：web 端页面在 `<KeepAlive>` + `<Transition>` +
+   router-view 的 vnode 克隆链下，wrapper 的 onMounted 可能整个不触发
+   （实测 setup 跑了、mounted 钩子数组为空、placeholder 空壳）→ 挂载改用
+   **提交期 ref 回调**（`ref: el => __mountAdopt(id, el)`），不依赖生命周期
+   flush；`mountAdoptNodes` 改收元素、幂等。
+2. **vite 预打包的 runtime-core 版本塌缩**：`@vue/runtime-core` 被优化成单份
+   dep，vue 3.6（demo 版本）与 fjs-runtime 的 3.5.42 谁先加载谁占坑——实例跨
+   版本串门（`instance.scope.on is not a function`，unmount 中断、adopt 泄漏）
+   、反应系统分裂。修法：vite alias `vue` → fjs-runtime 内链接的
+   vue@3.5.42 runtime dist——整个 web 应用（app/shell/vant/vue-router/pinia/
+   wrapper）与自研 runtime 统一到 **3.5 单一世界**，与 esbuild --web 的
+   vuePinPlugin 完全对齐；pnpm realpath 使 @vue/* 各只有一份。
+
+验收补充：home→vapor 直达、home→form→back→vapor（用户失败流）、连续往返、
+全新标签冷导航全部通过且 0 console 报错；vant:basic（纯 VDOM 页）在统一
+runtime 下回归正常；vapor-check / nav-vapor fjsrun 不回退。
