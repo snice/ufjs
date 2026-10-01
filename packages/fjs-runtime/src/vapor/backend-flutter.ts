@@ -197,11 +197,6 @@ export const flutterBackend: VaporBackend = {
     nodeOps.insert(host as never, parent as never, anchor as never);
   },
 
-  childAt(parent, index) {
-    const id = childElementIds((parent as { id: number }).id)[index];
-    return id == null ? null : elementById(id) ?? null;
-  },
-
   remove(host) {
     nodeOps.remove(host as never);
   },

@@ -10,6 +10,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { setOpSink } from '../src/host';
 import { installEventDispatcher } from '../src/ui/element';
 import { compileSfc } from './helpers/sfc';
+import { CHILD, INSERTION_CASES, initialState, type InsertionState } from './helpers/vapor-insertion-cases';
 
 type Vue = typeof import('../src/vapor/index');
 type Renderer = typeof import('../src/vue/renderer');
@@ -560,4 +561,46 @@ defineProps(['label'])
     await settle();
     expect(r.childElementIds(root.id)).toEqual([]);
   });
+});
+
+// specs/169: a trailing block's numeric insertion anchor is "append" (Vue's
+// client-render meaning), not "before raw child N" — the Flutter side of the
+// web test in vapor-insertion-web.test.ts, plus parity with the VDOM tree.
+describe('Vapor on fjs: insertion anchors among static siblings', () => {
+  const textsOf = (id: number): string => {
+    let out = '';
+    const walk = (n: number) => {
+      out += textOf(n) ?? '';
+      for (const k of r.childElementIds(n)) walk(k);
+    };
+    walk(id);
+    return out;
+  };
+  for (const c of INSERTION_CASES) {
+    it(c.name, async () => {
+      await recordTexts();
+      const roots: number[] = [];
+      const states: InsertionState[] = [];
+      for (const vapor of [false, true]) {
+        const runtime = vue as unknown as Record<string, unknown>;
+        const st = vue.reactive(initialState()) as InsertionState;
+        const child = compileSfc(CHILD, { vapor, runtime });
+        const page = compileSfc(c.source, { vapor, runtime, imports: { st, child: child.component } });
+        const root = r.flutterRoot();
+        if (vapor) vue.createVaporApp(page.component as never).mount(root);
+        else r.createApp(vue.defineComponent({ setup: () => () => vue.h(page.component as never) })).mount(root);
+        roots.push(root.id);
+        states.push(st);
+      }
+      await settle();
+      expect(textsOf(roots[1])).toBe(c.mount);
+      expect(snapshot(roots[1])).toEqual(snapshot(roots[0]));
+      for (const step of c.steps) {
+        for (const st of states) step.run(st);
+        await settle();
+        expect(textsOf(roots[1])).toBe(step.text);
+        expect(snapshot(roots[1])).toEqual(snapshot(roots[0]));
+      }
+    });
+  }
 });
