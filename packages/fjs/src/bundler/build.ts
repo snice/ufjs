@@ -57,7 +57,6 @@ import {
 import { printAnalysis } from './analyze.js';
 import { firstFrameNodeWarnings } from './node-budget.js';
 import { assetSourceWarnings } from './asset-check.js';
-import { prependSnapshots, captureStyleSnapshots, describeCapture, type CapturedStyles } from './style-snapshot.js';
 import { flutterDir as configuredFlutterDir, isEjected, readConfig } from '../project/config.js';
 import { formatLog } from '../terminal/colors.js';
 import { ensureOhosSigning } from '../project/ohos-signing.js';
@@ -225,11 +224,6 @@ export function engineDefineArgs(engine?: JsEngine): string[] {
 
 export interface BuildOptions {
   entry?: string;
-  /** Build-time style prewarm (specs/119, bundler/style-snapshot.ts). Set by
-   * `fjs build` / `fjs run` for app targets unless `fjs.styleSnapshot` is
-   * false; `fjs dev` leaves it off — capturing mounts every page, too slow
-   * for a rebuild on every save. */
-  styleSnapshot?: boolean;
   outDir: string;
   /** Minify the bundles. Default true for `fjs build`; `fjs dev` turns it
    * off so the served bundle stays readable in a stack trace. */
@@ -275,6 +269,11 @@ export interface BuildOptions {
    * `--devtools`. Without it the define is false and esbuild drops the
    * whole data plane from the output. */
   devtools?: boolean;
+  /** specs/172 '--ts-style': bundle the TS per-element style engine. App
+   * builds ship only the libfjs-style-backed one; harnesses that switch
+   * engines at runtime (`__fjsNativeStyle = false / 'verify'`) or decode raw
+   * frames need this. */
+  tsStyle?: boolean;
   /** spec 091: engine flavor for bytecode (`--js-engine`) — the .fjsbundle
    * engine id must match the engine embedded in the app, and the fjsc
    * binary is per flavor. Also selected for the Flutter build (spec 105:
@@ -371,6 +370,7 @@ export function parseBuildArgs(argv: string[]): BuildOptions {
     else if (a === '--analyze') opts.analyze = true;
     else if (a === '--pages') opts.pages = true;
     else if (a === '--devtools') opts.devtools = true;
+    else if (a === '--ts-style') opts.tsStyle = true;
     else if (a === '--web') opts.web = true;
     else if (a === '--mp') opts.mp = true;
     else if (a === '--shared-runtime' || a === '--shared') {
@@ -380,6 +380,7 @@ export function parseBuildArgs(argv: string[]): BuildOptions {
   }
   // spec 090: the DevTools data plane ships only where the build opts in
   setDevtoolsBundling(opts.devtools === true);
+  setTsStyleBundling(opts.tsStyle === true);
   // Per-target output layout (spec 047): app builds land in <outDir>/app and
   // web builds in <outDir>/web (buildWeb appends it), so the two targets
   // never clobber each other's artifacts — and a third target (miniprogram,
@@ -405,12 +406,21 @@ let devtoolsBundling = false;
 export function setDevtoolsBundling(v: boolean): void {
   devtoolsBundling = v;
 }
-/** Per-build define set: VUE_DEFINES plus the devtools gate. The web build
- * forces the gate off (the browser has its own DevTools). */
-function fjsDefines(forceOff = false): Record<string, string> {
+/** specs/172: whether app bundles carry the TS per-element style engine
+ * (`--ts-style`). Off: vue/host-ops.ts builds only NativeStyleEngine. */
+let tsStyleBundling = false;
+export function setTsStyleBundling(v: boolean): void {
+  tsStyleBundling = v;
+}
+/** Per-build define set: VUE_DEFINES plus the devtools and style-engine
+ * gates. The web build forces devtools off (the browser has its own
+ * DevTools) and never feeds the style engine — it keeps the TS default
+ * there, the behaviour any stray import had before. */
+function fjsDefines(web = false): Record<string, string> {
   return {
     ...VUE_DEFINES,
-    __FJS_DEVTOOLS__: String(devtoolsBundling && !forceOff),
+    __FJS_DEVTOOLS__: String(devtoolsBundling && !web),
+    __FJS_TS_STYLE__: String(tsStyleBundling || web),
   };
 }
 
@@ -511,11 +521,6 @@ export async function buildBundle(opts: BuildOptions): Promise<BuildResult> {
   const { jsPath, result } = await bundleSingle(opts, root, outDir);
   if (opts.sourcemap) stampDebuggerMap(jsPath, root, outDir);
   const warnings = [...perfWarnings, ...result.warnings.map((w) => w.text)];
-  // before bytecode: the snapshot has to be inside what fjsc compiles
-  if (opts.styleSnapshot) {
-    const captured = await prewarmStyles(() => captureStyleSnapshots(jsPath), warnings);
-    if (captured) prependSnapshots(jsPath, captured.snapshots);
-  }
 
   const res: BuildResult = { jsPath, warnings };
   if (result.metafile) res.metafiles = { [jsPath]: result.metafile };
@@ -584,27 +589,6 @@ async function bundleSingle(
     legalComments: 'none',
   });
   return { jsPath, result };
-}
-
-/** Runs the capture on a built single bundle and reports it in the log;
- * a failure costs the prewarm, never the build (it is only a speedup). */
-async function prewarmStyles(
-  capture: () => Promise<CapturedStyles | null>,
-  warnings: string[],
-): Promise<CapturedStyles | null> {
-  try {
-    const captured = await capture();
-    if (captured) {
-      console.log(`  ${describeCapture(captured)}`);
-      for (const [route, why] of Object.entries(captured.errors)) {
-        warnings.push(`style prewarm: ${route} threw while mounting, it computes styles at runtime (${why})`);
-      }
-    }
-    return captured;
-  } catch (e) {
-    warnings.push(`style prewarm skipped: ${String((e as Error)?.message ?? e)}`);
-    return null;
-  }
 }
 
 // ---- split build (--pages) -------------------------------------------------
@@ -1046,35 +1030,6 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
     pageChunks[page.chunk] = chunkPath;
   }
 
-  if (opts.styleSnapshot) {
-    // Captured on this very output, one fresh VM per page: shared, the
-    // entry, then the page's chunk when the router opens it — the order the
-    // device registers the sheets in. A throwaway single bundle (specs/119)
-    // registered every page's scoped sheet before the plugins' (vant)
-    // sheets, the opposite of the split order, so every snapshot was
-    // refused on the device (specs/121). A fresh VM per page also keeps
-    // other pages' sheets out of the snapshot's dependencies: on the device
-    // they may not have been opened yet.
-    const captured = await prewarmStyles(async () => {
-      const all: CapturedStyles = { snapshots: {}, errors: {}, ms: 0 };
-      for (const page of pages) {
-        const one = await captureStyleSnapshots([sharedPath, jsPath], { routes: [page.path], chunks: pageChunks });
-        if (!one) return null;
-        Object.assign(all.snapshots, one.snapshots);
-        Object.assign(all.errors, one.errors);
-        all.ms += one.ms;
-      }
-      return all;
-    }, warnings);
-    if (captured) {
-      for (const page of pages) {
-        const json = captured.snapshots[page.path];
-        const file = pageChunks[page.chunk];
-        if (json !== undefined && file) prependSnapshots(file, { [page.path]: json });
-      }
-    }
-  }
-
   const res: BuildResult = { jsPath, sharedPath, pageChunks, warnings };
   if (opts.analyze) res.metafiles = metafiles;
   if (opts.bytecode) {
@@ -1423,8 +1378,9 @@ export async function buildCommand(argv: string[]): Promise<void> {
     await mpBuild({ root: process.cwd(), outDir: opts.outDir });
     return;
   }
-  // app targets get the build-time style prewarm unless the project opts out
-  if (!opts.web) opts.styleSnapshot = readConfig().styleSnapshot !== false;
+  if (readConfig().styleSnapshot !== undefined) {
+    console.warn(formatLog('warn', '"fjs.styleSnapshot" in package.json is ignored: the build-time style snapshot was removed (specs/172)'));
+  }
   const t0 = Date.now();
   const res = await buildBundle(opts);
   for (const w of res.warnings) console.warn(formatLog('warn', w));

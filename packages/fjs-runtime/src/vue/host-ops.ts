@@ -15,7 +15,9 @@ import { transitionClassesOf } from './transition-classes';
 import { lastPointer } from '../ui/geometry';
 import { hasNativeHost, host, invokeHost, registerPreFlush } from '../host';
 import { usesDeclaredFont } from '../css/font-face';
-import { INHERITABLE_KEYS, StyleEngine, type PseudoStyles } from '../css/style';
+import { INHERITABLE_KEYS, type ApplyStyle, type PseudoStyles } from '../css/style-core';
+import { StyleEngine } from '../css/style';
+import { NativeStyleEngine } from '../css/style-native';
 import { devtoolsSlots, devtoolsStructuralVersion } from '../devtools-hooks';
 import { emitsFor } from '../event-emits';
 
@@ -663,8 +665,8 @@ function syncPlaceholderStyle(
   setProps(el, { placeholderStyle: next });
 }
 
-/** Shared engine instance; css-vars.ts also drives it (useCssVars). */
-export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, activeStyle, hoverStyle, pseudo, sent) => {
+/** The renderer side of every computed style. */
+const applyStyle: ApplyStyle = (id, style, activeStyle, hoverStyle, pseudo, sent) => {
   const el = elementsById.get(id);
   if (!el) return;
   // `sent`: libfjs-style wrote the styles into the frame itself (specs/150)
@@ -691,7 +693,25 @@ export const styleEngine = new StyleEngine(parentOf, childrenOf, (id, style, act
   if (style.position === 'fixed') hoistIfNeeded(el, style);
   else if (hoistedFrom.has(el.id)) unhoistIfNeeded(el);
   noteModalShape(el, style);
-});
+};
+
+declare const __FJS_TS_STYLE__: boolean;
+
+/** specs/172: the bundler defines `__FJS_TS_STYLE__` — false in a Flutter
+ * build, which then carries only the native-backed engine (the TS
+ * per-element engine is dead code esbuild drops). Undefined (vitest, raw
+ * esbuild) or `--ts-style` keeps the TS engine and the switch below. */
+const tsStyle = typeof __FJS_TS_STYLE__ === 'undefined' || __FJS_TS_STYLE__;
+
+/** Shared engine instance; css-vars.ts also drives it (useCssVars). The
+ * union is the same surface either way (see css/style-native.ts). */
+// The define is spelled out at each branch, not read through `tsStyle`:
+// esbuild folds a literal condition even without minify (fjs dev), but not
+// one behind a const — and the dead branch is what drops the TS engine.
+export const styleEngine: StyleEngine | NativeStyleEngine =
+  typeof __FJS_TS_STYLE__ === 'undefined' || __FJS_TS_STYLE__
+    ? new StyleEngine(parentOf, childrenOf, applyStyle)
+    : new NativeStyleEngine(applyStyle);
 
 // Styles go out with the ops that create their elements: the host flush
 // finishes the engine's pending recompute first (see flushPending)
@@ -702,12 +722,23 @@ registerPreFlush(() => styleEngine.flushPending());
 // module loads: false keeps the TS engine, 'verify' runs both and logs every
 // element they disagree on. Must attach before the first element exists.
 const nativeStyleMode = (globalThis as { __fjsNativeStyle?: unknown }).__fjsNativeStyle;
-const nativeAttached =
-  nativeStyleMode !== false &&
-  host?.styleAttach !== undefined &&
-  styleEngine.attachNative(host, nativeStyleMode === 'verify');
+let nativeAttached = false;
+if (!(typeof __FJS_TS_STYLE__ === 'undefined' || __FJS_TS_STYLE__)) {
+  if (nativeStyleMode !== undefined) {
+    console.error('[fjs] __fjsNativeStyle needs the TS style engine: rebuild with `fjs build --ts-style`; using the native engine');
+  }
+  nativeAttached = host != null && (styleEngine as NativeStyleEngine).attachNative(host);
+  if (!nativeAttached) {
+    console.error('[fjs] this host has no native style engine (libfjs-style); rebuild with --ts-style or upgrade flutter_fjs');
+  }
+} else {
+  nativeAttached =
+    nativeStyleMode !== false &&
+    host?.styleAttach !== undefined &&
+    (styleEngine as StyleEngine).attachNative(host, nativeStyleMode === 'verify');
+}
 /** The TS engine's structural bookkeeping is off (native, not verifying). */
-const nativeStyle = nativeAttached && nativeStyleMode !== 'verify';
+const nativeStyle = nativeAttached && (!tsStyle || nativeStyleMode !== 'verify');
 
 // The DOM-shaped `el.style` writes funnel into the same engine: libraries
 // like @vueuse/motion assign `el.style[key] = v`, a `:style` binding calls
@@ -2036,10 +2067,8 @@ export function releaseRoot(root: HostNode): void {
 /** Registers a SFC <style> block with the style engine (called by the code
  * the fjs esbuild plugin injects). scope=null means a global (non-scoped)
  * block. */
-export function registerStyles(scope: string | null, cssText: string, hash?: string): void {
-  // `hash` is the sheet's build-time identity (bundler/vue-plugin.ts
-  // styleSheetHash); the style snapshot check needs it (specs/119)
-  styleEngine.register(scope, cssText, hash);
+export function registerStyles(scope: string | null, cssText: string): void {
+  styleEngine.register(scope, cssText);
 }
 
 // spec 089/090: hand the DevTools data plane the shadow tree it serializes

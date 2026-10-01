@@ -114,7 +114,9 @@ jsi-and-native-modules.md)。
 的**。`JSON.stringify` 一个小对象 1.3 µs，而把同样 30 个 ASCII 字符逐个写进缓冲区
 也要几微秒——所以常量 props 缓存的是编码好的字节（一次 `set()` 拷贝），不是 JSON 串。
 
-## 首开的冷缓存：构建期预热（2026-09，specs/119）
+## 首开的冷缓存：构建期预热（2026-09，specs/119；specs/172 已移除）
+
+> native 样式引擎（specs/150）上线后收益变小，快照在 specs/172 整个移除；下面是当时的记录。
 
 页面第一次打开时 CSS 引擎的匹配 / 计算缓存是空的，vant-form 为此多付 ~50 ms（容器
 口径）。`fjs build` 现在在 Node 里把每个静态路由挂一遍，把缓存以快照的形式带进包里，
@@ -972,8 +974,8 @@ specs/146 / 147 / 149 连续三轮之后，样式引擎在 JS 里每元素仍约
 - **文字走引用**（specs/155）：一次 setText 1.36 µs 里，`drawableText` 的正则 0.45、逐字节写 1–2 个字符 0.64——
   解释器下循环本身就贵。改成字符串随帧交给 host（数组 push + 9 字节 op），C++ 展开成同样的 SetText：flat-4050 VDOM
   挂载 20.3 → 17.7 ms，改 2000 格 VDOM 22.6 → 20.1、Vapor 21.2 → 18.5 ms。
-- 对拍：`__fjsNativeStyle = 'verify'` 下两个引擎同时跑、每帧逐元素比较——flat-4050、demo 全部页面
-  （`demo/bench/verify-pages.ts`、`mount-verify.ts`、`mount-prewarm-verify.ts`）、hello-fjs 66 页
+- 对拍（specs/172 起要 `fjs build --ts-style`）：`__fjsNativeStyle = 'verify'` 下两个引擎同时跑、每帧逐元素比较——flat-4050、demo 全部页面
+  （`demo/bench/verify-pages.ts`、`mount-verify.ts`，当时还有已删的 `mount-prewarm-verify.ts`）、hello-fjs 66 页
   （`examples/hello-fjs/bench/verify-pages.ts`）共 3 万余次比较，0 不一致。
 
 ## 已知热点（优化路线）

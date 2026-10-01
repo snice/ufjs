@@ -8,7 +8,7 @@
     "build": "fjs build",
     "build:web": "fjs build --web",
     "build:vite": "vite build",
-    "check": "fjs build check/main.ts --out dist/check && ../../packages/flutter_fjs/native/build-native/fjsrun --pump 200 dist/check/app/bundle.js",
+    "check": "fjs build check/main.ts --ts-style --out dist/check && ../../packages/flutter_fjs/native/build-native/fjsrun --pump 200 dist/check/app/bundle.js",
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
@@ -24,7 +24,6 @@
     "vue-tsc": "^3.3.11"
   },
   "fjs": {
-    "styleSnapshot": false,
     "shared": [
       "pinia"
     ]

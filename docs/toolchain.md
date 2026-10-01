@@ -1199,36 +1199,26 @@ shared.js  402.3 KB  gz 90.9 KB  bytecode 1.1 MB
 `.vue` 子组件递归估算。遇到预警时，优先考虑把大列表改成 `list-view`/窗口化、降低默认
 行数，或把非首屏内容延后渲染。
 
-## 构建期样式预热（`fjs.styleSnapshot`）
+## 样式引擎与 `--ts-style`
 
-`fjs build`（含 `--pages` / `--bytecode` / `--release`）和 `fjs run --release` /
-`--profile` 会多一步（specs/119）：
+Flutter 目标（`fjs build` / `fjs dev` / `fjs run`，任何模式）只打包 libfjs-style 驱动的
+样式引擎（`css/style-native.ts`，specs/172）：逐元素状态、匹配缓存与 flush 都在 C++，
+JS 只保留 CSS 语义（`css/style-core.ts`：样式表、层叠、计算）。TS 逐元素引擎
+（`css/style.ts`）不进包，vapor-app / demo 的 shared.js 各小 ~20 KB。
 
+需要 TS 引擎的场景——压测里设 `globalThis.__fjsNativeStyle = false` 对比、设 `'verify'`
+双跑对拍、手解原始帧的 check harness——构建时加 `--ts-style`：
+
+```bash
+fjs build native/entry-verify.ts --ts-style --out dist/native-verify
 ```
-  style prewarm: 11 pages captured in 333ms (334 KB)
-```
 
-在 Node 里把 Flutter 目标的 bundle 跑一遍，逐个静态路由按真机路由同样的方式挂载
-（同样的 Shell、同样等 `<defer>` 补挂），把 CSS 引擎的匹配 / 计算缓存导出成每页一份
-JSON 快照，写在该页 chunk（单包则是 bundle）的**第一行**。路由挂载页面之前导入它，
-第一次打开就和再次打开一样热。原理与实测见 [vant-mount-perf.md](vant-mount-perf.md)。
-分包构建直接在分包产物上抓：每页一个全新 VM，按真机顺序执行 shared.js → bundle.js →
-该页 chunk（specs/121），样式表注册顺序与真机一致。
+没加 `--ts-style` 却设了 `__fjsNativeStyle`，启动时打一条 `console.error` 并照常走
+native；宿主没有 libfjs-style（极旧的 flutter_fjs）时同样报错提示。web 构建不用这个引擎。
 
-- **结果不变**：快照只是提前填好的缓存。样式表集合、`@media` 结果或引擎开关与构建时
-  不一致时整份放弃（日志里每页一行 `style snapshot for /路径 skipped: …`），照常现算。
-- **不覆盖**：`fjs dev` / `fjs run`（debug）——每次保存都重建，抓取要挂一遍所有页面；
-  带参数的路由（`/user/:id`）——构建期不知道参数。它们照常现算。要在模拟器上看预热
-  效果，用 `fjs run ios --profile` 或 `fjs build`。
-- **代价**：构建多约 0.5 s（demo 11 页）；包体积按页增加，vant 页每页 50–75 KB JSON
-  （字节码里差不多），release 打开 `--gz` 后压缩率很高。
-- 某页挂载时抛错（比如在 setup 里就要宿主能力）只跳过该页并告警，不让构建失败。
-
-关闭：
-
-```json
-{ "fjs": { "styleSnapshot": false } }
-```
+构建期样式快照（specs/119，`fjs.styleSnapshot`）已在 specs/172 移除：native 引擎下首开收益
+很小，却要在 Node 里多挂一遍所有页面、每页多带几十 KB JSON。`package.json` 里残留的
+`fjs.styleSnapshot` 会被忽略并告警一次。
 
 ## Release 构建
 

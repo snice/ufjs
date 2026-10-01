@@ -1,7 +1,7 @@
 // specs/150: every demo page mounted under both style engines at once
 // (`__fjsNativeStyle = 'verify'`): each element libfjs-style styles
 // differently from the TS engine is logged, and the totals print at the end.
-//   fjs build bench/verify-pages.ts --out dist/verify-pages
+//   fjs build bench/verify-pages.ts --ts-style --out dist/verify-pages
 //   fjsrun --frames --pump 200 dist/verify-pages/app/bundle.js
 import './style-verify';
 import type { Component } from 'vue';

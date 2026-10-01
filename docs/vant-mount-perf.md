@@ -506,8 +506,8 @@ vant-form / vant-more / vant-nav / vant-basic 把首屏以下的分组包进 `<d
 | 计算之外（比较、编码） | 28 | 14 | 14 |
 
 匹配与计算都是「元素树 + 样式表」的纯函数，构建期就能算好。`fjs build` 在 Node 里把
-app bundle 跑一遍、逐页挂载，导出缓存快照写进页面 chunk；路由挂载前导入。用法与开关见
-[toolchain.md](toolchain.md#构建期样式预热fjsstylesnapshot)。
+app bundle 跑一遍、逐页挂载，导出缓存快照写进页面 chunk；路由挂载前导入。（specs/172 已移除，
+见 [toolchain.md](toolchain.md#样式引擎与---ts-style)。）
 
 ### 实测（`bench:mount`，三种模式各一个全新 VM，冷 = 首开）
 

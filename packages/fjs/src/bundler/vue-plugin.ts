@@ -223,7 +223,7 @@ export async function compileVaporSfcModule(
         path.dirname(file),
       );
       const scope = s.scoped ? id : null;
-      code += `\n__fjsRegisterStyles(${scope === null ? 'null' : JSON.stringify(scope)}, ${JSON.stringify(css)}, ${JSON.stringify(styleSheetHash(scope, css))});`;
+      code += `\n__fjsRegisterStyles(${scope === null ? 'null' : JSON.stringify(scope)}, ${JSON.stringify(css)});`;
     }
   }
   if (styles.some((s) => s.scoped)) {
@@ -316,7 +316,7 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
           return {
             contents:
               "import { registerStyles } from 'fjs/vue';\n" +
-              `registerStyles(null, ${JSON.stringify(css)}, ${JSON.stringify(styleSheetHash(null, css))});`,
+              `registerStyles(null, ${JSON.stringify(css)});`,
             resolveDir: path.dirname(args.path),
             loader: 'js',
           };
@@ -503,7 +503,7 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
               path.dirname(args.path),
             );
             const scope = s.scoped ? id : null;
-            code += `\n__fjsRegisterStyles(${scope === null ? 'null' : JSON.stringify(scope)}, ${JSON.stringify(css)}, ${JSON.stringify(styleSheetHash(scope, css))});`;
+            code += `\n__fjsRegisterStyles(${scope === null ? 'null' : JSON.stringify(scope)}, ${JSON.stringify(css)});`;
           }
         }
         if (styles.some((s) => s.scoped)) {
@@ -556,15 +556,6 @@ function resolveDist(pkg: string, file: string): string {
  * updates never fire). onResolve has final say over resolution. 'vue'
  * resolves to the fjs shim: runtime-core plus the helper implementations
  * (useCssVars) that generated SFC code imports but runtime-core lacks. */
-/** A style sheet's identity for the build-time style snapshot (specs/119):
- * the runtime checks a page's snapshot against the sheets actually
- * registered, and it needs a name for each that is the same in the Node
- * capture and on the device. Computed here because hashing vant's 80 KB of
- * CSS inside the interpreter would cost milliseconds at every app start. */
-export function styleSheetHash(scope: string | null, css: string): string {
-  return createHash('sha1').update(`${scope ?? ''}\u0000${css}`).digest('hex').slice(0, 12);
-}
-
 export function vuePinPlugin(): Plugin {
   return {
     name: 'fjs-vue-pin',

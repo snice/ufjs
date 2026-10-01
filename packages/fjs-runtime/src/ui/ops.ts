@@ -35,6 +35,9 @@ export const enum UiOp {
   StyleRules = 0x47,
   StyleAttr = 0x48,
   StyleRulesAppend = 0x49,
+  // 0x4a / 0x4b: SEED_CHAIN / SEED_COMPUTE — libfjs-style still decodes
+  // them, nothing sends them since the build-time style snapshot was
+  // removed (specs/172)
   StyleSeedChain = 0x4a,
   StyleSeedCompute = 0x4b,
   // specs/155: u32 id, u32 index into the frame's `fjsText` — a SetText the
@@ -442,61 +445,6 @@ export class OpWriter {
   styleRules(table: Uint8Array, append = false): this {
     this.op1(append ? UiOp.StyleRulesAppend : UiOp.StyleRules, table.length, 0);
     this.bytes(table);
-    return this;
-  }
-
-  /** SEED_CHAIN head: seed, parent seed. The signatures follow through
-   * styleSigPart; styleSeedChainEnd closes it. */
-  styleSeedChain(seed: number, parentSeed: number): this {
-    this.op1(UiOp.StyleSeedChain, seed, 4);
-    this.u32(parentSeed);
-    return this;
-  }
-
-  /** One signature of a SEED_CHAIN (fjs_style.h `<sig>`); `attrs` only for
-   * the chain's own signature (null for the neighbour's). */
-  styleSigPart(tag: number, classes: readonly number[], scopes: readonly number[], bits: number, attrs: Array<[number, string]> | null): this {
-    this.u32(tag);
-    this.u16(classes.length);
-    for (let i = 0; i < classes.length; i++) this.u32(classes[i]);
-    this.u16(scopes.length);
-    for (let i = 0; i < scopes.length; i++) this.u32(scopes[i]);
-    this.u32(bits);
-    if (attrs !== null) {
-      this.u16(attrs.length);
-      for (const [name, value] of attrs) {
-        this.u32(name);
-        this.str(value, true);
-      }
-    }
-    return this;
-  }
-
-  styleSeedChainPrev(has: boolean): this {
-    this.u8(has ? 1 : 0);
-    return this;
-  }
-
-  styleSeedChainEnd(match: number): this {
-    this.u32(match);
-    return this;
-  }
-
-  /** SEED_COMPUTE (its JSON is asked for on first use). */
-  styleSeedCompute(
-    match: number,
-    parentResult: number,
-    defaultsId: number,
-    inlineKey: number,
-    rawText: boolean,
-    result: number,
-    flags: number,
-  ): this {
-    this.op3(UiOp.StyleSeedCompute, match, parentResult, defaultsId);
-    this.u32(inlineKey);
-    this.u8(rawText ? 1 : 0);
-    this.u32(result);
-    this.u32(flags);
     return this;
   }
 

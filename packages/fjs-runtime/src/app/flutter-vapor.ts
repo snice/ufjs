@@ -34,22 +34,6 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
   return {
     router,
     mount() {
-      // the build-time style capture (specs/119) runs this bundle in Node —
-      // same hook as app/flutter.ts
-      const capture = (globalThis as {
-        __fjsCaptureStyles?: ((r: unknown) => void) & {
-          started?: boolean;
-          routes?: string[];
-          loadChunk?: (chunk: string) => void;
-        };
-      }).__fjsCaptureStyles;
-      if (typeof capture === 'function') {
-        capture.started = true;
-        router
-          .captureStyles({ routes: capture.routes, loadChunk: capture.loadChunk })
-          .then(capture, (e: unknown) => capture({ __error: String(e) }));
-        return;
-      }
       router.start();
     },
   };

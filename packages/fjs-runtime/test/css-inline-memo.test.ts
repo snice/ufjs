@@ -1,23 +1,22 @@
 // specs/144: elements with an inline style are memoized under the inline
-// CONTENT (MatchResult.byInline) and travel in the build-time snapshot (v3).
+// CONTENT (MatchResult.byInline).
 // A memo hit must hand back exactly what a fresh compute would: every test
 // compares a warm engine against a cold one, element by element.
 import { describe, expect, it } from 'vitest';
-import { StyleEngine, STYLE_SNAPSHOT_VERSION, type StyleSnapshot } from '../src/css/style';
+import { StyleEngine } from '../src/css/style';
 
 async function styleTick(): Promise<void> {
   for (let i = 0; i < 4; i++) await Promise.resolve();
 }
 
-const SHEETS: Array<[string | null, string, string]> = [
-  [null, ':root { --brand: #1989fa; --gap: 12px }', 'root0000144a'],
+const SHEETS: Array<[string | null, string]> = [
+  [null, ':root { --brand: #1989fa; --gap: 12px }'],
   [
     null,
     '.slider { padding: var(--gap); font-size: 20px; color: var(--brand) }' +
       '.slider .bar { height: 2em; margin-left: calc(var(--gap) * 2) }' +
       '.slider .thumb::before { content: "o"; width: 1em }' +
       '.thumb:active { opacity: 0.5 } .thumb:hover { opacity: 0.8 }',
-    'glob0000144b',
   ],
 ];
 
@@ -30,9 +29,7 @@ type Engine = {
   childrenOf: Map<number, number[]>;
 };
 
-function newEngine(capture = false): Engine {
-  const g = globalThis as { __fjsCaptureStyles?: unknown };
-  if (capture) g.__fjsCaptureStyles = () => {};
+function newEngine(): Engine {
   const parentOf = new Map<number, number | null>();
   const childrenOf = new Map<number, number[]>();
   const applied = new Map<number, Record<string, unknown>>();
@@ -41,8 +38,7 @@ function newEngine(capture = false): Engine {
     applied.set(id, style);
     variants.set(id, { active, hover, pseudo });
   });
-  delete g.__fjsCaptureStyles;
-  for (const [scope, css, hash] of SHEETS) engine.register(scope, css, hash);
+  for (const [scope, css] of SHEETS) engine.register(scope, css);
   return { engine, applied, variants, parentOf, childrenOf };
 }
 
@@ -141,33 +137,5 @@ describe('inline style memo (specs/144)', () => {
       e.engine.flushPending();
     }
     expect(e.applied.get(112)?.left).toBe('399px');
-  });
-});
-
-describe('style snapshot v3: inline elements and their subtrees (specs/144)', () => {
-  async function capture(): Promise<{ snap: StyleSnapshot; cold: Map<number, Record<string, unknown>> }> {
-    const a = newEngine(true);
-    await buildSliders(a);
-    return { snap: a.engine.exportSnapshot(), cold: a.applied };
-  }
-
-  it('exports them, and an importing engine computes nothing', async () => {
-    const { snap, cold } = await capture();
-    expect(snap.v).toBe(STYLE_SNAPSHOT_VERSION);
-    expect(snap.computes.some((row) => row[9] !== '')).toBe(true);
-    const b = newEngine();
-    expect(b.engine.importSnapshot(JSON.stringify(snap))).toBe(true);
-    b.engine.resetStats();
-    await buildSliders(b);
-    expect(b.engine.stats.matchMiss).toBe(0);
-    expect(b.engine.stats.computeMiss).toBe(0);
-    for (const [id, style] of cold) expect(b.applied.get(id), `element ${id}`).toEqual(style);
-  });
-
-  it('refuses a v2 snapshot and says why', async () => {
-    const { snap } = await capture();
-    const b = newEngine();
-    expect(b.engine.snapshotMismatch({ ...snap, v: 2 })).toBe('version 2');
-    expect(b.engine.importSnapshot({ ...snap, v: 2 })).toBe(false);
   });
 });

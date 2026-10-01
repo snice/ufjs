@@ -59,7 +59,10 @@ commands:
                             the Elements/Network panels of fjs debug work on
                             a non-dev build (fjs dev always has it; a plain
                             build drops it)
-      --pages               split build: <out>/app/shared.js (prelude) +
+      --ts-style            also bundle the TS style engine (benchmarks and
+                            parity harnesses that set __fjsNativeStyle);
+                            app builds otherwise ship only libfjs-style's
+      --pages              split build: <out>/app/shared.js (prelude) +
                             <out>/app/bundle.js + <out>/app/pages/<id>.js
       --release             emit bytecode and copy release assets to
                             .fjs/flutter/assets/fjs
