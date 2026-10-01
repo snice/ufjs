@@ -76,6 +76,16 @@ describe('Vapor SFC compile', () => {
     expect(usesVapor(lib)).toBe(true);
   });
 
+  it('an empty <script setup vapor> is still Vapor (specs/168)', async () => {
+    const src = '<script setup vapor>\n</script>\n<template><text class="named">named</text></template>\n';
+    const dir = project({ 'E.vue': src });
+    expect(isVaporSfcFile(path.join(dir, 'E.vue'), false)).toBe(true);
+    const js = await compiled(dir, 'E.vue');
+    expect(js).toContain('__vapor = true');
+    expect(js).toContain('template(');
+    expect(js).not.toContain('createElementBlock');
+  });
+
   it('a plain <script setup> stays VDOM', async () => {
     const dir = project({ 'A.vue': VDOM });
     const js = await compiled(dir, 'A.vue');
