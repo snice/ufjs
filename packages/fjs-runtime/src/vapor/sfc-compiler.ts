@@ -74,7 +74,13 @@ export function compileVaporSfc(
   const parsed = parseDescriptor(source, filename, parseOpts);
   if ('errors' in parsed) return parsed;
   let descriptor: SFCDescriptor = parsed.descriptor;
-  if (!isVaporDescriptor(descriptor)) {
+  // an EMPTY `<script setup vapor>` is dropped by the parser, and with it
+  // the attribute isVaporDescriptor reads — re-injecting `vapor` into a
+  // source that already says it made `<script setup vapor vapor>` and a
+  // "Duplicate attribute." error (compiler-sfc versions that do not set
+  // descriptor.vapor). The source's own attribute is the authority.
+  const saysVapor = /<script\b[^>]*\bsetup\b[^>]*\bvapor\b/.test(source) || /<script\b[^>]*\bvapor\b[^>]*\bsetup\b/.test(source);
+  if (!isVaporDescriptor(descriptor) && !saysVapor) {
     // an auto-vapor library SFC: tag the script and re-parse (the injected
     // attribute is the only `vapor` in the file, so the re-parse is clean)
     const reparsed = parseDescriptor(

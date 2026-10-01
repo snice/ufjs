@@ -69,6 +69,18 @@ export function reportVaporError(err: unknown, info: string): void {
   }
 }
 
+/** Anchors (v-if / v-for / slot placeholders) a block may consist of —
+ * attrs fallthrough must never land on one (specs/170). */
+const anchorHosts = new WeakSet<object>();
+export function makeAnchor(label: string): HostNode {
+  const a = be().createAnchor(label);
+  if (a && typeof a === 'object') anchorHosts.add(a as object);
+  return a;
+}
+export function isAnchorHost(host: unknown): boolean {
+  return !!host && typeof host === 'object' && anchorHosts.has(host as object);
+}
+
 function beforeStop(scope: unknown): void {
   const hook = rx?.beforeStopScope;
   if (hook) hook.call(rx, scope);
@@ -232,6 +244,37 @@ export interface VaporBackend {
    * it silently drops the vars. Keys are custom-property names (engine
    * convention, `--` implied), values their current values. */
   setCssVars?(host: HostNode, vars: Record<string, unknown>): void;
+  // ---- specs/170: what compiler-vapor's remaining helpers need. All
+  // optional — the shared helpers (helpers.ts) fall back or warn when a
+  // backend has no counterpart (constitution V: never a ReferenceError).
+  /** `:value` on input/textarea/select (a DOM property on web, the fjs
+   * input's `value` prop on Flutter). Default: setAttr. */
+  setValue?(host: HostNode, value: unknown): void;
+  /** A DOM property write (`.prop` / `^attr` binding). Default: setAttr. */
+  setDOMProp?(host: HostNode, key: string, value: unknown): void;
+  /** v-html. Absent = no HTML parser here: the helper writes text. */
+  setHtml?(host: HostNode, html: string): void;
+  /** The host's current class string — the static template classes a
+   * fallthrough class merges with. */
+  classOf?(host: HostNode): string;
+  /** v-model on a text field: which event carries an edit (`lazy`: the
+   * commit event) and how to read the field's text out of its payload.
+   * Absent = text v-model unsupported. */
+  textModel?: {
+    event(lazy: boolean): string;
+    read(payload: unknown, host: HostNode): string;
+  };
+  /** v-model on checkbox / radio / select (DOM only). Returns false when
+   * the backend has no such control. */
+  applyChoiceModel?(
+    host: HostNode,
+    kind: 'checkbox' | 'radio' | 'select' | 'dynamic',
+    get: () => unknown,
+    set: (v: unknown) => void,
+    modifiers: Record<string, boolean | undefined>,
+  ): boolean;
+  /** `<component :is="'tag'">`: a bare element of that tag, unattached. */
+  createElement?(tag: string): HostNode;
 }
 
 let backend: VaporBackend | null = null;
@@ -320,7 +363,7 @@ export function takeInsertionState(): { parent: HostNode | null; anchor: HostNod
 
 /** Template nodes, blocks and bare hosts all flow through compiled code;
  * every helper boundary unwraps. */
-function hostOf(node: unknown): HostNode {
+export function hostOf(node: unknown): HostNode {
   if (node instanceof TplNode) return node.host;
   if (node && typeof node === 'object' && Array.isArray((node as Block).nodes)) return blockRoot(node as Block);
   if (node && typeof node === 'object') return node as HostNode;
@@ -558,8 +601,16 @@ export function setText(node: TplNode, value: unknown): void {
 
 /** The compiler hands class bindings through as arrays / objects
  * (`["title", { on }]`) — normalizeClass is what the write needs. */
-export function setClass(node: TplNode, value: unknown): void {
-  be().setClasses(node.host, value == null ? '' : normalizeClass(value as never));
+export function setClass(node: TplNode | HostNode, value: unknown): void {
+  const host = node instanceof TplNode ? node.host : node;
+  const cls = value == null ? '' : normalizeClass(value as never);
+  const layer = classLayers.get(host as object);
+  if (layer) {
+    layer.own = cls;
+    writeClasses(host);
+    return;
+  }
+  be().setClasses(host, cls);
 }
 
 export function setClassName(node: TplNode, value: string): void {
@@ -594,31 +645,112 @@ export function setProp(node: TplNode, key: string, value: unknown): void {
 /** v-show / the `show` helper: one inline-layer key, like runtime-dom's
  * vShow — everything else stays with the cascade. */
 export function show(node: TplNode, value: unknown): void {
-  const current = styleRecords.get(node.host as object) ?? null;
+  showHost(node.host, value);
+}
+
+export function showHost(host: HostNode, value: unknown): void {
+  const current = styleRecords.get(host as object) ?? null;
   const next = { ...current };
   if (value) delete next.display;
   else next.display = 'none';
-  be().patchStyle(node.host, current, next);
-  styleRecords.set(node.host as object, next);
+  be().patchStyle(host, current, next);
+  styleRecords.set(host as object, next);
+}
+
+/** setStyle against a bare host (fallthrough / dynamic props). */
+export function setStyleHost(host: HostNode, value: Record<string, unknown>): void {
+  const current = styleRecords.get(host as object) ?? null;
+  const merged: Record<string, unknown> = { ...current };
+  for (const k in value) {
+    const v = value[k];
+    if (v == null || v === '') delete merged[k];
+    else merged[k] = v;
+  }
+  be().patchStyle(host, current, merged);
+  styleRecords.set(host as object, merged);
+}
+
+// Class layers (specs/170): a component root's own class (its template's
+// static classes, then its :class) and the class a parent passes through
+// attrs are written independently and joined — setClass used to replace
+// the whole list, so fallthrough had nowhere to go.
+const classLayers = new WeakMap<object, { own: string | null; fall: string }>();
+
+function writeClasses(host: HostNode): void {
+  const layer = classLayers.get(host as object);
+  if (!layer) return;
+  const own = layer.own ?? '';
+  be().setClasses(host, layer.fall ? (own ? own + ' ' + layer.fall : layer.fall) : own);
+}
+
+function layerOf(host: HostNode): { own: string | null; fall: string } {
+  let layer = classLayers.get(host as object);
+  if (!layer) {
+    layer = { own: null, fall: '' };
+    classLayers.set(host as object, layer);
+  }
+  return layer;
+}
+
+/** The fallthrough half: the static template classes are read once, the
+ * first time anything falls through onto this host. */
+export function setFallthroughClass(host: HostNode, value: unknown): void {
+  const layer = layerOf(host);
+  if (layer.own === null) layer.own = be().classOf?.(host) ?? '';
+  layer.fall = value == null ? '' : normalizeClass(value as never);
+  writeClasses(host);
 }
 
 // ---- events --------------------------------------------------------------------------
 
+/** Listeners per (host, key), dispatched by ONE backend registration
+ * (specs/170). The Flutter backend keeps a single handler per event key
+ * (patchProp), so a second `on` for the same key — a component root's own
+ * `@tap` plus the parent's fallthrough `@tap`, v-on="obj" next to `@tap` —
+ * used to replace the first; the DOM would have stacked them. Now both ends
+ * stack, in registration order. */
+const listeners = new WeakMap<object, Map<string, ((...args: unknown[]) => void)[]>>();
+
+export function addListener(host: HostNode, key: string, fn: (...args: unknown[]) => void): () => void {
+  let map = listeners.get(host as object);
+  if (!map) {
+    map = new Map();
+    listeners.set(host as object, map);
+  }
+  let list = map.get(key);
+  if (!list) {
+    const fresh: ((...args: unknown[]) => void)[] = [];
+    list = fresh;
+    map.set(key, fresh);
+    be().on(host, key, (...args: unknown[]) => {
+      for (const f of fresh.slice()) f(...args);
+    });
+  }
+  list.push(fn);
+  const own = list;
+  return () => {
+    const at = own.indexOf(fn);
+    if (at >= 0) own.splice(at, 1);
+  };
+}
+
 export function on(node: TplNode | HostNode, event: string, handler: unknown, options?: { once?: boolean }): void {
   const host = node instanceof TplNode ? node.host : node;
   const key = toHandlerKey(camelize(event));
-  const wrapped = options?.once
+  let remove: () => void = () => {};
+  const fn = options?.once
     ? (...args: unknown[]) => {
-        be().off(host, key);
+        remove();
         (handler as (...a: unknown[]) => void)(...args);
       }
-    : handler;
-  be().on(host, key, wrapped);
+    : (handler as (...a: unknown[]) => void);
+  remove = addListener(host, key, fn);
 }
 
 export function off(node: TplNode | HostNode, event: string): void {
   const host = node instanceof TplNode ? node.host : node;
-  be().off(host, toHandlerKey(camelize(event)));
+  const key = toHandlerKey(camelize(event));
+  listeners.get(host as object)?.get(key)?.splice(0);
 }
 
 export function once(node: TplNode | HostNode, event: string, handler: unknown): void {
@@ -683,7 +815,25 @@ function enqueue(run: () => void, alive: () => boolean): void {
  * call inside withScope so the first run (and anything it constructs) lands
  * in the enclosing scope. Neither 3.5 nor 3.6 exposes ReactiveEffect's
  * active flag, so liveness goes through onStop. */
+/** v-once (specs/170): inside withOnce, a renderEffect runs its body once
+ * and tracks nothing — the content never updates, which is the point. */
+let inOnce = false;
+export function withOnce<T>(fn: () => T, value = true): T {
+  if (inOnce === value) return fn();
+  const prev = inOnce;
+  inOnce = value;
+  try {
+    return fn();
+  } finally {
+    inOnce = prev;
+  }
+}
+
 export function renderEffect(fn: () => unknown): void {
+  if (inOnce) {
+    fn();
+    return;
+  }
   const scope = currentScope;
   let alive = true;
   // one queue entry per effect per flush (specs/167): five writes in one
@@ -737,7 +887,7 @@ export function renderEffect(fn: () => unknown): void {
 export function createIf(condition: () => unknown, positive?: () => unknown, negative?: () => unknown, flags = 1): Block {
   void flags;
   const { parent, anchor: before } = takeInsertionState();
-  const anchor = be().createAnchor('if');
+  const anchor = makeAnchor('if');
   if (parent) be().attach(anchor, parent, before);
   const frag: Block & { nodes: HostNode[]; scopes: unknown[]; cleanups: (() => void)[] } = { nodes: [anchor], scopes: [], cleanups: [] };
   let current: { scope: unknown; cleanups: (() => void)[] } | null = null;
@@ -793,9 +943,77 @@ export function createIf(condition: () => unknown, positive?: () => unknown, neg
   return frag;
 }
 
+/** A block keyed on a value (specs/170): `<view :key="k">`, `<template v-if
+ * :key>` — when the key changes the content is torn down and rebuilt in a
+ * fresh scope, exactly like a v-if flipping. Same anchor/teardown shape as
+ * createIf; the switch is identity of the key instead of truthiness. */
+export function createKeyedFragment(key: () => unknown, render: () => unknown): Block {
+  const { parent, anchor: before } = takeInsertionState();
+  const anchor = makeAnchor('key');
+  if (parent) be().attach(anchor, parent, before);
+  const frag: Block & { nodes: HostNode[]; scopes: unknown[]; cleanups: (() => void)[] } = { nodes: [anchor], scopes: [], cleanups: [] };
+  let current: { scope: unknown; cleanups: (() => void)[] } | null = null;
+  const teardown = (): void => {
+    if (current) beforeStop(current.scope);
+    for (let i = frag.nodes.length - 1; i >= 1; i--) be().remove(frag.nodes[i]);
+    frag.nodes.length = 1;
+    if (current) {
+      needRx().stopScope(current.scope);
+      for (const cleanup of current.cleanups) cleanup();
+      current = null;
+      frag.scopes.length = 0;
+    }
+  };
+  const owner = currentScope;
+  let built = false;
+  let last: unknown;
+  withScope(owner, () => {
+    renderEffect(() => {
+      const k = key();
+      if (built && Object.is(k, last)) return;
+      built = true;
+      last = k;
+      teardown();
+      const scope = needRx().createScope();
+      let block: Block;
+      try {
+        block = withScope(scope, () => blockOf(render()));
+      } catch (e) {
+        needRx().stopScope(scope);
+        throw e;
+      }
+      if (parent) insertBlock(block, parent, anchor);
+      frag.nodes.push(...block.nodes);
+      for (const sc of block.scopes ?? []) frag.scopes.push(sc);
+      frag.scopes.push(scope);
+      current = { scope, cleanups: block.cleanups ? [...block.cleanups] : [] };
+    });
+  });
+  frag.cleanups.push(() => {
+    if (current) needRx().stopScope(current.scope);
+    for (const cleanup of current?.cleanups ?? []) cleanup();
+  });
+  return frag;
+}
+
+/** The compiler stamps a block's key for the interop's benefit; the own
+ * runtime keys through createKeyedFragment instead. */
+export function setBlockKey(block: unknown, key: unknown): void {
+  (block as { $key?: unknown }).$key = key;
+}
+
 // ---- v-for ----------------------------------------------------------------------------
 
 const FAST_REMOVE = 1;
+
+/** The list block's API the compiler talks to: a v-for whose items use a
+ * selector (`:class="{ on: sel === item }"`) registers the selector's reset
+ * through `onReset` (specs/170). Our selector keeps no cross-item state to
+ * reset, so the hook only has to exist. */
+function withListApi<T extends Block>(block: T): T & { onReset: (fn: () => void) => void } {
+  (block as T & { onReset: (fn: () => void) => void }).onReset = () => {};
+  return block as T & { onReset: (fn: () => void) => void };
+}
 
 interface ForItem {
   key: unknown;
@@ -854,7 +1072,7 @@ export function createFor(
 ): Block {
   const once = (flags & FOR_ONCE) !== 0;
   const { parent, anchor: before } = takeInsertionState();
-  const anchor = be().createAnchor('for');
+  const anchor = makeAnchor('for');
   const listBlock: Block & { nodes: HostNode[]; scopes: unknown[]; cleanups: (() => void)[] } = { nodes: [anchor], scopes: [], cleanups: [] };
   let items: ForItem[] = [];
   // null = append. A list inserted at the end defers its anchor so the
@@ -899,7 +1117,7 @@ export function createFor(
         ensureAnchor();
       });
     });
-    return listBlock;
+    return withListApi(listBlock);
   }
   const box = (v: unknown): { value: unknown } => needRx().box(v);
 
@@ -1015,7 +1233,7 @@ export function createFor(
     renderEffect(run);
   });
   fxTag = savedFx;
-  return listBlock;
+  return withListApi(listBlock);
 }
 
 /** The dynamic text node of a template whose only dynamic part is one
@@ -1064,7 +1282,7 @@ export function repeatTemplate(
     );
   }
   const { parent, anchor: before } = takeInsertionState();
-  const anchor = be().createAnchor('for');
+  const anchor = makeAnchor('for');
   const listBlock: Block & { nodes: HostNode[]; scopes: unknown[]; cleanups: (() => void)[] } = { nodes: [anchor], scopes: [], cleanups: [] };
   let slot: HostNode | null = anchor;
   let anchorPlaced = !parent;
@@ -1105,7 +1323,7 @@ export function repeatTemplate(
     }
   }
   if (!anchorPlaced && parent) be().attach(anchor, parent, null);
-  return listBlock;
+  return withListApi(listBlock);
 }
 
 /** The reactive twin of repeatTemplate: same structural cell (one template,
@@ -1143,7 +1361,7 @@ export function repeatTemplateLive(
     );
   }
   const { parent, anchor: before } = takeInsertionState();
-  const anchor = be().createAnchor('for');
+  const anchor = makeAnchor('for');
   const listBlock: Block & { nodes: HostNode[]; scopes: unknown[]; cleanups: (() => void)[] } = { nodes: [anchor], scopes: [], cleanups: [] };
   let slot: HostNode | null = anchor;
   let anchorPlaced = !parent;
@@ -1188,16 +1406,20 @@ export function repeatTemplateLive(
       if (!anchorPlaced && parent) be().attach(anchor, parent, null);
     });
   });
-  return listBlock;
+  return withListApi(listBlock);
 }
 
+/** Dynamic slot lists (`<template v-for … #[name]>`, specs/170): one slot
+ * descriptor per source item. Evaluated when the component mounts — the
+ * parent's slot set is fixed for the child's lifetime here. */
 export function createForSlots(
-  _rawSource: unknown,
-  _renderSlot: unknown,
-  _getName: unknown,
-  _getKey: unknown,
-): never {
-  throw new Error('[fjs vapor] dynamic slot lists (createForSlots) are not supported');
+  source: unknown,
+  getSlot: (item: unknown, key: unknown, index: number) => unknown,
+): unknown[] {
+  if (Array.isArray(source) || typeof source === 'string') return Array.from(source as ArrayLike<unknown>, (item, i) => getSlot(item, i, i));
+  if (typeof source === 'number') return Array.from({ length: source }, (_, i) => getSlot(i + 1, i, i));
+  if (source && typeof source === 'object') return Object.keys(source).map((k, i) => getSlot((source as Record<string, unknown>)[k], k, i));
+  return [];
 }
 
 /** Stops a block's scopes and cleanups WITHOUT removing its hosts — the
@@ -1317,7 +1539,7 @@ export function __vaporMicro(): Record<string, number> {
     const holder = template('<view>')();
     const { rows, cells } = forest();
     const anchors: HostNode[] = [];
-    for (let r = 0; r < 50; r++) anchors.push(be().createAnchor('for'));
+    for (let r = 0; r < 50; r++) anchors.push(makeAnchor('for'));
     const t0 = __now();
     for (let r = 0; r < 50; r++) {
       be().attach(rows[r].host, holder.host, null);

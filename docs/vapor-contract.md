@@ -83,6 +83,12 @@ Vue 绑定（`runtime.ts`）的实现即 `@vue/reactivity`：
 与框架无关，见 `VaporBackend` 接口注释（`host.ts`）。静态形状列表的批量克隆
 （`cloneList`，specs/162）两端各有等价实现。
 
+specs/170 起的可选成员（缺了由 `vapor/helpers.ts` 降级或告警，绝不 ReferenceError）：
+`setValue`（`:value`）、`setDOMProp`、`setHtml`（v-html；Flutter 无）、`classOf`（透传 class 合并时读模板静态
+class）、`textModel`（文本 v-model 的事件名与取值）、`applyChoiceModel`（checkbox / radio / select；仅 DOM）、
+`createElement`（`<component :is="tag">`）。事件注册经 host 层的 `addListener` 多路分发：每个
+(宿主, 事件键) 只向后端 `on` 一次，后端可以只支持单 handler。
+
 ## 接第二个框架的步骤
 
 1. **绑定反应式**：实现 `HostReactivity`（≤40 行，参照 Solid 测试），模块 init 时

@@ -5,12 +5,14 @@
 // Compiled SFCs import this via the CLI's `vue` → `fjs/vapor` rewrite; the
 // export surface equals the core's plus the component layer.
 import { EffectScope, effect, getCurrentScope, onScopeDispose, shallowRef, stop as stopRunner } from '@vue/reactivity';
-import { camelize, toHandlerKey } from '@vue/shared';
+import { camelize, isArray, toHandlerKey } from '@vue/shared';
 import {
   be,
   blockOf,
   emptyBlock,
   insertBlock,
+  isAnchorHost,
+  makeAnchor,
   removeBlock,
   renderEffect,
   setHostReactivity,
@@ -21,7 +23,10 @@ import {
   type Block,
   type HostNode,
   type Slots,
+  TplNode,
+  template,
 } from './host';
+import { patchHostProps, warnVaporOnce } from './helpers';
 import { discardCssVarsBucket, popAndApplyCssVars, pushCssVarsBucket } from './css-vars';
 import {
   createVaporInstance,
@@ -173,7 +178,9 @@ function withScope<T>(scope: EffectScope | null, fn: () => T, slots: Slots | nul
 
 export interface VaporComponent {
   name?: string;
-  props?: Record<string, { default?: unknown }> | string[];
+  props?: Record<string, { default?: unknown } | unknown> | string[];
+  emits?: Record<string, unknown> | string[];
+  inheritAttrs?: boolean;
   setup?: (props: Record<string, unknown>, ctx: {
     emit: (name: string, ...args: unknown[]) => void;
     slots: Slots;
@@ -220,36 +227,67 @@ export function createAssetComponent(
   return createComponent(resolveComponent(name), rawProps, rawSlots);
 }
 
-/** Props for a mounted component: getters evaluated on read, so an effect
- * reading `props.x` tracks whatever the getter read. Event handlers arrive
- * as plain functions and read as themselves; declared defaults fill in when
- * no getter exists. */
-function makeProps(getters: Record<string, unknown> | undefined, comp: VaporComponent): Record<string, unknown> {
+/** Props and attrs for a mounted component (specs/170: Vue's split). Raw
+ * values are getters evaluated on read, so a reader tracks what the
+ * closure read; declared props get their defaults; everything NOT declared
+ * as a prop or emit lands in attrs (class, style, undeclared listeners),
+ * which fall through onto a single-root component's root element. A
+ * function PROP (an event handler) cannot be told apart from a getter —
+ * both arrive as functions — and a getter returning the handler reads the
+ * same. */
+function splitProps(
+  getters: Record<string, unknown> | undefined,
+  comp: VaporComponent,
+): { props: Record<string, unknown>; attrs: Record<string, unknown> } {
   const props: Record<string, unknown> = {};
-  const declared = Array.isArray(comp.props) ? null : comp.props ?? null;
+  const attrs: Record<string, unknown> = {};
+  const declared = Array.isArray(comp.props) ? null : (comp.props as Record<string, { default?: unknown }> | undefined) ?? null;
   const keys = Array.isArray(comp.props) ? comp.props : declared ? Object.keys(declared) : [];
-  const names = new Set([...(getters ? Object.keys(getters) : []), ...keys]);
-  for (const key of names) {
-    const value = getters?.[key];
-    if (typeof value === 'function') {
-      // reactive binding: evaluated on read, so the reader tracks what the
-      // closure read. A function PROP (an event handler, `onClick`) cannot
-      // be told apart from a getter here — both arrive as functions — and
-      // a getter returning the handler works the same for readers.
-      Object.defineProperty(props, key, { get: value as () => unknown, enumerable: true });
-      continue;
-    }
-    // a static value the compiler folded (class="page" on a component tag);
-    // a declared default fills in when the parent passed nothing
-    if (value !== undefined) {
-      props[key] = value;
-      continue;
-    }
-    const fallback = declared?.[key]?.default;
+  const propKeys = new Set(keys.map((k) => camelize(k)));
+  const emitKeys = new Set<string>(
+    (Array.isArray(comp.emits) ? comp.emits : comp.emits ? Object.keys(comp.emits) : []).map((e) => toHandlerKey(camelize(e))),
+  );
+  const define = (target: Record<string, unknown>, key: string, value: unknown): void => {
+    if (typeof value === 'function') Object.defineProperty(target, key, { get: value as () => unknown, enumerable: true });
+    else target[key] = value;
+  };
+  for (const raw of getters ? Object.keys(getters) : []) {
+    const value = getters![raw];
+    const key = propKeys.has(camelize(raw)) ? camelize(raw) : raw;
+    if (propKeys.has(key)) define(props, key, value);
+    else if (!emitKeys.has(raw)) define(attrs, raw, value);
+  }
+  for (const key of propKeys) {
+    if (key in props) continue;
+    const fallback = (declared?.[key] as { default?: unknown } | undefined)?.default;
     props[key] = typeof fallback === 'function' ? (fallback as () => unknown)() : fallback;
   }
-  return props;
+  return { props, attrs };
 }
+
+/** Attrs onto the component's root (specs/170) — only a single element
+ * root, never an anchor, and not with `inheritAttrs: false`. class merges
+ * with the root's own, style merges (the parent's keys win), listeners
+ * stack, the rest become props / attributes. */
+function applyFallthrough(block: Block, attrs: Record<string, unknown>, comp: VaporComponent, record: object): void {
+  if (comp.inheritAttrs === false || block.nodes.length !== 1) return;
+  const root = block.nodes[0];
+  if (!root || typeof root !== 'object' || isAnchorHost(root) || isBlockOfComponent(root)) return;
+  if (Object.keys(attrs).length === 0) return;
+  renderEffect(() => {
+    const next: Record<string, unknown> = {};
+    for (const key of Object.keys(attrs)) next[key] = attrs[key];
+    patchHostProps(root, next, record, true);
+  });
+}
+
+function isBlockOfComponent(node: unknown): boolean {
+  return !!(node && typeof node === 'object' && Array.isArray((node as Block).nodes));
+}
+
+/** What a template ref to a component resolves to (`expose()`d object, or
+ * {} — `<script setup>` components are closed by default). */
+const exposedOf = new WeakMap<object, Record<string, unknown>>();
 
 function mountVaporComponent(
   comp: VaporComponent,
@@ -269,19 +307,27 @@ function mountVaporComponent(
   // the fallback unmount path (and the child-first collection of the main
   // one): fires whoever stops this scope
   scope.run(() => onScopeDispose(() => onInstanceDisposed(inst)));
-  const props = makeProps(rawProps, comp);
+  const { props, attrs } = splitProps(rawProps, comp);
+  inst.attrs = attrs;
   const slots = rawSlots ?? {};
+  let exposed: Record<string, unknown> = {};
   const ctx = {
+    // the listener the parent passed (rawProps hold getters returning it):
+    // `emit('scroll')` → `onScroll`, also its kebab / exact spellings
     emit: (name: string, ...args: unknown[]) => {
-      const handler = props[toHandlerKey(camelize(name))];
-      if (typeof handler === 'function') (handler as (...a: unknown[]) => void)(...args);
+      for (const key of new Set([toHandlerKey(camelize(name)), toHandlerKey(name)])) {
+        const raw = rawProps?.[key];
+        const handler = typeof raw === 'function' ? (raw as () => unknown)() : raw;
+        const list = isArray(handler) ? handler : [handler];
+        for (const fn of list) if (typeof fn === 'function') (fn as (...a: unknown[]) => void)(...args);
+      }
     },
     slots,
-    // the vite path's compiled setup destructures these (plugin-vue always
-    // emits `{ expose: __expose }` for vapor); expose is a no-op — the own
-    // runtime has no devtools instance to expose onto
-    attrs: {},
-    expose: () => {},
+    attrs,
+    // what a parent's template ref to this component receives (specs/170)
+    expose: (value?: Record<string, unknown>) => {
+      exposed = value ?? {};
+    },
   };
   let block: Block;
   // useVaporCssVars registrations made during setup land in this bucket and
@@ -300,6 +346,11 @@ function mountVaporComponent(
   }
   setCurrentVaporInstance(prevInst);
   withScope(scope, () => popAndApplyCssVars(block, (fn) => renderEffect(fn)));
+  withScope(scope, () => applyFallthrough(block, attrs, comp, inst));
+  // the block object identifies the component for template refs: a fresh
+  // object, so a child that returned its own child's block keeps its own
+  block = { nodes: block.nodes, scopes: block.scopes, cleanups: block.cleanups };
+  exposedOf.set(block, exposed);
   if (!block.scopes) block.scopes = [];
   block.scopes.push(scope);
   runBeforeMount(inst);
@@ -312,7 +363,21 @@ function mountVaporComponent(
  * consumer sees the object. */
 export function normalizeSlots(rawSlots?: Slots | (() => unknown)): Slots {
   if (rawSlots == null) return {};
-  return typeof rawSlots === 'function' ? { default: rawSlots as () => unknown } : rawSlots;
+  if (typeof rawSlots === 'function') return { default: rawSlots as () => unknown };
+  const dynamic = (rawSlots as { $?: unknown }).$;
+  if (!isArray(dynamic)) return rawSlots;
+  // `$`: dynamic slot sources (createForSlots / v-if'd slots), each a getter
+  // returning a descriptor `{ name, fn }` or a list of them (specs/170)
+  const out: Slots = {};
+  for (const key of Object.keys(rawSlots)) if (key !== '$') out[key] = (rawSlots as Slots)[key];
+  const addAll = (d: unknown): void => {
+    if (isArray(d)) d.forEach(addAll);
+    else if (d && typeof d === 'object' && typeof (d as { fn?: unknown }).fn === 'function') {
+      out[String((d as { name: unknown }).name)] = (d as { fn: (...a: unknown[]) => unknown }).fn;
+    }
+  };
+  for (const src of dynamic) addAll(typeof src === 'function' ? (src as () => unknown)() : src);
+  return out;
 }
 
 export function createComponent(
@@ -357,7 +422,40 @@ export function createComponentWithFallback(
   rawProps?: Record<string, unknown>,
   rawSlots?: Slots | (() => unknown),
 ): Block {
-  return createComponent(typeof comp === 'string' ? resolveComponent(comp) : comp, rawProps, rawSlots);
+  if (typeof comp === 'string') {
+    // `<component :is="'view'">`: a registered component by that name, else
+    // a plain element of that tag (specs/170 — it used to throw)
+    const resolved = activeInstance()?.appContext?.components[comp];
+    return resolved ? createComponent(resolved, rawProps, rawSlots) : createPlainElement(comp, rawProps, rawSlots);
+  }
+  return createComponent(comp, rawProps, rawSlots);
+}
+
+/** A bare element of [tag] with props applied and the default slot inside
+ * (dynamic `<component :is="tag">`). */
+export function createPlainElement(
+  tag: string,
+  rawProps?: Record<string, unknown> | null,
+  rawSlots?: Slots | (() => unknown) | null,
+): Block {
+  const { parent, anchor } = takeInsertionState();
+  const host = be().createElement ? be().createElement!(tag) : template(`<${tag}></${tag}>`)().host;
+  const getters = rawProps ?? {};
+  if (Object.keys(getters).length) {
+    renderEffect(() => {
+      const next: Record<string, unknown> = {};
+      for (const key of Object.keys(getters)) {
+        const v = getters[key];
+        next[key] = typeof v === 'function' && !/^on[A-Z]/.test(key) ? (v as () => unknown)() : typeof v === 'function' ? (v as () => unknown)() : v;
+      }
+      patchHostProps(host, next, host as object);
+    });
+  }
+  const slots = normalizeSlots(rawSlots ?? undefined);
+  if (slots.default) insertBlock(blockOf(slots.default()), host, null);
+  const block: Block = { nodes: [host] };
+  if (parent) insertBlock(block, parent, anchor);
+  return block;
 }
 
 export function createDynamicComponent(
@@ -376,12 +474,45 @@ export function createDynamicComponent(
 /** A slot position: renders the slot the parent passed, or the fallback
  * block. Slot content belongs to the CHILD's scope (it dies with the child)
  * but reads the parent's reactive state through the slot closure. */
-export function createSlot(name = 'default', _rawProps?: unknown, fallback?: () => unknown): Block {
+/** Slot props for a scoped slot (specs/170): the compiler passes getters
+ * (`{ item: () => x }`, plus `$: [() => obj]` for `v-bind="obj"`), the slot
+ * function reads `slotProps.item` — a getter here, so its effects track
+ * the source. */
+function makeSlotProps(rawProps: unknown): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!rawProps || typeof rawProps !== 'object') return out;
+  for (const key of Object.keys(rawProps)) {
+    const v = (rawProps as Record<string, unknown>)[key];
+    if (key === '$' && isArray(v)) {
+      for (const src of v) {
+        const obj = typeof src === 'function' ? (src as () => unknown)() : src;
+        for (const k of Object.keys((obj as Record<string, unknown>) ?? {})) {
+          Object.defineProperty(out, k, {
+            get: () => {
+              const o = typeof src === 'function' ? (src as () => Record<string, unknown>)() : (src as Record<string, unknown>);
+              return o?.[k];
+            },
+            enumerable: true,
+            configurable: true,
+          });
+        }
+      }
+      continue;
+    }
+    if (typeof v === 'function') Object.defineProperty(out, key, { get: v as () => unknown, enumerable: true, configurable: true });
+    else out[key] = v;
+  }
+  return out;
+}
+
+export function createSlot(name: string | (() => string) = 'default', rawProps?: unknown, fallback?: () => unknown): Block {
   const { parent, anchor } = takeInsertionState();
-  const render = currentSlots?.[name] ?? fallback;
+  const slotName = typeof name === 'function' ? name() : name;
+  const slotFn = currentSlots?.[slotName];
+  const render = slotFn ? () => slotFn(makeSlotProps(rawProps)) : fallback;
   if (!render) {
     if (!parent) return emptyBlock();
-    const anchorHost = be().createAnchor('slot');
+    const anchorHost = makeAnchor('slot');
     if (parent) be().attach(anchorHost, parent, anchor);
     return { nodes: [anchorHost] };
   }
@@ -462,6 +593,126 @@ export function mountVaporComponentForAdopt(
   };
 }
 
+// ---- template refs (specs/170) ---------------------------------------------------------
+
+interface RefLike {
+  value: unknown;
+  __v_isRef?: true;
+}
+const isRefLike = (r: unknown): r is RefLike => !!r && typeof r === 'object' && (r as RefLike).__v_isRef === true;
+
+/** What a ref points at: a template node's host, a component's exposed
+ * object, a fragment's first host. */
+function refValueOf(el: unknown): unknown {
+  if (el instanceof TplNode) return el.host;
+  if (el && typeof el === 'object' && exposedOf.has(el)) return exposedOf.get(el);
+  if (el && typeof el === 'object' && Array.isArray((el as Block).nodes)) return (el as Block).nodes[0] ?? null;
+  return el ?? null;
+}
+
+function setRef(el: unknown, ref: unknown, refFor: boolean | null | undefined, refKey: string | null | undefined): () => void {
+  const value = refValueOf(el);
+  const inst = activeInstance() as (ReturnType<typeof activeInstance> & { refs?: Record<string, unknown> }) | null;
+  if (isRefLike(ref)) {
+    if (refFor) {
+      const list = isArray(ref.value) ? (ref.value as unknown[]) : (ref.value = []) as unknown[];
+      list.push(value);
+      return () => {
+        const at = list.indexOf(value);
+        if (at >= 0) list.splice(at, 1);
+      };
+    }
+    ref.value = value;
+    if (refKey && inst) (inst.refs ??= {})[refKey] = value;
+    return () => {
+      if (ref.value === value) ref.value = null;
+      if (refKey && inst?.refs) inst.refs[refKey] = null;
+    };
+  }
+  if (typeof ref === 'function') {
+    (ref as (v: unknown, refs: unknown) => void)(value, inst?.refs ?? {});
+    return () => (ref as (v: unknown, refs: unknown) => void)(null, inst?.refs ?? {});
+  }
+  if (typeof ref === 'string' && inst) {
+    const refs = (inst.refs ??= {});
+    if (refFor) {
+      const list = (isArray(refs[ref]) ? refs[ref] : (refs[ref] = [])) as unknown[];
+      list.push(value);
+      return () => {
+        const at = list.indexOf(value);
+        if (at >= 0) list.splice(at, 1);
+      };
+    }
+    refs[ref] = value;
+    return () => {
+      if (refs[ref] === value) refs[ref] = null;
+    };
+  }
+  return () => {};
+}
+
+export function setStaticTemplateRef(el: unknown, ref: unknown, refFor?: boolean | null, refKey?: string | null): void {
+  const unset = setRef(el, ref, refFor, refKey);
+  onScopeDispose(unset, true);
+}
+
+/** The compiler's setter for refs whose element varies (v-for items). */
+export function createTemplateRefSetter(): (el: unknown, ref: unknown, refFor?: boolean | null, refKey?: string | null) => void {
+  return (el, ref, refFor, refKey) => setStaticTemplateRef(el, ref, refFor, refKey);
+}
+
+/** `:ref="expr"` — the target can change. */
+export function setTemplateRefBinding(el: unknown, getter: () => unknown, refFor?: boolean | null, refKey?: string | null): void {
+  let unset: (() => void) | null = null;
+  renderEffect(() => {
+    unset?.();
+    unset = setRef(el, getter(), refFor, refKey);
+  });
+  onScopeDispose(() => unset?.(), true);
+}
+
+// ---- custom directives (specs/170) -----------------------------------------------------
+
+type VaporDirective = (el: unknown, source?: () => unknown, arg?: string, modifiers?: Record<string, boolean>) => void | (() => void);
+
+/** `v-foo` on an element: a vapor directive is a function called once with
+ * the host and a value getter; a returned function is its cleanup. The
+ * VDOM object-hook form has no lifecycle to hang off here — warned. */
+export function withVaporDirectives(node: unknown, dirs: unknown[][]): void {
+  const host = refValueOf(node);
+  for (const [dir, source, arg, modifiers] of dirs) {
+    if (typeof dir === 'function') {
+      const cleanup = (dir as VaporDirective)(host, source as (() => unknown) | undefined, arg as string | undefined, modifiers as Record<string, boolean> | undefined);
+      if (typeof cleanup === 'function') onScopeDispose(cleanup, true);
+    } else {
+      warnVaporOnce('vdom-directive', 'an object-hook (VDOM) directive reached a vapor template — write it as a vapor directive function (el, source, arg, modifiers) => cleanup');
+    }
+  }
+}
+
+// ---- built-in components, degraded (specs/170) ------------------------------------------
+
+function degraded(name: string, what: string, props: string[]): VaporComponent {
+  return defineVaporComponent({
+    name,
+    props,
+    setup() {
+      warnVaporOnce(`builtin-${name}`, `<${name}> ${what} in vapor components yet (specs/170) — its content renders without it`);
+      return createSlot('default');
+    },
+  });
+}
+
+export const VaporTransition = degraded('Transition', 'does not animate', [
+  'name', 'appear', 'mode', 'css', 'type', 'duration', 'persisted',
+  'enterFromClass', 'enterActiveClass', 'enterToClass', 'appearFromClass', 'appearActiveClass', 'appearToClass',
+  'leaveFromClass', 'leaveActiveClass', 'leaveToClass',
+]);
+export const VaporTransitionGroup = degraded('TransitionGroup', 'does not animate', ['name', 'tag', 'moveClass', 'appear']);
+export const VaporKeepAlive = degraded('KeepAlive', 'does not cache', ['include', 'exclude', 'max']);
+export const VaporTeleport = degraded('Teleport', 'does not move content (rendered in place)', ['to', 'disabled', 'defer']);
+
 // the core's surface IS the compiled face — component layer adds the rest
 export * from './host';
+export * from './helpers';
 export type { Slots };

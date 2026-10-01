@@ -233,6 +233,28 @@ export const flutterBackend: VaporBackend = {
     patchProp(host as never, key, null, null);
   },
 
+  // ---- specs/170 ------------------------------------------------------------------------
+  // `value` is the fjs input element's own prop (widgets/input.dart)
+  setValue(host, value) {
+    patchProp(host as never, 'value', null, value == null ? '' : value);
+  },
+  setDOMProp(host, key, value) {
+    patchProp(host as never, key, null, value);
+  },
+  classOf(host) {
+    const id = (host as { id?: number }).id;
+    return typeof id === 'number' ? styleEngine.classesOf(id).join(' ') : '';
+  },
+  // the input element reports every edit as `textChanged` (payload: the
+  // text) and its commit as `blur` — the contract VDOM pages bind by hand
+  textModel: {
+    event: (lazy) => (lazy ? 'onBlur' : 'onTextChanged'),
+    read: (payload) => (payload == null ? '' : String(payload)),
+  },
+  createElement(tag) {
+    return nodeOps.createElement(tag);
+  },
+
 
   // <style> v-bind() on a Vapor component (specs/166): the vars ride the
   // style engine's inline-custom-props channel — the same one the VDOM

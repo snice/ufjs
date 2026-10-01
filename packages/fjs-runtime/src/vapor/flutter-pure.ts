@@ -13,7 +13,7 @@ export * from './runtime';
 // exports (those need a VDOM currentInstance, which Vapor code never has)
 export { resolveComponent, useSlots, type Slots } from './runtime';
 export {
-  onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext,
+  onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext, useAttrs,
 } from './instance';
 export { useVaporCssVars } from './css-vars';
 
@@ -23,3 +23,14 @@ import './backend-flutter';
 
 /** Kept for the CLI injection's call shape (see vapor/index.ts). */
 export function enableVapor(): void {}
+
+// specs/170: event modifiers on the Flutter end — vue-shim's withModifiers /
+// withKeys. A tap reaches the handler as renderer.ts's event object, whose
+// stopPropagation / preventDefault are real (the tap bubbles), so `.stop`
+// holds; key filters pass through (fjs events carry no key codes).
+import { withKeys as fjsWithKeys, withModifiers as fjsWithModifiers } from '../vue/modifiers';
+import { createInvoker } from './helpers';
+export const withVaporModifiers = <T extends (...args: unknown[]) => unknown>(fn: T, modifiers: string[]): T =>
+  createInvoker(typeof fn === 'function' ? (fjsWithModifiers(fn as never, modifiers) as unknown as T) : fn);
+export const withVaporKeys = <T extends (...args: unknown[]) => unknown>(fn: T, _modifiers: string[]): T =>
+  createInvoker(typeof fn === 'function' ? (fjsWithKeys(fn as never) as unknown as T) : fn);

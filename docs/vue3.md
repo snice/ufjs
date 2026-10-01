@@ -517,6 +517,32 @@ web 应用里 `vue` 是真 vue 包，那里的 `.ts` composable 在 vapor 组件
 `getCurrentInstance()` 在 vapor 里仍返回 null（伪造实例会让读 `instance.proxy` 的库崩），
 vueuse `tryOnMounted` 这类会走它们的无实例分支。
 
+### Vapor 模板语法支持（specs/170）
+
+compiler-vapor 能生成的每个运行时 helper，四个 vapor 入口都有导出（守护测试
+`vapor-helper-parity*.test.ts` 直接读编译器自己的 helper 清单对照）——做不到的写法降级并告警一次，
+不再在模块加载时 `_xxx is not a function`。
+
+| 写法 | Flutter | Web |
+|---|---|---|
+| `ref="el"` / `:ref` / v-for 里的 ref | ✅ 元素 = fjs Element；组件 = 其 `defineExpose` 的对象 | ✅ 元素 = DOM 节点 |
+| `v-show` | ✅（经样式引擎写 `display`） | ✅ |
+| `v-model` 文本（`<input>` / `<textarea>`，`.trim/.number/.lazy`） | ✅ `textChanged` 入、`value` 出 | ✅ |
+| `v-model` checkbox / radio / select | ⚠️ 无对应原生元素，告警不绑定 | ✅ |
+| `v-bind="obj"` / `v-on="obj"` | ✅ | ✅ |
+| `.stop/.prevent/.self` | ✅（tap 事件对象） | ✅ |
+| 按键修饰符 `.enter` 等 | 直通（fjs 事件无键码，同 VDOM） | ✅ |
+| `v-html` | ⚠️ 按纯文本写入（用 `<rich-text>`） | ✅ |
+| `v-once`、`:key` 重建、`<component :is>`（含原生标签）、`v-for` selector | ✅ | ✅ |
+| 自定义指令 | ✅ vapor 指令函数 `(el, source, arg, modifiers) => cleanup` | ✅ 同左 |
+| 作用域插槽 `#default="{ item }"`、动态插槽 | ✅ | ✅ |
+| attrs 透传（class / style 合并、监听叠加、`inheritAttrs: false`、`useAttrs`） | ✅ | ✅ |
+| `<Transition>` `<TransitionGroup>` `<KeepAlive>` `<Teleport>` | ⚠️ 渲染内容，不动画 / 不缓存 / 原地渲染，告警一次 | ⚠️ 同左 |
+
+同一元素上的多个监听（自己的 `@tap` + 父组件透传的 `@tap` + `v-on="obj"`）两端都按注册顺序叠加
+——Flutter 后端每个事件键只留一个 handler，叠加在 vapor 的 host 层做。VDOM 路径不受影响（原生元素
+上的 `v-model` 仍按下表不支持）。
+
 ## 不可用 / 注意
 
 | 项 | 状态 | 说明 |

@@ -24,6 +24,142 @@ import {
   type VaporBackend,
   setVaporBackend,
 } from './runtime';
+import { hyphenate, looseEqual, looseIndexOf, looseToNumber } from '@vue/shared';
+import { addListener, renderEffect } from './runtime';
+import { createInvoker } from './helpers';
+
+// ---- v-model on DOM controls (specs/170) ------------------------------------------
+// runtime-dom's vModelCheckbox / vModelRadio / vModelSelect, on the vapor
+// effect: the control's state follows the model through a renderEffect,
+// user changes go back through `set`.
+
+const modelValueOf = (el: HTMLInputElement | HTMLOptionElement): unknown =>
+  '_value' in el ? (el as unknown as { _value: unknown })._value : el.value;
+
+function applyDomChoiceModel(
+  el: HTMLInputElement,
+  kind: 'checkbox' | 'radio' | 'select' | 'dynamic',
+  get: () => unknown,
+  set: (v: unknown) => void,
+  modifiers: Record<string, boolean | undefined>,
+): boolean {
+  if (kind === 'dynamic') {
+    const tag = el.tagName;
+    if (tag === 'SELECT') kind = 'select';
+    else if (tag === 'INPUT' && el.type === 'checkbox') kind = 'checkbox';
+    else if (tag === 'INPUT' && el.type === 'radio') kind = 'radio';
+    else return false; // text fields: the caller falls back to the text model
+  }
+  if (kind === 'checkbox') {
+    addListener(el, 'onChange', () => {
+      const model = get();
+      const checked = el.checked;
+      const value = modelValueOf(el);
+      if (Array.isArray(model)) {
+        const at = looseIndexOf(model, value);
+        if (checked && at < 0) set(model.concat(value));
+        else if (!checked && at >= 0) set(model.filter((_, i) => i !== at));
+      } else if (model instanceof Set) {
+        const next = new Set(model);
+        if (checked) next.add(value);
+        else next.delete(value);
+        set(next);
+      } else {
+        const tv = (el as unknown as { _trueValue?: unknown })._trueValue;
+        const fv = (el as unknown as { _falseValue?: unknown })._falseValue;
+        set(checked ? (tv !== undefined ? tv : true) : (fv !== undefined ? fv : false));
+      }
+    });
+    renderEffect(() => {
+      const model = get();
+      const value = modelValueOf(el);
+      el.checked = Array.isArray(model)
+        ? looseIndexOf(model, value) > -1
+        : model instanceof Set
+          ? model.has(value)
+          : looseEqual(model, (el as unknown as { _trueValue?: unknown })._trueValue ?? true);
+    });
+    return true;
+  }
+  if (kind === 'radio') {
+    addListener(el, 'onChange', () => set(modelValueOf(el)));
+    renderEffect(() => {
+      el.checked = looseEqual(get(), modelValueOf(el));
+    });
+    return true;
+  }
+  const select = el as unknown as HTMLSelectElement;
+  addListener(select, 'onChange', () => {
+    const picked = Array.prototype.filter
+      .call(select.options, (o: HTMLOptionElement) => o.selected)
+      .map((o: HTMLOptionElement) => (modifiers.number ? looseToNumber(modelValueOf(o) as string) : modelValueOf(o)));
+    set(select.multiple ? picked : picked[0]);
+  });
+  renderEffect(() => {
+    const model = get();
+    for (const o of Array.from(select.options)) {
+      const v = modelValueOf(o);
+      o.selected = select.multiple
+        ? Array.isArray(model) ? looseIndexOf(model, v) > -1 : model instanceof Set ? model.has(v) : false
+        : looseEqual(v, model);
+    }
+  });
+  return true;
+}
+
+// ---- event modifiers (specs/170) ------------------------------------------------------
+// runtime-dom's withModifiers / withKeys, over real DOM events. (The
+// Flutter twins live in vue/modifiers.ts: there, key events do not exist.)
+
+const SYSTEM_MODIFIERS = ['ctrl', 'shift', 'alt', 'meta'] as const;
+type DomEventLike = Event & Partial<MouseEvent & KeyboardEvent>;
+const GUARDS: Record<string, (e: DomEventLike, mods: string[]) => boolean | void> = {
+  stop: (e) => e.stopPropagation(),
+  prevent: (e) => e.preventDefault(),
+  self: (e) => e.target !== e.currentTarget,
+  ctrl: (e) => !e.ctrlKey,
+  shift: (e) => !e.shiftKey,
+  alt: (e) => !e.altKey,
+  meta: (e) => !e.metaKey,
+  left: (e) => 'button' in e && e.button !== 0,
+  middle: (e) => 'button' in e && e.button !== 1,
+  right: (e) => 'button' in e && e.button !== 2,
+  exact: (e, mods) => SYSTEM_MODIFIERS.some((m) => (e as unknown as Record<string, boolean>)[`${m}Key`] && !mods.includes(m)),
+};
+
+export function withModifiers<T extends (...args: unknown[]) => unknown>(fn: T, modifiers: string[]): T {
+  return ((event: unknown, ...args: unknown[]) => {
+    if (event instanceof Event) {
+      for (const m of modifiers) if (GUARDS[m]?.(event as DomEventLike, modifiers)) return undefined;
+    }
+    return fn(event, ...args);
+  }) as T;
+}
+
+const KEY_ALIASES: Record<string, string | string[]> = {
+  esc: 'escape',
+  space: ' ',
+  up: 'arrow-up',
+  left: 'arrow-left',
+  right: 'arrow-right',
+  down: 'arrow-down',
+  delete: 'backspace',
+};
+
+export function withKeys<T extends (...args: unknown[]) => unknown>(fn: T, modifiers: string[]): T {
+  return ((event: unknown, ...args: unknown[]) => {
+    if (!(event instanceof Event) || !('key' in event)) return fn(event, ...args);
+    const key = hyphenate(String((event as KeyboardEvent).key));
+    if (modifiers.some((k) => k === key || KEY_ALIASES[k] === key)) return fn(event, ...args);
+    return undefined;
+  }) as T;
+}
+
+export const withVaporModifiers = <T extends (...args: unknown[]) => unknown>(fn: T, modifiers: string[]): T =>
+  createInvoker(typeof fn === 'function' ? withModifiers(fn, modifiers) : fn);
+export const withVaporKeys = <T extends (...args: unknown[]) => unknown>(fn: T, modifiers: string[]): T =>
+  createInvoker(typeof fn === 'function' ? withKeys(fn, modifiers) : fn);
+
 // ---- gestures -----------------------------------------------------------------
 
 const LONG_PRESS_MS = 350;
@@ -220,6 +356,35 @@ export const domBackend: VaporBackend = {
     // the honest bound here
     void name;
   },
+  // ---- specs/170 ------------------------------------------------------------------------
+  setValue(host, value) {
+    const el = host as HTMLInputElement;
+    const next = value == null ? '' : String(value);
+    // the DOM property, not the attribute (the attribute is only the
+    // default); skipped when equal so the caret does not jump
+    if ('value' in el) {
+      if (el.value !== next) el.value = next;
+    } else (host as Element).setAttribute('value', next);
+  },
+  setDOMProp(host, key, value) {
+    (host as unknown as Record<string, unknown>)[key] = value;
+  },
+  setHtml(host, html) {
+    (host as Element).innerHTML = html;
+  },
+  classOf(host) {
+    return (host as Element).getAttribute?.('class') ?? '';
+  },
+  textModel: {
+    event: (lazy) => (lazy ? 'onChange' : 'onInput'),
+    read: (_payload, host) => String((host as HTMLInputElement).value ?? ''),
+  },
+  applyChoiceModel(host, kind, get, set, modifiers) {
+    return applyDomChoiceModel(host as HTMLInputElement, kind, get, set, modifiers);
+  },
+  createElement(tag) {
+    return document.createElement(tag);
+  },
   // <style> v-bind() on a Vapor component (specs/166): inline custom
   // properties on the host element; CSS inheritance does the rest
   setCssVars(host, vars) {
@@ -305,6 +470,38 @@ export {
   txt,
   useSlots,
   withScope,
+  // specs/170: the rest of compiler-vapor's helper surface
+  applyCheckboxModel,
+  applyDynamicModel,
+  applyRadioModel,
+  applySelectModel,
+  applyTextModel,
+  applyVShow,
+  createInvoker,
+  createKeyedFragment,
+  createPlainElement,
+  createSelector,
+  createTemplateRefSetter,
+  extend,
+  getDefaultValue,
+  getRestElement,
+  insert,
+  onBinding,
+  setBlockKey,
+  setDOMProp,
+  setDynamicEvents,
+  setDynamicProps,
+  setElementText,
+  setHtml,
+  setStaticTemplateRef,
+  setTemplateRefBinding,
+  setValue,
+  withOnce,
+  withVaporDirectives,
+  VaporKeepAlive,
+  VaporTeleport,
+  VaporTransition,
+  VaporTransitionGroup,
 } from './runtime';
 export type {
   Block,
@@ -322,7 +519,7 @@ export { useVaporCssVars } from './css-vars';
 // specs/167: vapor-aware lifecycle + provide/inject, shadowing the
 // runtime-core star above like the runtime's names do
 export {
-  onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext,
+  onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext, useAttrs,
 } from './instance';
 // compiled text interpolations import this helper by name; the runtime only
 // imports it for its own use, and the flutter entry gets it from vue-shim

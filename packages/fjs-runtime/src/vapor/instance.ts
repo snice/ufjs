@@ -37,6 +37,7 @@ import {
   onUnmounted as rcOnUnmounted,
   onUpdated as rcOnUpdated,
   provide as rcProvide,
+  useAttrs as rcUseAttrs,
 } from '@vue/runtime-core';
 
 type Hook = () => void;
@@ -62,6 +63,8 @@ export interface VaporInstance {
   /** beforeUnmount ran (or was skipped because unmount is under way) */
   isUnmounting: boolean;
   isUnmounted: boolean;
+  /** the non-prop attrs the parent passed (specs/170) */
+  attrs?: Record<string, unknown>;
 }
 
 const EMPTY_PROVIDES: Record<string | symbol, unknown> = Object.freeze(Object.create(null)) as never;
@@ -263,6 +266,12 @@ export function inject(key: InjectionKey, defaultValue?: unknown, treatDefaultAs
 
 export function hasInjectionContext(): boolean {
   return hasVaporInjectionContext() || rcHasInjectionContext();
+}
+
+/** useAttrs() (specs/170): a vapor setup's attrs; runtime-core's otherwise. */
+export function useAttrs(): Record<string, unknown> {
+  if (current) return current.attrs ?? {};
+  return rcUseAttrs() as Record<string, unknown>;
 }
 
 /** true when runtime-core has its own current instance and no vapor one —
