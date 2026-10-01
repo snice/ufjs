@@ -119,7 +119,14 @@ export function sfcParseOptions({
   web?: boolean;
   moduleTags?: Set<string>;
 } = {}): Record<string, unknown> {
-  return { templateParseOptions: { isNativeTag: (tag: string) => isNativeTagFor(tag, { web, moduleTags }) } };
+  // ignoreEmpty: false — compiler-sfc otherwise drops a whitespace-only
+  // `<script setup vapor>` along with its `vapor` attribute, so a display-only
+  // page is judged VDOM (and the auto-vapor re-parse then tags it twice:
+  // `<script setup vapor vapor>` → "Duplicate attribute."). specs/168.
+  return {
+    ignoreEmpty: false,
+    templateParseOptions: { isNativeTag: (tag: string) => isNativeTagFor(tag, { web, moduleTags }) },
+  };
 }
 
 /** A library's SFC (under node_modules) is compiled as Vapor when all it
