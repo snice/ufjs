@@ -176,6 +176,8 @@ export function fjs(): VitePlugin {
             { find: /^fjs\/app$/, replacement: path.join(runtime, 'src', 'app', enableVapor ? 'web-vapor.ts' : 'web.ts') },
             { find: /^fjs\/router$/, replacement: path.join(runtime, 'src', 'router', 'web.ts') },
             { find: /^fjs\/web$/, replacement: path.join(runtime, 'src', 'web', 'index.ts') },
+            // generated <style> injection (specs/168): the leaf module
+            { find: /^fjs\/web-style$/, replacement: path.join(runtime, 'src', 'web', 'inject-style.ts') },
             { find: /^fjs\/vue$/, replacement: path.join(runtime, 'src', 'vue', 'index.ts') },
             { find: /^fjs\/vapor$/, replacement: path.join(runtime, 'src', 'vapor', enableVapor ? 'web-pure.ts' : 'web.ts') },
             // ONE runtime-core for the whole web app — the shim's 3.5

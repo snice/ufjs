@@ -201,7 +201,7 @@ export async function compileVaporSfcModule(
     }
   }
   if (styles.length && opts.web) {
-    code += `\nimport { injectStyle as __fjsInjectStyle } from 'fjs/web';`;
+    code += `\nimport { injectStyle as __fjsInjectStyle } from 'fjs/web-style';`;
     for (const s of styles) {
       const style = compileStyle({
         source: s.content,
@@ -481,7 +481,7 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
         if (styles.length && web) {
           // real CSS: let compiler-sfc rewrite the selectors (scoped
           // attribute, ::v-deep, v-bind()) and inject a <style> tag
-          code += `\nimport { injectStyle as __fjsInjectStyle } from 'fjs/web';`;
+          code += `\nimport { injectStyle as __fjsInjectStyle } from 'fjs/web-style';`;
           for (const s of styles) {
             const compiled = compileStyle({
               source: s.content,
@@ -944,6 +944,9 @@ export function webAliases(enableVapor = false): Record<string, string> {
     fjs: path.join(root, 'src', 'index.ts'),
     'fjs/vue': path.join(root, 'src', 'vue', 'index.ts'),
     'fjs/web': path.join(root, 'src', 'web', 'index.ts'),
+    // what generated SFC code imports for <style> (specs/168): the leaf
+    // module, not the 'fjs/web' entry and its whole component table
+    'fjs/web-style': path.join(root, 'src', 'web', 'inject-style.ts'),
     'fjs/router': path.join(root, 'src', 'router', 'web.ts'),
     'fjs/app': path.join(root, 'src', 'app', enableVapor ? 'web-vapor.ts' : 'web.ts'),
     // enableVapor: the interop-free vapor surface — no createRenderer, no

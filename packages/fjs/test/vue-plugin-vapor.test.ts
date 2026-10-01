@@ -148,6 +148,24 @@ describe('Vapor wrapper (a VDOM module importing a Vapor SFC)', () => {
   });
 });
 
+describe('web <style> injection (specs/168)', () => {
+  it('generated code imports injectStyle from the leaf fjs/web-style, never the fjs/web entry', async () => {
+    for (const [name, sfc] of [['Vap.vue', VAPOR], ['Vdom.vue', VDOM]] as const) {
+      const dir = project({ [name]: sfc, 'entry.ts': `import C from './${name}'; export default C;` });
+      const out = await esbuild.build({
+        entryPoints: [path.join(dir, 'entry.ts')],
+        absWorkingDir: dir, bundle: true, write: false, format: 'esm',
+        external: ['vue', 'fjs/vue', 'fjs/vapor', 'fjs/web', 'fjs/web-style'],
+        plugins: [vueSfcPlugin({ web: true })],
+        logLevel: 'silent',
+      });
+      const js = out.outputFiles[0].text;
+      expect(js, name).toMatch(/from ["']fjs\/web-style["']/);
+      expect(js, name).not.toMatch(/from ["']fjs\/web["']/);
+    }
+  });
+});
+
 describe('enableVapor (specs/166)', () => {
   it('usesEnableVapor reads the flag off the app entry', () => {
     const dir = project({

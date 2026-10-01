@@ -887,6 +887,27 @@ JS 里的样式引擎到此为止：每元素约 6 µs（十几个状态字段�
 样式调用换成每次一个 op、JS 不再 flush——不经过 Vue 的渲染器挂载 42.6 → 21.6 ms，所以下一步是样式引擎下沉 C++
 （specs/150，门控 spike）。
 
+## Vapor 包体（2026-10，specs/166–168）
+
+同一个应用（`examples/vapor-app`：两页 + vapor Shell + pinia store）分别按 enableVapor 与 VDOM
+构建（VDOM 版 = 去掉 `enableVapor` 与 `vapor` 属性，其余不动），`fjs build --analyze`：
+
+| | VDOM | enableVapor（spec 168 前） | enableVapor（spec 168 后） |
+|---|---|---|---|
+| Web 总量 | 257.0 KB / gz 94.3 KB | 214.2 KB / gz 76.5 KB | **116.3 KB / gz 43.7 KB** |
+| Flutter `shared.js` | 313.7 KB / gz 113.6 KB | 336.4 KB / gz 120.7 KB | 同左（未动） |
+
+- **web 的大头是被一个样式函数拖进来的**：每个带 `<style>` 的 SFC，生成代码都
+  `import { injectStyle } from 'fjs/web'`，而 `fjs/web` 入口静态导入整张 VDOM web 组件表
+  （canvas 2d、form、rich-text、picker、swiper、list-view……约 100 KB）。纯 vapor 应用从不
+  实例化它们。specs/168 把 `injectStyle` 拆成叶子模块 `fjs/web-style`，enableVapor web 包体减半。
+  剩下的：base-css 26 KB、vue-router 25.2 KB、@vue/reactivity 16.6 KB、vapor host 9.4 KB、
+  runtime-core 8.3 KB（tree-shake 后）、pinia 5.9 KB。
+- **Flutter 端 enableVapor 反而更大**：runtime-core 68.4 KB 整包在（`vue/renderer.ts` 用它的
+  `createRenderer`，而 vapor 的 Flutter 后端与路由的页面根都从 `vue/renderer` 拿），再叠上
+  vapor 运行时；另外有原生样式引擎时 TS 样式引擎 `css/style.ts`（41.9 KB）照样进包。抽出
+  「renderer 无关的 element 原语层」之前，enableVapor 在 Flutter 端不省包体。
+
 ## 样式引擎下沉 C++：libfjs-style（2026-09，specs/150）
 
 specs/146 / 147 / 149 连续三轮之后，样式引擎在 JS 里每元素仍约 6 µs（十几个状态字段的读写、几次 Map

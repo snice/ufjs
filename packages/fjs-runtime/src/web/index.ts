@@ -7,7 +7,6 @@ import type { App } from 'vue';
 import { fjsComponents, FJS_TAGS } from './components';
 import { installBaseCss } from './base-css';
 import { setToastHandler } from '../host';
-import { rewriteFjsCss } from './css-compat';
 
 /** Registers the built-in tags and the base stylesheet on [app]. */
 export function installFjsWeb(app: App): void {
@@ -24,19 +23,9 @@ export function installFjsWeb(app: App): void {
   setToastHandler(showToast);
 }
 
-const injected = new Set<string>();
-
-/** Adds one SFC <style> block to the document. Called by the code the fjs
- * esbuild plugin injects; `key` dedupes across hot reloads and repeated
- * imports of the same component. */
-export function injectStyle(key: string, css: string): void {
-  if (injected.has(key)) return;
-  injected.add(key);
-  const style = document.createElement('style');
-  style.setAttribute('data-fjs', key);
-  style.textContent = rewriteFjsCss(css);
-  document.head.appendChild(style);
-}
+// the compiler imports it from 'fjs/web-style' (the leaf); kept here for
+// code that already imports it from 'fjs/web'
+export { injectStyle } from './inject-style';
 
 let toastEl: HTMLElement | null = null;
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
