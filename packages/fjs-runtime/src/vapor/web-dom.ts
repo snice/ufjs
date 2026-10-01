@@ -164,10 +164,6 @@ export const domBackend: VaporBackend = {
     (parent as Node).insertBefore(host as Node, anchor as Node | null);
   },
 
-  childAt(parent, index) {
-    return (parent as Node).childNodes[index] ?? null;
-  },
-
   remove(host) {
     (host as Node).parentNode?.removeChild(host as Node);
   },

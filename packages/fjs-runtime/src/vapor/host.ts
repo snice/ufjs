@@ -166,9 +166,6 @@ export interface VaporBackend {
   /** An invisible placeholder (v-if / v-for / empty slot anchor). */
   createAnchor(label: string): HostNode;
   attach(host: HostNode, parent: HostNode, anchor: HostNode | null): void;
-  /** The current child at [index] (setInsertionState's appendIndex form
-   * resolves to it once, at block creation) — null past the end. */
-  childAt(parent: HostNode, index: number): HostNode | null;
   remove(host: HostNode): void;
   /** element-content text ({{ }} on an element) vs a bare text node */
   setElementText(host: HostNode, text: string): void;
@@ -268,14 +265,15 @@ let insertionAnchor: HostNode | null = null;
 export function setInsertionState(parent: unknown, anchor?: unknown): void {
   const p = hostOf(parent);
   insertionParent = p;
-  // the compiler's appendIndex form: a NUMBER means "before the current
-  // child at that index" — resolve it once, here, while the siblings are
-  // exactly as the compiler saw them
-  if (typeof anchor === 'number') {
-    insertionAnchor = be().childAt(p, anchor);
-  } else {
-    insertionAnchor = anchor == null ? null : hostOf(anchor);
-  }
+  // the compiler's appendIndex form: a NUMBER means APPEND (specs/169). It
+  // is the block's LOGICAL index (a `<!>` placeholder or an earlier dynamic
+  // block counts as one unit), which Vue only uses to locate hydration
+  // targets. compiler-vapor emits it only for a block after the parent's
+  // last template node — anything earlier gets a `<!>` placeholder anchor —
+  // and blocks are created in source order, so appending lands each one
+  // right. Reading it as a raw child index broke once an earlier v-if in the
+  // same parent had inserted its anchor and branch.
+  insertionAnchor = anchor == null || typeof anchor === 'number' ? null : hostOf(anchor);
 }
 
 export function takeInsertionState(): { parent: HostNode | null; anchor: HostNode | null } {
