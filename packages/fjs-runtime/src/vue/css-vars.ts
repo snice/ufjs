@@ -17,7 +17,7 @@ import {
   queuePostFlushCb,
   watchPostEffect,
 } from '@vue/runtime-core';
-import { styleEngine } from './renderer';
+import { styleEngine } from './host-ops';
 
 export function useCssVars(getter: (ctx: any) => Record<string, unknown>): void {
   const instance = getCurrentInstance() as any;

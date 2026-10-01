@@ -847,6 +847,45 @@ function sharedBareRe(shared: string[]): RegExp {
   return new RegExp(`^(${escaped.join('|')})$`);
 }
 
+/** The pre-scan twin of [sharedStubPlugin] (specs/169): the same shared
+ * specifiers (bare, `@ufjs/runtime/*`, the app's shared modules) resolve as
+ * EXTERNAL instead of to the `__FJS_SHARED` stub, so an ESM build of the page
+ * chunks and the entry keeps their `import { … } from '<spec>'` statements —
+ * which is how the release build learns which names each shared module must
+ * export. App modules come back as their shared key. */
+export function sharedExternalPlugin(
+  appModules?: Map<string, string>,
+  shared: string[] = SHARED_BARE_BUILTIN,
+): Plugin {
+  const byPath = new Map<string, string>();
+  for (const [key, abs] of appModules ?? []) byPath.set(abs, key);
+  const bareRe = sharedBareRe(shared);
+  return {
+    name: 'fjs-shared-external',
+    setup(build) {
+      build.onResolve({ filter: bareRe }, (args) => ({ path: args.path, external: true }));
+      build.onResolve({ filter: RUNTIME_PACKAGE_RE }, (args) => {
+        const id = runtimeSpecifier(args.path);
+        return bareRe.test(id) ? { path: id, external: true } : undefined;
+      });
+      if (byPath.size) {
+        build.onResolve({ filter: /^[./]/ }, async (args) => {
+          if ((args.pluginData as { skip?: boolean } | undefined)?.skip) return null;
+          const resolved = await build.resolve(args.path, {
+            importer: args.importer,
+            resolveDir: args.resolveDir,
+            kind: args.kind,
+            pluginData: { skip: true },
+          });
+          if (resolved.errors.length) return resolved;
+          const key = byPath.get(resolved.path);
+          return key ? { path: key, external: true } : resolved;
+        });
+      }
+    },
+  };
+}
+
 /** App-build stubs for `fjs build --pages`: imports that the shared chunk
  * already owns resolve to virtual CJS modules reading from
  * globalThis.__FJS_SHARED, which the shared chunk installs once per VM.
@@ -956,12 +995,22 @@ export function webAliases(enableVapor = false): Record<string, string> {
 }
 
 /** Resolve aliases for a Flutter build. */
-export function flutterAliases(): Record<string, string> {
+export function flutterAliases(enableVapor = false): Record<string, string> {
   const root = runtimeDir();
   return withPackageAliases({
     ...runtimeAliases(),
     'fjs/router': path.join(root, 'src', 'router', 'flutter.ts'),
-    'fjs/app': path.join(root, 'src', 'app', 'flutter.ts'),
+    // enableVapor (specs/169): the pure-vapor surfaces, the twins of web's
+    // web-vapor.ts / web-pure.ts — no built-in VDOM components, no VDOM
+    // page mounter, no interop, and `fjs/vue` without createApp/render, so
+    // runtime-core's rendering engine is not in the graph at all
+    ...(enableVapor
+      ? {
+          'fjs/app': path.join(root, 'src', 'app', 'flutter-vapor.ts'),
+          'fjs/vapor': path.join(root, 'src', 'vapor', 'flutter-pure.ts'),
+          'fjs/vue': path.join(root, 'src', 'vue', 'index-vapor.ts'),
+        }
+      : { 'fjs/app': path.join(root, 'src', 'app', 'flutter.ts') }),
   });
 }
 

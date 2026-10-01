@@ -36,6 +36,7 @@ import {
   sharedBare,
   SHARED_BARE_BUILTIN,
   sharedStubPlugin,
+  sharedExternalPlugin,
   srcAliasPlugin,
 } from './vue-plugin.js';
 import { loadViteAppHooks, viteAppHooksPlugin } from '../project/vite-plugins.js';
@@ -555,7 +556,7 @@ async function bundleSingle(
     srcAliasPlugin(root),
     moduleDataPlugin(root, modules),
   ];
-  const alias = { ...flutterAliases(), ...moduleAliases(root, modules) };
+  const alias = { ...flutterAliases(enableVapor), ...moduleAliases(root, modules) };
   if (!fs.existsSync(entry)) {
     throw new Error(`entry not found: ${entry}`);
   }
@@ -609,12 +610,18 @@ async function prewarmStyles(
 /** Source of the shared-chunk entry. [appModules] are the project's own
  * modules that the app entry pulls in (shell, components, stores): putting
  * them in the shared chunk is what keeps a page chunk down to the page. */
-function sharedEntrySource(
+/** What each shared bare specifier must export (specs/169), from
+ * [collectSharedImports]: a name set, or `'*'` when some importer needs the
+ * whole namespace. Absent map = dev / non-release: every namespace whole. */
+export type SharedNames = Map<string, Set<string> | '*'>;
+
+export function sharedEntrySource(
   appModules: Map<string, string> = new Map(),
   extraShared: string[] = [],
   entryImports: string[] = [],
+  names?: SharedNames,
 ): string {
-  const lines = [
+  const lines: string[] = [
     // What the app entry imports, in its order, before anything else: a
     // module's styles register when it is evaluated, and the fixed list
     // below would otherwise run fjs/plugins (vant's sheets) ahead of the
@@ -622,28 +629,58 @@ function sharedEntrySource(
     // so an equal-specificity rule could win in one build and lose in
     // another (specs/121)
     ...entryImports.map((spec) => `import ${JSON.stringify(spec)};`),
-    "import * as vue from 'vue';",
-    "import * as fjs from 'fjs';",
-    "import * as fjsVue from 'fjs/vue';",
-    "import * as fjsRouter from 'fjs/router';",
-    "import * as fjsApp from 'fjs/app';",
-    "import * as fjsPages from 'fjs/pages';",
-    "import * as fjsPlugins from 'fjs/plugins';",
-    "import * as runtimeCore from '@vue/runtime-core';",
-    "import * as reactivity from '@vue/reactivity';",
-    "import * as shared from '@vue/shared';",
   ];
+  // release (specs/169): a namespace import keeps EVERY export of the module
+  // reachable — runtime-core's whole renderer engine, Suspense, KeepAlive…
+  // whatever no page uses. With the page chunks' actual imports known, the
+  // shared entry imports exactly those names instead. Functions become plain
+  // properties (page code calls them on every render — no getter on the hot
+  // path); anything else stays a getter, keeping ESM live-binding semantics.
+  const nsOf = (spec: string, ident: string): string => {
+    const wanted = names?.get(spec);
+    if (!names || wanted === '*' ) {
+      lines.push(`import * as ${ident} from ${JSON.stringify(spec)};`);
+      return ident;
+    }
+    const list = [...(wanted ?? [])].sort();
+    if (list.length === 0) {
+      // still evaluated (its init order is part of the contract) — but
+      // nothing of it is shared
+      lines.push(`import ${JSON.stringify(spec)};`);
+      lines.push(`const ${ident} = {};`);
+      return ident;
+    }
+    lines.push(`import { ${list.map((n, k) => `${n} as ${ident}_${k}`).join(', ')} } from ${JSON.stringify(spec)};`);
+    lines.push(`const ${ident} = __fjsNs({ ${list.map((n, k) => `get ${n}() { return ${ident}_${k}; }`).join(', ')} });`);
+    return ident;
+  };
+  if (names) {
+    lines.push(
+      'function __fjsNs(o) { for (const k of Object.keys(o)) { const v = o[k]; ' +
+        "if (typeof v === 'function') Object.defineProperty(o, k, { value: v, enumerable: true }); } return o; }",
+    );
+  }
+  const vue = nsOf('vue', 'vue');
+  const fjs = nsOf('fjs', 'fjs');
+  const fjsVue = nsOf('fjs/vue', 'fjsVue');
+  const fjsRouter = nsOf('fjs/router', 'fjsRouter');
+  const fjsApp = nsOf('fjs/app', 'fjsApp');
+  const fjsPages = nsOf('fjs/pages', 'fjsPages');
+  const fjsPlugins = nsOf('fjs/plugins', 'fjsPlugins');
+  const runtimeCore = nsOf('@vue/runtime-core', 'runtimeCore');
+  const reactivity = nsOf('@vue/reactivity', 'reactivity');
+  const shared = nsOf('@vue/shared', 'shared');
   const registrations = [
-    "  vue, fjs, 'fjs/vue': fjsVue, 'fjs/router': fjsRouter,",
-    "  'fjs/app': fjsApp, 'fjs/pages': fjsPages, 'fjs/plugins': fjsPlugins,",
-    "  '@vue/runtime-core': runtimeCore, '@vue/reactivity': reactivity,",
-    "  '@vue/shared': shared,",
+    `  vue: ${vue}, fjs: ${fjs}, 'fjs/vue': ${fjsVue}, 'fjs/router': ${fjsRouter},`,
+    `  'fjs/app': ${fjsApp}, 'fjs/pages': ${fjsPages}, 'fjs/plugins': ${fjsPlugins},`,
+    `  '@vue/runtime-core': ${runtimeCore}, '@vue/reactivity': ${reactivity},`,
+    `  '@vue/shared': ${shared},`,
   ];
   // `fjs.shared` from package.json: third-party packages that page chunks
   // import directly and that must stay a single module instance.
   const extra: string[] = [];
   extraShared.forEach((id, n) => {
-    lines.push(`import * as __s${n} from ${JSON.stringify(id)};`);
+    nsOf(id, `__s${n}`);
     extra.push(
       `S[${JSON.stringify(id)}] = Object.assign({ __esModule: true }, __s${n});`,
     );
@@ -661,6 +698,78 @@ function sharedEntrySource(
   return `${lines.join('\n')}\nconst S = {\n${registrations.join(
     '\n',
   )}\n};\n${extra.join('\n')}\n(globalThis).__FJS_SHARED = S;\n`;
+}
+
+/** Which names each shared bare specifier must export (specs/169): the
+ * union of what the app entry and every page chunk import from it. An ESM
+ * pre-build of exactly the inputs the real chunks are built from, with the
+ * shared specifiers external, leaves their import statements in esbuild's
+ * normalized output form — `import { a, b as c } from "vue";`,
+ * `import * as x from "vue";`, `import x from "vue";` — which a pattern
+ * reads reliably. A namespace or default import (the stub hands over the
+ * whole module object), or an `export * from`, needs the whole namespace:
+ * that specifier falls back to '*'. Release-only: dev hot-reloads single
+ * pages, and a re-evaluated page may import a name nothing else did. */
+export async function collectSharedImports(
+  entryPoints: { name: string; contents: string }[],
+  root: string,
+  shared: string[],
+  plugins: esbuild.Plugin[],
+): Promise<SharedNames> {
+  const names: SharedNames = new Map();
+  const add = (spec: string, name: string | '*'): void => {
+    if (!shared.includes(spec)) return;
+    const cur = names.get(spec);
+    if (cur === '*') return;
+    if (name === '*') {
+      names.set(spec, '*');
+      return;
+    }
+    const set = cur ?? new Set<string>();
+    set.add(name);
+    names.set(spec, set);
+  };
+  const result = await esbuild.build({
+    entryPoints: entryPoints.map((e) => `fjs-narrow:${e.name}`),
+    bundle: true,
+    write: false,
+    format: 'esm',
+    splitting: false,
+    outdir: path.join(root, '.fjs-narrow'),
+    absWorkingDir: root,
+    target: 'es2019', /* PrimJS engine (spec 088) */
+    ...flutterEsbuildPlatform(),
+    plugins: [
+      {
+        name: 'fjs-narrow-entries',
+        setup(build) {
+          build.onResolve({ filter: /^fjs-narrow:/ }, (args) => ({ path: args.path, namespace: 'fjs-narrow' }));
+          build.onLoad({ filter: /.*/, namespace: 'fjs-narrow' }, (args) => {
+            const e = entryPoints.find((x) => `fjs-narrow:${x.name}` === args.path);
+            return { contents: e?.contents ?? '', loader: 'ts', resolveDir: root };
+          });
+        },
+      },
+      ...plugins,
+    ],
+    define: fjsDefines(),
+    ...assetOutputOptions(),
+    logLevel: 'silent',
+  });
+  for (const file of result.outputFiles) {
+    const code = file.text;
+    for (const m of code.matchAll(/\bimport\s*\{([^}]*)\}\s*from\s*"([^"]+)"/g)) {
+      for (const part of m[1].split(',')) {
+        const name = part.trim().split(/\s+as\s+/)[0]?.trim();
+        if (name) add(m[2], name === 'default' ? '*' : name);
+      }
+    }
+    for (const m of code.matchAll(/\bimport\s+(?:\w+\s*,\s*)?\*\s*as\s+\w+\s+from\s*"([^"]+)"/g)) add(m[1], '*');
+    for (const m of code.matchAll(/\bimport\s+[\w$]+\s*(?:,\s*\{[^}]*\})?\s*from\s*"([^"]+)"/g)) add(m[1], '*');
+    for (const m of code.matchAll(/\bexport\s*\*\s*from\s*"([^"]+)"/g)) add(m[1], '*');
+    for (const m of code.matchAll(/\bimport\s*\(\s*"([^"]+)"\s*\)/g)) add(m[1], '*');
+  }
+  return names;
 }
 
 /** The static imports of the app entry, in source order (type-only ones
@@ -711,7 +820,7 @@ async function appModuleGraph(
     format: 'iife',
     target: 'es2019', /* PrimJS engine (spec 088) */
     ...flutterEsbuildPlatform(),
-    alias: { ...flutterAliases(), ...moduleAliases(root, fjsModules) },
+    alias: { ...flutterAliases(usesEnableVapor(root, entry)), ...moduleAliases(root, fjsModules) },
     plugins: [
       nodeBuiltinStubs(),
       pagesPlugin(pages, 'app', false),
@@ -810,11 +919,33 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
     moduleDataPlugin(root, modules),
   ];
 
+  // 1b) release (specs/169): the names the entry and pages actually import
+  // from each shared module — the shared chunk exports only those
+  const sharedNames = opts.release
+    ? await collectSharedImports(
+        [
+          { name: 'entry', contents: `import ${JSON.stringify(entry)};` },
+          ...pages.map((page) => ({ name: `page-${page.chunk}`, contents: pageChunkSource(page) })),
+        ],
+        root,
+        shared.filter((id) => !appModules.has(id)),
+        [
+          nodeBuiltinStubs(),
+          vueSfcPlugin({ nativeTags: widgetNativeTags(modules, 'app'), enableVapor }),
+          ...(enableVapor ? [] : [vaporWrapperPlugin()]),
+          viteAppHooksPlugin(appHooks),
+          sharedExternalPlugin(appModules, shared),
+          srcAliasPlugin(root),
+          moduleDataPlugin(root, modules),
+        ],
+      )
+    : undefined;
+
   // 2) the shared chunk itself (the prelude every page runs on top of)
   const sharedPath = path.join(outDir, 'shared.js');
   const sharedResult = await esbuild.build({
     stdin: generatedEntry(
-      sharedEntrySource(appModules, extraShared, entryImportOrder(entry)),
+      sharedEntrySource(appModules, extraShared, entryImportOrder(entry), sharedNames),
       root,
       'fjs-shared',
     ),
@@ -828,7 +959,7 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
     target: 'es2019', /* PrimJS engine (spec 088) */
     ...flutterEsbuildPlatform(),
     minify: opts.minify,
-    alias: { ...flutterAliases(), ...moduleAliases(root, modules) },
+    alias: { ...flutterAliases(enableVapor), ...moduleAliases(root, modules) },
     plugins: [
       nodeBuiltinStubs(),
       pagesPlugin(pages, 'app', false),

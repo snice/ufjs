@@ -482,6 +482,13 @@ CLI 在构建期读这个开关（扫入口源码），runtime 在挂载期执�
   vue-router 自己的 `useRouter` / `useRoute` 是 runtime-core 的 inject，vapor 页里拿不到
   （返回 undefined），CLI 发现 vapor SFC 从 `'vue-router'` 导入它们会警告；
   `<router-link>` / `<router-view>` 是 VDOM 组件，不可用。
+- **两端同一条能力边界（specs/169）**：enableVapor 应用里 vapor 页**不能嵌 VDOM 组件**——
+  vant 之类，以及内置的 canvas / list-view / form / picker / rich-text / textarea / defer（它们
+  目前是 VDOM 组件，改写成 vapor 组件后恢复）。两端报同一句
+  `a VDOM component reached a pure-vapor app`。Flutter 端以前靠互操作能用，代价是整个 VDOM
+  渲染器进包；现在 `fjs/app` / `fjs/vapor` / `fjs/vue` 在 enableVapor 下别名到纯 vapor 面
+  （`app/flutter-vapor.ts` / `vapor/flutter-pure.ts` / `vue/index-vapor.ts`），渲染器不进图。
+  非 enableVapor 应用（VDOM 页嵌 vapor 组件、vapor 页嵌 vant）不受影响。
 - **代价（有意为之，都写进了 spec）**：web 端 Vapor 页内嵌 VDOM 组件（vant）不可用——web 的 vdom 互操作依赖
   runtime-dom 的渲染器，这正是这个模式要省掉的东西（Flutter 端互操作照旧可用，代价只是
   包体）。web 壳比 vdom 壳简单：visited 页常驻 LRU 缓存（默认 16）不按历史栈销毁、无进场

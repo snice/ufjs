@@ -30,7 +30,9 @@ import {
 } from '@vue/runtime-core';
 import type { BaseTransitionProps, Directive, VNode } from '@vue/runtime-core';
 import type { Element } from '../ui/element';
-import { styleEngine } from './renderer';
+// host primitives only (specs/169): every 'vue' import goes through here, and
+// the renderer module would pin runtime-core's rendering engine into it
+import { styleEngine } from './host-ops';
 import { trackTransitionClass, untrackTransitionClass, transitionClassesOf } from './transition-classes';
 export * from '@vue/runtime-core';
 // specs/167: lifecycle + provide/inject that also serve a vapor setup — a

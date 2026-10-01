@@ -26,6 +26,10 @@ export { useVaporCssVars } from './css-vars';
 // SFCs call template() at module level, and this entry is their import. The
 // adopt hook (VDOM pages embedding Vapor components) comes with it.
 import './backend-flutter';
+// VDOM components inside vapor templates, and vapor components adopted by
+// VDOM pages — both need the Vue renderer; the enableVapor surface
+// (flutter-pure.ts) leaves them out (specs/169)
+import './backend-flutter-interop';
 import './interop';
 
 /** specs/148's enableVapor installed runtime-vapor's interop plugin on every

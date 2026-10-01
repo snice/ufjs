@@ -5,8 +5,8 @@
 // hook registered below and hands back the already-built host instead of
 // making a new one. The Vapor subtree is therefore ordinary fjs elements in
 // the VDOM tree — patching skips them, unmount removes them as usual.
-import type { HostNode } from '../vue/renderer';
-import { nodeOps, registerAdoptHook } from '../vue/renderer';
+import type { HostNode } from '../vue/host-ops';
+import { nodeOps, registerAdoptHook } from '../vue/host-ops';
 import { type Block, type VaporAppContext, type VaporComponent, disposeBlock, mountVaporComponentForAdopt } from './runtime';
 
 interface AdoptEntry {

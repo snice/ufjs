@@ -24,14 +24,15 @@
 // pages with it.
 import {
   getCurrentInstance,
-  h,
   inject,
   reactive,
   type App,
   type Component,
 } from '@vue/runtime-core';
-// createApp here is the fjs custom renderer's, not runtime-dom's
-import { createApp as createVueApp, flutterRoot, releaseRoot, styleEngine } from '../vue/renderer';
+// host primitives only (specs/169): the Vue renderer (createApp) is reached
+// through the injected VDOM page mounter, so a pure-vapor build of this
+// router carries no rendering engine
+import { flutterRoot, releaseRoot, styleEngine } from '../vue/host-ops';
 // enableVapor (specs/166): a vapor page mounts through the own runtime
 import { createVaporApp, isVaporComponent, withVaporShell, type VaporAppContext } from '../vapor/runtime';
 // specs/167: a vapor page's useRoute/useRouter/onPageSettled inject through
@@ -69,7 +70,26 @@ export const ROUTER_KEY = Symbol.for('fjs.router');
 export const ROUTE_KEY = Symbol.for('fjs.route');
 /** The calling component's own page entry, so onPageSettled() knows which
  * page it is being asked about. */
-const PAGE_KEY = Symbol.for('fjs.page');
+export const PAGE_KEY = Symbol.for('fjs.page');
+
+/** What mounting a VDOM page needs (router/flutter-vdom.ts implements it). */
+export interface VdomPageMount {
+  page: Component | undefined;
+  root: Element;
+  route: RouteLocation;
+  shell: unknown;
+  provides: [symbol, unknown][];
+  onCreateApp?: (app: App) => void;
+}
+type VdomPageMounter = (mount: VdomPageMount) => { unmount: () => void };
+let vdomPageMounter: VdomPageMounter | null = null;
+
+/** Registers how VDOM pages mount (specs/169). app/flutter.ts does it at
+ * module init; the enableVapor app (app/flutter-vapor.ts) never does, which
+ * is what keeps the Vue renderer out of its bundle. */
+export function setVdomPageMounter(mounter: VdomPageMounter): void {
+  vdomPageMounter = mounter;
+}
 
 // ---- page registry ---------------------------------------------------------
 
@@ -522,27 +542,32 @@ class FlutterRouter implements Router {
       return;
     }
 
-    const shell = this.options.shell;
-    const content = () => (page ? h(page) : h('view'));
-    const app = createVueApp({
-      name: 'FjsPage',
-      render: () =>
-        shell
-          ? h(shell as Component, { route: entry.route }, { default: content })
-          : content(),
-    });
-    app.provide(ROUTER_KEY, this);
-    app.provide(ROUTE_KEY, entry.route);
-    app.provide(PAGE_KEY, entry);
+    // a VDOM page: its own Vue app through the injected mounter
+    // (router/flutter-vdom.ts, registered by app/flutter.ts — specs/169)
+    if (!vdomPageMounter) {
+      throw new Error(
+        `[fjs-router] ${entry.location.fullPath} is not a vapor page, and this enableVapor build carries no VDOM renderer — ` +
+          'give the page `<script setup vapor>` or drop enableVapor.',
+      );
+    }
     if (!entry.settled && entry.settleTimer === null) {
       entry.settleTimer = setTimeout(
         () => this.markSettled(entry, true),
         SETTLE_FALLBACK_MS,
       );
     }
-    this.options.onCreateApp?.(app);
-    entry.app = app;
-    app.mount(root);
+    entry.app = vdomPageMounter({
+      page,
+      root,
+      route: entry.route,
+      shell: this.options.shell,
+      provides: [
+        [ROUTER_KEY, this],
+        [ROUTE_KEY, entry.route],
+        [PAGE_KEY, entry],
+      ],
+      onCreateApp: this.options.onCreateApp,
+    });
     Object.assign(this.currentRoute, entry.location);
     // Subscribed rather than hooked into markSettled: the base page is not
     // animated, is settled from birth and never passes through there.

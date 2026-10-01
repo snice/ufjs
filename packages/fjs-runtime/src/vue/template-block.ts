@@ -22,7 +22,7 @@ import {
   prepareClone,
   type ClonePlan,
   type CloneNode,
-} from './renderer';
+} from './host-ops';
 import type { Element as HostNode } from '../ui/element';
 
 /** One node as the compiler writes it, in pre-order:

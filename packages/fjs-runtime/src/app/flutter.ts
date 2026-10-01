@@ -4,6 +4,9 @@
 // router/flutter.ts for the wire protocol.
 import type { App } from '@vue/runtime-core';
 import { createRouter, onPageSettled, type FlutterRouterOptions } from '../router/flutter';
+// VDOM pages mount through the renderer (specs/169: registered here, never
+// by the enableVapor app — app/flutter-vapor.ts)
+import '../router/flutter-vdom';
 import type { Router } from '../router/types';
 import { createFjsCanvas } from '../components/canvas';
 import { createDefer } from '../components/defer';

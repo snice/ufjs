@@ -33,7 +33,7 @@ import {
   setProps,
   type Element,
 } from '../ui/element';
-import { childElementIds, elementById, elementTag } from '../vue/renderer';
+import { childElementIds, elementById, elementTag } from '../vue/host-ops';
 
 /** Tags whose own value a form collects. A group reports for its members, so
  * a radio/checkbox inside one is skipped (see collect). */
