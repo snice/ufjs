@@ -482,10 +482,16 @@ CLI 在构建期读这个开关（扫入口源码），runtime 在挂载期执�
   vue-router 自己的 `useRouter` / `useRoute` 是 runtime-core 的 inject，vapor 页里拿不到
   （返回 undefined），CLI 发现 vapor SFC 从 `'vue-router'` 导入它们会警告；
   `<router-link>` / `<router-view>` 是 VDOM 组件，不可用。
-- **两端同一条能力边界（specs/169）**：enableVapor 应用里 vapor 页**不能嵌 VDOM 组件**——
-  vant 之类，以及内置的 canvas / list-view / form / picker / rich-text / textarea / defer（它们
-  目前是 VDOM 组件，改写成 vapor 组件后恢复）。两端报同一句
-  `a VDOM component reached a pure-vapor app`。Flutter 端以前靠互操作能用，代价是整个 VDOM
+- **fjs 自己的标签与内置组件两端可用（specs/171）**：web 的 input / image / scroll-view / swiper /
+  switch / checkbox / radio / slider / progress / picker-view / modal / form / label / *-group /
+  page-container / refresh / sticky-*，以及两端的内置组件 canvas / list-view / form / picker /
+  rich-text / textarea / defer，都是 render 函数写的组件，enableVapor 下由 vapor 运行时的
+  **render-host**（`vapor/render-host.ts`）执行——每个组件仍只有一份实现。编译器给用到这些标签
+  的页面注入 `import "fjs/tag/<tag>"`，只打包实际用到的标签；只用 view / text 的应用不带
+  render-host。限制：vant 等**三方** VDOM 库仍不可用（需要完整渲染器，报
+  `a render-function (VDOM) component reached a pure-vapor app`）；自写的组件请写成
+  `<script setup vapor>`；swiper 的 `circular` 在纯 vapor web 下不可用（告警）；rich-text 在 vapor
+  页里拿不到页面的 scoped 样式。Flutter 端以前靠互操作能用，代价是整个 VDOM
   渲染器进包；现在 `fjs/app` / `fjs/vapor` / `fjs/vue` 在 enableVapor 下别名到纯 vapor 面
   （`app/flutter-vapor.ts` / `vapor/flutter-pure.ts` / `vue/index-vapor.ts`），渲染器不进图。
   非 enableVapor 应用（VDOM 页嵌 vapor 组件、vapor 页嵌 vant）不受影响。

@@ -83,6 +83,16 @@ Vue 绑定（`runtime.ts`）的实现即 `@vue/reactivity`：
 与框架无关，见 `VaporBackend` 接口注释（`host.ts`）。静态形状列表的批量克隆
 （`cloneList`，specs/162）两端各有等价实现。
 
+**render-host（specs/171）**：纯 vapor 入口里，`createComponent` 遇到非 vapor 组件且后端没有
+VDOM 互操作时，交给 `vapor/render-host.ts`：组件包成 vapor 组件（props / attrs / 生命周期 /
+provide-inject 走 vapor 组件层），render 函数在 renderEffect 里重算、vnode 树与上次比对后增量写宿主
+（元素 / 文本 / Fragment / 组件 / Teleport / keyed 子节点）。vapor 父组件的插槽 Block 以「宿主节点
+vnode」交给 render 函数（`__fjsTag` 标出原标签），按调用序号缓存、插槽参数原地更新。它由
+`fjs/tag/<tag>` 注册模块引入，入口本身不加载。
+
+另外两条 specs/171 的组件层规则：vapor 模板的**静态属性**在 Flutter 端随克隆补写（此前只带
+class）；父组件的 scoped `__scopeId` 落到子组件唯一的根元素上（Vue 的规则）。
+
 specs/170 起的可选成员（缺了由 `vapor/helpers.ts` 降级或告警，绝不 ReferenceError）：
 `setValue`（`:value`）、`setDOMProp`、`setHtml`（v-html；Flutter 无）、`classOf`（透传 class 合并时读模板静态
 class）、`textModel`（文本 v-model 的事件名与取值）、`applyChoiceModel`（checkbox / radio / select；仅 DOM）、

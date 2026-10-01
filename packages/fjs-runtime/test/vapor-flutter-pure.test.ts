@@ -12,15 +12,22 @@ beforeEach(() => {
 });
 
 describe('Flutter pure vapor surface (specs/169)', () => {
-  it('a VDOM component inside a vapor template fails with the same error as web', async () => {
+  it('a render-function component inside a vapor template mounts through the render host (specs/171)', async () => {
     const vapor = await import('../src/vapor/flutter-pure');
-    const Vdom = defineComponent({ render: () => h('view') });
+    // the render host comes with the tag modules; a hand-mounted one loads it
+    await import('../src/vapor/render-host');
+    const r = await import('../src/vue/host-ops');
+    const Vdom = defineComponent({ render: () => h('view', { class: 'from-render' }, [h('text', null, 'hi')]) });
     const Page = vapor.defineVaporComponent({
       setup() {
         return vapor.createComponent(Vdom);
       },
     });
-    expect(() => vapor.createVaporApp(Page)).toThrow(/a VDOM component reached a pure-vapor app/);
+    const root = r.flutterRoot();
+    vapor.createVaporApp(Page).mount(root);
+    const view = r.childElementIds(root.id).find((id) => r.elementTag(id) === 'view');
+    expect(view).toBeDefined();
+    expect(r.styleEngine.classesOf(view!)).toEqual(['from-render']);
   });
 
   it('the router without the VDOM page mounter says the page must be vapor', async () => {

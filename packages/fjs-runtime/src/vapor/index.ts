@@ -15,7 +15,7 @@ export { resolveComponent, useSlots, type Slots } from './runtime';
 // specs/167: vapor-aware lifecycle + provide/inject (the shim above already
 // re-exports the same bindings; spelled out so the surface is explicit)
 export {
-  onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext, useAttrs,
+  onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext, useAttrs, resolveDynamicComponent,
 } from './instance';
 
 // <style> v-bind() on a Vapor page (specs/166): the compiler names this

@@ -25,7 +25,9 @@
 // The web adapter has its own implementation (../web/components/form.ts) for
 // the same reason list-view does — different substrate, same contract: the
 // submit payload is `{name: value}` JSON in document order, byte for byte.
-import { defineComponent, h, onMounted, onUnmounted, onUpdated, ref } from '@vue/runtime-core';
+import { defineComponent, h, ref } from '@vue/runtime-core';
+// lifecycle that also serves the vapor render host (specs/171)
+import { onMounted, onUnmounted, onUpdated } from '../vapor/instance';
 import {
   fieldFormType,
   fieldName,

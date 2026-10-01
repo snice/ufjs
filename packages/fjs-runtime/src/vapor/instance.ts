@@ -37,6 +37,7 @@ import {
   onUnmounted as rcOnUnmounted,
   onUpdated as rcOnUpdated,
   provide as rcProvide,
+  resolveDynamicComponent as rcResolveDynamicComponent,
   useAttrs as rcUseAttrs,
 } from '@vue/runtime-core';
 
@@ -65,6 +66,14 @@ export interface VaporInstance {
   isUnmounted: boolean;
   /** the non-prop attrs the parent passed (specs/170) */
   attrs?: Record<string, unknown>;
+  /** the component definition (its `__scopeId` scopes its children's
+   * roots — specs/171) */
+  type?: unknown;
+  /** a render-function component on the render host (specs/171): it HAS
+   * re-renders, so onBeforeUpdate / onUpdated apply */
+  renderHost?: boolean;
+  bu?: Hook[] | null;
+  u?: Hook[] | null;
 }
 
 const EMPTY_PROVIDES: Record<string | symbol, unknown> = Object.freeze(Object.create(null)) as never;
@@ -213,8 +222,22 @@ function unsupported<F extends (...args: never[]) => unknown>(name: string, rc: 
   }) as F;
 }
 
-export const onBeforeUpdate = unsupported('onBeforeUpdate', rcOnBeforeUpdate);
-export const onUpdated = unsupported('onUpdated', rcOnUpdated);
+const unsupportedBeforeUpdate = unsupported('onBeforeUpdate', rcOnBeforeUpdate);
+const unsupportedUpdated = unsupported('onUpdated', rcOnUpdated);
+export const onBeforeUpdate = (fn: Hook, target?: unknown): void => {
+  if (current?.renderHost && target === undefined) (current.bu ??= []).push(fn);
+  else unsupportedBeforeUpdate(fn, target as never);
+};
+export const onUpdated = (fn: Hook, target?: unknown): void => {
+  if (current?.renderHost && target === undefined) (current.u ??= []).push(fn);
+  else unsupportedUpdated(fn, target as never);
+};
+export function runBeforeUpdate(inst: VaporInstance): void {
+  callHooks(inst.bu ?? null, 'beforeUpdate hook');
+}
+export function runUpdated(inst: VaporInstance): void {
+  callHooks(inst.u ?? null, 'updated hook');
+}
 export const onActivated = unsupported('onActivated', rcOnActivated);
 export const onDeactivated = unsupported('onDeactivated', rcOnDeactivated);
 export const onErrorCaptured = unsupported('onErrorCaptured', rcOnErrorCaptured);
@@ -266,6 +289,20 @@ export function inject(key: InjectionKey, defaultValue?: unknown, treatDefaultAs
 
 export function hasInjectionContext(): boolean {
   return hasVaporInjectionContext() || rcHasInjectionContext();
+}
+
+/** resolveDynamicComponent() (specs/171): inside a vapor setup — a
+ * render-function component on the render host — names resolve through the
+ * vapor runtime (app components, then the fjs tag table), which registers
+ * the lookup here so this module stays free of it; elsewhere runtime-core's
+ * (the VDOM app's component table). An unknown name stays a tag string. */
+let vaporResolver: ((name: string) => unknown) | null = null;
+export function setVaporComponentResolver(fn: (name: string) => unknown): void {
+  vaporResolver = fn;
+}
+export function resolveDynamicComponent(comp: unknown): unknown {
+  if (current && vaporResolver && typeof comp === 'string') return vaporResolver(comp) ?? comp;
+  return rcResolveDynamicComponent(comp);
 }
 
 /** useAttrs() (specs/170): a vapor setup's attrs; runtime-core's otherwise. */

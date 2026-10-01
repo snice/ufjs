@@ -39,7 +39,7 @@ export * from '@vue/runtime-core';
 // composable importing them from 'vue' reaches the vapor instance. Outside
 // one they ARE runtime-core's (see vapor/instance.ts for the dispatch)
 export {
-  onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext, useAttrs,
+  onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext, useAttrs, resolveDynamicComponent,
 } from '../vapor/instance';
 export { useCssVars } from './css-vars';
 // the Flutter build's template compiler emits it (specs/153)

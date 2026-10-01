@@ -182,6 +182,12 @@ export interface TemplateNode {
   raw: string;
   classes: string | null;
   scope: string | null;
+  /** static attributes other than class / scope (`src`, `name`,
+   * `placeholder`…), in template order — specs/171: the Flutter backend
+   * dropped them (its native clone carries class + scope only), so every
+   * `<image src>` / `<input placeholder>` in a vapor template lost its
+   * value. A backend that clones from the HTML keeps them on its own. */
+  attrs?: [string, string][] | null;
 }
 
 /** The platform's node shape: on Flutter an element-API element, on web a
@@ -275,6 +281,8 @@ export interface VaporBackend {
   ): boolean;
   /** `<component :is="'tag'">`: a bare element of that tag, unattached. */
   createElement?(tag: string): HostNode;
+  /** The host's current parent (render-host re-places a changed root). */
+  parentNode?(host: HostNode): HostNode | null;
 }
 
 let backend: VaporBackend | null = null;
@@ -432,14 +440,13 @@ function parseTemplateHtml(html: string): TemplateDef {
       i = html.indexOf('>', i) + 1;
       let classes: string | null = null;
       let scope: string | null = null;
+      let rest: [string, string][] | null = null;
       for (const [k, v] of attrs) {
         if (k === 'class') classes = v;
         else if (v === '' && k.startsWith('data-v-') && scope === null) scope = k;
-        // no other attribute lands in the shape: a template carries class +
-        // scope and nothing else, which is exactly what a native clone
-        // replays; anything else must come out of the parse as a rejection
+        else (rest ??= []).push([k, v]);
       }
-      const idx = addNode({ kind: 'element', tag, inline: false, raw: '', classes, scope });
+      const idx = addNode({ kind: 'element', tag, inline: false, raw: '', classes, scope, attrs: rest });
       if (!selfClosing && !VOID.has(tag)) stack.push(idx);
     } else {
       const end = html.indexOf('<', i);

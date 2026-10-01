@@ -39,6 +39,7 @@ onUnmounted(() => {
     <text v-else class="hint" @tap="show = true">tap to show</text>
     <text class="store">store {{ counter.total }} · ticks {{ counter.ticks }}</text>
     <text class="nav" @tap="router.push('/about')">go /about →</text>
+    <text class="nav form-link" @tap="router.push('/controls')">表单控件 →</text>
     <view v-for="(r, i) in rows" :key="i" class="row">
       <text class="cell">{{ r }} ({{ i }})</text>
     </view>

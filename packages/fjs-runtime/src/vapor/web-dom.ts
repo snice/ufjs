@@ -25,6 +25,8 @@ import {
   setVaporBackend,
 } from './runtime';
 import { hyphenate, looseEqual, looseIndexOf, looseToNumber } from '@vue/shared';
+import { normalizeStyleValues } from '../web/style';
+import { touchBindings } from '../web/components/touch';
 import { addListener, renderEffect } from './runtime';
 import { createInvoker } from './helpers';
 
@@ -159,6 +161,43 @@ export const withVaporModifiers = <T extends (...args: unknown[]) => unknown>(fn
   createInvoker(typeof fn === 'function' ? withModifiers(fn, modifiers) : fn);
 export const withVaporKeys = <T extends (...args: unknown[]) => unknown>(fn: T, modifiers: string[]): T =>
   createInvoker(typeof fn === 'function' ? withKeys(fn, modifiers) : fn);
+
+// ---- touch (specs/171) --------------------------------------------------------------
+// `@touchstart` & co on a native vapor element: the web adapter's pointer
+// emulation (web/components/touch.ts), which delivers the payload shape the
+// Flutter side does. One set of pointer listeners per element feeds all
+// four: touchBindings routes a pointer from its pointerdown to the move /
+// end handlers known then, so they have to be bound together.
+const TOUCH_KEYS: Record<string, 'start' | 'move' | 'end' | 'cancel'> = {
+  onTouchstart: 'start',
+  onTouchStart: 'start',
+  onTouchmove: 'move',
+  onTouchMove: 'move',
+  onTouchend: 'end',
+  onTouchEnd: 'end',
+  onTouchcancel: 'cancel',
+  onTouchCancel: 'cancel',
+};
+const touchHandlers = new WeakMap<Element, Partial<Record<'start' | 'move' | 'end' | 'cancel', (...a: unknown[]) => void>>>();
+
+function bindTouch(el: Element, phase: 'start' | 'move' | 'end' | 'cancel', handler: (...a: unknown[]) => void): void {
+  let record = touchHandlers.get(el);
+  if (!record) {
+    const rec: Partial<Record<'start' | 'move' | 'end' | 'cancel', (...a: unknown[]) => void>> = {};
+    record = rec;
+    touchHandlers.set(el, rec);
+    const bindings = touchBindings({
+      onTouchstart: (...a: unknown[]) => rec.start?.(...a),
+      onTouchmove: (...a: unknown[]) => rec.move?.(...a),
+      onTouchend: (...a: unknown[]) => rec.end?.(...a),
+      onTouchcancel: (...a: unknown[]) => rec.cancel?.(...a),
+    });
+    for (const [key, fn] of Object.entries(bindings)) {
+      el.addEventListener(key.slice(2).toLowerCase(), fn as EventListener);
+    }
+  }
+  record[phase] = handler;
+}
 
 // ---- gestures -----------------------------------------------------------------
 
@@ -317,14 +356,20 @@ export const domBackend: VaporBackend = {
   },
 
   patchStyle(host, prev, next) {
+    // the same value rules the web adapter applies (specs/171): numbers
+    // are px, `direction` is fjs's scroll-axis key — and the property names
+    // arrive camelCase from templates (`fontSize`), which setProperty does
+    // not accept: it wants `font-size`, and silently drops anything else
     const style = (host as HTMLElement).style;
-    for (const k in prev ?? {}) {
-      if (!(k in next)) style.removeProperty(k);
+    const norm = (normalizeStyleValues(next) ?? {}) as Record<string, unknown>;
+    const cssName = (k: string): string => (k.startsWith('--') ? k : hyphenate(k));
+    for (const k in (normalizeStyleValues(prev) as Record<string, unknown>) ?? {}) {
+      if (!(k in norm)) style.removeProperty(cssName(k));
     }
-    for (const k in next) {
-      const v = next[k];
-      if (v == null || v === '') style.removeProperty(k);
-      else style.setProperty(k, String(v));
+    for (const k in norm) {
+      const v = norm[k];
+      if (v == null || v === '') style.removeProperty(cssName(k));
+      else style.setProperty(cssName(k), String(v));
     }
   },
 
@@ -334,6 +379,10 @@ export const domBackend: VaporBackend = {
   },
 
   on(host, key, handler) {
+    if (TOUCH_KEYS[key]) {
+      bindTouch(host as Element, TOUCH_KEYS[key], handler as (...a: unknown[]) => void);
+      return;
+    }
     const name = eventNameOf(key);
     if (GESTURED.has(name)) {
       pressOf(host);
@@ -384,6 +433,9 @@ export const domBackend: VaporBackend = {
   },
   createElement(tag) {
     return document.createElement(tag);
+  },
+  parentNode(host) {
+    return (host as Node).parentNode;
   },
   // <style> v-bind() on a Vapor component (specs/166): inline custom
   // properties on the host element; CSS inheritance does the rest
@@ -471,6 +523,7 @@ export {
   useSlots,
   withScope,
   // specs/170: the rest of compiler-vapor's helper surface
+  registerTagComponent,
   applyCheckboxModel,
   applyDynamicModel,
   applyRadioModel,
@@ -519,7 +572,7 @@ export { useVaporCssVars } from './css-vars';
 // specs/167: vapor-aware lifecycle + provide/inject, shadowing the
 // runtime-core star above like the runtime's names do
 export {
-  onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext, useAttrs,
+  onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext, useAttrs, resolveDynamicComponent,
 } from './instance';
 // compiled text interpolations import this helper by name; the runtime only
 // imports it for its own use, and the flutter entry gets it from vue-shim

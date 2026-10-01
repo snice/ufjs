@@ -315,6 +315,11 @@ export function fjs(): VitePlugin {
     resolveId(id, importer) {
       if (id === 'fjs/pages') return VIRTUAL_PAGES;
       if (id === 'fjs/plugins') return VIRTUAL_PLUGINS;
+      // specs/171: a component-backed fjs tag a vapor template uses
+      if (id.startsWith('fjs/tag/')) {
+        const file = path.join(runtimeDir(), 'src', 'vapor', 'tags', 'web', `${id.slice('fjs/tag/'.length)}.ts`);
+        return fs.existsSync(file) ? file : null;
+      }
       // what a module's prepare hook generated for this project
       if (id.startsWith('fjs/data/') && importer) {
         return resolveModuleData(root, modules, importer, id);

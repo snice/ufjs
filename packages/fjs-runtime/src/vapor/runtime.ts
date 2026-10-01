@@ -5,7 +5,7 @@
 // Compiled SFCs import this via the CLI's `vue` → `fjs/vapor` rewrite; the
 // export surface equals the core's plus the component layer.
 import { EffectScope, effect, getCurrentScope, onScopeDispose, shallowRef, stop as stopRunner } from '@vue/reactivity';
-import { camelize, isArray, toHandlerKey } from '@vue/shared';
+import { camelize, hyphenate, isArray, toHandlerKey } from '@vue/shared';
 import {
   be,
   blockOf,
@@ -38,6 +38,7 @@ import {
   runMounted,
   runUnmounted,
   setCurrentVaporInstance,
+  setVaporComponentResolver,
   type VaporAppContext,
   type VaporInstance,
 } from './instance';
@@ -208,8 +209,19 @@ function isVaporComponent(comp: unknown): comp is VaporComponent {
 
 export { isVaporComponent };
 
+/** fjs's component-backed tags (specs/171): `<input>` on web, `<list-view>`
+ * on both ends… The compiler injects `import "fjs/tag/<tag>"` into a module
+ * that uses one, and that module registers the implementation here — so a
+ * bundle carries exactly the tags its pages use, with no app-level table
+ * (an enableVapor app has none). App components still win. */
+const tagComponents = new Map<string, unknown>();
+export function registerTagComponent(tag: string, comp: unknown): void {
+  tagComponents.set(tag, comp);
+}
+setVaporComponentResolver((name) => activeInstance()?.appContext?.components[name] ?? tagComponents.get(name) ?? null);
+
 export function resolveComponent(name: string): unknown {
-  const resolved = activeInstance()?.appContext?.components[name];
+  const resolved = activeInstance()?.appContext?.components[name] ?? tagComponents.get(name);
   if (resolved) return resolved;
   throw new Error(`[fjs vapor] component <${name}> is not registered on the app — import it and use the imported name instead`);
 }
@@ -225,6 +237,39 @@ export function createAssetComponent(
   rawSlots?: Slots | (() => unknown),
 ): Block {
   return createComponent(resolveComponent(name), rawProps, rawSlots);
+}
+
+interface PropOptions {
+  type?: unknown;
+  default?: unknown;
+}
+
+const typeList = (opt: PropOptions): unknown[] => (isArray(opt.type) ? opt.type : opt.type != null ? [opt.type] : []);
+const isBooleanProp = (opt: PropOptions): boolean => typeList(opt).includes(Boolean);
+/** `[String, Boolean]` keeps "" a string; `[Boolean, String]` casts it. */
+const stringBeforeBoolean = (opt: PropOptions): boolean => {
+  const list = typeList(opt);
+  const s = list.indexOf(String);
+  return s >= 0 && s < list.indexOf(Boolean);
+};
+
+/** A declared default: a factory is called (once per instance — [cache]
+ * is the instance's) unless the prop's type is Function; a Boolean prop
+ * without one is false. */
+function defaultOf(opt: PropOptions | undefined, key: string, cache: Map<string, unknown>): unknown {
+  if (!opt || typeof opt !== 'object') return undefined;
+  if (!('default' in opt)) return isBooleanProp(opt) ? false : undefined;
+  const d = opt.default;
+  if (typeof d !== 'function' || typeList(opt).includes(Function)) return d;
+  if (!cache.has(key)) cache.set(key, (d as () => unknown)());
+  return cache.get(key);
+}
+
+/** Vue's resolvePropValue for one read. */
+function resolvePropValue(opt: PropOptions | undefined, key: string, v: unknown, cache: Map<string, unknown>): unknown {
+  if (v === undefined) return defaultOf(opt, key, cache);
+  if (opt && isBooleanProp(opt) && (v === '' || v === hyphenate(key)) && !stringBeforeBoolean(opt)) return true;
+  return v;
 }
 
 /** Props and attrs for a mounted component (specs/170: Vue's split). Raw
@@ -247,6 +292,7 @@ function splitProps(
   const emitKeys = new Set<string>(
     (Array.isArray(comp.emits) ? comp.emits : comp.emits ? Object.keys(comp.emits) : []).map((e) => toHandlerKey(camelize(e))),
   );
+  const defaults = new Map<string, unknown>();
   const define = (target: Record<string, unknown>, key: string, value: unknown): void => {
     if (typeof value === 'function') Object.defineProperty(target, key, { get: value as () => unknown, enumerable: true });
     else target[key] = value;
@@ -254,13 +300,21 @@ function splitProps(
   for (const raw of getters ? Object.keys(getters) : []) {
     const value = getters![raw];
     const key = propKeys.has(camelize(raw)) ? camelize(raw) : raw;
-    if (propKeys.has(key)) define(props, key, value);
-    else if (!emitKeys.has(raw)) define(attrs, raw, value);
+    if (propKeys.has(key)) {
+      const opt = declared?.[key] as PropOptions | undefined;
+      if (opt && typeof opt === 'object' && ('default' in opt || isBooleanProp(opt))) {
+        // Vue's casting / defaults (specs/171): `<switch checked>` passes ""
+        // and reads true; an absent Boolean reads false
+        Object.defineProperty(props, key, {
+          get: () => resolvePropValue(opt, key, typeof value === 'function' ? (value as () => unknown)() : value, defaults),
+          enumerable: true,
+        });
+      } else define(props, key, value);
+    } else if (!emitKeys.has(raw)) define(attrs, raw, value);
   }
   for (const key of propKeys) {
     if (key in props) continue;
-    const fallback = (declared?.[key] as { default?: unknown } | undefined)?.default;
-    props[key] = typeof fallback === 'function' ? (fallback as () => unknown)() : fallback;
+    props[key] = defaultOf(declared?.[key] as PropOptions | undefined, key, defaults);
   }
   return { props, attrs };
 }
@@ -281,6 +335,23 @@ function applyFallthrough(block: Block, attrs: Record<string, unknown>, comp: Va
   });
 }
 
+/** The parent's scoped styles reach this component's root (Vue's rule,
+ * specs/171): `<list-view class="list">` styled by the page's scoped
+ * `.list { height: … }` needs the page's `data-v-…` on the list's root —
+ * without it the rule never matches (on Flutter an unbounded list-view
+ * then throws). A single element root only; fragments get none. */
+function applyParentScope(block: Block, parent: VaporInstance | null): void {
+  const scopeId = (parent?.type as { __scopeId?: unknown } | undefined)?.__scopeId;
+  if (typeof scopeId !== 'string' || !scopeId) return;
+  let root: unknown = null;
+  for (const n of block.nodes) {
+    if (!n || typeof n !== 'object' || isAnchorHost(n) || isBlockOfComponent(n)) continue;
+    if (root) return;
+    root = n;
+  }
+  if (root) be().setAttr(root as HostNode, scopeId, '');
+}
+
 function isBlockOfComponent(node: unknown): boolean {
   return !!(node && typeof node === 'object' && Array.isArray((node as Block).nodes));
 }
@@ -288,6 +359,27 @@ function isBlockOfComponent(node: unknown): boolean {
 /** What a template ref to a component resolves to (`expose()`d object, or
  * {} — `<script setup>` components are closed by default). */
 const exposedOf = new WeakMap<object, Record<string, unknown>>();
+
+/** A component block's ref value (its exposed object), the block itself
+ * when it is not a component's. */
+export function exposedRefOf(block: unknown): unknown {
+  return block && typeof block === 'object' && exposedOf.has(block) ? exposedOf.get(block) : block;
+}
+
+type RenderHost = (
+  comp: unknown,
+  rawProps: Record<string, unknown> | undefined,
+  slots: Slots,
+  parent: HostNode | null,
+  anchor: HostNode | null,
+) => Block;
+let renderHost: RenderHost | null = null;
+/** The pure-vapor entries load vapor/render-host.ts, which registers here
+ * (specs/171): a module the full entries (with the real VDOM interop) and
+ * apps without render-function components never pull in. */
+export function setRenderHost(fn: RenderHost): void {
+  renderHost = fn;
+}
 
 function mountVaporComponent(
   comp: VaporComponent,
@@ -301,6 +393,7 @@ function mountVaporComponent(
   // die with it, and no parent to inherit provides from
   const parent = root ? null : activeInstance();
   const inst = createVaporInstance(parent, appContext ?? parent?.appContext ?? null);
+  inst.type = comp;
   const scope = new EffectScope(root);
   scopeOwner.set(scope, inst);
   componentOf.set(scope, inst);
@@ -347,6 +440,7 @@ function mountVaporComponent(
   setCurrentVaporInstance(prevInst);
   withScope(scope, () => popAndApplyCssVars(block, (fn) => renderEffect(fn)));
   withScope(scope, () => applyFallthrough(block, attrs, comp, inst));
+  applyParentScope(block, parent);
   // the block object identifies the component for template refs: a fresh
   // object, so a child that returned its own child's block keeps its own
   block = { nodes: block.nodes, scopes: block.scopes, cleanups: block.cleanups };
@@ -401,10 +495,16 @@ export function createComponent(
     else props[k] = v;
   }
   const interop = be().mountVdomComponent;
+  if (!interop && renderHost) {
+    // specs/171: no VDOM renderer in this build — a render-function
+    // component (fjs's own controls) runs on the render host instead
+    return renderHost(comp, rawProps, slots, parent, anchor);
+  }
   if (!interop) {
     throw new Error(
-      '[fjs vapor] a VDOM component reached a pure-vapor app — the enableVapor web build ships no vdom machinery (specs/166). ' +
-        'Import it in a vapor page of a non-enableVapor app, or drop enableVapor.',
+      '[fjs vapor] a render-function (VDOM) component reached a pure-vapor app and no render host is loaded (specs/171). ' +
+        "fjs's own tags load it with them; for a component of your own, write it as a vapor component " +
+        '(`<script setup vapor>`) or drop enableVapor.',
     );
   }
   // the VDOM component's own setup must register its hooks on ITS
@@ -425,7 +525,7 @@ export function createComponentWithFallback(
   if (typeof comp === 'string') {
     // `<component :is="'view'">`: a registered component by that name, else
     // a plain element of that tag (specs/170 — it used to throw)
-    const resolved = activeInstance()?.appContext?.components[comp];
+    const resolved = activeInstance()?.appContext?.components[comp] ?? tagComponents.get(comp);
     return resolved ? createComponent(resolved, rawProps, rawSlots) : createPlainElement(comp, rawProps, rawSlots);
   }
   return createComponent(comp, rawProps, rawSlots);

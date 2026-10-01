@@ -23,6 +23,7 @@ import {
   sfcParseOptions,
   vaporCompilerOptions,
   webIsNativeTag,
+  tagModulesFor,
 } from '../../../fjs-runtime/src/vapor/sfc-tags';
 
 // the tag decision + vapor option builders live in the runtime's
@@ -699,8 +700,59 @@ export const SHARED_BARE_BUILTIN = [
  * just bytes: two copies of pinia are two `activePinia` variables, and a
  * store read from a page chunk is then a different store. */
 export function sharedBare(root = process.cwd()): string[] {
-  const extra = [...(readConfig(root).shared ?? []), ...(usesVapor(root) ? ['fjs/vapor'] : [])];
+  const extra = [
+    ...(readConfig(root).shared ?? []),
+    ...(usesVapor(root) ? ['fjs/vapor', ...usedTagSpecifiers(root)] : []),
+  ];
   return [...SHARED_BARE_BUILTIN, ...extra.filter((id) => !SHARED_BARE_BUILTIN.includes(id))];
+}
+
+/** `fjs/tag/<tag>` modules (specs/171) the app's vapor templates use, on
+ * Flutter. They must live in the shared chunk: a tag module imports the
+ * component's code by relative path, and that code reaches stateful runtime
+ * modules (host-ops' element table, the router) the same way — bundled into
+ * a page chunk they would be second copies. A template scan, like
+ * usesVapor: a tag mentioned in no template is never imported. */
+export function usedTagSpecifiers(root: string): string[] {
+  const tags = tagModulesFor(false);
+  const used = new Set<string>();
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 8) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full, depth + 1);
+      else if (e.name.endsWith('.vue')) {
+        const src = fs.readFileSync(full, 'utf8');
+        for (const t of tags) if (new RegExp(`<${t}[\\s/>]`).test(src)) used.add(t);
+      }
+    }
+  };
+  walk(path.join(root, 'src'), 0);
+  return [...used].sort().map((t) => `fjs/tag/${t}`);
+}
+
+/** Resolves `fjs/tag/<tag>` (specs/171) to the platform's registration
+ * module. Goes LAST in a plugin list: in a --pages build the shared stub
+ * plugin claims the tags the shared chunk owns first. */
+export function tagModulePlugin(web: boolean): Plugin {
+  return {
+    name: 'fjs-tag-module',
+    setup(build) {
+      build.onResolve({ filter: /^fjs\/tag\// }, (args) => {
+        const tag = args.path.slice('fjs/tag/'.length);
+        const file = path.join(runtimeDir(), 'src', 'vapor', 'tags', web ? 'web' : 'flutter', `${tag}.ts`);
+        if (!fs.existsSync(file)) return { errors: [{ text: `[fjs] no ${web ? 'web' : 'Flutter'} implementation registered for <${tag}>` }] };
+        return { path: file };
+      });
+    },
+  };
 }
 
 const vaporUse = new Map<string, boolean>();

@@ -13,7 +13,7 @@ export * from './runtime';
 // exports (those need a VDOM currentInstance, which Vapor code never has)
 export { resolveComponent, useSlots, type Slots } from './runtime';
 export {
-  onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext, useAttrs,
+  onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext, useAttrs, resolveDynamicComponent,
 } from './instance';
 export { useVaporCssVars } from './css-vars';
 

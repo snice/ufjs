@@ -21,8 +21,10 @@ let seq = 0;
 
 export function compileSfc(
   source: string,
-  { vapor, runtime, imports = {}, modules = {} }: {
+  { vapor, runtime, imports = {}, modules = {}, web = false }: {
     vapor: boolean;
+    /** compile with the web tag rules (specs/171: component-backed tags) */
+    web?: boolean;
     runtime: Record<string, unknown>;
     imports?: Record<string, unknown>;
     /** named imports from other specifiers: `import { useRouter } from
@@ -35,7 +37,7 @@ export function compileSfc(
   let content: string;
   let styleTexts: { scoped: boolean; text: string }[];
   if (vapor) {
-    const res = compileVaporSfc(text, { file: `t${seq}.vue`, id: scopeId, web: false, moduleTags: new Set() });
+    const res = compileVaporSfc(text, { file: `t${seq}.vue`, id: scopeId, web, moduleTags: new Set() });
     if ('errors' in res) throw new Error(res.errors.map((e) => e.text).join('\n'));
     content = res.code;
     styleTexts = source.match(/<style[^>]*>([\s\S]*?)<\/style>/g)?.map((block) => {
@@ -54,6 +56,8 @@ export function compileSfc(
     styleTexts = descriptor.styles.map((s) => ({ scoped: !!s.scoped, text: s.content }));
   }
   const body = content
+    // specs/171: tag registration imports — a test registers what it needs
+    .replace(/import\s*"fjs\/tag\/[^"]+";?\n?/g, '')
     .replace(/import\s*\{([^}]*)\}\s*from\s*['"]vue['"];?/g, (_, spec: string) => `const {${spec.replace(/\s+as\s+/g, ': ')}} = __vue;`)
     .replace(/import\s*\{([^}]*)\}\s*from\s*['"]fjs\/vapor['"];?/g, (_, spec: string) => `const {${spec.replace(/\s+as\s+/g, ': ')}} = __vue;`)
     .replace(/import\s*\{([^}]*)\}\s*from\s*['"]fjs\/router['"];?/g, (_, spec: string) => `const {${spec.replace(/\s+as\s+/g, ': ')}} = __fjsRouter;`)

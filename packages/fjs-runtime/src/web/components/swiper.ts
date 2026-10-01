@@ -24,7 +24,9 @@ const TRACK_CELL = 'fjs-swiper-item';
  * here came from a render function or a <slot>: it still gets a page — a
  * wrapper of our own — and a warning, the way Flutter's adapter does. */
 function trackCell(page: VNode, key: PropertyKey | undefined): VNode {
-  if (page.type === FjsSwiperItem || page.type === 'swiper-item') {
+  // a vapor page's <swiper-item> reaches here as a host marker carrying its
+  // tag (vapor/render-host.ts, specs/171)
+  if (page.type === FjsSwiperItem || page.type === 'swiper-item' || (page.props as { __fjsTag?: unknown } | null)?.__fjsTag === 'swiper-item') {
     return key === undefined
       ? cloneVNode(page, { class: TRACK_CELL })
       : cloneVNode(page, { class: TRACK_CELL, key });

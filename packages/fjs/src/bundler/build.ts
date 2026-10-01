@@ -37,6 +37,7 @@ import {
   SHARED_BARE_BUILTIN,
   sharedStubPlugin,
   sharedExternalPlugin,
+  tagModulePlugin,
   srcAliasPlugin,
 } from './vue-plugin.js';
 import { loadViteAppHooks, viteAppHooksPlugin } from '../project/vite-plugins.js';
@@ -555,6 +556,7 @@ async function bundleSingle(
     viteAppHooksPlugin(appHooks),
     srcAliasPlugin(root),
     moduleDataPlugin(root, modules),
+    tagModulePlugin(false),
   ];
   const alias = { ...flutterAliases(enableVapor), ...moduleAliases(root, modules) };
   if (!fs.existsSync(entry)) {
@@ -831,6 +833,7 @@ async function appModuleGraph(
       viteAppHooksPlugin(appHooks),
       srcAliasPlugin(root),
       moduleDataPlugin(root, fjsModules),
+      tagModulePlugin(false),
     ],
     define: fjsDefines(),
     // write:false, so this never emits an asset — but without the loaders it
@@ -917,6 +920,7 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
     sharedStubPlugin(appModules, shared),
     srcAliasPlugin(root),
     moduleDataPlugin(root, modules),
+    tagModulePlugin(false),
   ];
 
   // 1b) release (specs/169): the names the entry and pages actually import
@@ -937,6 +941,7 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
           sharedExternalPlugin(appModules, shared),
           srcAliasPlugin(root),
           moduleDataPlugin(root, modules),
+          tagModulePlugin(false),
         ],
       )
     : undefined;
@@ -974,6 +979,7 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
       viteAppHooksPlugin(appHooks),
       srcAliasPlugin(root),
       moduleDataPlugin(root, modules),
+      tagModulePlugin(false),
     ],
     define: fjsDefines(),
     ...assetOutputOptions(),
@@ -1180,6 +1186,7 @@ async function buildWeb(opts: BuildOptions, outDir: string): Promise<BuildResult
       ...(enableVapor ? [webPureVaporPinPlugin()] : [webPinPlugin()]),
       srcAliasPlugin(root),
       moduleDataPlugin(root, webModules),
+      tagModulePlugin(true),
     ],
     define: fjsDefines(true),
     ...assetOutputOptions(),

@@ -28,7 +28,7 @@
 import { parse, compileScript, type SFCDescriptor } from '@vue/compiler-sfc';
 import { compile as compileVaporTemplate } from '@vue/compiler-vapor';
 import { inlineVaporOnce } from './once-inline';
-import { isAutoVapor, sfcParseOptions, vaporCompilerOptions } from './sfc-tags';
+import { isAutoVapor, sfcParseOptions, tagModulesFor, vaporCompilerOptions } from './sfc-tags';
 
 /** Whether a parsed descriptor is a Vapor SFC. compiler-sfc@3.5 does not
  * know the `vapor` attribute, so the flag is read off the script block's
@@ -176,10 +176,15 @@ export function compileVaporSfc(
   content = content.replace(/export default/, 'const __sfc__ =');
   content += '\n__sfc__.__vapor = true;\nexport default __sfc__;';
 
+  // specs/171: a component-backed fjs tag the template resolves
+  // (`resolveComponent("list-view")`) gets its implementation imported —
+  // the module registers it with the runtime's tag table, so a bundle
+  // carries only the tags its pages use
+  const tagImports = tagModuleImports(`${preamble}\n${content}`, opts.web);
   return {
     // the output carries `const __sfc__ = …` + `__sfc__.__vapor = true` +
     // `export default __sfc__` — the callers append style attach after it
-    code: inlineVaporOnce(`${preamble ? preamble + '\n' : ''}${content}`),
+    code: inlineVaporOnce(`${tagImports}${preamble ? preamble + '\n' : ''}${content}`),
     bindings: compiled.bindings ?? {},
     id,
     scriptMappings: compiled.map?.mappings,
@@ -200,3 +205,16 @@ function parseDescriptor(
   return { descriptor };
 }
 
+
+/** `import "fjs/tag/<tag>";` for every component-backed fjs tag the
+ * compiled code resolves by name (specs/171). */
+export function tagModuleImports(code: string, web: boolean): string {
+  const known = new Set(tagModulesFor(web));
+  const used = new Set<string>();
+  // the compiler's calls are underscore-aliased (`_resolveComponent("x")`):
+  // no \b in front — `_` and `r` are both word characters
+  for (const m of code.matchAll(/(?:resolveComponent|createAssetComponent|resolveDynamicComponent)\(\s*"([^"]+)"/g)) {
+    if (known.has(m[1])) used.add(m[1]);
+  }
+  return [...used].sort().map((t) => `import "fjs/tag/${t}";\n`).join('');
+}

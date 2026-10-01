@@ -24,7 +24,9 @@
 // one off vue-router's route — and its own placeholder tag. Once ready the
 // slot renders as a fragment, with no wrapper element, so `.page > .group`
 // selectors and flex layout are the same with and without <defer>.
-import { defineComponent, h, onBeforeUnmount, ref, type PropType } from '@vue/runtime-core';
+import { defineComponent, h, ref, type PropType } from '@vue/runtime-core';
+// lifecycle that also serves the vapor render host (specs/171)
+import { onBeforeUnmount } from '../vapor/instance';
 
 const warned = new Set<string>();
 

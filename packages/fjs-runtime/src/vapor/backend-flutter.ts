@@ -72,6 +72,27 @@ function planOf(def: TemplateDef): PlanEntry {
   return entry;
 }
 
+/** Static attributes the native clone does not carry (specs/171): written
+ * onto each instance after the clone — one prop write per attribute, and
+ * nothing at all for the attribute-free templates hot lists are made of. */
+const attrNodes = new WeakMap<TemplateDef, number[]>();
+function attrNodesOf(def: TemplateDef): number[] {
+  let list = attrNodes.get(def);
+  if (!list) {
+    list = [];
+    for (let k = 1; k < def.nodes.length; k++) if (def.nodes[k].attrs) list.push(k);
+    attrNodes.set(def, list);
+  }
+  return list;
+}
+function applyStaticAttrs(def: TemplateDef, hosts: unknown[], list = attrNodesOf(def)): void {
+  for (const k of list) {
+    const host = hosts[k];
+    if (!host) continue;
+    for (const [key, value] of def.nodes[k].attrs!) patchProp(host as never, key, null, value);
+  }
+}
+
 /** Node-by-node instantiation when the native clone is unavailable (TS style
  * engine, a rejected frame, a tag the plan cannot carry). Same end state as
  * cloneTemplate: hosts in template order, template root unattached. */
@@ -89,6 +110,7 @@ function instantiateFallback(def: TemplateDef, hosts: unknown[]): void {
       if (n.classes !== null) patchProp(host as never, 'class', null, n.classes);
       if (n.scope !== null) nodeOps.setScopeId?.(host as never, n.scope);
       if (n.inline && n.raw.trim() !== '') nodeOps.setElementText(host as never, n.raw);
+      for (const [key, value] of n.attrs ?? []) patchProp(host as never, key, null, value);
     } else if (n.kind === 'text') {
       host = nodeOps.createText(n.raw);
     } else {
@@ -117,6 +139,7 @@ export const flutterBackend: VaporBackend = {
       if (profiling) __zoneEnter('remap');
       for (const [defIdx, planIdx] of defToPlan) hosts[defIdx] = out[planIdx];
       if (profiling) __zoneExit('remap');
+      applyStaticAttrs(def, hosts);
       return;
     }
     if (profiling) __zoneEnter('fallback');
@@ -130,10 +153,12 @@ export const flutterBackend: VaporBackend = {
     if (plan !== null && cloneReady()) {
       const copies = cloneTemplateMany(plan, count);
       const all: unknown[][] = new Array(count);
+      const withAttrs = attrNodesOf(def);
       for (let i = 0; i < count; i++) {
         const hosts: unknown[] = [];
         hosts[0] = undefined;
         for (const [defIdx, planIdx] of defToPlan) hosts[defIdx] = copies[i][planIdx];
+        if (withAttrs.length) applyStaticAttrs(def, hosts, withAttrs);
         all[i] = hosts;
       }
       return all;
@@ -167,10 +192,12 @@ export const flutterBackend: VaporBackend = {
     }
     const copies = cloneListMany(plan, count, parent as HostNode, (anchor ?? null) as HostNode | null, textPlanIdx, texts);
     const all: unknown[][] = new Array(count);
+    const withAttrs = attrNodesOf(def);
     for (let i = 0; i < count; i++) {
       const hosts: unknown[] = [];
       hosts[0] = undefined;
       for (const [defIdx, planIdx] of defToPlan) hosts[defIdx] = copies[i][planIdx];
+      if (withAttrs.length) applyStaticAttrs(def, hosts, withAttrs);
       all[i] = hosts;
     }
     return all;
@@ -253,6 +280,9 @@ export const flutterBackend: VaporBackend = {
   },
   createElement(tag) {
     return nodeOps.createElement(tag);
+  },
+  parentNode(host) {
+    return (nodeOps.parentNode(host as never) as HostNode | null) ?? null;
   },
 
 

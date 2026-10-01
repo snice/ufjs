@@ -6,6 +6,19 @@ import {
   FJS_TAGS as FJS_TAG_LIST,
   FJS_COMPONENT_TAGS,
 } from '../tags.js';
+import { WEB_TAG_MODULES } from './tags/web/index';
+import { FLUTTER_TAG_MODULES } from './tags/flutter/index';
+
+/** The component-backed fjs tags of a platform (specs/171): the ones with
+ * an `fjs/tag/<tag>` registration module. On Flutter that is the built-in
+ * components (every other fjs tag is a Dart widget); on web, every tag the
+ * web adapter implements with behavior — view / text / safe-area /
+ * swiper-item / stack stay native elements (gestures and styles only), so
+ * hot paths like a 4050-cell grid never go through the render host. */
+export function tagModulesFor(web: boolean): readonly string[] {
+  return web ? WEB_TAG_MODULES : FLUTTER_TAG_MODULES;
+}
+const WEB_COMPONENT_TAGS = new Set<string>(WEB_TAG_MODULES);
 
 /** Tags the fjs runtime provides. On web they must compile as components
  * (several — text, image, switch — are otherwise native SVG/HTML tags);
@@ -91,10 +104,10 @@ export function vaporCompilerOptions({
   web?: boolean;
   moduleTags?: Set<string>;
 }): Record<string, unknown> {
-  void web;
   return {
     isNativeTag: (tag: string) =>
       !FLUTTER_COMPONENT_TAGS.has(tag) &&
+      !(web && WEB_COMPONENT_TAGS.has(tag)) &&
       (moduleTags.has(tag) ||
         FJS_TAGS.has(tag) ||
         isHTMLTag(tag) ||
