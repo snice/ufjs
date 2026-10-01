@@ -76,9 +76,10 @@ export interface FjsAppOptions extends WebRouterOptions {
   /** specs/166: every page is a Vapor SFC. The whole app — shell included —
    * mounts through the vapor runtime's DOM backend and `vue` resolves to
    * the runtime-core shim, so runtime-dom (the DOM vdom renderer) never
-   * enters the bundle. `setup` and [plugins] get no Vue app and do not
-   * apply; vue-router still drives navigation. VDOM components inside
-   * vapor pages are not available in this mode. */
+   * enters the bundle. `setup` and [plugins] run once against the app
+   * shell (specs/167); vue-router still drives navigation (use 'fjs/router'
+   * in pages). VDOM components inside vapor pages are not available in
+   * this mode. */
   enableVapor?: boolean;
   /** Global components (enableVapor): what a vapor page's
    * `resolveComponent` may name. */

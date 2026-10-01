@@ -168,9 +168,10 @@ const VAPOR_WRAPPER_NS = 'fjs-vapor-wrapper';
  * vite dev tolerates script-only mappings being absent. */
 export async function compileVaporSfcModule(
   file: string,
-  opts: { web: boolean; moduleTags: Set<string>; root: string },
+  opts: { web: boolean; moduleTags: Set<string>; root: string; enableVapor?: boolean },
 ): Promise<{ code: string; scriptMappings?: string } | { errors: { text: string }[] }> {
   const source = fs.readFileSync(file, 'utf8');
+  if (opts.enableVapor) warnVueRouterInVapor(file, source);
   const filename = path.basename(file);
   // stable per-file scope id (relative to the build root so the same
   // checkout hashes identically everywhere)
@@ -371,6 +372,7 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
           // parse + script + template splice are one step in the runtime's
           // sfc-compiler.ts (specs/166 — stable compiler-sfc, the codegen
           // from @vue/compiler-vapor).
+          if (enableVapor) warnVueRouterInVapor(args.path, source);
           const compiledVapor = compileVaporSfc(source, { file: args.path, id, web, moduleTags });
           if ('errors' in compiledVapor) return { errors: compiledVapor.errors };
           // The helpers a Vapor module imports — generated and the page's
@@ -705,23 +707,100 @@ const vaporUse = new Map<string, boolean>();
 
 const enableVaporUse = new Map<string, boolean>();
 
+/** JS/TS source with `//` and block comments blanked out — string and
+ * template literals kept intact, so a `'//'` inside a string is not taken
+ * for a comment. Newlines survive (positions in warnings stay meaningful). */
+export function stripJsComments(src: string): string {
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    const n = src[i + 1];
+    if (c === '/' && n === '/') {
+      while (i < src.length && src[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && n === '*') {
+      i += 2;
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) {
+        if (src[i] === '\n') out += '\n';
+        i++;
+      }
+      i += 2;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c;
+      out += c;
+      i++;
+      while (i < src.length && src[i] !== q) {
+        if (src[i] === '\\') {
+          out += src[i] + (src[i + 1] ?? '');
+          i += 2;
+          continue;
+        }
+        out += src[i];
+        i++;
+      }
+      if (i < src.length) out += src[i];
+      i++;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
 /** specs/166: whether the app entry declares `enableVapor: true` in its
  * `createFjsApp` call — the "this app is all-Vapor" switch. A static scan
  * of the entry source, the same shape as usesVapor; the build reads it to
  * skip the compile-time wrapper (pages mount natively) and, on web, to pin
- * `vue` to the runtime-core shim so runtime-dom never enters the bundle. */
+ * `vue` to the runtime-core shim so runtime-dom never enters the bundle.
+ *
+ * specs/167: comments are stripped first (a comment quoting the option
+ * used to switch the whole app over), and only a LITERAL true counts — the
+ * build decides before any code runs, so `enableVapor: flag` cannot be
+ * honoured and is reported instead of guessed. */
 export function usesEnableVapor(root: string, entry?: string): boolean {
   const file = path.resolve(root, entry ?? 'src/main.ts');
   const cached = enableVaporUse.get(file);
   if (cached !== undefined) return cached;
   let hit = false;
   try {
-    hit = /enableVapor\s*:\s*true/.test(fs.readFileSync(file, 'utf8'));
+    // string contents blanked too: a URL or message quoting the option is
+    // not the option
+    const code = stripJsComments(fs.readFileSync(file, 'utf8')).replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, '""');
+    const literal = /\benableVapor\s*:\s*(true|false)\b/.exec(code);
+    hit = literal?.[1] === 'true';
+    if (!literal && /\benableVapor\b/.test(code)) {
+      console.warn(
+        `[fjs] ${path.relative(root, file)}: enableVapor must be the literal \`true\` — ` +
+          'the build reads it statically before any code runs; treating the app as NOT enableVapor.',
+      );
+    }
   } catch {
     // no readable entry: not declared
   }
   enableVaporUse.set(file, hit);
   return hit;
+}
+
+const warnedVueRouter = new Set<string>();
+
+/** specs/167: under enableVapor, vue-router's own useRouter/useRoute are
+ * runtime-core injects that a vapor page (no Vue app installed the router)
+ * never satisfies — they return undefined. 'fjs/router' has both, on both
+ * targets. Warn once per file rather than let the page break silently. */
+export function warnVueRouterInVapor(file: string, source: string): void {
+  if (warnedVueRouter.has(file)) return;
+  const m = /import\s*\{([^}]*)\}\s*from\s*['"]vue-router['"]/.exec(stripJsComments(source));
+  if (!m || !/\b(useRouter|useRoute)\b/.test(m[1])) return;
+  warnedVueRouter.add(file);
+  console.warn(
+    `[fjs] ${path.basename(file)}: useRouter/useRoute from 'vue-router' return undefined in an enableVapor app — ` +
+      "import them from 'fjs/router' instead.",
+  );
 }
 
 /** Whether the app has a Vapor component (specs/148): its own
@@ -839,7 +918,10 @@ export function webPureVaporPinPlugin(): Plugin {
     setup(build) {
       const nm = path.join(runtimeDir(), 'node_modules');
       const pinned: Record<string, string> = {
-        vue: path.join(nm, '@vue', 'runtime-core', 'dist', 'runtime-core.esm-bundler.js'),
+        // specs/167: runtime-core + the vapor-aware lifecycle/provide/inject
+        // (the module re-exports the same runtime-core dist the vapor
+        // runtime links, so reactivity stays one copy)
+        vue: path.join(runtimeDir(), 'src', 'vapor', 'vue-pure.ts'),
         'vue-router': path.join(nm, 'vue-router', 'dist', 'vue-router.mjs'),
       };
       build.onResolve({ filter: /^(vue|vue-router)$/ }, (args) => {

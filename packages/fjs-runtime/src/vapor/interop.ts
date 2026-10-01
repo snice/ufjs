@@ -14,6 +14,8 @@ interface AdoptEntry {
   /** fragment adopt: the block's nodes, filled under `root` on mount */
   fragment: HostNode[] | null;
   block: Block;
+  /** the adopted tree's mounted hooks (specs/167), run once it is in */
+  mounted: () => void;
 }
 
 const adopts = new Map<number, AdoptEntry>();
@@ -31,9 +33,9 @@ export function adoptVaporComponent(
   props: Record<string, unknown> | undefined,
   appContext: VaporAppContext | null,
 ): { id: number } {
-  const block = mountVaporComponentForAdopt(comp, props, appContext).block;
+  const { block, mounted } = mountVaporComponentForAdopt(comp, props, appContext);
   const id = ++adoptSeq;
-  adopts.set(id, { root: null as unknown as HostNode, fragment: block.nodes.length === 1 ? null : ([...block.nodes] as unknown as HostNode[]), block });
+  adopts.set(id, { root: null as unknown as HostNode, fragment: block.nodes.length === 1 ? null : ([...block.nodes] as unknown as HostNode[]), block, mounted });
   pending = { id };
   return { id };
 }
@@ -42,8 +44,12 @@ export function adoptVaporComponent(
  * the placeholder host into the tree. */
 export function mountAdoptNodes(id: number): void {
   const entry = adopts.get(id);
-  if (!entry?.fragment) return;
-  for (const node of entry.fragment) nodeOps.insert(node as never, entry.root as never, null);
+  if (!entry) return;
+  if (entry.fragment) {
+    for (const node of entry.fragment) nodeOps.insert(node as never, entry.root as never, null);
+  }
+  // the ref re-fires on re-renders; runMounted is once per instance
+  entry.mounted();
 }
 
 /** Stops the block's effects and drops the slot. Host removal is the VDOM's

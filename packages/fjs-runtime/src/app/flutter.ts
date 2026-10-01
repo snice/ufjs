@@ -13,22 +13,26 @@ import { FjsPicker } from '../components/picker';
 import { FjsRichText } from '../components/rich-text';
 import { FjsTextarea } from '../components/textarea';
 import { applyPlugins, type FjsPlugin } from './plugin';
+import { createVaporAppShell } from './vapor-app';
+import type { VaporAppContext } from '../vapor/instance';
 
 export interface FjsAppOptions extends FlutterRouterOptions {
   /** App plugins, applied in order before [setup]. Normally the generated
    * list: `import { plugins } from 'fjs/plugins'`. */
   plugins?: readonly FjsPlugin[];
   /** Called with the Vue app before it is mounted. On Flutter this runs
-   * once per page (each page is its own app). */
+   * once per page (each page is its own app). With [enableVapor] it runs
+   * ONCE, with the app shell (specs/167: use / provide / component /
+   * runWithContext / config — enough for pinia). */
   setup?: (app: App) => void;
   /** Web only: mount target. Ignored here. */
   el?: string | unknown;
   /** specs/166: every page is a Vapor SFC. Pages mount through the vapor
    * runtime directly — no per-page Vue app, no compile-time wrapper (the
-   * CLI reads this option at build time and skips it). `setup` and
-   * [plugins] get no Vue app to run against and do not apply; global
-   * component resolution goes through [components] plus the built-in fjs
-   * component set. */
+   * CLI reads this option at build time and skips it; it must be the
+   * literal `true`). `setup` and [plugins] run once against the app shell
+   * (specs/167); global component resolution goes through [components]
+   * plus the built-in fjs component set. */
   enableVapor?: boolean;
   /** Global components (enableVapor): what a vapor page's
    * `resolveComponent` may name. The built-in fjs components
@@ -44,25 +48,33 @@ export interface FjsApp {
 }
 
 export function createFjsApp(options: FjsAppOptions): FjsApp {
+  // enableVapor (specs/166/167): no per-page Vue app. The built-in component
+  // set — what onCreateApp registers on each page's app in the vdom path —
+  // and the app's own components resolve through one vapor app context;
+  // plugins and setup run ONCE, here, against the app shell (the vdom path
+  // runs them per page)
+  let vaporContext: VaporAppContext | undefined;
+  if (options.enableVapor) {
+    vaporContext = {
+      components: {
+        canvas: createFjsCanvas('inner-canvas'),
+        'list-view': FjsListView,
+        form: FjsForm,
+        picker: FjsPicker,
+        'rich-text': FjsRichText,
+        textarea: FjsTextarea,
+        defer: FjsDefer,
+        ...options.components,
+      },
+      provides: Object.create(null) as Record<string | symbol, unknown>,
+    };
+    const shell = createVaporAppShell(vaporContext);
+    applyPlugins(shell as unknown as App, options.plugins);
+    options.setup?.(shell as unknown as App);
+  }
   const router = createRouter({
     ...options,
-    // enableVapor (specs/166): the built-in component set — what onCreateApp
-    // registers on each page's Vue app in the vdom path — resolves through
-    // the vapor app context instead, alongside the app's own components
-    ...(options.enableVapor
-      ? {
-          vaporComponents: {
-            canvas: createFjsCanvas('inner-canvas'),
-            'list-view': FjsListView,
-            form: FjsForm,
-            picker: FjsPicker,
-            'rich-text': FjsRichText,
-            textarea: FjsTextarea,
-            defer: FjsDefer,
-            ...options.components,
-          },
-        }
-      : {}),
+    ...(vaporContext ? { vaporContext } : {}),
     onCreateApp(app) {
       // the surface is the `inner-canvas` ELEMENT here; on web the same
       // factory is pointed at the web adapter's component

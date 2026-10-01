@@ -33,6 +33,12 @@ import type { Element } from '../ui/element';
 import { styleEngine } from './renderer';
 import { trackTransitionClass, untrackTransitionClass, transitionClassesOf } from './transition-classes';
 export * from '@vue/runtime-core';
+// specs/167: lifecycle + provide/inject that also serve a vapor setup — a
+// composable importing them from 'vue' reaches the vapor instance. Outside
+// one they ARE runtime-core's (see vapor/instance.ts for the dispatch)
+export {
+  onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext,
+} from '../vapor/instance';
 export { useCssVars } from './css-vars';
 // the Flutter build's template compiler emits it (specs/153)
 export { fjsTemplate } from './template-block';

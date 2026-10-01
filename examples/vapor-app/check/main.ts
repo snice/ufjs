@@ -7,8 +7,11 @@ import './preload';
 import { flushNow, setOpSink } from 'fjs';
 import { createFjsApp } from 'fjs/app';
 import { definePage } from 'fjs/router';
+import { createPinia } from 'pinia';
+import { useCounter } from '../src/stores/counter';
 import Home from '../src/pages/index.vue';
 import About from '../src/pages/about.vue';
+import Shell from '../src/Shell.vue';
 
 /** QuickJS has no TextDecoder — ASCII/UTF-8 decode by hand (demo
  * bench/vapor-check.ts's helper). */
@@ -97,6 +100,10 @@ async function main(): Promise<void> {
       { path: '/about', meta: { title: 'About' }, component: About as never },
     ],
     transition: false,
+    shell: Shell as never,
+    setup(a) {
+      a.use(createPinia());
+    },
   });
   app.mount();
   flushNow();
@@ -124,10 +131,21 @@ async function main(): Promise<void> {
   };
   console.log(`[vapor-app] tree: ${JSON.stringify(tree)}`);
   if (!tree.includes('vapor home')) fail('home title missing');
+  if (!tree.includes('Home')) fail('shell nav-bar title missing (specs/167 §8)');
   if (!tree.includes('3')) fail('count text missing');
   if (!tree.includes('a (0)') || !tree.includes('c (2)')) fail('v-for rows missing');
   if (!tree.includes('tap to hide')) fail('v-if branch missing');
   console.log('[vapor-app] PASS base page (title/count/v-for/v-if, native vapor mount)');
+
+  // specs/167: pinia through setup(app), onMounted after the mount
+  if (!tree.includes('store 0 · ticks 0')) fail('pinia store text missing');
+  if (!useCounter().mounted) fail('onMounted did not run');
+  useCounter().add();
+  await Promise.resolve();
+  await Promise.resolve();
+  flushNow();
+  if (!walk(root).includes('store 1 · ticks 0')) fail('store update did not reach the page');
+  console.log('[vapor-app] PASS pinia (setup(app) install, store read + update) and onMounted');
 
   // push/back are not exercised here: fjsrun has no navigator on the other
   // side of `fjs.nav.push`, so a push never swaps (the router's vapor mount

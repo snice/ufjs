@@ -187,11 +187,13 @@ export function fjs(): VitePlugin {
             // not a function` on unmount, dead lifecycle hooks, split
             // reactivity) — specs/165. vue 3.5.42 here is the same copy
             // fjs-runtime links, so realpath dedupe yields a single graph.
-            // enableVapor (specs/166): `vue` is the runtime-core dist — the
-            // vue package's entry is runtime-dom, which a pure-vapor app
-            // must not reach. vue-router needs nothing beyond runtime-core.
+            // enableVapor (specs/166): `vue` is runtime-core — the vue
+            // package's entry is runtime-dom, which a pure-vapor app must
+            // not reach. vue-router needs nothing beyond runtime-core.
+            // specs/167: through vue-pure.ts, which adds the vapor-aware
+            // lifecycle/provide/inject for composables (pinia, vueuse)
             ...(enableVapor
-              ? [{ find: /^vue$/, replacement: path.join(runtime, 'node_modules', '@vue', 'runtime-core', 'dist', 'runtime-core.esm-bundler.js') }]
+              ? [{ find: /^vue$/, replacement: path.join(runtime, 'src', 'vapor', 'vue-pure.ts') }]
               : [{ find: /^vue$/, replacement: path.join(runtime, 'node_modules', 'vue', 'dist', 'vue.runtime.esm-bundler.js') }]),
             { find: /^fjs$/, replacement: path.join(runtime, 'src', 'index.ts') },
           ],
@@ -351,6 +353,7 @@ export function fjs(): VitePlugin {
           web: true,
           moduleTags: new Set(nativeTags),
           root,
+          enableVapor,
         });
         if ('errors' in res) {
           // vite reports a load failure through a thrown error
@@ -364,7 +367,15 @@ export function fjs(): VitePlugin {
           target: 'esnext',
           sourcefile: file,
         });
-        return js.code;
+        // the module's id is virtual, so vite cannot resolve the page's own
+        // RELATIVE imports against it (`../stores/counter` failed with
+        // "Does the file exist?" — specs/167). Anchor them at the real file;
+        // absolute paths still get vite's extension resolution, and a
+        // relative .vue import lands on the absolute-path branch above.
+        return js.code.replace(
+          /(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])(\.{1,2}\/[^'"]+)\2/g,
+          (_m, lead: string, q: string, rel: string) => `${lead}${q}${path.resolve(path.dirname(file), rel)}${q}`,
+        );
       }
       if (VUE_ROUTE_BLOCK_RE.test(id)) return 'export default {}';
       if (id === VIRTUAL_PLUGINS) {

@@ -325,6 +325,12 @@ node_modules 里以 `.vue` 发布、只有 `<script setup>` 的库组件默认�
 }
 ```
 
+全 Vapor 应用在入口写 `createFjsApp({ enableVapor: true, ... })`（见
+[vue3.md](vue3.md)）。CLI 构建期**静态**读这个开关：先去掉注释和字符串内容，再找字面量
+`enableVapor: true`；值不是字面量（`enableVapor: flag`）时警告并按未开启处理（specs/167）。
+开启后，vapor SFC 若从 `'vue-router'` 导入 `useRouter` / `useRoute` 会警告一次（改用
+`'fjs/router'`）。
+
 ### 和 `fjs native add` 的分界
 
 `fjs add` 只动 JS 侧。要动 Flutter 宿主（pubspec 插件、Dart 注册、权限清单）的原生

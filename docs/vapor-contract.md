@@ -49,6 +49,7 @@ export interface HostReactivity<S = unknown, R = unknown> {
   effect(fn: () => unknown, opts: { scheduler: () => void; onStop: () => void }): R;
   stopEffect(runner: R): void;
   box<T>(value: T): { value: T };          // 可写盒子：读追踪、写触发
+  beforeStopScope?(scope: S): void;        // specs/167：scope 将停、宿主尚未移除（beforeUnmount 点）
 }
 ```
 
@@ -62,10 +63,18 @@ export interface HostReactivity<S = unknown, R = unknown> {
    效果永不重跑。核心用它做 v-if 分支销毁、v-for 逐项销毁与整表销毁。
 3. **box 是最小追踪单元**：v-for 的 item/key 惰性盒子经它创建；效果读 `box.value` 必须建立
    依赖。
+4. **去重与隔离归核心（specs/167）**：同一效果在一次 flush 前多次触发只入队一次（运行前清
+   标记，运行中的新触发可再入队）；flush 中单个 job 抛错交给 `setVaporErrorReporter` 注入的
+   上报函数，同批其余 job 照跑。
+5. **`beforeStopScope` 可选**：核心在移除宿主**之前**对将停的 scope 调它（removeBlock、v-if
+   切分支、disposeBlock），绑定据此跑 beforeUnmount。没有组件层的绑定（Solid 验证）不实现。
+   `setVaporJobHook` 是每个 job 跑完后的回调——Vue 绑定用它触发「更新中新建组件」的
+   onMounted。
 
 Vue 绑定（`runtime.ts`）的实现即 `@vue/reactivity`：
 `createScope = () => new EffectScope()`、`runInScope = scope.run`、`effect = effect(fn, opts)`、
-`box = shallowRef`。Solid 绑定的参考实现见 `test/vapor-solid-host.test.ts`
+`box = shallowRef`；组件实例、生命周期与 provide/inject 在 `vapor/instance.ts`（无 host /
+渲染器依赖，vue-shim 与 `vapor/vue-pure.ts` 也导出它的双模函数）。Solid 绑定的参考实现见 `test/vapor-solid-host.test.ts`
 （`createRoot` + `runWithOwner` + `createSignal`）。
 
 ## VaporBackend：渲染接缝

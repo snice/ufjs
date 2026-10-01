@@ -450,19 +450,65 @@ CLI 在构建期读这个开关（扫入口源码），runtime 在挂载期执�
   纯 vapor 应用碰不到 DOM 渲染器）；`fjs/app` 别名到纯 vapor 壳（`app/web-vapor.ts`）、
   `fjs/vapor` 别名到无 interop 面（`vapor/web-pure.ts`）——vdom 渲染引擎、wrapper、adopt
   机制整段不进图。
-- **全局组件**走 `components` 选项（Flutter 端内置 fjs 组件集自动带上）；`useRoute` /
-  `useRouter` 在无 Vue 实例时有模块级回退，页面照常用。
+- **全局组件**走 `components` 选项（Flutter 端内置 fjs 组件集自动带上）。
+- **开关必须是字面量**：CLI 去掉注释（和字符串内容）后找 `enableVapor: true`；
+  `enableVapor: flag` 这类非字面量构建期无法求值，会警告并按「未开启」处理。
 - **fjs 标签在 vapor 模板里两端一致地编译成原生元素**（view/text/image…——web 后端
   createElement 出的就是同一批自定义元素，样式来自 base-css，手势走后端 on()）；
   `form` / `picker` / `list-view` / `textarea` 等组件标签仍走组件解析，纯 vapor 的 web 应用
   用它们会得到明确的 resolveComponent 报错（vdom interop 才挂得起）。
-- **代价（有意为之，都写进了 spec）**：`setup(app)` / `applyPlugins` 没有 Vue app 可跑，
-  pinia 之类不生效；web 端 Vapor 页内嵌 VDOM 组件（vant）不可用——web 的 vdom 互操作依赖
+- **插件与 `setup(app)`（specs/167）**：没有 Vue app，但 `setup` / `plugins` 拿到一个 App
+  形状的外壳（`app/vapor-app.ts`），在 `createFjsApp` 时**只跑一次**（VDOM 的 Flutter 路径是
+  每页跑一次）。可用：`use` / `provide` / `component` / `runWithContext` /
+  `config.globalProperties` / `config.errorHandler`；`mixin` / `directive` / `mount` 警告一次后
+  忽略。pinia 照常写：
+
+  ```ts
+  createFjsApp({ enableVapor: true, routes, setup(app) { app.use(createPinia()) } }).mount();
+  ```
+
+  分包构建（`--pages` / `fjs run`）里 pinia 要登记进 `package.json` 的 `fjs.shared`
+  （`fjs add pinia` 会写），否则入口与页面 chunk 各打一份 pinia、store 找不到 active pinia。
+
+  `config.errorHandler` 收 vapor effect 与生命周期钩子里的异常，签名
+  `(err, null, info)`——vapor 没有组件实例可传；没设时 `console.error`，且一个 effect 抛错
+  不会连累同批其他 effect。
+- **外壳 `shell` 必须是 vapor 组件**（`<script setup vapor>`）：两端都把每个 vapor 页包进它
+  （props `route` = 本页路由，默认插槽 = 页面），导航栏和返回键就放在这里。VDOM 的 shell
+  在 enableVapor 下没有渲染器可用，会警告一次并不包壳——页面就没有导航栏 / 返回键
+  （specs/167 §8）。`transition: false` 在 iOS 上同时关掉右滑返回。
+- **路由**：页面里用 `fjs/router` 的 `useRouter` / `useRoute` / `onPageSettled`——两端都经
+  vapor provide 拿到**本页**的 router / route（`reactive` 对象，导航走后仍是本页的）。
+  vue-router 自己的 `useRouter` / `useRoute` 是 runtime-core 的 inject，vapor 页里拿不到
+  （返回 undefined），CLI 发现 vapor SFC 从 `'vue-router'` 导入它们会警告；
+  `<router-link>` / `<router-view>` 是 VDOM 组件，不可用。
+- **代价（有意为之，都写进了 spec）**：web 端 Vapor 页内嵌 VDOM 组件（vant）不可用——web 的 vdom 互操作依赖
   runtime-dom 的渲染器，这正是这个模式要省掉的东西（Flutter 端互操作照旧可用，代价只是
   包体）。web 壳比 vdom 壳简单：visited 页常驻 LRU 缓存（默认 16）不按历史栈销毁、无进场
   过场动画。
-- 参考实现：`examples/vapor-app`（`pnpm run check` 是 fjsrun 断言 harness，
+- 参考实现：`examples/vapor-app`（pinia store + 生命周期；`pnpm run check` 是 fjsrun 断言 harness，
   `pnpm run build:web` 后 bundle 无 runtime-dom / wrapper / createRenderer 痕迹）。
+
+### Vapor 组件的生命周期与 provide / inject（specs/167）
+
+自研运行时有自己的组件实例，下面这些从 `'vue'` 导入即可（vapor SFC 的 `'vue'` 由 CLI 改到
+`fjs/vapor`），**全部 vapor 组件**适用——enableVapor 应用，以及 VDOM 页里被收养的 vapor 组件：
+
+| API | 时机 / 语义 |
+|---|---|
+| `onBeforeMount` | setup 返回后、块插入宿主之前 |
+| `onMounted` | 块进入宿主树之后**同步**触发（`mount()` 返回前；收养路径在节点放进占位元素后），子先于父；v-if 翻转、v-for 新增项里新建的组件在那次更新结束时触发 |
+| `onBeforeUnmount` | 宿主节点移除**前**，父先于子 |
+| `onUnmounted` | 移除之后，子先于父。页面卸载、v-if 切走、v-for 删项、web 壳 LRU 逐出都会触发 |
+| `provide` / `inject` / `hasInjectionContext` | Vue 语义：inject 读父组件的 provides，链尾是 app 级（`app.provide`）；`runWithContext` 内可读 app 级 |
+| `onUpdated` / `onBeforeUpdate` / `onActivated` / `onDeactivated` / `onErrorCaptured` / `onRenderTracked` / `onRenderTriggered` / `onServerPrefetch` | ❌ 不支持，调用时警告一次 |
+
+`.ts` 里的 composable（pinia、vueuse）从 `'vue'` 导入这些函数同样生效：Flutter 端 `vue`
+是 vue-shim，enableVapor 的 web 端 `vue` 钉在 `vapor/vue-pure.ts`，两者导出的是同一套「双模」
+函数（vapor setup 中走 vapor 实例，VDOM 组件中走 runtime-core）。**例外**：非 enableVapor 的
+web 应用里 `vue` 是真 vue 包，那里的 `.ts` composable 在 vapor 组件里注册生命周期不生效。
+`getCurrentInstance()` 在 vapor 里仍返回 null（伪造实例会让读 `instance.proxy` 的库崩），
+vueuse `tryOnMounted` 这类会走它们的无实例分支。
 
 ## 不可用 / 注意
 

@@ -167,6 +167,8 @@ domBackend.mountVdomComponent = mountVdomComponent as NonNullable<VaporBackend['
 interface WebAdopt {
   block: Block;
   el: HTMLElement | null;
+  /** the adopted tree's mounted hooks (specs/167), run once it is in */
+  mounted: () => void;
 }
 
 const adopts = new Map<number, WebAdopt>();
@@ -177,9 +179,9 @@ export function adoptVaporComponent(
   props: Record<string, unknown> | undefined,
   appContext: VaporAppContext | null,
 ): { id: number } {
-  const { block } = mountVaporComponentForAdopt(comp, props, appContext);
+  const { block, mounted } = mountVaporComponentForAdopt(comp, props, appContext);
   const id = ++adoptSeq;
-  adopts.set(id, { block, el: null });
+  adopts.set(id, { block, el: null, mounted });
   return { id };
 }
 
@@ -197,6 +199,7 @@ export function mountAdoptNodes(id: number, target: unknown): void {
   if (first && first.parentNode === el) return;
   adopt.el = el;
   for (const node of adopt.block.nodes) el.appendChild(node as Node);
+  adopt.mounted();
 }
 
 export function releaseAdopt(id: number): void {

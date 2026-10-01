@@ -12,6 +12,11 @@ export { adoptVaporComponent, mountAdoptNodes, releaseAdopt } from './interop';
 // the runtime's slot/resolve helpers win over runtime-core's same-named
 // exports (those need a VDOM currentInstance, which Vapor code never has)
 export { resolveComponent, useSlots, type Slots } from './runtime';
+// specs/167: vapor-aware lifecycle + provide/inject (the shim above already
+// re-exports the same bindings; spelled out so the surface is explicit)
+export {
+  onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext,
+} from './instance';
 
 // <style> v-bind() on a Vapor page (specs/166): the compiler names this
 // helper in the useCssVars call it injects for vapor SFCs

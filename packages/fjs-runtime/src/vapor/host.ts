@@ -27,6 +27,10 @@ export interface HostReactivity<S = unknown, R = unknown> {
   stopEffect(runner: R): void;
   /** A writable box: `.value` reads track, writes trigger. */
   box<T>(value: T): { value: T };
+  /** Called for a scope that is about to stop, BEFORE its hosts leave the
+   * tree (specs/167) — the binding's beforeUnmount point. Optional: an
+   * engine with no component layer (the Solid seam test) leaves it out. */
+  beforeStopScope?(scope: S): void;
 }
 
 let rx: HostReactivity | null = null;
@@ -39,6 +43,36 @@ export function setHostReactivity(impl: HostReactivity): void {
 
 /** opts for an effect nobody schedules — the micro bench's tight loops. */
 const NO_SCHED = { scheduler: () => {}, onStop: () => {} };
+
+/** Runs after every flushed effect job (specs/167): the binding fires the
+ * mounted hooks of components a re-run created — their hosts are in the
+ * tree by the time the job returns. */
+let jobHook: (() => void) | null = null;
+export function setVaporJobHook(fn: (() => void) | null): void {
+  jobHook = fn;
+}
+
+/** Where a throwing effect goes (specs/167): the binding routes it to the
+ * app's errorHandler. One bad effect must not take the rest of its batch —
+ * or the queue — down with it. */
+let errorReporter: (err: unknown, info: string) => void = (err) => {
+  console.error('[fjs vapor] effect error:', err);
+};
+export function setVaporErrorReporter(fn: (err: unknown, info: string) => void): void {
+  errorReporter = fn;
+}
+export function reportVaporError(err: unknown, info: string): void {
+  try {
+    errorReporter(err, info);
+  } catch (e) {
+    console.error('[fjs vapor] error handler threw:', e, 'while reporting', err);
+  }
+}
+
+function beforeStop(scope: unknown): void {
+  const hook = rx?.beforeStopScope;
+  if (hook) hook.call(rx, scope);
+}
 
 function needRx(): HostReactivity {
   if (rx === null) throw new Error('[fjs vapor] no reactivity bound — the framework binding must call setHostReactivity at module init');
@@ -249,8 +283,10 @@ export function insertBlock(block: Block, parent: HostNode, anchor: HostNode | n
   for (const node of block.nodes) be().attach(node, parent, anchor);
 }
 
-/** Removes a block's hosts and tears down everything created for it. */
+/** Removes a block's hosts and tears down everything created for it. The
+ * beforeStop pass comes first: beforeUnmount hooks still see their hosts. */
 export function removeBlock(block: Block): void {
+  for (const s of block.scopes ?? []) beforeStop(s);
   for (const node of block.nodes) be().remove(node);
   for (const s of block.scopes ?? []) needRx().stopScope(s);
   for (const cleanup of block.cleanups ?? []) cleanup();
@@ -632,7 +668,13 @@ function enqueue(run: () => void, alive: () => boolean): void {
       for (const { run, alive } of queue.splice(0)) {
         // a scope stopped between trigger and flush must not write into
         // hosts that no longer exist — onStop() flips `alive`
-        if (alive()) run();
+        if (!alive()) continue;
+        try {
+          run();
+        } catch (e) {
+          reportVaporError(e, 'vapor effect');
+        }
+        if (jobHook) jobHook();
       }
     });
   }
@@ -646,13 +688,23 @@ function enqueue(run: () => void, alive: () => boolean): void {
 export function renderEffect(fn: () => unknown): void {
   const scope = currentScope;
   let alive = true;
+  // one queue entry per effect per flush (specs/167): five writes in one
+  // handler used to run a v-for reconcile five times. Cleared BEFORE the
+  // run, so a trigger the run itself causes queues again (the engine drops
+  // self-triggers while running, so this cannot spin).
+  let pending = false;
   let runner: () => unknown = () => {};
+  const job = (): void => {
+    pending = false;
+    if (scope) withScope(scope, () => runner());
+    else runner();
+  };
   const opts = {
-    scheduler: () =>
-      enqueue(
-        () => (scope ? withScope(scope, () => runner()) : runner()),
-        () => alive,
-      ),
+    scheduler: () => {
+      if (pending) return;
+      pending = true;
+      enqueue(job, () => alive);
+    },
     onStop: () => {
       alive = false;
     },
@@ -692,6 +744,7 @@ export function createIf(condition: () => unknown, positive?: () => unknown, neg
   const frag: Block & { nodes: HostNode[]; scopes: unknown[]; cleanups: (() => void)[] } = { nodes: [anchor], scopes: [], cleanups: [] };
   let current: { scope: unknown; cleanups: (() => void)[] } | null = null;
   const teardown = (): void => {
+    if (current) beforeStop(current.scope);
     for (let i = frag.nodes.length - 1; i >= 1; i--) be().remove(frag.nodes[i]);
     frag.nodes.length = 1;
     if (current) {
@@ -707,12 +760,19 @@ export function createIf(condition: () => unknown, positive?: () => unknown, neg
   withScope(
     owner,
     () => {
+      // the branch only changes when the condition's TRUTH does (specs/167):
+      // `v-if="n > 5"` going 6 → 7 re-ran this effect, and it used to tear
+      // the branch down and rebuild it — losing every bit of state inside
+      let shown: boolean | null = null;
       renderEffect(() => {
+        const next = !!condition();
+        if (next === shown) return;
+        shown = next;
         teardown();
         const branchScope = needRx().createScope();
         let branch: Block;
         try {
-          branch = withScope(branchScope, () => blockOf(condition() ? positive?.() : negative?.()));
+          branch = withScope(branchScope, () => blockOf(next ? positive?.() : negative?.()));
         } catch (e) {
           needRx().stopScope(branchScope);
           throw e;
@@ -1145,6 +1205,7 @@ export function createForSlots(
 /** Stops a block's scopes and cleanups WITHOUT removing its hosts — the
  * adopt paths (VDOM owns the placeholder host) dispose this way. */
 export function disposeBlock(block: Block): void {
+  for (const s of block.scopes ?? []) beforeStop(s);
   for (const s of block.scopes ?? []) needRx().stopScope(s);
   for (const cleanup of block.cleanups ?? []) cleanup();
 }

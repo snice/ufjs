@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import * as esbuild from 'esbuild';
 import { describe, expect, it } from 'vitest';
-import { isAutoVapor, isVaporSfcFile, sharedBare, usesVapor, usesEnableVapor, vaporWrapperModule, vueSfcPlugin, vuePinPlugin, vaporWrapperPlugin } from '../src/bundler/vue-plugin';
+import { isAutoVapor, isVaporSfcFile, sharedBare, stripJsComments, usesVapor, usesEnableVapor, vaporWrapperModule, vueSfcPlugin, vuePinPlugin, vaporWrapperPlugin } from '../src/bundler/vue-plugin';
 
 const VDOM = `<script setup lang="ts">
 const n: number = 1
@@ -157,6 +157,56 @@ describe('enableVapor (specs/166)', () => {
     expect(usesEnableVapor(dir, 'src/main.ts')).toBe(true);
     expect(usesEnableVapor(dir, 'src/other.ts')).toBe(false);
     expect(usesEnableVapor(dir)).toBe(true); // default entry src/main.ts
+  });
+
+  it('specs/167: comments do not switch it on; only a literal true counts', () => {
+    const dir = project({
+      'src/a.ts': "// the app says so once — `enableVapor: true`\ncreateFjsApp({ routes });",
+      'src/b.ts': "/* enableVapor: true */ createFjsApp({ routes, url: 'http://x//enableVapor: true' });",
+      'src/c.ts': 'createFjsApp({ enableVapor: flag, routes });',
+      'src/d.ts': 'createFjsApp({ enableVapor: false, routes });',
+      'src/e.ts': "// enableVapor: false\ncreateFjsApp({ enableVapor: true });",
+    });
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (m: string) => warns.push(m);
+    try {
+      expect(usesEnableVapor(dir, 'src/a.ts')).toBe(false);
+      // the string stays a string: its `//` is not a comment start
+      expect(usesEnableVapor(dir, 'src/b.ts')).toBe(false);
+      expect(usesEnableVapor(dir, 'src/c.ts')).toBe(false);
+      expect(usesEnableVapor(dir, 'src/d.ts')).toBe(false);
+      expect(usesEnableVapor(dir, 'src/e.ts')).toBe(true);
+    } finally {
+      console.warn = orig;
+    }
+    expect(warns.filter((w) => w.includes('literal')).length).toBe(1);
+    expect(warns.some((w) => w.includes('c.ts'))).toBe(true);
+    expect(stripJsComments("a('//x') // y\n/* z */b")).toBe("a('//x') \nb");
+  });
+
+  it('specs/167: a vapor SFC importing useRouter from vue-router warns under enableVapor', async () => {
+    const page = VAPOR.replace('<script setup vapor lang="ts">', "<script setup vapor lang=\"ts\">\nimport { useRouter } from 'vue-router'\nconst r = useRouter()");
+    const dir = project({ 'RPage.vue': page, 'entry.ts': "import P from './RPage.vue'; export default P;" });
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (m: string) => warns.push(m);
+    const build = (enableVapor: boolean) => esbuild.build({
+      entryPoints: [path.join(dir, 'entry.ts')],
+      absWorkingDir: dir, bundle: true, write: false, format: 'esm',
+      external: ['vue', 'vue-router', 'fjs/vue', 'fjs/vapor'],
+      plugins: [vueSfcPlugin({ enableVapor })],
+      logLevel: 'silent',
+    });
+    try {
+      await build(false);
+      expect(warns.filter((w) => w.includes('vue-router')).length).toBe(0);
+      await build(true);
+      await build(true);
+    } finally {
+      console.warn = orig;
+    }
+    expect(warns.filter((w) => w.includes("from 'fjs/router'")).length).toBe(1);
   });
 
   it('the wrapper plugin is skipped: a vapor import compiles bare (the router mounts it)', async () => {

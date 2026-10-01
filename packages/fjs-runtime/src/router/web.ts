@@ -11,6 +11,7 @@ import {
   type Router as VueRouter,
 } from 'vue-router';
 import { getCurrentInstance } from '@vue/runtime-core';
+import { hasVaporInjectionContext, inject as vaporInject } from '../vapor/instance';
 import { Matcher } from './match';
 import { startPreloadQueue } from './preload-queue';
 import { whenSettled } from './settled';
@@ -170,8 +171,18 @@ function whenBrowserIdle(): Promise<void> {
  *
  * `<canvas>` already does this for its first `@resize`, so a charting page
  * usually needs nothing — this is for everything else. */
+/** What the enableVapor shell provides to each vapor page (specs/167) —
+ * the same symbols the Flutter router provides, so page code is shared. */
+export const ROUTER_KEY = Symbol.for('fjs.router');
+export const ROUTE_KEY = Symbol.for('fjs.route');
+
 export function onPageSettled(cb: () => void): void {
   let path: string | undefined;
+  if (hasVaporInjectionContext()) {
+    const route = vaporInject(ROUTE_KEY, null) as { fullPath?: string } | null;
+    whenSettled(route?.fullPath ?? active?.currentRoute?.fullPath, cb);
+    return;
+  }
   try {
     // inside a page's setup this is that page's route; outside it falls back
     // to whatever the router is on
@@ -187,11 +198,14 @@ export function useRouter(): Router {
   return active;
 }
 
-/** vue-router's own useRoute inside a component; outside one (a vapor page's
- * setup, enableVapor mode) it reads the active router's current route — the
- * same ref vue-router keeps, so a vapor renderEffect tracking `.value` sees
- * every navigation. A kept-alive VDOM view keeps the inject path. */
+/** A vapor page (specs/167): the route its shell provided — this page's,
+ * a `reactive` copy like the Flutter router's. vue-router's own useRoute
+ * inside a VDOM component. Outside both, the router's current route. */
 export function useRoute(): RouteLocation {
+  if (hasVaporInjectionContext()) {
+    const provided = vaporInject(ROUTE_KEY, null) as RouteLocation | null;
+    if (provided) return provided;
+  }
   if (getCurrentInstance()) return vueUseRoute() as unknown as RouteLocation;
   const current = active?.vueRouter.currentRoute.value;
   if (!current) {

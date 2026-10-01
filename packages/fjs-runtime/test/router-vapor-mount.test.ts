@@ -189,3 +189,125 @@ describe('enableVapor: the Flutter router mounts vapor pages natively', () => {
     // pop flow is device-only)
   });
 });
+
+// specs/167: the page gets its router / route / entry through vapor
+// provides, plugins and setup(app) run once against the app shell (pinia),
+// and a page torn down by navigation runs its unmount hooks.
+const STORE_PAGE = `
+<script setup>
+import { onMounted, onUnmounted, isReactive } from 'vue'
+import { useRoute, useRouter, onPageSettled } from 'fjs/router'
+const log = globalThis.__log
+const route = useRoute()
+const router = useRouter()
+const store = globalThis.__useStore()
+globalThis.__routes.push(route)
+log.push('route ' + route.fullPath + ' reactive=' + isReactive(route) + ' router=' + (router === globalThis.__router()))
+onMounted(() => log.push('mounted ' + route.fullPath))
+onUnmounted(() => log.push('unmounted ' + route.fullPath))
+onPageSettled(() => log.push('settled ' + route.fullPath))
+</script>
+<template>
+  <view class="page">
+    <text class="n">{{ store.n }}</text>
+  </view>
+</template>
+`;
+
+describe('enableVapor (Flutter): app shell, vapor provides, page lifecycle', () => {
+  it('pinia through setup(app); per-page route; unmount hooks on navigation', async () => {
+    const { createFjsApp } = appMod;
+    const fjsRouter = (await import('../src/router/flutter')) as unknown as Record<string, unknown>;
+    const pinia = await import('pinia');
+    const log: string[] = [];
+    const routes: { fullPath: string }[] = [];
+    const g = globalThis as Record<string, unknown>;
+    g.__log = log;
+    g.__routes = routes;
+    const useStore = pinia.defineStore('flutter-counter', { state: () => ({ n: 5 }) });
+    g.__useStore = useStore;
+    const page = compileSfc(STORE_PAGE, {
+      vapor: true,
+      runtime: vue as unknown as Record<string, unknown>,
+      modules: { 'fjs/router': fjsRouter },
+    });
+    const { definePage } = await import('../src/router/flutter');
+    definePage('/', page.component as never);
+    definePage('/b', page.component as never);
+    const rec = recordOps();
+    let setupRuns = 0;
+    const app = createFjsApp({
+      enableVapor: true,
+      setup(a) {
+        setupRuns++;
+        a.use(pinia.createPinia());
+      },
+      routes: [
+        { path: '/', component: page.component as never },
+        { path: '/b', component: page.component as never },
+      ],
+    });
+    g.__router = () => app.router;
+    app.mount();
+    await settle();
+    expect(treeTexts(rec, rec.currentRoot())).toEqual(['5']);
+    await app.router.push('/b');
+    await settle();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(setupRuns).toBe(1);
+    expect(log).toContain('route / reactive=true router=true');
+    expect(log).toContain('route /b reactive=true router=true');
+    expect(log).toContain('mounted /');
+    // headless push swaps in place: the base page is torn down
+    expect(log).toContain('unmounted /');
+    expect(log.indexOf('unmounted /')).toBeLessThan(log.indexOf('mounted /b'));
+    // each page holds its OWN route object
+    expect(routes.map((r) => r.fullPath)).toEqual(['/', '/b']);
+  });
+});
+
+describe('enableVapor (Flutter): the vapor shell (specs/167 §8)', () => {
+  it('wraps the page with its own route; a VDOM shell warns and is skipped', async () => {
+    const { createFjsApp } = appMod;
+    const fjsRouter = (await import('../src/router/flutter')) as unknown as Record<string, unknown>;
+    const { definePage } = await import('../src/router/flutter');
+    const shell = compileSfc(`
+<script setup>
+const props = defineProps(['route'])
+</script>
+<template><view class="shell"><text class="title">[{{ props.route.meta.title }}]</text><slot /></view></template>`, {
+      vapor: true,
+      runtime: vue as unknown as Record<string, unknown>,
+      modules: { 'fjs/router': fjsRouter },
+    });
+    const count = compileSfc(COUNT_PAGE, { vapor: true, runtime: vue as unknown as Record<string, unknown> });
+    definePage('/', count.component as never);
+    const rec = recordOps();
+    const app = createFjsApp({
+      enableVapor: true,
+      shell: shell.component as never,
+      routes: [{ path: '/', meta: { title: 'home' }, component: count.component as never }],
+    });
+    app.mount();
+    await settle();
+    expect(treeTexts(rec, rec.currentRoot())).toEqual(['[home]', '0']);
+
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (m: string) => warns.push(String(m));
+    try {
+      const rec2 = recordOps();
+      const app2 = createFjsApp({
+        enableVapor: true,
+        shell: { name: 'VdomShell', render: () => null } as never,
+        routes: [{ path: '/', meta: { title: 'home' }, component: count.component as never }],
+      });
+      app2.mount();
+      await settle();
+      expect(treeTexts(rec2, rec2.currentRoot())).toEqual(['0']);
+    } finally {
+      console.warn = orig;
+    }
+    expect(warns.some((w) => w.includes('not a vapor component'))).toBe(true);
+  });
+});

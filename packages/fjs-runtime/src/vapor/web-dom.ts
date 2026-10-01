@@ -323,6 +323,11 @@ export type {
   VaporComponent,
 } from './runtime';
 export { useVaporCssVars } from './css-vars';
+// specs/167: vapor-aware lifecycle + provide/inject, shadowing the
+// runtime-core star above like the runtime's names do
+export {
+  onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext,
+} from './instance';
 // compiled text interpolations import this helper by name; the runtime only
 // imports it for its own use, and the flutter entry gets it from vue-shim
 export { toDisplayString } from '@vue/shared';
