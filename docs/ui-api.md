@@ -55,6 +55,13 @@ fjs 用 HTML 风格的语义标签构建 UI，由 Dart 侧映射为 Flutter Widg
 | `page-container` | 原生标签：route 级透明路由（遮罩 + 面板），返回手势关闭的是容器 | `show` / `duration`(300) / `z-index`(100) / `overlay`(true) / `position`(bottom/top/right/center) / `round` / `close-on-slide-down`；生命周期 `@before-enter` → `@enter` → `@after-enter`，离场链 `@before-leave` → `@leave` → `@after-leave`（**所有**关闭路径都走完），点遮罩派 `@clickoverlay`（不自动关）。详见下表 |
 | 自定义标签 | `engine.registerComponent` 注册的 Dart 组件（platform view 也经此接入）| 任意 props；未注册回落 `view` |
 
+**渲染提示 prop（specs/188）**：任何节点可带 `repaintBoundary: true` —— 该节点
+的子树自成一层（RepaintBoundary），改它内部只重录它自己的显示列表，兄弟节点
+复用层缓存；适合「内容局部更新、整体不重绘」的容器（静态网格的行、卡片列表的
+项）。代价是每个节点一个 layer（内存与合成开销），不要无脑全开。仅 Flutter
+渲染有效：web 基质是真 DOM，分层归浏览器合成器管，写了即忽略。克隆挂载
+（`defineCloneTemplate` 的模板节点）同样生效——模板 `props` 里带上即可。
+
 `<button>` 的默认描边、`type` 的配色、`radio` 的圆圈都是**宿主的默认值**
 （`widgets/button.dart` / `widgets/radio.dart` 与 web 的 `.fjs-button--*` /
 `.fjs-radio` 取同一组数值）；页面自己写的 `border` / `background-color` 照旧盖过

@@ -420,6 +420,15 @@ class _FjsNodeView extends StatefulWidget {
         child: inner,
       );
     }
+    // specs/188: opt-in per-node repaint boundary. By default a page shares
+    // one layer — a single text change re-records every visible cell's
+    // display list (~25 ms for the 4050 grid on an iPhone). A boundary on a
+    // row/section cuts the re-record to that subtree; the cost is one layer
+    // per opted-in node. Rendering hint only: the web substrate (real DOM
+    // under the browser compositor) needs no counterpart.
+    if (node.props['repaintBoundary'] == true) {
+      decorated = RepaintBoundary(child: decorated);
+    }
     return gestureNode(node, style, decorated, dispatch);
   }
 }
