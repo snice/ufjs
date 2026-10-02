@@ -15,8 +15,9 @@
 // runs them natively) and its popup slides / dialog bounce with class-
 // flipped `transform` under a `transition` (the peer tweens those) — the
 // shim's only job is the timing.
-// TransitionGroup stays a plain fragment: vant's overlays don't use it and
-// @vueuse only imports the name.
+// TransitionGroup (specs/179) is runtime-dom's, reshaped the same way: the
+// per-item enter / leave are this Transition's hooks, and the move pass
+// reads positions through ui/geometry instead of getBoundingClientRect.
 //
 // The DOM-only helpers (v-show, key filters, event modifiers) live in
 // @vue/runtime-dom and are likewise absent; component libraries import them
@@ -25,9 +26,19 @@
 import {
   BaseTransition,
   Fragment,
+  createVNode,
   defineComponent,
+  getCurrentInstance,
+  getTransitionRawChildren,
   h,
+  onUpdated,
+  resolveTransitionHooks,
+  setTransitionHooks,
+  toRaw,
+  useTransitionState,
+  warn,
 } from '@vue/runtime-core';
+import { boundingRectOf } from '../ui/geometry';
 import type { BaseTransitionProps, Directive, VNode } from '@vue/runtime-core';
 import type { Element } from '../ui/element';
 // host primitives only (specs/169): every 'vue' import goes through here, and
@@ -242,10 +253,105 @@ TransitionImpl.displayName = 'Transition';
 TransitionImpl.props = TransitionProps;
 export const Transition = TransitionImpl as unknown as ReturnType<typeof defineComponent>;
 
+// ---- <TransitionGroup> (specs/179) ------------------------------------------------------
+
+type Pos = { left: number; top: number };
+const positionMap = new WeakMap<VNode, Pos>();
+const newPositionMap = new WeakMap<VNode, Pos>();
+/** A move still running on the element: finishes it early (a new update
+ * started before the slide ended), as runtime-dom's `_moveCb` does. */
+const moveCbs = new WeakMap<object, () => void>();
+
+const isFjsElement = (el: unknown): el is Element => !!el && typeof (el as { id?: unknown }).id === 'number';
+const rectOf = (el: Element): Pos => boundingRectOf(el.id);
+
+/** runtime-dom's applyTranslation: put a moved element back where it was —
+ * an inline transform with transitions off — and say whether it moved. */
+function applyTranslation(c: VNode): boolean {
+  const oldPos = positionMap.get(c);
+  const newPos = newPositionMap.get(c);
+  if (!oldPos || !newPos) return false;
+  const dx = oldPos.left - newPos.left;
+  const dy = oldPos.top - newPos.top;
+  if (!dx && !dy) return false;
+  const el = c.el as Element;
+  el.style.transform = `translate(${dx}px,${dy}px)`;
+  el.style.transitionDuration = '0s';
+  return true;
+}
+
+const TransitionGroupProps = {
+  ...TransitionProps,
+  tag: String,
+  moveClass: String,
+};
+
+/** The fjs twin of runtime-dom's TransitionGroup. Enter / leave per item are
+ * the Transition hooks above (classes in the style engine, timing off the
+ * computed durations); the move is FLIP. Unlike the DOM there is no forced
+ * reflow to make the browser paint the put-back position: the peer animates
+ * between styles it has RENDERED, so the slide starts a frame later. */
 export const TransitionGroup = defineComponent({
   name: 'TransitionGroup',
-  setup(_, { slots }) {
-    return () => slots.default?.() ?? h(Fragment, null);
+  props: TransitionGroupProps as never,
+  setup(props: RawProps, { slots }) {
+    const instance = getCurrentInstance()!;
+    const state = useTransitionState();
+    let prevChildren: VNode[] = [];
+    let children: VNode[] = [];
+
+    onUpdated(() => {
+      if (!prevChildren.length) return;
+      const moveClass = (props.moveClass as string | undefined) || `${(props.name as string | undefined) || 'v'}-move`;
+      for (const c of prevChildren) moveCbs.get(c.el as object)?.();
+      for (const c of prevChildren) newPositionMap.set(c, rectOf(c.el as Element));
+      const moved = prevChildren.filter(applyTranslation);
+      if (!moved.length) return;
+      nextFrame(() => {
+        for (const c of moved) {
+          const el = c.el as Element & ElementFlags;
+          addTransitionClass(el, moveClass);
+          el.style.transform = '';
+          el.style.transitionDuration = '';
+          let done = false;
+          const finish = (): void => {
+            if (done) return;
+            done = true;
+            moveCbs.delete(el);
+            removeTransitionClass(el, moveClass);
+          };
+          moveCbs.set(el, finish);
+          // the end comes off the computed style, which carries the move
+          // class's transition only once it has been applied: a frame on
+          nextFrame(() => {
+            if (!done) whenTransitionEnds(el, undefined, finish);
+          });
+        }
+      });
+    });
+
+    return () => {
+      const rawProps = toRaw(props);
+      const cssTransitionProps = resolveTransitionProps(rawProps);
+      const tag = (rawProps.tag as string | undefined) || Fragment;
+      prevChildren = [];
+      for (const child of children) {
+        if (isFjsElement(child.el)) {
+          prevChildren.push(child);
+          setTransitionHooks(child, resolveTransitionHooks(child, cssTransitionProps, state, instance));
+          positionMap.set(child, rectOf(child.el));
+        }
+      }
+      children = slots.default ? getTransitionRawChildren(slots.default()) : [];
+      for (const child of children) {
+        if (child.key != null) {
+          setTransitionHooks(child, resolveTransitionHooks(child, cssTransitionProps, state, instance));
+        } else {
+          warn('<TransitionGroup> children must be keyed.');
+        }
+      }
+      return createVNode(tag as never, null, children);
+    };
   },
 });
 
