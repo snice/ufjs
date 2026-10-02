@@ -10,6 +10,8 @@ import TabA from '../components/TabA.vue'
 import TabB from '../components/TabB.vue'
 
 const showIf = ref(true)
+const maskOpen = ref(false)
+const page = ref(0)
 const showShow = ref(true)
 const tab = shallowRef(TabA)
 const kept = shallowRef(TabA)
@@ -46,6 +48,19 @@ const flipKept = () => {
     <KeepAlive>
       <component :is="kept" />
     </KeepAlive>
+
+    <text class="h">swiper circular（当前 {{ page }}）</text>
+    <swiper class="sw" circular indicator-dots @change="(i: string) => (page = Number(i))">
+      <swiper-item v-for="n in 3" :key="n" :class="'slide s' + n"><text>第 {{ n }} 页</text></swiper-item>
+    </swiper>
+
+    <text class="h">Teleport 遮罩</text>
+    <text class="btn open-mask" @tap="maskOpen = true">打开遮罩</text>
+    <Teleport to="body">
+      <Transition name="fade">
+        <view v-if="maskOpen" class="mask" @tap="maskOpen = false"><text class="mask-text">点任意处关闭</text></view>
+      </Transition>
+    </Teleport>
   </view>
 </template>
 
@@ -56,6 +71,13 @@ const flipKept = () => {
 .box { height: 56px; border-radius: 8px; align-items: center; justify-content: center; }
 .if-box { background-color: #d9ecff; }
 .show-box { background-color: #e1f3d8; }
+.sw { height: 120px; margin-top: 8px; }
+.slide { align-items: center; justify-content: center; }
+.s1 { background-color: #fde2e2; }
+.s2 { background-color: #e1f3d8; }
+.s3 { background-color: #d9ecff; }
+.mask { position: fixed; left: 0; top: 0; right: 0; bottom: 0; background-color: rgba(0, 0, 0, 0.6); align-items: center; justify-content: center; }
+.mask-text { color: #ffffff; font-size: 16px; }
 .fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 .slide-enter-active, .slide-leave-active { transition: transform 0.3s, opacity 0.3s; }

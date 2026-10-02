@@ -420,7 +420,7 @@ SFC、TSX / 渲染函数写的库编不了 Vapor，走互操作。
 
 - 原生元素上的 `v-model`：不支持，用 `:value` + `@input`（vant 的 v-model 是组件 props/事件，
   不受影响）。
-- Vapor 组件里的 `<Teleport>`、`<TransitionGroup>`：还没接（`<Transition>` / `<KeepAlive>` 见下表，specs/174）。
+- Vapor 组件里的 `<TransitionGroup>`：还没接（`<Transition>` / `<KeepAlive>` / `<Teleport>` 见下表，specs/174、175）。
 - 动态 slot 名：只做静态求值（`<component :is>` 已能切换，specs/174）。
 - `defineVaporCustomElement`、SSR hydration：不支持。
 - Vue 版本：**编译器**主体是 stable 3.5（`@vue/compiler-sfc@3.5.43`，parse + script-setup 的
@@ -493,7 +493,7 @@ CLI 在构建期读这个开关（扫入口源码），runtime 在挂载期执�
   的页面注入 `import "fjs/tag/<tag>"`，只打包实际用到的标签；只用 view / text 的应用不带
   render-host。限制：vant 等**三方** VDOM 库仍不可用（需要完整渲染器，报
   `a render-function (VDOM) component reached a pure-vapor app`）；自写的组件请写成
-  `<script setup vapor>`；swiper 的 `circular` 在纯 vapor web 下不可用（告警）；rich-text 在 vapor
+  `<script setup vapor>`；swiper 的 `circular` 在纯 vapor web 下用首尾页的 DOM 快照做克隆页（specs/175，见 web.md）；rich-text 在 vapor
   页里拿不到页面的 scoped 样式。Flutter 端以前靠互操作能用，代价是整个 VDOM
   渲染器进包；现在 `fjs/app` / `fjs/vapor` / `fjs/vue` 在 enableVapor 下别名到纯 vapor 面
   （`app/flutter-vapor.ts` / `vapor/flutter-pure.ts` / `vue/index-vapor.ts`），渲染器不进图。
@@ -548,7 +548,8 @@ compiler-vapor 能生成的每个运行时 helper，四个 vapor 入口都有导
 | attrs 透传（class / style 合并、监听叠加、`inheritAttrs: false`、`useAttrs`） | ✅ | ✅ |
 | `<Transition>`（v-if / v-show / `:key` / `<component :is>`；`mode`、`appear`、`duration`、`css: false`、自定义类名、JS 钩子与 done） | ✅ 类名进样式引擎，结束时机取计算样式的时长（与 VDOM 版同一套） | ✅ `classList` + transitionend / animationend，按计算时长兜底 |
 | `<KeepAlive>`（`include` / `exclude` / `max`，`onActivated` / `onDeactivated` 含子组件） | ✅ 停用的节点挪进不挂树的容器（Flutter 的 remove 会销毁元素） | ✅ |
-| `<TransitionGroup>` `<Teleport>` | ⚠️ 渲染内容，不动画 / 原地渲染，告警一次 | ⚠️ 同左 |
+| `<Teleport>`（`to` / `disabled` / `defer`，可变；内容里的切换照常落在目标里） | ✅ `body` / `html` → 应用浮层宿主（与 VDOM 同一落点）；其他选择器无目标，告警后原地渲染 | ✅ `document.querySelector` 或元素 |
+| `<TransitionGroup>` | ⚠️ 渲染内容，不动画，告警一次 | ⚠️ 同左 |
 
 同一元素上的多个监听（自己的 `@tap` + 父组件透传的 `@tap` + `v-on="obj"`）两端都按注册顺序叠加
 ——Flutter 后端每个事件键只留一个 handler，叠加在 vapor 的 host 层做。VDOM 路径不受影响（原生元素

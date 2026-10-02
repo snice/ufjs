@@ -321,7 +321,7 @@ globalThis.__items = items
     expect(cells()).toBe('0:z,1:b');
   });
 
-  it('Transition / KeepAlive / Teleport render their content (specs/174: only Teleport is still degraded)', () => {
+  it('Transition / KeepAlive / Teleport render their content (specs/174, specs/175: Teleport moves it to its target)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const Page = sfc(`
 <script setup>
@@ -337,11 +337,14 @@ const on = ref(true)
   </view>
 </template>`);
     const root = mount(Page);
-    expect(['.tr', '.tr2', '.ka', '.tp'].map((c) => !!root.querySelector(c))).toEqual([true, true, true, true]);
+    expect(['.tr', '.tr2', '.ka'].map((c) => !!root.querySelector(c))).toEqual([true, true, true]);
+    // teleported to <body>, out of the page
+    expect(root.querySelector('.tp')).toBeNull();
+    expect(document.querySelector('body > .tp')).not.toBeNull();
     const msgs = warn.mock.calls.map((c) => String(c[0]));
     expect(msgs.some((m) => m.includes('<Transition>'))).toBe(false);
     // a KeepAlive around a plain element has nothing to keep — said once
     expect(msgs.some((m) => m.includes('<KeepAlive>'))).toBe(true);
-    expect(msgs.some((m) => m.includes('<Teleport>'))).toBe(true);
+    expect(msgs.some((m) => m.includes('<Teleport'))).toBe(false);
   });
 });

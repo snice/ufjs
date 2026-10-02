@@ -286,6 +286,9 @@ export interface VaporBackend {
   /** <Transition>'s platform half (specs/174); without it Transition only
    * runs its JS hooks. */
   transition?: TransitionBackend;
+  /** <Teleport to="…">'s target (specs/175): the DOM's querySelector on
+   * web; on Flutter `body` / `html` name the app overlay host. */
+  querySelector?(selector: string): HostNode | null;
 }
 
 /** What <Transition> needs from a platform: class flips that survive the
@@ -1249,7 +1252,13 @@ export function createFor(
   flags = 0,
 ): Block {
   const once = (flags & FOR_ONCE) !== 0;
-  const { parent, anchor: before } = takeInsertionState();
+  const { parent: insertedInto, anchor: before } = takeInsertionState();
+  let parent = insertedInto;
+  /** A list that is a slot's / component's root (specs/175): no insertion
+   * point — its block joins the tree with whoever renders it, so `nodes`
+   * must list the items (an enclosing removal, a render-host marker per
+   * item), and later runs find the parent through the anchor. */
+  const rootLevel = !insertedInto;
   const anchor = makeAnchor('for');
   const listBlock: Block & { nodes: HostNode[]; scopes: unknown[]; cleanups: (() => void)[] } = { nodes: [anchor], scopes: [], cleanups: [] };
   let items: ForItem[] = [];
@@ -1286,13 +1295,16 @@ export function createFor(
         // v-for="r in N" iterates r = 1..N (the index param stays 0-based) —
         // getItem's item box is the VALUE, so the number source is i + 1
         const value = (i: number): unknown => (typeof src === 'number' ? i + 1 : src[i]);
+        const built: HostNode[] = [];
         for (let i = 0; i < count; i++) {
           const v = value(i);
           const key = getKey ? getKey(v, i) : i;
           const block = blockOf(getItem({ value: v }, { value: key }));
           if (parent) insertBlock(block, parent, slot);
+          else built.push(...block.nodes);
         }
         ensureAnchor();
+        if (rootLevel) listBlock.nodes.splice(0, listBlock.nodes.length, ...built, anchor);
       });
     });
     return withListApi(listBlock);
@@ -1339,7 +1351,17 @@ export function createFor(
   const owner = currentScope;
   const savedFx = fxTag;
   fxTag = 'forFx';
+  /** Root-level lists: the hosts in order, anchor last. */
+  const syncNodes = (): void => {
+    if (!rootLevel) return;
+    const nodes: HostNode[] = [];
+    for (const it of items) nodes.push(...it.block.nodes);
+    nodes.push(anchor);
+    listBlock.nodes.splice(0, listBlock.nodes.length, ...nodes);
+  };
   const run = (): void => {
+          // a root-level list is in the tree once its anchor is
+          if (rootLevel) parent = be().parentNode?.(anchor) ?? null;
           const src = source();
           const count = typeof src === 'number' ? src : src.length;
           // number source: item is the VALUE (1..N), same as the ONCE path
@@ -1359,6 +1381,7 @@ export function createFor(
             if (items.length > count) items.length = count;
             syncScopes();
             ensureAnchor();
+            syncNodes();
             return;
           }
 
@@ -1391,6 +1414,7 @@ export function createFor(
           items = wanted;
           syncScopes();
           ensureAnchor();
+          syncNodes();
           if (parent && forOutOfOrder(prev, wanted, fresh)) {
             const hostParent = parent;
             let cursor: HostNode | null = anchor;

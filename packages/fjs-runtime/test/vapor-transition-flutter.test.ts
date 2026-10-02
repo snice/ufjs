@@ -1,7 +1,7 @@
 // specs/174: <Transition> / <KeepAlive> in vapor components on the Flutter
 // backend — the transition classes go through the style engine (what the
 // peer's styles follow), KeepAlive parks hosts without destroying them.
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setOpSink } from '../src/host';
 import { installEventDispatcher } from '../src/ui/element';
 import { compileSfc } from './helpers/sfc';
@@ -25,7 +25,10 @@ beforeEach(() => {
   setOpSink(() => {});
 });
 
-const wait = (ms = 20): Promise<void> => new Promise((res) => setTimeout(res, ms));
+// fake clock (timers + rAF): see vapor-transition-web.test.ts
+const wait = async (ms = 20): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(ms);
+};
 
 function mount(source: string): { id: number } {
   const comp = compileSfc(source, { vapor: true, runtime: vue as unknown as Record<string, unknown> }).component;
@@ -50,6 +53,13 @@ function withClass(id: number, cls: string): number[] {
   walk(id);
   return out;
 }
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame'] });
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('vapor <Transition> on Flutter (specs/174)', () => {
   it('v-if: enter / leave classes in the style engine; the element leaves after the leave', async () => {
@@ -109,3 +119,26 @@ globalThis.__fcur = cur
     expect(log).toEqual(['FA on', 'FA on']);
   });
 });
+
+describe('vapor <Teleport> on Flutter (specs/175)', () => {
+  it('to="body" lands in the app overlay host, out of the page; disabled brings it back', async () => {
+    const root = mount(`
+<script setup>
+import { ref } from 'vue'
+const off = ref(false)
+globalThis.__toff = off
+</script>
+<template><view><Teleport to="body" :disabled="off"><view class="tp">t</view></Teleport></view></template>`);
+    await wait();
+    const overlay = r.nodeOps.querySelector!('body') as unknown as { id: number };
+    expect(withClass(root.id, 'tp')).toEqual([]);
+    const [tp] = withClass(overlay.id, 'tp');
+    expect(tp).toBeDefined();
+    (g.__toff as { value: boolean }).value = true;
+    await wait();
+    // the same element, moved back into the page
+    expect(withClass(root.id, 'tp')).toEqual([tp]);
+    expect(withClass(overlay.id, 'tp')).toEqual([]);
+  });
+});
+

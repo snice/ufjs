@@ -940,7 +940,74 @@ export const VaporKeepAlive = /* @__PURE__ */ defineVaporComponent({
     return block;
   },
 });
-export const VaporTeleport = /* @__PURE__ */ degraded('Teleport', 'does not move content (rendered in place)', ['to', 'disabled', 'defer']);
+/** Vapor <Teleport> (specs/175): the slot renders as usual, then its hosts
+ * move to the target — `to` a selector (the backend resolves it) or a host —
+ * and back in front of the placeholder while `disabled`. The block's `nodes`
+ * array is live (a v-if at the slot root swaps branches into it), and a
+ * switching fragment finds its parent through its anchor, so later branches
+ * land in the target on their own. */
+export const VaporTeleport = /* @__PURE__ */ defineVaporComponent({
+  name: 'Teleport',
+  props: ['to', 'disabled', 'defer'],
+  setup(props: Record<string, unknown>) {
+    const placeholder = makeAnchor('teleport');
+    const content = createSlot('default');
+    const b = be();
+    const resolve = (): HostNode | null => {
+      const to = props.to;
+      if (typeof to === 'string') return b.querySelector?.(to) ?? null;
+      return to && typeof to === 'object' ? (to as HostNode) : null;
+    };
+    /** Where the content is: a target host, in place, or nowhere yet. */
+    let where: HostNode | 'inline' | null = null;
+    const place = (): void => {
+      const disabled = props.disabled !== undefined && props.disabled !== false && props.disabled !== 'false';
+      const target = disabled ? null : resolve();
+      if (!disabled && !target) {
+        warnVaporOnce(`teleport:${String(props.to)}`, `<Teleport to="${String(props.to)}"> has no target here — rendered in place`);
+      }
+      if (target) {
+        if (where === target) return;
+        where = target;
+        for (const node of content.nodes) b.attach(node, target, null);
+        return;
+      }
+      if (where === 'inline') return;
+      const parent = b.parentNode?.(placeholder) ?? null;
+      if (!parent) return; // not in the tree yet: mount places it
+      where = 'inline';
+      for (const node of content.nodes) b.attach(node, parent, placeholder);
+    };
+    // the placement effect belongs to this component: it stops with it
+    const scope = getCurrentScope();
+    const deferred = props.defer !== undefined && props.defer !== false && props.defer !== 'false';
+    let started = false;
+    const start = (): void => {
+      if (started) return;
+      started = true;
+      const run = () =>
+        renderEffect(() => {
+          void props.to;
+          void props.disabled;
+          place();
+        });
+      if (scope) scope.run(run);
+      else run();
+    };
+    // in-place content needs the placeholder's parent, a deferred target
+    // the rest of the page — both are there at mount; a target that exists
+    // already takes the content before the first paint
+    onMounted(start);
+    if (!deferred && !props.disabled && resolve()) start();
+    // teleported hosts are not in any ancestor's subtree, so an ancestor's
+    // removal would not take them: they go when this component's scope stops
+    onScopeDispose(() => {
+      for (let i = content.nodes.length - 1; i >= 0; i--) b.remove(content.nodes[i]);
+      for (const cleanup of content.cleanups ?? []) cleanup();
+    });
+    return { nodes: [placeholder] } as Block;
+  },
+});
 
 // the core's surface IS the compiled face — component layer adds the rest
 export * from './host';

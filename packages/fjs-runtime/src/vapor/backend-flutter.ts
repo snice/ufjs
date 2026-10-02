@@ -289,6 +289,12 @@ export const flutterBackend: VaporBackend = {
   },
 
 
+  // specs/175: <Teleport to="body"> lands where the VDOM Teleport does —
+  // the app overlay host, above every page
+  querySelector(selector) {
+    return (nodeOps.querySelector?.(selector) as HostNode | null | undefined) ?? null;
+  },
+
   // specs/174: the vapor <Transition> on the same timing as the VDOM one
   // (vue-shim.ts): classes in the style engine, the end read off the
   // computed animation / transition durations

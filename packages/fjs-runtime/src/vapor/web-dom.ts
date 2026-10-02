@@ -413,6 +413,8 @@ export const domBackend: VaporBackend = {
     (host as Element).setAttribute('class', vtc.length ? (value ? value + ' ' : '') + vtc.join(' ') : value);
   },
 
+  querySelector: (selector) => (typeof document === 'undefined' ? null : document.querySelector(selector)),
+
   transition: {
     addClass(host, cls) {
       for (const c of cls.split(/\s+/)) {

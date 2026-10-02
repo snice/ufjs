@@ -127,3 +127,12 @@ op 编码。
 
 作为组件 / slot 根的分支，切换时父节点用 `be().parentNode(anchor)` 兜底。
 
+## 根节点位置的 v-for 与 Teleport（specs/175）
+
+- 作为 slot / 组件根的 `v-for`（`createFor` 没有插入点）：`nodes` 列出全部条目再加锚点，后续运行用
+  `be().parentNode(anchor)` 找父节点。此前这种列表的条目根本不进树（纯 vapor 下 swiper 的
+  `v-for` 页面因此为空）。
+- `VaporTeleport`：slot 照常渲染，节点再 attach 到 `be().querySelector(to)`（`VaporBackend` 可选成员）
+  或传入的元素；`disabled` 时放回占位锚点之前。传送出去的节点不在任何祖先的子树里，所以随组件
+  作用域销毁时移除（`onScopeDispose`），而不是靠祖先移除。
+

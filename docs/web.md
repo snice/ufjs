@@ -268,6 +268,10 @@ snap 点，而 PageView 一个手势只翻一页。所以轨道是 `overflow: hi
 再在越界时无声跳回。但 `@change` 的语义相同——两端报的都是**真实索引**，页面永远
 看不到克隆页的号（取模逻辑同样来自 `scroll/metrics.ts` 的 `wrapIndex`）。
 
+纯 vapor（enableVapor）的 web 包里，页面是活节点，没法像 vnode 那样复制：两个克隆格是空的
+`swiper-item`，在可能露出来之前（拖动开始、跨边界翻页前）用首尾页的 `cloneNode(true)` 快照填充
+（specs/175）。克隆页只在跨边界的那一下可见、是静态快照：`<canvas>` 内容不复制、不响应点击。
+
 翻页后回派 `@change`（旧名 `@page-changed` 仍可用），载荷与 Flutter 一致。
 
 ### picker-view

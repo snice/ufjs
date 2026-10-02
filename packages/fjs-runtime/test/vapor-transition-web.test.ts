@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // specs/174: <component :is>, <Transition> and <KeepAlive> in vapor
 // components on the web backend.
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { compileSfc } from './helpers/sfc';
 
 type Vue = typeof import('../src/vapor/web-pure');
@@ -19,7 +19,11 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-const wait = (ms = 20): Promise<void> => new Promise((r) => setTimeout(r, ms));
+// fake clock (timers + rAF): the class timeline is asserted at exact
+// points, which real timers under a loaded test run cannot promise
+const wait = async (ms = 20): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(ms);
+};
 
 function page(source: string, extra: Record<string, unknown> = {}): HTMLElement {
   const comp = compileSfc(source, { vapor: true, web: true, runtime: vue as unknown as Record<string, unknown> }).component;
@@ -37,6 +41,13 @@ function child(name: string, source: string): unknown {
 }
 
 const classOf = (root: HTMLElement, sel: string): string => root.querySelector(sel)?.getAttribute('class') ?? '';
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame'] });
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('<component :is> switches (specs/174)', () => {
   it('rebuilds when `is` names another component, keeps it otherwise', async () => {
