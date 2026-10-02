@@ -74,6 +74,54 @@ function ownerOfActiveScope(): VaporInstance | null {
 // a branch belongs to the component rendering it (specs/174)
 setBranchOwnerResolver(() => activeInstance());
 
+// ---- slot authorship (specs/180) ----------------------------------------------------------
+//
+// Vue scopes slot content by the component that WROTE it, not the one that
+// renders it: `<form><input class="field" /></form>` in a page with
+// `.field { … }` scoped must give the input's root the PAGE's data-v id. A
+// component created while slot content runs takes its scope from here.
+
+let currentSlotAuthor: VaporInstance | null = null;
+const slotAuthorOf = new WeakMap<EffectScope, VaporInstance>();
+const authoredSlots = new WeakSet<object>();
+
+function slotAuthor(): VaporInstance | null {
+  if (currentSlotAuthor) return currentSlotAuthor;
+  const active = getCurrentScope();
+  return (active && slotAuthorOf.get(active)) ?? null;
+}
+
+/** Each slot runs with its author set. A slot already authored (forwarded
+ * through another component's <slot>) keeps its original author. */
+function authorSlots(slots: Slots, author: VaporInstance | null): Slots {
+  if (!author) return slots;
+  let out: Slots | null = null;
+  for (const key of Object.keys(slots)) {
+    const fn = (slots as Record<string, unknown>)[key];
+    if (typeof fn !== 'function' || authoredSlots.has(fn)) continue;
+    const wrapped = (...args: unknown[]): unknown => {
+      // its own scope (a child of whatever renders it, so it stops with
+      // that), marked with the author: what a later effect re-run creates
+      // inside the slot content — a v-if flipping — is scoped the same way
+      const scope = new EffectScope();
+      slotAuthorOf.set(scope, author);
+      const owner = activeInstance();
+      if (owner) scopeOwner.set(scope, owner);
+      const prev = currentSlotAuthor;
+      currentSlotAuthor = author;
+      try {
+        // the host's withScope: branches capture ITS current scope
+        return hostWithScope(scope, () => (fn as (...a: unknown[]) => unknown)(...args));
+      } finally {
+        currentSlotAuthor = prev;
+      }
+    };
+    authoredSlots.add(wrapped);
+    (out ??= { ...slots } as Slots)[key as never] = wrapped as never;
+  }
+  return out ?? slots;
+}
+
 function activeInstance(): VaporInstance | null {
   return currentVaporInstance() ?? ownerOfActiveScope();
 }
@@ -131,6 +179,11 @@ setHostReactivity({
     const scope = new EffectScope();
     const owner = activeInstance();
     if (owner) scopeOwner.set(scope, owner);
+    // a branch / item scope made while slot content renders remembers who
+    // wrote that content, so what a later re-run creates in it is scoped
+    // the same way (specs/180)
+    const author = slotAuthor();
+    if (author) slotAuthorOf.set(scope, author);
     return scope;
   },
   runInScope: <T,>(scope: EffectScope, fn: () => T) => scope.run(fn) as T,
@@ -407,6 +460,14 @@ function mountVaporComponent(
   // scope, so a page mounted from inside another page's effect does not
   // die with it, and no parent to inherit provides from
   const parent = root ? null : activeInstance();
+  // whose scoped styles reach this component's root: the parent's — or, for
+  // a component written inside slot content, the template author's (Vue's
+  // slotScopeIds). The parent stays the slot-rendering component (provide /
+  // inject, lifecycle) (specs/180)
+  const scopeFrom = root ? null : slotAuthor() ?? parent;
+  // the component's own template is its own: no slot author inside it
+  const prevAuthor = currentSlotAuthor;
+  currentSlotAuthor = null;
   const inst = createVaporInstance(parent, appContext ?? parent?.appContext ?? null);
   // a component mounted straight into a v-if / dynamic-component branch:
   // KeepAlive keys, matches and activates by it (specs/174)
@@ -453,13 +514,15 @@ function mountVaporComponent(
   } catch (e) {
     discardCssVarsBucket();
     setCurrentVaporInstance(prevInst);
+    currentSlotAuthor = prevAuthor;
     scope.stop();
     throw e;
   }
   setCurrentVaporInstance(prevInst);
   withScope(scope, () => popAndApplyCssVars(block, (fn) => renderEffect(fn)));
   withScope(scope, () => applyFallthrough(block, attrs, comp, inst));
-  applyParentScope(block, parent);
+  currentSlotAuthor = prevAuthor;
+  applyParentScope(block, scopeFrom);
   // the block object identifies the component for template refs: a fresh
   // object, so a child that returned its own child's block keeps its own
   block = { nodes: block.nodes, scopes: block.scopes, cleanups: block.cleanups };
@@ -498,7 +561,8 @@ export function createComponent(
   rawProps?: Record<string, unknown>,
   rawSlots?: Slots | (() => unknown),
 ): Block {
-  const slots = normalizeSlots(rawSlots);
+  // the slots are this template's: whoever wrote it authors their content
+  const slots = authorSlots(normalizeSlots(rawSlots), slotAuthor() ?? activeInstance());
   const { parent, anchor } = takeInsertionState();
   if (isVaporComponent(comp)) {
     const block = mountVaporComponent(comp, rawProps, slots, null);
