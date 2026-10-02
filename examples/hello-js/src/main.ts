@@ -1,19 +1,24 @@
 // hello-js —— 不用任何框架，直接写 element API 的示例 app。
 //
-// 两屏：
+// 三屏：
+//   4050 压测   和 hello-fjs 的 example/interaction/flat-4050 同构的一页，但没有
+//               Vue：同样的 50×40 网格、同样的量法，量的是 element API 本身的账，
+//               见 flat4050.ts
 //   组件总览   已实现组件各来一个，见 gallery.ts
-//   主题压测   和 hello-fjs 的 example/theme 同构的一页，但没有 Vue，
-//              用来把「样式重排慢」这件事拆成框架的账和引擎的账，见 theme-bench.ts
+//   主题压测   和 hello-fjs 的 example/theme 同构的一页，把「样式重排慢」拆成
+//              框架的账和引擎的账，见 theme-bench.ts
 //
 // 屏是**换掉**而不是藏起来的：藏起来的那一屏，它的定时器还在跑，压测采样窗口
 // 里混进来的每一帧都会顶掉「最慢帧」那一格。
 import { createRoot, h, insert, setProps, type Element } from 'fjs';
+import { mountFlat4050 } from './flat4050';
 import { mountGallery } from './gallery';
 import { mountThemeBench } from './theme-bench';
 
 type Screen = { name: string; mount: (host: Element) => () => void };
 
 const SCREENS: Screen[] = [
+  { name: '4050 压测', mount: mountFlat4050 },
   { name: '主题压测', mount: mountThemeBench },
   { name: '组件总览', mount: mountGallery },
 ];
