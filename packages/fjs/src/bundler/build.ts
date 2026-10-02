@@ -35,6 +35,7 @@ import {
   pluginsPlugin,
   sharedBare,
   SHARED_BARE_BUILTIN,
+  runtimeDir,
   sharedStubPlugin,
   sharedExternalPlugin,
   tagModulePlugin,
@@ -602,6 +603,55 @@ async function bundleSingle(
  * whole namespace. Absent map = dev / non-release: every namespace whole. */
 export type SharedNames = Map<string, Set<string> | '*'>;
 
+/** specs/184: what a pure-vapor app never reaches through 'vue' — the VDOM
+ * renderer engine and the components only it can mount. A namespace export
+ * of runtime-core keeps them all (≈40 KB of the dev shared.js); a vapor page
+ * has its own KeepAlive, and no renderer to hand a Suspense or an async
+ * component to. */
+export const PURE_VAPOR_UNSHARED = [
+  'createRenderer',
+  'createHydrationRenderer',
+  'ssrUtils',
+  'Suspense',
+  'KeepAlive',
+  'registerRuntimeCompiler',
+  'defineAsyncComponent',
+];
+
+/** specs/184: the non-release shared names of a pure-vapor app. Dev keeps
+ * whole namespaces (a hot-reloaded page may import a name nothing imported
+ * before) — for the modules that carry runtime-core that means the whole
+ * renderer engine too. These get "every export but [PURE_VAPOR_UNSHARED]",
+ * read off the modules themselves (an esm pre-build's metafile), so a vue
+ * upgrade needs no list update; every other shared module stays '*'. */
+export async function pureVaporSharedNames(
+  specs: readonly string[],
+  alias: Record<string, string>,
+  plugins: esbuild.Plugin[],
+): Promise<SharedNames> {
+  const names: SharedNames = new Map();
+  for (const spec of specs) names.set(spec, '*');
+  const deny = new Set(PURE_VAPOR_UNSHARED);
+  for (const spec of ['vue', '@vue/runtime-core', 'fjs/vapor']) {
+    if (!names.has(spec)) continue;
+    const res = await esbuild.build({
+      stdin: { contents: `export * from ${JSON.stringify(spec)};`, resolveDir: runtimeDir(), loader: 'ts' },
+      bundle: true,
+      write: false,
+      format: 'esm',
+      metafile: true,
+      alias,
+      plugins,
+      ...flutterEsbuildPlatform(),
+      define: fjsDefines(),
+      logLevel: 'silent',
+    });
+    const out = Object.values(res.metafile!.outputs)[0];
+    names.set(spec, new Set(out.exports.filter((n) => !deny.has(n))));
+  }
+  return names;
+}
+
 export function sharedEntrySource(
   appModules: Map<string, string> = new Map(),
   extraShared: string[] = [],
@@ -910,6 +960,7 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
 
   // 1b) release (specs/169): the names the entry and pages actually import
   // from each shared module — the shared chunk exports only those
+  const pureVapor = enableVapor && !usesVaporInterop(root, entry);
   const sharedNames = opts.release
     ? await collectSharedImports(
         [
@@ -929,7 +980,13 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
           tagModulePlugin(false),
         ],
       )
-    : undefined;
+    : pureVapor
+      ? await pureVaporSharedNames(
+          [...SHARED_BARE_BUILTIN, ...extraShared],
+          { ...flutterAliases(enableVapor, false), ...moduleAliases(root, modules) },
+          [nodeBuiltinStubs(), vuePinPlugin(), vueSfcPlugin({ nativeTags: widgetNativeTags(modules, 'app'), enableVapor }), tagModulePlugin(false)],
+        )
+      : undefined;
 
   // 2) the shared chunk itself (the prelude every page runs on top of)
   const sharedPath = path.join(outDir, 'shared.js');
