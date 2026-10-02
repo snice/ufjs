@@ -142,12 +142,18 @@ JS op 缓冲 ─┤ 结构 op（Create/Insert/Remove…）+ 样式输入 op（0x
   libfjs-style 在字节流原位展开成 SetText 并滤掉 Flutter 画不了的控制字符。Dart 收到的字节不变；strip 路径同样展开。
 - C++ 铸的线上 style id 从 `0x40000000` 起，不与 JS op 写入器（锚点、伪元素盒）
   的 id 冲突。
-- 宿主有 `__fjs.fns.styleAttach` 就默认走 native；`globalThis.__fjsNativeStyle`
-  在渲染器加载前设成 `false` 回到纯 TS 引擎，设成 `'verify'` 两个引擎同时跑、
-  每帧比对每个重算过的元素（`styleEngine.verifyStats`，不一致逐个打印）——任何
-  app 在 fjsrun / 真机上都能当对拍用例。web、小程序、vitest 没有 natives，照旧 TS。
-- 构建期样式快照（specs/119）在 native 下直接灌进 C++ 缓存（SEED_CHAIN /
-  SEED_COMPUTE），样式 JSON 在第一次用到时才经回调取。
+- JS 侧分三个文件（specs/172）：`css/style-core.ts` 是 CSS 语义（样式表、层叠、
+  `buildMatch` / `computeResult`、inline 记录），两种引擎共用；`css/style-native.ts`
+  （`NativeStyleEngine`）把逐元素入口全交给 libfjs-style；`css/style.ts`
+  （`StyleEngine`）是 TS 逐元素引擎。Flutter 构建由 `__FJS_TS_STYLE__ = false` 只打包
+  前者，宿主没有 `styleAttach` 就报错。
+- `fjs build --ts-style` 才带上 TS 引擎：这时宿主有 `styleAttach` 仍默认走 native；
+  `globalThis.__fjsNativeStyle` 在渲染器加载前设成 `false` 回到纯 TS 引擎，设成
+  `'verify'` 两个引擎同时跑、每帧比对每个重算过的元素（`styleEngine.verifyStats`，
+  不一致逐个打印）——任何 app 在 fjsrun / 真机上都能当对拍用例。web、小程序、vitest
+  没有 natives，照旧 TS。
+- SEED_CHAIN / SEED_COMPUTE（0x4a / 0x4b）是已移除的构建期样式快照（specs/119 →
+  172）留下的 op，C++ 仍识别，JS 不再发送。
 - 帧被拒（协议 bug 或回调抛错）时，C++ 把该帧剔掉样式 op 交给 Dart（不丢结构），
   之后断开并只做剔除，错误抛给 JS——样式停在那一刻，但不会静默错乱。
 - 自定义 `setOpSink` 若吞掉帧不转给宿主，native 下就没有样式：包一层时要转发

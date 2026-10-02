@@ -24,15 +24,20 @@
 // pages with it.
 import {
   getCurrentInstance,
-  h,
   inject,
   reactive,
   type App,
   type Component,
 } from '@vue/runtime-core';
-// createApp here is the fjs custom renderer's, not runtime-dom's
-import { createApp as createVueApp, flutterRoot, releaseRoot, styleEngine } from '../vue/renderer';
-import type { StyleSnapshot } from '../css/style';
+// host primitives only (specs/169): the Vue renderer (createApp) is reached
+// through the injected VDOM page mounter, so a pure-vapor build of this
+// router carries no rendering engine
+import { flutterRoot, releaseRoot } from '../vue/host-ops';
+// enableVapor (specs/166): a vapor page mounts through the own runtime
+import { createVaporApp, isVaporComponent, withVaporShell, type VaporAppContext } from '../vapor/runtime';
+// specs/167: a vapor page's useRoute/useRouter/onPageSettled inject through
+// the vapor provides the mount below hands the page
+import { hasVaporInjectionContext, inject as vaporInject } from '../vapor/instance';
 import { remove, setProps, registerSystemHandler, type Element } from '../ui/element';
 import { hasNativeHost, invokeHost } from '../host';
 import { invokeHostAsync } from '../host-async';
@@ -64,7 +69,26 @@ export const ROUTER_KEY = Symbol.for('fjs.router');
 export const ROUTE_KEY = Symbol.for('fjs.route');
 /** The calling component's own page entry, so onPageSettled() knows which
  * page it is being asked about. */
-const PAGE_KEY = Symbol.for('fjs.page');
+export const PAGE_KEY = Symbol.for('fjs.page');
+
+/** What mounting a VDOM page needs (router/flutter-vdom.ts implements it). */
+export interface VdomPageMount {
+  page: Component | undefined;
+  root: Element;
+  route: RouteLocation;
+  shell: unknown;
+  provides: [symbol, unknown][];
+  onCreateApp?: (app: App) => void;
+}
+type VdomPageMounter = (mount: VdomPageMount) => { unmount: () => void };
+let vdomPageMounter: VdomPageMounter | null = null;
+
+/** Registers how VDOM pages mount (specs/169). app/flutter.ts does it at
+ * module init; the enableVapor app (app/flutter-vapor.ts) never does, which
+ * is what keeps the Vue renderer out of its bundle. */
+export function setVdomPageMounter(mounter: VdomPageMounter): void {
+  vdomPageMounter = mounter;
+}
 
 // ---- page registry ---------------------------------------------------------
 
@@ -121,7 +145,9 @@ interface PageEntry {
   location: RouteLocation;
   route: RouteLocation; // reactive copy handed to the page
   root: Element | null;
-  app: App | null;
+  /** the page's app — a Vue app (vdom page) or `{ unmount }` (a vapor page,
+   * enableVapor mode, specs/166); teardown only ever unmounts */
+  app: { unmount: () => void } | null;
   /** The route's push transition is over (or there never was one), so the
    * page may do work that would have janked the animation. */
   settled: boolean;
@@ -135,6 +161,17 @@ export interface FlutterRouterOptions extends RouterOptions {
   rootTag?: string;
   /** Hook to configure every page's Vue app (plugins, error handler). */
   onCreateApp?: (app: App) => void;
+  /** specs/166: every page is a Vapor SFC — pages mount through the vapor
+   * runtime (`createVaporApp` into the page root) instead of a per-page
+   * Vue app, and the compile-time wrapper is not generated. `onCreateApp`
+   * does not run (there is no Vue app); global components resolve through
+   * the app context instead. */
+  enableVapor?: boolean;
+  /** The vapor app context (enableVapor, specs/167): global components (the
+   * built-in fjs set plus the app's) and app-level provides — what the app
+   * shell's `app.provide` / plugins wrote. Every vapor page mounts with a
+   * context of its own that inherits these provides. */
+  vaporContext?: VaporAppContext;
   /** Page transition. The names in `TRANSITIONS` ('fjs-fade',
    * 'fjs-slide', 'fjs-slide-up', 'fjs-zoom') are native page routes here
    * and the matching CSS families on web, so the same name animates the
@@ -158,8 +195,7 @@ class FlutterRouter implements Router {
   /** Tab pages kept alive across a tab switch, by path. */
   private parked = new Map<string, PageEntry>();
   /** Idle-time preloading (specs/143): armed by start(), launched by the
-   * first page to settle. Never armed for captureStyles(), which mounts
-   * every page itself. */
+   * first page to settle. */
   private preloadArmed = false;
   private preloadQueue: PreloadQueue | null = null;
 
@@ -477,35 +513,56 @@ class FlutterRouter implements Router {
           'without calling definePage — check the chunk eval error above)',
       );
     }
-    // the page's chunk has run (its scoped sheets are registered), so this
-    // is the moment its build-time style snapshot can be checked and loaded
-    importPageStyleSnapshot(entry.location.path);
     const root = flutterRoot(this.options.rootTag ?? 'view');
     // the marker the Dart navigator matches its route against
     setProps(root, { __navKey: entry.key });
     entry.root = root;
 
-    const shell = this.options.shell;
-    const content = () => (page ? h(page) : h('view'));
-    const app = createVueApp({
-      name: 'FjsPage',
-      render: () =>
-        shell
-          ? h(shell as Component, { route: entry.route }, { default: content })
-          : content(),
-    });
-    app.provide(ROUTER_KEY, this);
-    app.provide(ROUTE_KEY, entry.route);
-    app.provide(PAGE_KEY, entry);
+    // enableVapor (specs/166): a Vapor page mounts through the own runtime —
+    // no per-page Vue app. specs/167: the page gets the same three provides
+    // a vdom page's app carries, through its own vapor context (inheriting
+    // the app's), and the app's (vapor) shell around it like the vdom path
+    if (this.options.enableVapor && page && isVaporComponent(page)) {
+      if (!entry.settled && entry.settleTimer === null) {
+        entry.settleTimer = setTimeout(() => this.markSettled(entry, true), SETTLE_FALLBACK_MS);
+      }
+      const wrapped = withVaporShell(page, this.options.shell, () => entry.route);
+      const vaporApp = createVaporApp(wrapped, this.vaporPageContext(entry));
+      entry.app = vaporApp;
+      vaporApp.mount(root);
+      Object.assign(this.currentRoute, entry.location);
+      if (this.preloadArmed && !this.preloadQueue) {
+        this.subscribeSettled(entry, () => this.startPreloadQueue());
+      }
+      return;
+    }
+
+    // a VDOM page: its own Vue app through the injected mounter
+    // (router/flutter-vdom.ts, registered by app/flutter.ts — specs/169)
+    if (!vdomPageMounter) {
+      throw new Error(
+        `[fjs-router] ${entry.location.fullPath} is not a vapor page, and this enableVapor build carries no VDOM renderer — ` +
+          'give the page `<script setup vapor>` or drop enableVapor.',
+      );
+    }
     if (!entry.settled && entry.settleTimer === null) {
       entry.settleTimer = setTimeout(
         () => this.markSettled(entry, true),
         SETTLE_FALLBACK_MS,
       );
     }
-    this.options.onCreateApp?.(app);
-    entry.app = app;
-    app.mount(root);
+    entry.app = vdomPageMounter({
+      page,
+      root,
+      route: entry.route,
+      shell: this.options.shell,
+      provides: [
+        [ROUTER_KEY, this],
+        [ROUTE_KEY, entry.route],
+        [PAGE_KEY, entry],
+      ],
+      onCreateApp: this.options.onCreateApp,
+    });
     Object.assign(this.currentRoute, entry.location);
     // Subscribed rather than hooked into markSettled: the base page is not
     // animated, is settled from birth and never passes through there.
@@ -514,61 +571,16 @@ class FlutterRouter implements Router {
     }
   }
 
-  /** Build-time style capture (specs/119): mounts every static route in
-   * turn — headless, so replace() swaps the page in place under the same
-   * shell and root a device builds — lets deferred content settle, and
-   * exports the style caches the page left behind. A page that throws is
-   * reported and skipped; the rest still get their snapshot.
-   *
-   * A split build captures on its own output, one fresh VM per page
-   * (specs/121): `routes` narrows the run to that page, and `loadChunk`
-   * evaluates its chunk the way the host would, so the sheets register in
-   * the device's order — shared first, the page's own when it opens. */
-  async captureStyles(
-    opts: { routes?: string[]; loadChunk?: (chunk: string) => void } = {},
-  ): Promise<Record<string, StyleSnapshot | { error: string }>> {
-    const out: Record<string, StyleSnapshot | { error: string }> = {};
-    const settle = async () => {
-      for (let round = 0; round < 3; round++) {
-        for (let i = 0; i < 8; i++) await Promise.resolve();
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      }
-      styleEngine.flushPending();
-    };
-    // The device preloads every page's code once the first page settles
-    // (specs/143), so from then on every page's global (unscoped) sheets are
-    // registered. Capture in that same state, in the same order: a snapshot
-    // taken with only its own page loaded lists fewer global sheets than the
-    // device has, and snapshotMismatch refuses it. Other pages' scoped sheets
-    // match nothing here, so they never become a snapshot's dependency.
-    if (this.options.preload !== false) {
-      for (const record of this.routes) {
-        if (/[:*]/.test(record.path)) continue;
-        try {
-          if (!record.chunk) pageComponent(record.path);
-          else if (!pageLoaded(record.path)) opts.loadChunk?.(record.chunk);
-        } catch {
-          // reported by the capture of that page below, which loads it again
-        }
-      }
-    }
-    for (const record of this.routes) {
-      const path = record.path;
-      // no parameters to fill in at build time: these compute cold
-      if (/[:*]/.test(path)) continue;
-      if (opts.routes && !opts.routes.includes(path)) continue;
-      try {
-        if (record.chunk && !pageComponent(path)) opts.loadChunk?.(record.chunk);
-        await this.replace(path);
-        await settle();
-        out[path] = styleEngine.exportSnapshot();
-      } catch (e) {
-        out[path] = { error: String((e as Error)?.stack ?? e) };
-      }
-    }
-    this.teardown(this.stack[this.stack.length - 1]);
-    this.stack = [];
-    return out;
+  /** The context a native-mounted vapor page resolves against: the app's
+   * components, and provides that inherit the app's plus this page's
+   * router / route / entry (what injectOr reads on the vdom path). */
+  private vaporPageContext(entry: PageEntry): VaporAppContext {
+    const app = this.options.vaporContext ?? { components: {} };
+    const provides = Object.create(app.provides ?? null) as Record<string | symbol, unknown>;
+    provides[ROUTER_KEY] = this;
+    provides[ROUTE_KEY] = entry.route;
+    provides[PAGE_KEY] = entry;
+    return { components: app.components, directives: app.directives, provides };
   }
 
   private teardown(entry: PageEntry | undefined): void {
@@ -601,40 +613,14 @@ function blankLocation(): RouteLocation {
 
 let active: FlutterRouter | null = null;
 
-/** The epoch each page's snapshot was last imported under. A reopen in the
- * same epoch is warm already; after a sheet registration cleared the caches
- * the snapshot is worth loading again. */
-const snapshotImported = new Map<string, number>();
-
-/** Loads the build-time style snapshot of `path`, if the build attached one
- * (`fjs build` appends it to the page chunk, see bundler/style-snapshot.ts).
- * Kept as a JSON string until the page is first opened: a page never
- * visited never pays the parse. */
 /** Routes with one page to load: patterns (`/user/:id`, `/*`) have none. */
 function staticPaths(routes: readonly { path: string }[]): string[] {
   return routes.map((r) => r.path).filter((p) => !p.includes(':') && !p.includes('*'));
 }
 
-function importPageStyleSnapshot(path: string): void {
-  const table = (globalThis as { __fjsStyleSnapshots?: Record<string, string> }).__fjsStyleSnapshots;
-  const snap = table?.[path];
-  if (snap === undefined) return;
-  const epoch = styleEngine.snapshotEpoch;
-  if (snapshotImported.get(path) === epoch) return;
-  // a refusal is remembered too: the same epoch would refuse it again
-  snapshotImported.set(path, epoch);
-  styleEngine.importSnapshot(snap, path);
-}
-
 export function createRouter(
   options: FlutterRouterOptions,
-): Router & {
-  start(): void;
-  captureStyles(opts?: {
-    routes?: string[];
-    loadChunk?: (chunk: string) => void;
-  }): Promise<Record<string, StyleSnapshot | { error: string }>>;
-} {
+): Router & { start(): void } {
   const router = new FlutterRouter(options);
   active = router;
   return router;
@@ -643,6 +629,7 @@ export function createRouter(
 /** inject() only works inside setup(); module-level helpers get the
  * process-wide router/route instead of an undefined. */
 function injectOr<T>(key: symbol, fallback: T): T {
+  if (hasVaporInjectionContext()) return vaporInject(key, fallback) as T;
   if (!getCurrentInstance()) return fallback;
   return inject<T>(key as never, fallback);
 }

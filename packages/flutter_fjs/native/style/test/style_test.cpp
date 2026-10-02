@@ -500,6 +500,83 @@ void test_clone() {
   CHECK(sb.size() == sc.size());  // same ops reach Dart, in another order
 }
 
+// CLONE_MANY (specs/162): one op mounts N copies under a parent, before an
+// anchor, with per-copy initial text overriding the template's static text.
+// The parent and anchor may be created by byte ops of the same frame — the
+// root inserts land after them.
+void test_clone_many() {
+  auto pack = [](std::vector<uint32_t>& w, const std::string& v) {
+    w.push_back(static_cast<uint32_t>(v.size()));
+    for (size_t i = 0; i < v.size(); i += 4) {
+      uint32_t word = 0;
+      for (size_t k = 0; k < 4 && i + k < v.size(); k++) word |= uint32_t(uint8_t(v[i + k])) << (8 * k);
+      w.push_back(word);
+    }
+  };
+  enum : uint32_t { P = 1, ANCHOR = 2, TINY = 14 };
+  Host h;
+  auto cb = h.callbacks();
+  fjs_style* s = fjs_style_create(&cb);
+  // [0] view.c root, [1] text.tiny with static "x" — the override replaces it
+  std::vector<uint32_t> w;
+  w.insert(w.end(), {FJS_STYLE_W_TEMPLATE, 7, 2});
+  w.insert(w.end(), {2, 0xffffffffu, VIEW, 0, SCOPE, 1, C});
+  pack(w, "view"); pack(w, ""); pack(w, "");
+  w.insert(w.end(), {2, 0, TEXT, 0, SCOPE, 1, TINY});
+  pack(w, "text"); pack(w, ""); pack(w, "x");
+  w.insert(w.end(), {FJS_STYLE_W_CLONE_MANY, 7, 10, 2, P, ANCHOR, 1, 2});
+  pack(w, "a"); pack(w, "b");
+  Frame f;
+  f.create(P, "view").create(ANCHOR, "view");
+  f.insert(0, P, 0x7fffffff).insert(P, ANCHOR, 0x7fffffff);
+  const uint8_t* out = nullptr;
+  size_t len = 0;
+  CHECK(fjs_style_process_words(s, w.data(), w.size(), f.b.data(), f.b.size(), &out, &len) == 0);
+  Out o = decode(out, len);
+  fjs_style_stats st;
+  fjs_style_get_stats(s, &st);
+  CHECK(st.elements == 4);  // two cells, two texts; the anchor is unstyled
+  // Walk the passthrough: the expansion first (cells in copy order, texts
+  // are the overrides "a"/"b", never the template's "x"), then the frame's
+  // byte ops (parent + anchor created and attached), then the deferred root
+  // inserts before the anchor in copy order.
+  const uint8_t* p = o.passthrough.data();
+  const uint8_t* end = p + o.passthrough.size();
+  int text_overrides = 0;
+  uint32_t seen_cell_index = 0;
+  std::string last_text;
+  std::vector<uint32_t> created;
+  while (p < end) {
+    uint8_t op = *p++;
+    if (op == 1) {
+      uint32_t id = rd32(p);
+      p += 4;
+      p += 2 + (p[0] | (p[1] << 8));
+      created.push_back(id);
+    } else if (op == 5) {
+      uint32_t id = rd32(p), n = rd32(p + 4);
+      last_text.assign(reinterpret_cast<const char*>(p + 8), n);
+      if (last_text == "a" || last_text == "b") text_overrides++;
+      CHECK(last_text != "x");
+      p += 8 + n;
+    } else if (op == 3) {
+      uint32_t parent = rd32(p), id = rd32(p + 4), index = rd32(p + 8);
+      p += 12;
+      if (parent == P && index != 0x7fffffffu) {  // a deferred cell insert
+        seen_cell_index |= (1u << index);
+        CHECK(index <= 1);
+      }
+    } else {
+      CHECK(false);  // nothing else is expected in this frame
+      break;
+    }
+  }
+  CHECK(created == std::vector<uint32_t>({10, 11, 12, 13, P, ANCHOR}));
+  CHECK(text_overrides == 2);
+  CHECK(seen_cell_index == 0x3u);  // copies at index 0 and 1, before the anchor
+  fjs_style_destroy(s);
+}
+
 }  // namespace
 
 // TEXT ops reach Dart as SetText in place, with the frame's strings minus
@@ -539,6 +616,7 @@ int main() {
   test_append_and_bad_frame();
   test_words();
   test_clone();
+  test_clone_many();
   test_text_refs();
   if (g_failures) {
     std::fprintf(stderr, "fjs-style-test: %d failure(s)\n", g_failures);

@@ -234,3 +234,47 @@ Vapor 只跑那一格的 renderEffect。**Vue 官方说的「Vapor 更快」在�
 2. 外壳模块做成无顶层副作用（委托事件访问器在 enableVapor 时安装，顶层调用标 `/*@__PURE__*/`），否则被注入
    runtime-vapor 的 import 牵进所有包。
 3. Vapor 组件内的 `<Transition>` / `<TransitionGroup>` 未接（抛错说明），留作后续。
+
+### 8.3 挂载差值的最终拆账（2026-09-30，specs/149–158 之后）
+
+§8.2 的「首次挂载慢约 25 ms」是模板克隆（specs/152）之前量的。今天在所有挂载优化落地后重新拆，
+离线 fjsrun（PrimJS，Mac，`examples/bench` `pnpm run vapor`，7 轮 min/med/max，两变体交替两轮）：
+
+| | VDOM | Vapor |
+|---|---:|---:|
+| 挂载 total | 17.6 / 18.0 / 18.7 | 31.1 / 35.2 / 42.8（次轮 31.7 / 32.2 / 41.7） |
+| 卸载 total | 4.0 / 4.2 / 4.2 | 5.4 / 6.2 / 7.7 |
+| 样式 flush | 0.3 | 0.2–0.3 |
+| element API 裸 create+insert 同树 | 5.9 / 6.1 / 6.3 | —（格子已并入 C++ 克隆，specs/152） |
+
+打开逐调用计时（`__VAPOR_PROFILE__`，抬高总数，`.net` 已扣包装开销）拆 Vapor 的 rest（35.6）：
+
+| 环节 | ms | 说明 |
+|---|---:|---|
+| host.net（nodeOps：行/外框的 create / insert、每格 setElementText） | 3.3 | VDOM 路径同一项约 9.5——模板克隆把格子的宿主工作搬进了 C++，反而是 Vapor 便宜 |
+| shell.net（外壳 cloneNode / insertBefore 净值） | 9.7–10.2 | `cloneTemplate` host 调用 + `instantiateCloned` 的外壳对象：每格一个 Element + 一个 Text + linkChild，全页 ~8300 个（`new Element` 0.67 µs，specs/152 量过） |
+| 样式 flush | 0.3 | 在 libfjs-style |
+| **runtime-vapor 自身（差值）** | **~22** | 每个 v-for 项：块对象 + effect scope + key 记账；每格文字绑定一个 renderEffect + 依赖收集 + 首跑 |
+
+静态文字差分（把格子的 `{{ i }}` 换成常量，两边各跑一轮，同口径）：
+
+| | 动态 | 静态 | 差值 |
+|---|---:|---:|---:|
+| VDOM mount | 21.0 | 16.7 | −4.3（每格 ~2.1 µs：text vnode 创建 + diff） |
+| Vapor mount | 35.9 | 27.9 | −8.0（每格 ~4 µs：renderEffect + scope + setText） |
+
+即 Vapor 的逐格绑定单价是 VDOM 的 2 倍，但总量上它只占 8 ms；**差值的大头是 runtime-vapor 的
+per-item 块/scope（~15 ms，静态化也省不掉）和外壳对象（~10 ms）**。
+
+真机（iPhone 12，`--profile`，页面自报）：VDOM 显示 87.9–91.4 ms，Vapor 119.5–122.7 ms，差 ~32 ms
+≈ 离线差值 14.2 × 解释器 ~2.2 的放大；`frame-timeline` 录的显示帧 VDOM 83.6 / Vapor 82.8 ms——
+**Flutter 侧两路径一致，慢全部在 JS**（specs/145 §5）。
+
+结论：模板克隆之后，外壳的宿主工作不再是 Vapor 的问题（3.3 vs VDOM 9.5 ms）；剩下的差值按大小是
+① runtime-vapor 每 v-for 项的块对象 + effect scope（~15 ms，在 runtime-vapor 的路径里，外壳侧改不掉；
+只有「纯静态、无绑定」的项可以特化，flat-4050 这种带绑定的不在其列）；② 外壳逐节点对象（~10 ms，
+字段已瘦身过一轮，再压要把外壳对象做成单形并复用，估 ~5 ms）；③ 逐格绑定贵一倍（~8 ms，来源是
+renderEffect 的固定成本，vapor 的官方语义，绑定在就得付）。所以外壳侧能削的只有 ②（和 ① 里跟着
+外壳对象走的部分），估离线 ~5–8 ms；**要抹平剩下的一半差值得动 runtime-vapor 本身，不属于外壳能
+解决的范围**。不立项：挂载差值真机 32 ms 在总上屏 215 ms 里占 15%，且 Vapor 的价值在更新路径
+（改 1 格 2.4–2.9 ms vs VDOM 30.8–61.4，真机）。

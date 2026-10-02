@@ -82,6 +82,16 @@ fjs-modal-sheet, switch, checkbox, progress-bar {
   flex-shrink: 0;
 }
 
+/* Same rule for the roots the components render (specs/180): a swiper,
+   divider or picker-view below a growing list was squeezed to 0 high, where
+   Flutter keeps every child its natural size and lets the scroll-view
+   scroll. :where() keeps it at zero specificity — a page's own "flex: 1"
+   still wins. */
+:where(.fjs-image, .fjs-button, .fjs-input, .fjs-swiper, .fjs-slider,
+  .fjs-picker-view, divider, radio-group, checkbox-group, label, form, stack) {
+  flex-shrink: 0;
+}
+
 text {
   display: block;
   /* template whitespace is already condensed by the Vue compiler, so

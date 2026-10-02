@@ -17,10 +17,11 @@ import {
   defineComponent,
   getCurrentInstance,
   h,
-  resolveDynamicComponent,
   type PropType,
   type VNode,
 } from '@vue/runtime-core';
+// tag names resolve through the vapor runtime too (specs/171)
+import { resolveDynamicComponent } from '../vapor/instance';
 import { layoutRichText, type RenderChild, type RenderElement } from '../rich-text/layout';
 import { parseHtml } from '../rich-text/parse';
 import { sanitizeNodes } from '../rich-text/sanitize';

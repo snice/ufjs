@@ -2,6 +2,9 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { defineComponent, h, ref } from '@vue/runtime-core';
 import { setOpSink } from '../src/host';
 import { createRouter, definePage } from '../src/router/flutter';
+// VDOM pages mount through the injected mounter (specs/169); app/flutter.ts
+// registers it in an app — a bare router needs it imported
+import '../src/router/flutter-vdom';
 import { registerStyles, styleEngine } from '../src/vue';
 import { UiOp as Op } from '../src/ui/ops';
 import type { RouteRecord } from '../src/router/types';

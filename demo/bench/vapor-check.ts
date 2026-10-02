@@ -12,7 +12,9 @@ import VantVapor from '../src/pages/vant/vapor.vue';
 
 const texts = new Map<number, string>();
 const hostSink = setOpSink((frame: Uint8Array) => {
-  // SetText only (op 5); everything else skipped by its encoded size
+  // SetText only. specs/155: the text rides the frame's `fjsText` list, the
+  // op carries (id, index) — 8 bytes, no inline string.
+  const fjsText = (frame as Uint8Array & { fjsText?: string[] }).fjsText;
   const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
   let i = 0;
   const u32 = () => ((i += 4), view.getUint32(i - 4, true));
@@ -23,7 +25,18 @@ const hostSink = setOpSink((frame: Uint8Array) => {
     else if (op === 2) u32();
     else if (op === 3) i += 12;
     else if (op === 4) i += 8;
-    else if (op === 5) { const id = u32(); const n = u32(); texts.set(id, decodeUtf8(frame.subarray(i, i + n))); i += n; }
+    else if (op === 5) {
+      const id = u32();
+      const n = u32();
+      texts.set(id, decodeUtf8(frame.subarray(i, i + n)));
+      i += n;
+    }
+    else if (op === 0x4c && fjsText) {
+      // StyleText (specs/155): (id, index into fjsText)
+      const id = u32();
+      const index = u32();
+      texts.set(id, fjsText[index] ?? '');
+    }
     else if (op === 6 || op === 7) { u32(); const n = u32(); i += n; }
     else if (op === 8) i += 12;
     else if (op === 12) i += 8;
@@ -59,12 +72,23 @@ const tap = (id: number) =>
 async function main(): Promise<void> {
   const root = flutterRoot('view');
   const app = createApp(VantVapor);
+  app.config.errorHandler = (err: unknown, _i: unknown, info: string) => {
+    console.log(`[vapor-check] vue error (${info}): ${String(err)}`);
+    if ((err as Error)?.stack) console.log(String((err as Error).stack).split('\n').slice(0, 6).join('\n'));
+  };
   for (const plugin of plugins) plugin(app as never);
   app.mount(root);
   await tick();
-  const report = (label: string) => console.log(`[vapor-check] ${label}: ${allTexts(root.id).filter((t) => /次|Stepper|开关|大于/.test(t)).join(' | ')}`);
+  const report = (label: string) => console.log(`[vapor-check] ${label}: ${allTexts(root.id).filter((t) => /次|Stepper|开关|大于/.test(t)).join(' | ')}\n  [all texts] ${allTexts(root.id).join(' | ').slice(0, 400)}`);
   const count = (c: string) => find(root.id, hasClass(c)).length;
   console.log(`[vapor-check] vant parts: button ${count('van-button')}, cell ${count('van-cell')}, switch ${count('van-switch')}, stepper ${count('van-stepper')}`);
+  {
+    const dump = (id: number, d: number): string => {
+      const kids = childElementIds(id);
+      return '  '.repeat(d) + `${styleEngine.elementTag?.(id) ?? ''}#${id}[${styleEngine.classesOf(id).slice(0, 2).join(' ')}]` + (kids.length ? '\n' + kids.map((k) => dump(k, d + 1)).join('\n') : '');
+    };
+    console.log(`[vapor-check] tree:\n${dump(root.id, 0).split('\n').slice(24, 56).join('\n')}`);
+  }
   report('mounted');
   const [primary, plus10] = find(root.id, hasClass('van-button'));
   tap(primary);

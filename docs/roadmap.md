@@ -52,12 +52,12 @@
   属性不过桥）、子树标脏去重；新内置标签 `<defer>` 把首屏以下的内容推到转场结束
   后挂。vant-form 首开同步段 204 → 38 ms、卸载 29 → 7 ms（离线基准，容器口径），
   见 [vant-mount-perf.md](vant-mount-perf.md)。离线基准 `pnpm --filter demo run bench:mount`
-- ✅ **构建期样式预热**（specs/119）：`fjs build` / `fjs run --release|--profile` 在 Node
+- ~~构建期样式预热~~（specs/119）：`fjs build` / `fjs run --release|--profile` 在 Node
   里逐页挂载、导出 CSS 引擎的匹配 / 计算缓存，写进页面 chunk，路由挂载前导入。vant-form
-  首开同步段 CSS 22 → 8 ms、match miss 270 → 1；校验不过整份放弃。`fjs.styleSnapshot:
-  false` 关闭，dev 不做
+  首开同步段 CSS 22 → 8 ms、match miss 270 → 1；校验不过整份放弃。**specs/172 已移除**
+  （native 引擎下收益小，换回 TS 逐元素引擎出包）
 - ✅ **页面 chunk 空闲预执行 + `router.preload()`**（specs/143）：首页停稳后，按路由表
-  逐个执行页面 chunk / 单包页面模块（样式快照仍在打开时导入），打开页面时 `[nav] mounted` 不再含
+  逐个执行页面 chunk / 单包页面模块，打开页面时 `[nav] mounted` 不再含
   chunk 的读取与执行（真机 12–16 ms）。空闲由 Dart 判定（手指、转场、帧排队）；web 走
   `requestIdleCallback` + 动态 import；`preload: false` 关闭
 - ✅ **样式引擎命中路径瘦身**（specs/144）：DefineStyle 改 ASCII 直写（字节不变）；inline 样式元素按内容

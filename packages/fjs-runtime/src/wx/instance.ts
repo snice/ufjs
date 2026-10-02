@@ -20,9 +20,9 @@
 //   };
 //   __createWevuComponent(__sfc__);
 import {
-  WatcherEffect,
   effectScope,
   reactive,
+  watch,
   type Ref,
 } from '@vue/reactivity';
 import {
@@ -219,20 +219,28 @@ function mountInstance(self: MpInstance, sfc: WevuSfc): void {
   // times per frame. Coalescing to one flush per microtask is what
   // runtime-core's pre-flush queue does, and it keeps `nextTick()` (also a
   // microtask) ordered after the setData of the writes that preceded it.
-  // Vue 3.6 dropped watch()'s `scheduler` option; runtime-core now subclasses
-  // WatcherEffect and overrides notify(), and so does this.
+  // watch()'s `scheduler` option is the coalescing point: the job (the cb)
+  // lands once per microtask, after whatever property writes queued it.
   // created inside the scope so scope.stop() takes it down too
-  const watcher = scope.run(() => {
-    const w = new CoalescedWatcher(render, (next) => {
+  let queued = false;
+  const watcher = scope.run(() =>
+    watch(render, (next) => {
       const patch = shallowDiff(prev, next as Record<string, unknown>);
       if (patch) {
         prev = next as Record<string, unknown>;
         self.setData(patch, () => runHooks(hooks, 'rendered'));
       }
-    });
-    w.run(true);
-    return w;
-  });
+    }, {
+      scheduler: (job: () => void) => {
+        if (queued) return;
+        queued = true;
+        void Promise.resolve().then(() => {
+          queued = false;
+          job();
+        });
+      },
+    }),
+  );
   const stopWatch = () => watcher?.stop();
 
   self.__fjs_state = {
@@ -470,25 +478,6 @@ export function pageQuery(): Record<string, string> {
 
 /** Registers the SFC with the mini-program runtime. Calling this is the
  * module's side effect — exactly what `Component()` means on wx. */
-/** A watcher whose re-runs after the first land once per microtask. */
-class CoalescedWatcher extends WatcherEffect {
-  declare queued: boolean;
-
-  constructor(source: () => unknown, cb: (next: unknown) => void) {
-    super(source, cb);
-    this.queued = false;
-  }
-
-  override notify(): void {
-    if (this.queued) return;
-    this.queued = true;
-    void Promise.resolve().then(() => {
-      this.queued = false;
-      if (this.dirty) this.run();
-    });
-  }
-}
-
 export function createWevuComponent(sfc: WevuSfc, options: WevuComponentOptions = {}): void {
   const names = propNames(sfc);
   const config: Record<string, unknown> = {

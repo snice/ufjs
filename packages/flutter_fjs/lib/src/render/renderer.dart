@@ -95,6 +95,12 @@ class FjsNodeRenderer extends StatelessWidget {
   @visibleForTesting
   static set buildCount(int value) => _FjsNodeView.buildCount = value;
 
+  /// `display: contents`: the node's children are laid out in its place.
+  static bool isContents(MirrorNode node) {
+    final display = node.styleMap['display'] ?? node.props['display'];
+    return display != null && display.toString() == 'contents';
+  }
+
   static bool isHidden(MirrorNode node) {
     // Read `display` straight off the maps instead of through FjsStyle: this
     // is called twice per node build plus once per child of every parent, and
@@ -338,9 +344,25 @@ class _FjsNodeView extends StatefulWidget {
     // `tree.node(id)` three times for every one of them, and a scroll-view
     // with a thousand rows pays that on every rebuild of the container.
     final kidNodes = <MirrorNode>[];
+    // `display: contents` boxes generate no box of their own: their children
+    // stand in their place in this parent's layout, as in CSS (specs/182 —
+    // the vapor ⇄ VDOM slot bridge wraps slot content in one, and vant's
+    // tabbar items laid out as a column inside it)
+    void addKid(MirrorNode kid) {
+      if (FjsNodeRenderer.isHidden(kid)) return;
+      if (FjsNodeRenderer.isContents(kid)) {
+        for (final id in kid.children) {
+          final inner = tree.node(id);
+          if (inner != null) addKid(inner);
+        }
+        return;
+      }
+      kidNodes.add(kid);
+    }
+
     for (final id in node.children) {
       final kid = tree.node(id);
-      if (kid != null && !FjsNodeRenderer.isHidden(kid)) kidNodes.add(kid);
+      if (kid != null) addKid(kid);
     }
     List<Widget>? kids;
     // one view per direct child, so collecting them costs O(children) rather

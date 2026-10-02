@@ -25,7 +25,9 @@
 // The web adapter has its own implementation (../web/components/form.ts) for
 // the same reason list-view does — different substrate, same contract: the
 // submit payload is `{name: value}` JSON in document order, byte for byte.
-import { defineComponent, h, onMounted, onUnmounted, onUpdated, ref } from '@vue/runtime-core';
+import { defineComponent, h, ref } from '@vue/runtime-core';
+// lifecycle that also serves the vapor render host (specs/171)
+import { onMounted, onUnmounted, onUpdated } from '../vapor/instance';
 import {
   fieldFormType,
   fieldName,
@@ -33,7 +35,7 @@ import {
   setProps,
   type Element,
 } from '../ui/element';
-import { childElementIds, elementById, elementTag } from '../vue/renderer';
+import { childElementIds, elementById, elementTag } from '../vue/host-ops';
 
 /** Tags whose own value a form collects. A group reports for its members, so
  * a radio/checkbox inside one is skipped (see collect). */

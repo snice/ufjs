@@ -14,7 +14,7 @@
 import { flushNow, frameEpoch, getWriter, scheduleFlush } from '../host';
 import { utf8Encode } from '../ui/utf8';
 import { DISABLED_CLASS, mediaMatches, type AttrTest, type ClassAttrTest, type CssRule } from './parser';
-import type { ComputeResult, MatchedRuleReport, MatchResult, PseudoHits, PseudoStyles, RuleHit, StyleEngine, StyleEngineStats } from './style';
+import type { ComputeResult, MatchedRuleReport, MatchResult, PseudoHits, PseudoStyles, RuleHit, StyleCore, StyleEngineStats } from './style-core';
 
 /** Tags whose `:disabled` state the engine tracks (StyleEngine.setDisabled). */
 const DISABLEABLE_TAGS = new Set(['input', 'textarea', 'button', 'select', 'option', 'fieldset']);
@@ -56,7 +56,7 @@ export interface TemplateNodeSpec {
 /** What the backend needs from the engine that owns it — its CSS state and
  * the renderer's apply callback. */
 export interface NativeStyleHost {
-  engine: StyleEngine;
+  engine: StyleCore;
   /** Every registered rule (plain and pseudo), the :root tokens, the
    * viewport and whether pseudo rules exist. */
   sources(): {
@@ -120,8 +120,11 @@ export class NativeStyleBackend {
   ) {
     const ok = fns.styleAttach!(
       (hits) => this.defineMatch(hits),
-      (el, match, parent, tag, defaultsId, inlineKey, flags, seeded) =>
-        this.compute(el, match, parent, tag, defaultsId, inlineKey, flags, seeded),
+      // the trailing `seeded` argument is only ever nonzero after a
+      // SEED_COMPUTE op, which nothing sends since the build-time style
+      // snapshot was removed (specs/172)
+      (el, match, parent, tag, defaultsId, inlineKey, flags) =>
+        this.compute(el, match, parent, tag, defaultsId, inlineKey, flags),
       (el, result) => this.styled(el, result),
     );
     if (!ok) throw new Error('styleAttach refused');
@@ -543,79 +546,25 @@ export class NativeStyleBackend {
     scheduleFlush();
   }
 
-  // ---- build-time snapshot (specs/119) ---------------------------------------
-
-  /** One snapshot chain: StyleEngine's chain key suffix — `tag \1 classes
-   * \1 scopes`, then `\4 bits`, `\6 attrs`, `\5 prev` as the engine's
-   * shape flags had them — respelled in atoms (SEED_CHAIN). */
-  seedChain(seed: number, parentSeed: number, suffix: string, match: MatchResult): void {
-    this.matches.set(match.id, match);
-    const cut = suffix.indexOf('\u0005');
-    const self = cut < 0 ? suffix : suffix.slice(0, cut);
-    const prev = cut < 0 ? '' : suffix.slice(cut + 1);
-    // parse everything first: atom() may write ATOM ops, which must not land
-    // inside the seed op
-    const own = this.parseSig(self, true);
-    const nb = prev === '' ? null : this.parseSig(prev, false);
-    const w = this.writer;
-    w.styleSeedChain(seed, parentSeed);
-    w.styleSigPart(own.tag, own.classes, own.scopes, own.bits, own.attrs);
-    w.styleSeedChainPrev(nb !== null);
-    if (nb !== null) w.styleSigPart(nb.tag, nb.classes, nb.scopes, nb.bits, null);
-    w.styleSeedChainEnd(match.id);
-  }
-
-  private parseSig(
-    text: string,
-    withAttrs: boolean,
-  ): { tag: number; classes: number[]; scopes: number[]; bits: number; attrs: Array<[number, string]> | null } {
-    let rest = text;
-    let attrText = '';
-    const a = rest.indexOf('\u0006');
-    if (a >= 0) {
-      attrText = rest.slice(a + 1);
-      rest = rest.slice(0, a);
+  /** CLONE_MANY (specs/162): count instances of a registered template in
+   * one op. The engine expands each copy, overrides `textNode`'s static
+   * text with texts[i] (0xffffffff = no override, texts must be null), and
+   * inserts every root under `parent` — before `anchor` (0 = append) — in
+   * deferred ops at the end of the frame, so parent/anchor may be created
+   * by later ops of the same frame. */
+  cloneMany(template: number, first: number, count: number, parent: number, anchor: number, textNode: number, texts: readonly string[] | null): void {
+    const words: number[] = [9, template, first, count, parent, anchor, textNode, texts === null ? 0 : texts.length];
+    if (texts !== null) {
+      for (const v of texts) {
+        const b = utf8Encode(v);
+        words.push(b.length);
+        for (let i = 0; i < b.length; i += 4) {
+          words.push((b[i] | ((b[i + 1] ?? 0) << 8) | ((b[i + 2] ?? 0) << 16) | ((b[i + 3] ?? 0) << 24)) >>> 0);
+        }
+      }
     }
-    let bits = 0xffffffff;
-    const b = rest.indexOf('\u0004');
-    if (b >= 0) {
-      bits = Number(rest.slice(b + 1));
-      rest = rest.slice(0, b);
-    }
-    const [tag, classText = '', scopeText = ''] = rest.split('\u0001');
-    const list = (joined: string) => (joined === '' ? [] : joined.split('\u0002'));
-    const classes = list(classText).map((c) => this.atom(c));
-    const scopes = list(scopeText).map((sc) => {
-      // a later sheet for one of these scopes must invalidate
-      this.seenScopes.add(sc);
-      return this.atom(sc);
-    });
-    let attrs: Array<[number, string]> | null = null;
-    if (withAttrs) {
-      attrs = list(attrText).map((pair) => {
-        const eq = pair.indexOf('=');
-        return [this.atom(pair.slice(0, eq)), pair.slice(eq + 1)] as [number, string];
-      });
-    }
-    return { tag: this.atom(tag), classes, scopes, bits, attrs };
-  }
-
-  /** One snapshot compute entry, keyed as libfjs-style's compute cache is
-   * (SEED_COMPUTE). `inlineKey` is StyleEngine.inlineKeyOf's spelling. The
-   * JSON is not sent: the first element to hit the entry asks for it
-   * (compute's `seeded`) — most of a snapshot's entries are, and the strings
-   * cross far cheaper as a callback's return than written into the frame. */
-  seedCompute(match: number, parentResult: number, inlineKey: string, result: ComputeResult): void {
-    this.results.set(result.styleId, result);
-    this.writer.styleSeedCompute(
-      match,
-      parentResult,
-      result.defaultsId,
-      inlineKey === '' ? 0 : this.inlineKeyId(inlineKey),
-      result.rawText,
-      result.styleId,
-      this.flagsOf(result),
-    );
+    this.commit();
+    this.writer.styleTemplate(words);
     scheduleFlush();
   }
 
@@ -706,13 +655,7 @@ export class NativeStyleBackend {
     defaultsId: number,
     inlineKey: number,
     flags: number,
-    seeded: number,
   ): FjsNativeStyleResult {
-    if (seeded !== 0) {
-      const known = this.result(seeded);
-      if (known === undefined) throw new Error(`native style: unknown seeded result ${seeded}`);
-      return this.describe(known);
-    }
     const matched = this.matches.get(match) ?? this.oldMatches.get(match);
     if (matched === undefined) throw new Error(`native style: unknown match ${match}`);
     const parent = parentResult !== 0 ? this.result(parentResult) : undefined;

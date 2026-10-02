@@ -53,6 +53,7 @@ QuickJS 上实现的是一套**框架无关的命令式 element API**，前端�
 
 | # | 文档 | 一句话 |
 |---|------|--------|
+| 4.5 | [Vapor host contract](vapor-contract.md) | `src/vapor/host.ts` 的接缝文档：中立核心 + HostReactivity/VaporBackend 两缝，接第二框架读这篇 |
 | 5 | [自定义渲染器](custom-renderer.md) | element API → Vue renderer 参考实现 → **接 React 的步骤** |
 | 6 | [UI API 参考](ui-api.md) | 标签全集、事件表、样式键清单、触摸事件 |
 | 7 | [Web CSS 兼容清单](css-compat.md) | **选择器 / 属性支持矩阵**，加新 CSS 能力先改这张表 |

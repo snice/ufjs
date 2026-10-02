@@ -3,7 +3,7 @@
 // differently from the TS engine is logged, and the totals print at the end.
 // Pages that need the router or a device capability throw here and are
 // reported as such. Generated list — regenerate when pages are added.
-//   npx fjs build bench/verify-pages.ts --out dist/verify-pages
+//   npx fjs build bench/verify-pages.ts --ts-style --out dist/verify-pages
 //   fjsrun --frames --pump 300 dist/verify-pages/app/bundle.js
 import './style-verify';
 import type { Component } from 'vue';

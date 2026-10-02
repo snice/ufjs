@@ -6,6 +6,9 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { defineComponent, h } from '@vue/runtime-core';
 import { setOpSink } from '../src/host';
 import { createRouter, definePage } from '../src/router/flutter';
+// VDOM pages mount through the injected mounter (specs/169); app/flutter.ts
+// registers it in an app — a bare router needs it imported
+import '../src/router/flutter-vdom';
 import type { RouteRecord } from '../src/router/types';
 
 const enum Op {

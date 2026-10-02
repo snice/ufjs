@@ -206,7 +206,14 @@ class MirrorTree {
     var id = parent;
     while (id != null && id != 0) {
       _dirty.add(id);
-      if (_nodes[id]?.tag != 'text') return;
+      // a `display: contents` box is laid out by ITS parent, which collects
+      // its children (renderer.dart) — the change has to reach that one too
+      final n = _nodes[id];
+      if (n != null && (n.styleMap['display'] ?? n.props['display'])?.toString() == 'contents') {
+        id = _parentOf[id];
+        continue;
+      }
+      if (n?.tag != 'text') return;
       final up = _parentOf[id];
       if (up == null || up == 0) return;
       final upNode = _nodes[up];

@@ -15,7 +15,7 @@ import { createApp, flutterRoot, registerStyles, styleEngine } from 'fjs/vue';
 import { create, flush, nowMs, setOpSink } from 'fjs';
 import Flat from '../src/Flat4050.vue';
 import FlatVapor from '../vapor/Flat4050Vapor.vue';
-import { createComponent, createVaporApp, defineVaporComponent, shellOf } from 'fjs/vapor';
+import { createComponent, createVaporApp, defineVaporComponent } from 'fjs/vapor';
 
 /** Time inside uiOps: the host's frame handling, plus libfjs-style's parse
  * and flush (and its callbacks into JS) in native mode. */
@@ -141,7 +141,7 @@ async function main(): Promise<void> {
   const vaporShow = ref(false);
   createVaporApp(defineVaporComponent({
     setup: () => createComponent(FlatVapor, { show: () => vaporShow.value }),
-  })).mount(shellOf(flutterRoot()) as never);
+  })).mount(flutterRoot());
   await drain();
   await run('vapor', vaporShow);
   registerStyles(null, '.bench-none:first-child { color: red } .bench-none + .bench-none { color: red }');

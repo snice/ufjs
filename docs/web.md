@@ -35,7 +35,7 @@ element API，产品层面已经是那个设想想要的东西。只有当「Flu
 | 渲染器 | fjs 自定义 renderer → op 帧 → Widget | Vue runtime-dom |
 | `<view>` `<swiper>` … | Dart 侧 widget 映射 | `fjs/web` 里的 Vue 组件 |
 | `<style scoped>` | fjs 样式引擎（自己做 cascade / 继承） | 真 CSS（`compileStyle` 注入 `<style>`） |
-| 路由 | 原生 Navigator | vue-router（hash 模式） |
+| 路由 | 原生 Navigator | vue-router（hash 模式）；enableVapor 下是自带的 history 驱动（同样的 URL，无 vue-router，specs/173） |
 | `toast()` | 原生浮层 | DOM 浮层 |
 | `new Worker('/workers/x.js')`（`src/workers/x.ts`，specs/049） | fetch 脚本 → Dart isolate + 独立 QuickJS | 真 Web Worker（路径即 URL；vite dev 中间件按需编译，构建写 `workers/`） |
 
@@ -267,6 +267,10 @@ snap 点，而 PageView 一个手势只翻一页。所以轨道是 `overflow: hi
 `circular` 两端实现不同：Flutter 用一个无边界的 PageView 取模，web 复制首尾两页
 再在越界时无声跳回。但 `@change` 的语义相同——两端报的都是**真实索引**，页面永远
 看不到克隆页的号（取模逻辑同样来自 `scroll/metrics.ts` 的 `wrapIndex`）。
+
+纯 vapor（enableVapor）的 web 包里，页面是活节点，没法像 vnode 那样复制：两个克隆格是空的
+`swiper-item`，在可能露出来之前（拖动开始、跨边界翻页前）用首尾页的 `cloneNode(true)` 快照填充
+（specs/175）。克隆页只在跨边界的那一下可见、是静态快照：`<canvas>` 内容不复制、不响应点击。
 
 翻页后回派 `@change`（旧名 `@page-changed` 仍可用），载荷与 Flutter 一致。
 

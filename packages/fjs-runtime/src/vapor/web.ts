@@ -1,20 +1,8 @@
-// `fjs/vapor` on web builds (specs/148). The browser has a real DOM, so the
-// official runtime-vapor runs as is; the only job is Vue's VDOM ⇄ Vapor
-// interop on the app — fjs tags are VDOM components on web (the DOM
-// adapter), so a Vapor template's <view> resolves to one through it.
-import { vaporInteropPlugin, type App } from 'vue';
-
-// the build rewrites nothing on web (real vue carries runtime-vapor), but
-// `fjs/vapor` answers to the same names as on Flutter
-export * from 'vue';
-import { onEveryWebApp } from './web-apps';
-
-let enabled = false;
-
-export function enableVapor(): void {
-  if (enabled) return;
-  enabled = true;
-  onEveryWebApp((app: App) => {
-    if (!(app._context as { vapor?: unknown }).vapor) app.use(vaporInteropPlugin);
-  });
-}
+// `fjs/vapor` for web, WITH the VDOM interop (specs/166 split): the DOM
+// backend (web-dom.ts) plus the vdom-into-vapor mount and the compile-time
+// wrapper's adopt path (web-interop.ts). This is the default web surface —
+// an app with vapor AND vdom on the same page needs both halves. An
+// enableVapor app aliases `fjs/vapor` to `web-pure.ts`, which ships web-dom
+// alone.
+export * from './web-dom';
+export * from './web-interop';

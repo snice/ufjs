@@ -27,14 +27,20 @@ import {
   webAliases,
   moduleDataPlugin,
   vuePinPlugin,
+  vaporWrapperPlugin,
   webPinPlugin,
+  webPureVaporPinPlugin,
+  usesEnableVapor,
   pagesPlugin,
   pluginsPlugin,
   sharedBare,
   SHARED_BARE_BUILTIN,
   sharedStubPlugin,
+  sharedExternalPlugin,
+  tagModulePlugin,
   srcAliasPlugin,
 } from './vue-plugin.js';
+import { usesVaporInterop } from './vdom-libs.js';
 import { loadViteAppHooks, viteAppHooksPlugin } from '../project/vite-plugins.js';
 import { pageChunkSource, pagesFor, writeRouteTypes, type PageRoute } from '../project/pages.js';
 import { writeAssetTypes } from '../project/assets.js';
@@ -52,7 +58,6 @@ import {
 import { printAnalysis } from './analyze.js';
 import { firstFrameNodeWarnings } from './node-budget.js';
 import { assetSourceWarnings } from './asset-check.js';
-import { prependSnapshots, captureStyleSnapshots, describeCapture, type CapturedStyles } from './style-snapshot.js';
 import { flutterDir as configuredFlutterDir, isEjected, readConfig } from '../project/config.js';
 import { formatLog } from '../terminal/colors.js';
 import { ensureOhosSigning } from '../project/ohos-signing.js';
@@ -220,11 +225,6 @@ export function engineDefineArgs(engine?: JsEngine): string[] {
 
 export interface BuildOptions {
   entry?: string;
-  /** Build-time style prewarm (specs/119, bundler/style-snapshot.ts). Set by
-   * `fjs build` / `fjs run` for app targets unless `fjs.styleSnapshot` is
-   * false; `fjs dev` leaves it off — capturing mounts every page, too slow
-   * for a rebuild on every save. */
-  styleSnapshot?: boolean;
   outDir: string;
   /** Minify the bundles. Default true for `fjs build`; `fjs dev` turns it
    * off so the served bundle stays readable in a stack trace. */
@@ -270,6 +270,11 @@ export interface BuildOptions {
    * `--devtools`. Without it the define is false and esbuild drops the
    * whole data plane from the output. */
   devtools?: boolean;
+  /** specs/172 '--ts-style': bundle the TS per-element style engine. App
+   * builds ship only the libfjs-style-backed one; harnesses that switch
+   * engines at runtime (`__fjsNativeStyle = false / 'verify'`) or decode raw
+   * frames need this. */
+  tsStyle?: boolean;
   /** spec 091: engine flavor for bytecode (`--js-engine`) — the .fjsbundle
    * engine id must match the engine embedded in the app, and the fjsc
    * binary is per flavor. Also selected for the Flutter build (spec 105:
@@ -366,6 +371,7 @@ export function parseBuildArgs(argv: string[]): BuildOptions {
     else if (a === '--analyze') opts.analyze = true;
     else if (a === '--pages') opts.pages = true;
     else if (a === '--devtools') opts.devtools = true;
+    else if (a === '--ts-style') opts.tsStyle = true;
     else if (a === '--web') opts.web = true;
     else if (a === '--mp') opts.mp = true;
     else if (a === '--shared-runtime' || a === '--shared') {
@@ -375,6 +381,7 @@ export function parseBuildArgs(argv: string[]): BuildOptions {
   }
   // spec 090: the DevTools data plane ships only where the build opts in
   setDevtoolsBundling(opts.devtools === true);
+  setTsStyleBundling(opts.tsStyle === true);
   // Per-target output layout (spec 047): app builds land in <outDir>/app and
   // web builds in <outDir>/web (buildWeb appends it), so the two targets
   // never clobber each other's artifacts — and a third target (miniprogram,
@@ -400,12 +407,21 @@ let devtoolsBundling = false;
 export function setDevtoolsBundling(v: boolean): void {
   devtoolsBundling = v;
 }
-/** Per-build define set: VUE_DEFINES plus the devtools gate. The web build
- * forces the gate off (the browser has its own DevTools). */
-function fjsDefines(forceOff = false): Record<string, string> {
+/** specs/172: whether app bundles carry the TS per-element style engine
+ * (`--ts-style`). Off: vue/host-ops.ts builds only NativeStyleEngine. */
+let tsStyleBundling = false;
+export function setTsStyleBundling(v: boolean): void {
+  tsStyleBundling = v;
+}
+/** Per-build define set: VUE_DEFINES plus the devtools and style-engine
+ * gates. The web build forces devtools off (the browser has its own
+ * DevTools) and never feeds the style engine — it keeps the TS default
+ * there, the behaviour any stray import had before. */
+function fjsDefines(web = false): Record<string, string> {
   return {
     ...VUE_DEFINES,
-    __FJS_DEVTOOLS__: String(devtoolsBundling && !forceOff),
+    __FJS_DEVTOOLS__: String(devtoolsBundling && !web),
+    __FJS_TS_STYLE__: String(tsStyleBundling || web),
   };
 }
 
@@ -506,11 +522,6 @@ export async function buildBundle(opts: BuildOptions): Promise<BuildResult> {
   const { jsPath, result } = await bundleSingle(opts, root, outDir);
   if (opts.sourcemap) stampDebuggerMap(jsPath, root, outDir);
   const warnings = [...perfWarnings, ...result.warnings.map((w) => w.text)];
-  // before bytecode: the snapshot has to be inside what fjsc compiles
-  if (opts.styleSnapshot) {
-    const captured = await prewarmStyles(() => captureStyleSnapshots(jsPath), warnings);
-    if (captured) prependSnapshots(jsPath, captured.snapshots);
-  }
 
   const res: BuildResult = { jsPath, warnings };
   if (result.metafile) res.metafiles = { [jsPath]: result.metafile };
@@ -532,6 +543,7 @@ async function bundleSingle(
   const entry = path.resolve(opts.entry ?? 'src/main.ts');
   const modules = scanModules(root);
   const appHooks = await loadViteAppHooks(root);
+  const enableVapor = usesEnableVapor(root, entry);
   // single bundle: every page is imported straight into it
   const plugins = [
     nodeBuiltinStubs(),
@@ -540,13 +552,19 @@ async function bundleSingle(
     vueSfcPlugin({
       nativeTags: widgetNativeTags(modules, 'app'),
       sourceMap: opts.sourcemap === true,
+      enableVapor,
     }),
     vuePinPlugin(),
+    // enableVapor (specs/166): pages mount natively through the vapor
+    // runtime — a VDOM module importing a Vapor SFC is a configuration
+    // error and gets no wrapper
+    ...(enableVapor ? [] : [vaporWrapperPlugin()]),
     viteAppHooksPlugin(appHooks),
     srcAliasPlugin(root),
     moduleDataPlugin(root, modules),
+    tagModulePlugin(false),
   ];
-  const alias = { ...flutterAliases(), ...moduleAliases(root, modules) };
+  const alias = { ...flutterAliases(enableVapor, usesVaporInterop(root, entry)), ...moduleAliases(root, modules) };
   if (!fs.existsSync(entry)) {
     throw new Error(`entry not found: ${entry}`);
   }
@@ -574,38 +592,23 @@ async function bundleSingle(
   return { jsPath, result };
 }
 
-/** Runs the capture on a built single bundle and reports it in the log;
- * a failure costs the prewarm, never the build (it is only a speedup). */
-async function prewarmStyles(
-  capture: () => Promise<CapturedStyles | null>,
-  warnings: string[],
-): Promise<CapturedStyles | null> {
-  try {
-    const captured = await capture();
-    if (captured) {
-      console.log(`  ${describeCapture(captured)}`);
-      for (const [route, why] of Object.entries(captured.errors)) {
-        warnings.push(`style prewarm: ${route} threw while mounting, it computes styles at runtime (${why})`);
-      }
-    }
-    return captured;
-  } catch (e) {
-    warnings.push(`style prewarm skipped: ${String((e as Error)?.message ?? e)}`);
-    return null;
-  }
-}
-
 // ---- split build (--pages) -------------------------------------------------
 
 /** Source of the shared-chunk entry. [appModules] are the project's own
  * modules that the app entry pulls in (shell, components, stores): putting
  * them in the shared chunk is what keeps a page chunk down to the page. */
-function sharedEntrySource(
+/** What each shared bare specifier must export (specs/169), from
+ * [collectSharedImports]: a name set, or `'*'` when some importer needs the
+ * whole namespace. Absent map = dev / non-release: every namespace whole. */
+export type SharedNames = Map<string, Set<string> | '*'>;
+
+export function sharedEntrySource(
   appModules: Map<string, string> = new Map(),
   extraShared: string[] = [],
   entryImports: string[] = [],
+  names?: SharedNames,
 ): string {
-  const lines = [
+  const lines: string[] = [
     // What the app entry imports, in its order, before anything else: a
     // module's styles register when it is evaluated, and the fixed list
     // below would otherwise run fjs/plugins (vant's sheets) ahead of the
@@ -613,28 +616,58 @@ function sharedEntrySource(
     // so an equal-specificity rule could win in one build and lose in
     // another (specs/121)
     ...entryImports.map((spec) => `import ${JSON.stringify(spec)};`),
-    "import * as vue from 'vue';",
-    "import * as fjs from 'fjs';",
-    "import * as fjsVue from 'fjs/vue';",
-    "import * as fjsRouter from 'fjs/router';",
-    "import * as fjsApp from 'fjs/app';",
-    "import * as fjsPages from 'fjs/pages';",
-    "import * as fjsPlugins from 'fjs/plugins';",
-    "import * as runtimeCore from '@vue/runtime-core';",
-    "import * as reactivity from '@vue/reactivity';",
-    "import * as shared from '@vue/shared';",
   ];
+  // release (specs/169): a namespace import keeps EVERY export of the module
+  // reachable — runtime-core's whole renderer engine, Suspense, KeepAlive…
+  // whatever no page uses. With the page chunks' actual imports known, the
+  // shared entry imports exactly those names instead. Functions become plain
+  // properties (page code calls them on every render — no getter on the hot
+  // path); anything else stays a getter, keeping ESM live-binding semantics.
+  const nsOf = (spec: string, ident: string): string => {
+    const wanted = names?.get(spec);
+    if (!names || wanted === '*' ) {
+      lines.push(`import * as ${ident} from ${JSON.stringify(spec)};`);
+      return ident;
+    }
+    const list = [...(wanted ?? [])].sort();
+    if (list.length === 0) {
+      // still evaluated (its init order is part of the contract) — but
+      // nothing of it is shared
+      lines.push(`import ${JSON.stringify(spec)};`);
+      lines.push(`const ${ident} = {};`);
+      return ident;
+    }
+    lines.push(`import { ${list.map((n, k) => `${n} as ${ident}_${k}`).join(', ')} } from ${JSON.stringify(spec)};`);
+    lines.push(`const ${ident} = __fjsNs({ ${list.map((n, k) => `get ${n}() { return ${ident}_${k}; }`).join(', ')} });`);
+    return ident;
+  };
+  if (names) {
+    lines.push(
+      'function __fjsNs(o) { for (const k of Object.keys(o)) { const v = o[k]; ' +
+        "if (typeof v === 'function') Object.defineProperty(o, k, { value: v, enumerable: true }); } return o; }",
+    );
+  }
+  const vue = nsOf('vue', 'vue');
+  const fjs = nsOf('fjs', 'fjs');
+  const fjsVue = nsOf('fjs/vue', 'fjsVue');
+  const fjsRouter = nsOf('fjs/router', 'fjsRouter');
+  const fjsApp = nsOf('fjs/app', 'fjsApp');
+  const fjsPages = nsOf('fjs/pages', 'fjsPages');
+  const fjsPlugins = nsOf('fjs/plugins', 'fjsPlugins');
+  const runtimeCore = nsOf('@vue/runtime-core', 'runtimeCore');
+  const reactivity = nsOf('@vue/reactivity', 'reactivity');
+  const shared = nsOf('@vue/shared', 'shared');
   const registrations = [
-    "  vue, fjs, 'fjs/vue': fjsVue, 'fjs/router': fjsRouter,",
-    "  'fjs/app': fjsApp, 'fjs/pages': fjsPages, 'fjs/plugins': fjsPlugins,",
-    "  '@vue/runtime-core': runtimeCore, '@vue/reactivity': reactivity,",
-    "  '@vue/shared': shared,",
+    `  vue: ${vue}, fjs: ${fjs}, 'fjs/vue': ${fjsVue}, 'fjs/router': ${fjsRouter},`,
+    `  'fjs/app': ${fjsApp}, 'fjs/pages': ${fjsPages}, 'fjs/plugins': ${fjsPlugins},`,
+    `  '@vue/runtime-core': ${runtimeCore}, '@vue/reactivity': ${reactivity},`,
+    `  '@vue/shared': ${shared},`,
   ];
   // `fjs.shared` from package.json: third-party packages that page chunks
   // import directly and that must stay a single module instance.
   const extra: string[] = [];
   extraShared.forEach((id, n) => {
-    lines.push(`import * as __s${n} from ${JSON.stringify(id)};`);
+    nsOf(id, `__s${n}`);
     extra.push(
       `S[${JSON.stringify(id)}] = Object.assign({ __esModule: true }, __s${n});`,
     );
@@ -652,6 +685,78 @@ function sharedEntrySource(
   return `${lines.join('\n')}\nconst S = {\n${registrations.join(
     '\n',
   )}\n};\n${extra.join('\n')}\n(globalThis).__FJS_SHARED = S;\n`;
+}
+
+/** Which names each shared bare specifier must export (specs/169): the
+ * union of what the app entry and every page chunk import from it. An ESM
+ * pre-build of exactly the inputs the real chunks are built from, with the
+ * shared specifiers external, leaves their import statements in esbuild's
+ * normalized output form — `import { a, b as c } from "vue";`,
+ * `import * as x from "vue";`, `import x from "vue";` — which a pattern
+ * reads reliably. A namespace or default import (the stub hands over the
+ * whole module object), or an `export * from`, needs the whole namespace:
+ * that specifier falls back to '*'. Release-only: dev hot-reloads single
+ * pages, and a re-evaluated page may import a name nothing else did. */
+export async function collectSharedImports(
+  entryPoints: { name: string; contents: string }[],
+  root: string,
+  shared: string[],
+  plugins: esbuild.Plugin[],
+): Promise<SharedNames> {
+  const names: SharedNames = new Map();
+  const add = (spec: string, name: string | '*'): void => {
+    if (!shared.includes(spec)) return;
+    const cur = names.get(spec);
+    if (cur === '*') return;
+    if (name === '*') {
+      names.set(spec, '*');
+      return;
+    }
+    const set = cur ?? new Set<string>();
+    set.add(name);
+    names.set(spec, set);
+  };
+  const result = await esbuild.build({
+    entryPoints: entryPoints.map((e) => `fjs-narrow:${e.name}`),
+    bundle: true,
+    write: false,
+    format: 'esm',
+    splitting: false,
+    outdir: path.join(root, '.fjs-narrow'),
+    absWorkingDir: root,
+    target: 'es2019', /* PrimJS engine (spec 088) */
+    ...flutterEsbuildPlatform(),
+    plugins: [
+      {
+        name: 'fjs-narrow-entries',
+        setup(build) {
+          build.onResolve({ filter: /^fjs-narrow:/ }, (args) => ({ path: args.path, namespace: 'fjs-narrow' }));
+          build.onLoad({ filter: /.*/, namespace: 'fjs-narrow' }, (args) => {
+            const e = entryPoints.find((x) => `fjs-narrow:${x.name}` === args.path);
+            return { contents: e?.contents ?? '', loader: 'ts', resolveDir: root };
+          });
+        },
+      },
+      ...plugins,
+    ],
+    define: fjsDefines(),
+    ...assetOutputOptions(),
+    logLevel: 'silent',
+  });
+  for (const file of result.outputFiles) {
+    const code = file.text;
+    for (const m of code.matchAll(/\bimport\s*\{([^}]*)\}\s*from\s*"([^"]+)"/g)) {
+      for (const part of m[1].split(',')) {
+        const name = part.trim().split(/\s+as\s+/)[0]?.trim();
+        if (name) add(m[2], name === 'default' ? '*' : name);
+      }
+    }
+    for (const m of code.matchAll(/\bimport\s+(?:\w+\s*,\s*)?\*\s*as\s+\w+\s+from\s*"([^"]+)"/g)) add(m[1], '*');
+    for (const m of code.matchAll(/\bimport\s+[\w$]+\s*(?:,\s*\{[^}]*\})?\s*from\s*"([^"]+)"/g)) add(m[1], '*');
+    for (const m of code.matchAll(/\bexport\s*\*\s*from\s*"([^"]+)"/g)) add(m[1], '*');
+    for (const m of code.matchAll(/\bimport\s*\(\s*"([^"]+)"\s*\)/g)) add(m[1], '*');
+  }
+  return names;
 }
 
 /** The static imports of the app entry, in source order (type-only ones
@@ -702,16 +807,18 @@ async function appModuleGraph(
     format: 'iife',
     target: 'es2019', /* PrimJS engine (spec 088) */
     ...flutterEsbuildPlatform(),
-    alias: { ...flutterAliases(), ...moduleAliases(root, fjsModules) },
+    alias: { ...flutterAliases(usesEnableVapor(root, entry), usesVaporInterop(root, entry)), ...moduleAliases(root, fjsModules) },
     plugins: [
       nodeBuiltinStubs(),
       pagesPlugin(pages, 'app', false),
       pluginsPlugin(pluginsFor(root, 'app'), fjsModules),
       vueSfcPlugin({ nativeTags: widgetNativeTags(fjsModules, 'app') }),
       vuePinPlugin(),
+      ...(usesEnableVapor(root, entry) ? [] : [vaporWrapperPlugin()]),
       viteAppHooksPlugin(appHooks),
       srcAliasPlugin(root),
       moduleDataPlugin(root, fjsModules),
+      tagModulePlugin(false),
     ],
     define: fjsDefines(),
     // write:false, so this never emits an asset — but without the loaders it
@@ -776,6 +883,7 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
 
   // 1) which of the app's modules belong in the shared chunk
   const appModules = await appModuleGraph(entry, root, pages, modules);
+  const enableVapor = usesEnableVapor(root, entry);
   // an fjs module is shared by name like any other stateful library: page
   // chunks import 'test', the shared chunk owns the one instance of it
   const shared = [...sharedBare(root), ...moduleNames(modules)];
@@ -786,18 +894,48 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
     vueSfcPlugin({
       nativeTags: widgetNativeTags(modules, 'app'),
       sourceMap: opts.sourcemap === true,
+      enableVapor,
     }),
+    // --pages' page chunks import Vapor SFCs as readily as the main bundle
+    // does: without the wrapper here, a Vapor component inside a VDOM page
+    // compiles bare and runtime-core (3.5, no interop) renders it as nothing.
+    // Under enableVapor there are no VDOM pages to do the importing.
+    ...(enableVapor ? [] : [vaporWrapperPlugin()]),
     viteAppHooksPlugin(appHooks),
     sharedStubPlugin(appModules, shared),
     srcAliasPlugin(root),
     moduleDataPlugin(root, modules),
+    tagModulePlugin(false),
   ];
+
+  // 1b) release (specs/169): the names the entry and pages actually import
+  // from each shared module — the shared chunk exports only those
+  const sharedNames = opts.release
+    ? await collectSharedImports(
+        [
+          { name: 'entry', contents: `import ${JSON.stringify(entry)};` },
+          ...pages.map((page) => ({ name: `page-${page.chunk}`, contents: pageChunkSource(page) })),
+        ],
+        root,
+        shared.filter((id) => !appModules.has(id)),
+        [
+          nodeBuiltinStubs(),
+          vueSfcPlugin({ nativeTags: widgetNativeTags(modules, 'app'), enableVapor }),
+          ...(enableVapor ? [] : [vaporWrapperPlugin()]),
+          viteAppHooksPlugin(appHooks),
+          sharedExternalPlugin(appModules, shared),
+          srcAliasPlugin(root),
+          moduleDataPlugin(root, modules),
+          tagModulePlugin(false),
+        ],
+      )
+    : undefined;
 
   // 2) the shared chunk itself (the prelude every page runs on top of)
   const sharedPath = path.join(outDir, 'shared.js');
   const sharedResult = await esbuild.build({
     stdin: generatedEntry(
-      sharedEntrySource(appModules, extraShared, entryImportOrder(entry)),
+      sharedEntrySource(appModules, extraShared, entryImportOrder(entry), sharedNames),
       root,
       'fjs-shared',
     ),
@@ -811,7 +949,7 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
     target: 'es2019', /* PrimJS engine (spec 088) */
     ...flutterEsbuildPlatform(),
     minify: opts.minify,
-    alias: { ...flutterAliases(), ...moduleAliases(root, modules) },
+    alias: { ...flutterAliases(enableVapor, usesVaporInterop(root, entry)), ...moduleAliases(root, modules) },
     plugins: [
       nodeBuiltinStubs(),
       pagesPlugin(pages, 'app', false),
@@ -819,11 +957,14 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
       vueSfcPlugin({
         nativeTags: widgetNativeTags(modules, 'app'),
         sourceMap: opts.sourcemap === true,
+        enableVapor,
       }),
       vuePinPlugin(),
+      ...(enableVapor ? [] : [vaporWrapperPlugin()]),
       viteAppHooksPlugin(appHooks),
       srcAliasPlugin(root),
       moduleDataPlugin(root, modules),
+      tagModulePlugin(false),
     ],
     define: fjsDefines(),
     ...assetOutputOptions(),
@@ -888,35 +1029,6 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
     warnings.push(...pageResult.warnings.map((w) => w.text));
     if (pageResult.metafile) metafiles[chunkPath] = pageResult.metafile;
     pageChunks[page.chunk] = chunkPath;
-  }
-
-  if (opts.styleSnapshot) {
-    // Captured on this very output, one fresh VM per page: shared, the
-    // entry, then the page's chunk when the router opens it — the order the
-    // device registers the sheets in. A throwaway single bundle (specs/119)
-    // registered every page's scoped sheet before the plugins' (vant)
-    // sheets, the opposite of the split order, so every snapshot was
-    // refused on the device (specs/121). A fresh VM per page also keeps
-    // other pages' sheets out of the snapshot's dependencies: on the device
-    // they may not have been opened yet.
-    const captured = await prewarmStyles(async () => {
-      const all: CapturedStyles = { snapshots: {}, errors: {}, ms: 0 };
-      for (const page of pages) {
-        const one = await captureStyleSnapshots([sharedPath, jsPath], { routes: [page.path], chunks: pageChunks });
-        if (!one) return null;
-        Object.assign(all.snapshots, one.snapshots);
-        Object.assign(all.errors, one.errors);
-        all.ms += one.ms;
-      }
-      return all;
-    }, warnings);
-    if (captured) {
-      for (const page of pages) {
-        const json = captured.snapshots[page.path];
-        const file = pageChunks[page.chunk];
-        if (json !== undefined && file) prependSnapshots(file, { [page.path]: json });
-      }
-    }
   }
 
   const res: BuildResult = { jsPath, sharedPath, pageChunks, warnings };
@@ -1001,6 +1113,7 @@ async function buildWeb(opts: BuildOptions, outDir: string): Promise<BuildResult
   fs.rmSync(webOut, { recursive: true, force: true });
   fs.mkdirSync(webOut, { recursive: true });
 
+  const enableVapor = usesEnableVapor(root, entry);
   const result = await esbuild.build({
     entryPoints: [entry],
     bundle: true,
@@ -1013,15 +1126,23 @@ async function buildWeb(opts: BuildOptions, outDir: string): Promise<BuildResult
     target: 'es2020',
     platform: 'browser',
     minify: opts.minify,
-    alias: { ...webAliases(), ...moduleAliases(root, webModules) },
+    alias: { ...webAliases(enableVapor, usesVaporInterop(root, entry)), ...moduleAliases(root, webModules) },
     plugins: [
       nodeBuiltinStubs(),
       pagesPlugin(pagesFor(root, 'web'), 'web', false),
       pluginsPlugin(pluginsFor(root, 'web'), webModules, 'web'),
-      vueSfcPlugin({ web: true, nativeTags: widgetNativeTags(webModules, 'web') }),
-      webPinPlugin(),
+      vueSfcPlugin({
+        web: true,
+        nativeTags: widgetNativeTags(webModules, 'web'),
+        enableVapor,
+      }),
+      ...(enableVapor ? [] : [vaporWrapperPlugin()]),
+      // enableVapor: `vue` pins to runtime-core — runtime-dom (the DOM
+      // vdom renderer) must not be reachable from a pure-vapor bundle
+      ...(enableVapor ? [webPureVaporPinPlugin(usesVaporInterop(root, entry))] : [webPinPlugin()]),
       srcAliasPlugin(root),
       moduleDataPlugin(root, webModules),
+      tagModulePlugin(true),
     ],
     define: fjsDefines(true),
     ...assetOutputOptions(),
@@ -1258,8 +1379,9 @@ export async function buildCommand(argv: string[]): Promise<void> {
     await mpBuild({ root: process.cwd(), outDir: opts.outDir });
     return;
   }
-  // app targets get the build-time style prewarm unless the project opts out
-  if (!opts.web) opts.styleSnapshot = readConfig().styleSnapshot !== false;
+  if (readConfig().styleSnapshot !== undefined) {
+    console.warn(formatLog('warn', '"fjs.styleSnapshot" in package.json is ignored: the build-time style snapshot was removed (specs/172)'));
+  }
   const t0 = Date.now();
   const res = await buildBundle(opts);
   for (const w of res.warnings) console.warn(formatLog('warn', w));

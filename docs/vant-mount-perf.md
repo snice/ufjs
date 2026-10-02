@@ -345,7 +345,7 @@ vant-form（346 元素）：
 
 ### Vue 3.6（Vapor）：对这条管线基本无效
 
-> 2026-09-28 更新（specs/148）：第 1 条已解决——fjs 用一层 DOM 外壳接上了 runtime-vapor，Vapor 组件可选用，
+> 2026-09-28 更新（specs/148，2026-09-30 起为 specs/161 的自研运行时）：第 1 条已解决——Vapor 组件可选用，
 > 见 [vue3.md](vue3.md#vue-vapor可选specs148)。第 2 条仍成立：vant 在 Vapor 页里走互操作，挂载成本不变。
 
 1. **Vapor 用不上。** `@vue/runtime-vapor@3.6.0-rc.9` 直接 import
@@ -506,8 +506,8 @@ vant-form / vant-more / vant-nav / vant-basic 把首屏以下的分组包进 `<d
 | 计算之外（比较、编码） | 28 | 14 | 14 |
 
 匹配与计算都是「元素树 + 样式表」的纯函数，构建期就能算好。`fjs build` 在 Node 里把
-app bundle 跑一遍、逐页挂载，导出缓存快照写进页面 chunk；路由挂载前导入。用法与开关见
-[toolchain.md](toolchain.md#构建期样式预热fjsstylesnapshot)。
+app bundle 跑一遍、逐页挂载，导出缓存快照写进页面 chunk；路由挂载前导入。（specs/172 已移除，
+见 [toolchain.md](toolchain.md#样式引擎与---ts-style)。）
 
 ### 实测（`bench:mount`，三种模式各一个全新 VM，冷 = 首开）
 

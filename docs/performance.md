@@ -114,7 +114,9 @@ jsi-and-native-modules.md)。
 的**。`JSON.stringify` 一个小对象 1.3 µs，而把同样 30 个 ASCII 字符逐个写进缓冲区
 也要几微秒——所以常量 props 缓存的是编码好的字节（一次 `set()` 拷贝），不是 JSON 串。
 
-## 首开的冷缓存：构建期预热（2026-09，specs/119）
+## 首开的冷缓存：构建期预热（2026-09，specs/119；specs/172 已移除）
+
+> native 样式引擎（specs/150）上线后收益变小，快照在 specs/172 整个移除；下面是当时的记录。
 
 页面第一次打开时 CSS 引擎的匹配 / 计算缓存是空的，vant-form 为此多付 ~50 ms（容器
 口径）。`fjs build` 现在在 Node 里把每个静态路由挂一遍，把缓存以快照的形式带进包里，
@@ -765,6 +767,11 @@ iPhone 12，`fjs run ios --profile`：
 | 显示，153 之后（VDOM） | **92–93 ms** | 3.5–3.9 ms | 0.5–0.9 | 0 | 88 | 215 ms |
 | 显示，153 之后（Vapor） | 121–144 ms | 3.0–3.3 ms | 0.5–0.6 | 0 | 117–140 | 248–265 ms |
 | 隐藏，153 之后（VDOM / Vapor） | 46 / 42–55 ms | 1.6 ms | 0 | 0 | 45 / 41–53 | 82–94 ms |
+| 显示，158 之后（VDOM） | **87.9–91.4 ms** | 3.1–4.1 ms | 0.5–1.0 | 0 | 83.8–87.5 | 181.7–198.6 ms |
+| 显示，158 之后（Vapor） | 119.5–122.7 ms | 3.0–3.3 ms | 0.5–0.7 | 0 | 115.6–119 | 215.1–215.7 ms |
+| 隐藏，158 之后（VDOM / Vapor） | 21–36 / 46.2–55.1 ms | 1.3–2.1 ms | 0 | 0 | — | 65.6–98.5 ms |
+
+（「158 之后」= 2026-09-30 复测，specs/149–158 全部落地后，同机多次取样；离群值不计入区间。）
 
 **JS 之后的上屏链路**（specs/154，`packages/flutter_fjs/tool/frame-timeline.mjs` 录 VM timeline）：显示那一帧
 UI 线程 99.6 ms，其中 LAYOUT 89 ms = 布局期 build 30（每个 flex 容器的子节点在 `LayoutBuilder` 里建，一格一次）
@@ -779,7 +786,17 @@ specs/155 的文字引用，真机 VDOM 显示 JS 77–89 ms、上屏 181–199 
 30 → 23 ms；上屏 182 ms。
 
 153 之后改 1 / 200 / 2000 格（JS）：VDOM 32 / 45 / 76 ms，Vapor 4.7–5.9 / 16.9 / 70 ms（2026-09-29，
-样式引擎已在 libfjs-style，specs/150–153）。
+样式引擎已在 libfjs-style，specs/150–153）。2026-09-30 复测：VDOM 30.8–61.4 / 56.6–65.2 / 63.2 ms，
+Vapor 2.4–2.9 / 18.3–23.3 / 81.9 ms（单次）——改 1 / 200 格 Vapor 领先一个数量级，改 2000 格两边都进
+设备 GC 噪声区，样本不足以分先后。
+
+**显示帧的两半（2026-09-30，frame-timeline）**：JS 之前 VDOM 88 / Vapor 120 ms；JS 之后那一帧
+VDOM 83.6 / **Vapor 82.8 ms——Flutter 侧两条路径完全一致**（镜像树同构），构成 BUILD ~46–50
+（内嵌 Scavenge 18.7–22.1，扣除后 build ~24–32）+ 纯布局 24.5–28.3 + PAINT ~6.5；隐藏帧
+22.7–24.7 ms（FINALIZE TREE ~15）；raster 最长 17.0 ms（一个 vsync），不是瓶颈。与 specs/157 的
+80.5 ms 在噪声内。**渲染瓶颈没有单项大头：build、GC、纯布局各约 25 ms，继续压要三线并进。**
+Vapor 挂载比 VDOM 慢的 32 ms 全在 JS（拆账见 specs/148 §8.3：外壳对象 ~10、runtime-vapor
+per-item 块/scope ~15、逐格 renderEffect 比克隆块的 text 贵一倍 ~8）。
 
 uni-app x 官方 iOS 数字：iPhone SE2 vapor 160.6 ms / UIKit 328.75 ms（终点是渲染指令交给系统，
 不含最后一帧 GPU；上表的「上屏」多含约一帧）。
@@ -806,7 +823,46 @@ uni-app x 官方 iOS 数字：iPhone SE2 vapor 160.6 ms / UIKit 328.75 ms（终�
 3.4 ms + recompute 自身 2.8 ms 的地板，开了结构规则再多约 11 ms 的首尾位 / 邻居签名计算；Vue + 元素层
 约 115 ms。op 编码是下一个方向，没有立项。
 
-**Vue Vapor 试过，不划算（specs/148 阶段 0）**：`examples/bench/vapor/` 用 Vue 3.6.0-rc.9，把同一个
+**Vue Vapor：自研运行时（specs/161，2026-09-30 起）**：`fjs/vapor` 是 fjs 自己的实现
+（runtime.ts 直连元素 API，Flutter 走 libfjs-style 原生克隆、web 走 DOM 后端），运行时回
+`vue@^3.5` stable，编译器（构建期依赖）仍是 3.6。specs/148 的官方 runtime-vapor + DOM 外壳
+已删除。flat-4050 离线（TS 引擎模式，优化前）：VDOM 挂载 18.0 / 自研 Vapor 46.5 ms；改 1 格
+11.7 → **0.0 ms**、200 格 12.7 → **1.9 ms**、2000 格 21.3 → **19.1 ms**。真机（iPhone 12，
+profile，同一版）：显示 JS 129.3–154.5 ms（官方 runtime-vapor 同口径 119.5–122.7——per-item 块记账
+省不掉，详见 specs/161 §8），隐藏 21.3 ms（官方 46–55），改 1 格 **1.0–5.8 ms**（VDOM
+41.2–56.4）、200 格 **8.9–26.1**、2000 格 **59.4**。原生样式（`fjsrun --frames`，2026-09-30）：
+ONCE 且文本只读循环变量的格子在编译期收成 `repeatTemplate`（一批克隆，不建 per-cell effect /
+scope），挂载 VDOM 18.3 / 自研 Vapor **12.6 ms**；更新不变，改 1 格 **0.0**、200 格 **1.7**、
+2000 格 **17.2 ms**。真机（iPhone，hello-fjs 4050 页，profile）：Vapor 挂载 99–103 ms / VDOM
+89–92 ms——这页 GridVapor 的格子读 `vals` prop，走不到静态批量，吃到的只有 runtime 侧
+（50 行共用一个 scope + 首挂载快插入）；更新路径无回退，改 1 格 3.1–4.6 ms（VDOM 53–64）。
+`repeatTemplateLive` 后同页复测：Vapor 挂载 85.6–108.4 ms（中位 ~92，与 VDOM 88–92 持平），
+更新不变（改 1 格 3.2–4.7、200 格 17–20、2000 格 63–71 ms，首按一次 106 ms 是冷启离群）。
+
+**格子读 prop 的静态列表（`repeatTemplateLive`，2026-09-30）**：结构仍是「一模板 + 一文本」但
+表达式读了 prop/ref 的格子（真实页面的 GridVapor 就是），编译期收成 `repeatTemplateLive`——
+同一批克隆，每格一个 renderEffect（首个列表级 scope，效果的首跑即初次写文本）。离线
+flat-4050（bench 的 FlatLiveVapor）挂载 35 → **30.3 ms**。真机（iPhone，hello-fjs 4050 页，
+profile）复测：Vapor 挂载 85.6–108.4 ms（中位 ~92，与 VDOM 88–92 持平），更新不变（改 1 格
+3.2–4.7、200 格 17–20、2000 格 63–71 ms，首按一次 106 ms 是冷启离群）。
+
+**批量执行下 native（`W_CLONE_MANY`，specs/162，2026-09-30）**：整张静态列表一个字 op——
+libfjs-style 循环展开 N 份、帧末按 anchor 落 root 插入、（静态变体）首写文本随 op 走；
+Dart 只见普通 op，零改动。宿主从每格 3 次 op（clone/insert/text）变成整表 1 次。离线
+flat-4050（原生样式）：静态挂载 12.4 → **10.2 ms**、Live 30.3 → **26.4 ms**，帧体积
+47.8KB → **3.8KB**（静态）/ 21.8KB（Live）——op 编码与派发省掉，剩余大头是 JS 侧逐格
+host 记账（adoptElement/track/映射表，静态约 7 ms）与 per-cell effect（Live 约 18 ms）；
+更新路径不变（0.0 / 1.7 / 16.7 ms）。真机（iPhone，hello-fjs 4050 页，profile）复测：
+Vapor 挂载 75.6–103.7 ms（中位 ~87，VDOM 91.7–113.6）、帧流量 21KB vs VDOM 47KB；更新
+**1.1–1.2 ms 改 1 格**（VDOM 59.6–61.9，约 50x）、200 格 4.7–18.4、2000 格 32.3–67.1
+（中位 ~48，VDOM 37.5–83）——双峰是测量窗口里的 GC 停顿，非回退。再往下的选项：批量
+格子的轻量记账（跳过非 root/text 节点的包装与映射）、每行一个 effect（50 个代替 2000 个，
+挂载估再省 13–16 ms，代价是改 1 格重写整行文本，更新换挂载）——均未立项。同一轮
+（specs/161 侧）修复：数字源 `v-for="r in N"` 的 item 此前 0 基（VDOM 是 1..N），静态格子
+只读 index 掩住了它，格子一读 `r` 首行即空、整体错位一行；已按 Vue 语义改 1..N 并加
+parity 用例（ba98359）。
+
+**官方 runtime-vapor 的历史数字（specs/148 阶段 0，已被上者取代）**：`examples/bench/vapor/` 用 Vue 3.6.0-rc.9，把同一个
 `Flat4050.vue` 分别以 VDOM（fjs 渲染器）和 Vapor（官方 runtime-vapor 跑在一层落到同一套 nodeOps 的 DOM 外壳上）
 挂载，同一份 runtime-core、同一个样式引擎。离线挂载 VDOM **65.5 ms**、Vapor **81.5 ms**，卸载 8.2 / 9.5 ms。
 逐段计时：两边的宿主工作（建元素、scope、class、insert、文本）都约 32 ms，flush 都约 18.5 ms；VDOM 的
@@ -832,6 +888,32 @@ child list；flush 里按父节点的 child list 顺序游标一次得到首尾�
 JS 里的样式引擎到此为止：每元素约 6 µs（十几个状态字段、几次 Map 查找）是 PrimJS 解释执行的地板。量过的上限——
 样式调用换成每次一个 op、JS 不再 flush——不经过 Vue 的渲染器挂载 42.6 → 21.6 ms，所以下一步是样式引擎下沉 C++
 （specs/150，门控 spike）。
+
+## Vapor 包体（2026-10，specs/166–168）
+
+同一个应用（`examples/vapor-app`：两页 + vapor Shell + pinia store）分别按 enableVapor 与 VDOM
+构建（VDOM 版 = 去掉 `enableVapor` 与 `vapor` 属性，其余不动），`fjs build --analyze`：
+
+| | VDOM | enableVapor（spec 168 前） | enableVapor（spec 168 后） |
+|---|---|---|---|
+| Web 总量 | 257.0 KB / gz 94.3 KB | 214.2 KB / gz 76.5 KB | **116.3 KB / gz 43.7 KB** |
+| Flutter `shared.js` | 313.7 KB / gz 113.6 KB | 336.4 KB / gz 120.7 KB | 同左（168 未动 Flutter） |
+| Flutter `shared.js`（specs/169，`--release`） | — | — | **207.3 KB / gz 71.6 KB** |
+
+- **web 的大头是被一个样式函数拖进来的**：每个带 `<style>` 的 SFC，生成代码都
+  `import { injectStyle } from 'fjs/web'`，而 `fjs/web` 入口静态导入整张 VDOM web 组件表
+  （canvas 2d、form、rich-text、picker、swiper、list-view……约 100 KB）。纯 vapor 应用从不
+  实例化它们。specs/168 把 `injectStyle` 拆成叶子模块 `fjs/web-style`，enableVapor web 包体减半。
+  剩下的：base-css 26 KB、vue-router 25.2 KB、@vue/reactivity 16.6 KB、vapor host 9.4 KB、
+  runtime-core 8.3 KB（tree-shake 后）、pinia 5.9 KB。
+- **Flutter 端（specs/169）**：原先 enableVapor 反而更大（336.4 KB），两层原因——分包的
+  shared.js 用 `import * as` 整命名空间导出（runtime-core 68.4 KB 整包可达），以及
+  `vue/renderer.ts` 顶层的 `createRenderer` 调用把 VDOM 渲染引擎钉进任何导入它的包。169 把
+  渲染器无关的宿主原语拆到 `vue/host-ops.ts`、enableVapor 走纯 vapor 面（无互操作、无内置
+  VDOM 组件），release 的 shared.js 只导出页面用到的名字：**207.3 KB / gz 71.6 KB**（runtime-core
+  11.3 KB），比同内容 VDOM 版的 313.7 KB 小 34%。L2 单独（不收窄）为 304.4 KB。release 收窄
+  对 VDOM 应用同样生效：hello-fjs 436.3 → 375.9 KB、demo 809.4 → 652.9 KB。剩下的大头是 TS
+  样式引擎 `css/style.ts` 41.9 KB（有原生样式引擎时仍进包，另立 spec）。
 
 ## 样式引擎下沉 C++：libfjs-style（2026-09，specs/150）
 
@@ -892,14 +974,17 @@ specs/146 / 147 / 149 连续三轮之后，样式引擎在 JS 里每元素仍约
 - **文字走引用**（specs/155）：一次 setText 1.36 µs 里，`drawableText` 的正则 0.45、逐字节写 1–2 个字符 0.64——
   解释器下循环本身就贵。改成字符串随帧交给 host（数组 push + 9 字节 op），C++ 展开成同样的 SetText：flat-4050 VDOM
   挂载 20.3 → 17.7 ms，改 2000 格 VDOM 22.6 → 20.1、Vapor 21.2 → 18.5 ms。
-- 对拍：`__fjsNativeStyle = 'verify'` 下两个引擎同时跑、每帧逐元素比较——flat-4050、demo 全部页面
-  （`demo/bench/verify-pages.ts`、`mount-verify.ts`、`mount-prewarm-verify.ts`）、hello-fjs 66 页
+- 对拍（specs/172 起要 `fjs build --ts-style`）：`__fjsNativeStyle = 'verify'` 下两个引擎同时跑、每帧逐元素比较——flat-4050、demo 全部页面
+  （`demo/bench/verify-pages.ts`、`mount-verify.ts`，当时还有已删的 `mount-prewarm-verify.ts`）、hello-fjs 66 页
   （`examples/hello-fjs/bench/verify-pages.ts`）共 3 万余次比较，0 不一致。
 
 ## 已知热点（优化路线）
 
-按 2026-09-03 那轮真机/模拟器实测重排过：
+按 2026-09-03 那轮真机/模拟器实测重排过（**2026-09-30 增补**见第一条）：
 
+- **4050 显示帧，2026-09-30 复盘**：JS 段 VDOM 88 / Vapor 120 ms；之后的一帧 build（扣 GC）
+  ~25–32 + GC ~19–22 + 纯布局 ~25–28，三块均衡无单项大头，raster 一帧封顶。Vapor 与 VDOM 的
+  Flutter 侧完全相同，差值全在 JS（specs/148 §8.3）。
 - **第三方组件库页面的首开**：CSS 规则全集常驻（demo 注册 639 条）× 每个
   新元素签名的线性扫，vant 页首开 200–400 ms，且卸载即逐出缓存、重开重付。
   **2026-09 已修**：specs/075 索引把匹配从 ~240 ms 压到 7.2 ms；specs/076

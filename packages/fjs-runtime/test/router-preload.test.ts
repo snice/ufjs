@@ -6,8 +6,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { defineComponent, h } from '@vue/runtime-core';
 import { setOpSink } from '../src/host';
-import { styleEngine } from '../src/vue/renderer';
+import '../src/vue/renderer';
 import { createRouter, definePage, definePageLoader } from '../src/router/flutter';
+// VDOM pages mount through the injected mounter (specs/169); app/flutter.ts
+// registers it in an app — a bare router needs it imported
+import '../src/router/flutter-vdom';
 import { createRouter as createWebRouter } from '../src/router/web';
 
 const view = () => defineComponent({ setup: () => () => h('view') });
@@ -31,27 +34,6 @@ describe('Flutter router.preload', () => {
   it('resolves for a path no route matches', async () => {
     const router = createRouter({ routes: [{ path: '/p143-only' }] });
     await expect(router.preload('/p143-missing')).resolves.toBeUndefined();
-  });
-
-  it('leaves the style snapshot to the open (specs/143 plan §3.5)', async () => {
-    setOpSink(() => {});
-    definePage('/p143-snap', view());
-    (globalThis as { __fjsStyleSnapshots?: Record<string, string> }).__fjsStyleSnapshots = {
-      '/p143-snap': JSON.stringify({ v: 999 }), // refused, but still counted
-    };
-    const imports = vi.spyOn(styleEngine, 'importSnapshot');
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      const router = createRouter({ routes: [{ path: '/p143-snap' }] });
-      await router.preload('/p143-snap');
-      expect(imports).not.toHaveBeenCalled();
-      await router.replace('/p143-snap');
-      expect(imports).toHaveBeenCalledTimes(1);
-    } finally {
-      imports.mockRestore();
-      warn.mockRestore();
-      delete (globalThis as { __fjsStyleSnapshots?: unknown }).__fjsStyleSnapshots;
-    }
   });
 
   it('loads every static page once the first page has settled', async () => {

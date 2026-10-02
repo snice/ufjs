@@ -978,6 +978,9 @@ struct fjs_style {
 
   std::vector<uint32_t> scratch_classes;
   std::unordered_map<uint32_t, std::vector<TemplateNode>> templates;
+  // CLONE_MANY root inserts deferred to the end of the frame: (parent, root,
+  // anchor) triples, applied in op order after the byte stream (specs/162)
+  std::vector<uint32_t> pending_roots;
 
   // A packed string of the word stream: byte length, then the bytes in
   // ceil(len / 4) little-endian words.
@@ -1033,7 +1036,14 @@ struct fjs_style {
   bool clone(uint32_t tid, uint32_t first) {
     auto it = templates.find(tid);
     if (it == templates.end()) return false;
-    const std::vector<TemplateNode>& t = it->second;
+    return clone_at(it->second, first, kNone, nullptr);
+  }
+
+  // One copy of a template: nodes at first, first + 1, … in template order,
+  // roots unattached (the host inserts). When override_node is a template
+  // node index, that node's own static SetText is suppressed and
+  // *override_text is emitted instead (CLONE_MANY's per-copy initial text).
+  bool clone_at(const std::vector<TemplateNode>& t, uint32_t first, uint32_t override_node, const std::string* override_text) {
     if (first == 0 || first + t.size() >= kMaxId) return false;
     for (size_t k = 0; k < t.size(); k++) {
       const TemplateNode& tn = t[k];
@@ -1045,7 +1055,8 @@ struct fjs_style {
       out.push_back(static_cast<uint8_t>(tn.create_tag.size() >> 8));
       out.insert(out.end(), tn.create_tag.begin(), tn.create_tag.end());
       if (!tn.props.empty()) put_string_op(kOpSetProps, id, tn.props);
-      if (!tn.text.empty()) put_string_op(kOpSetText, id, tn.text);
+      if (!tn.text.empty() && k != override_node) put_string_op(kOpSetText, id, tn.text);
+      if (k == override_node && override_text != nullptr) put_string_op(kOpSetText, id, *override_text);
       if (tn.flags & 2) {
         if (!apply_el(id, tn.tag, tn.defaults, tn.flags & 1)) return false;
         if (tn.scope != 0) apply_scope(id, tn.scope);
@@ -1062,6 +1073,46 @@ struct fjs_style {
       put_u32(out, id);
       put_u32(out, 0x7fffffffu);
       if (!apply_insert(pid, id, 0x7fffffffu)) return false;
+    }
+    return true;
+  }
+
+  // CLONE_MANY (specs/162): count copies of one template in a single op —
+  // per-copy clone_at plus the root insert the host would otherwise encode
+  // per cell, and (text_node set) the initial text from a packed string
+  // array. anchor 0 = append; otherwise the copies land before that node,
+  // in order, at the index it holds at expansion time.
+  bool clone_many(const uint32_t* w, size_t n, size_t& i) {
+    if (i + 7 > n) return false;
+    uint32_t tid = w[i], first = w[i + 1], count = w[i + 2], parent = w[i + 3], anchor = w[i + 4], text_node = w[i + 5], ntexts = w[i + 6];
+    i += 7;
+    auto it = templates.find(tid);
+    if (it == templates.end()) return false;
+    const std::vector<TemplateNode>& t = it->second;
+    if (count == 0 || t.empty() || first == 0 || count > (kMaxId - first) / t.size()) return false;
+    if (text_node != kNone && text_node >= t.size()) return false;
+    if ((text_node != kNone) != (ntexts == count)) return false;
+    std::vector<std::string> texts;
+    if (text_node != kNone) {
+      texts.resize(ntexts);
+      for (uint32_t k = 0; k < ntexts; k++) {
+        if (!read_packed(w, n, i, texts[k])) return false;
+      }
+    }
+    uint32_t index = 0x7fffffffu;  // append
+    if (parent == kNone && anchor != 0) return false;
+    const uint32_t nn = static_cast<uint32_t>(t.size());
+    for (uint32_t k = 0; k < count; k++) {
+      uint32_t at = first + k * nn;
+      if (!clone_at(t, at, text_node, text_node != kNone ? &texts[k] : nullptr)) return false;
+      if (parent != kNone) {
+        // pre-order: node 0 is the root; the insert itself is deferred to
+        // the end of the frame (see process) because the parent or anchor
+        // may be created by later ops of this same frame
+        pending_roots.push_back(parent);
+        pending_roots.push_back(at);
+        pending_roots.push_back(anchor);
+      }
     }
     return true;
   }
@@ -1207,6 +1258,9 @@ struct fjs_style {
           // frame that could name the new ids
           if (!need(2) || !clone(w[i], w[i + 1])) return false;
           i += 2;
+          break;
+        case FJS_STYLE_W_CLONE_MANY:
+          if (!clone_many(w, n, i)) return false;
           break;
         default:
           return false;
@@ -1452,6 +1506,36 @@ struct fjs_style {
       }
     }
     out.insert(out.end(), copy_from, r.end);
+    // deferred CLONE_MANY root inserts (specs/162): parents and anchors can
+    // be created by byte ops of this same frame, so the inserts land here —
+    // after every structural op of the frame — with each anchor's index
+    // resolved against the tree as this frame leaves it
+    for (size_t k = 0; k < pending_roots.size(); k += 3) {
+      uint32_t parent = pending_roots[k], root = pending_roots[k + 1], anchor = pending_roots[k + 2];
+      uint32_t index = 0x7fffffffu;
+      if (anchor != 0) {
+        const std::vector<uint32_t>& kids = nodes[parent].kids;
+        for (size_t j = 0; j < kids.size(); j++) {
+          if (kids[j] == anchor) {
+            index = static_cast<uint32_t>(j);
+            break;
+          }
+        }
+        if (index == 0x7fffffffu) {
+          strip(in, len);
+          return -1;
+        }
+      }
+      out.push_back(kOpInsert);
+      put_u32(out, parent);
+      put_u32(out, root);
+      put_u32(out, index);
+      if (!apply_insert(parent, root, index)) {
+        strip(in, len);
+        return -1;
+      }
+    }
+    pending_roots.clear();
     if (!flush()) {
       strip(in, len);
       return -2;

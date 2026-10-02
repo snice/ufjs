@@ -10,9 +10,12 @@ import {
   type RouteRecordRaw,
   type Router as VueRouter,
 } from 'vue-router';
+import { getCurrentInstance } from '@vue/runtime-core';
+import { hasVaporInjectionContext, inject as vaporInject } from '../vapor/instance';
 import { Matcher } from './match';
 import { startPreloadQueue } from './preload-queue';
-import { whenSettled } from './settled';
+import { preloadRecord, whenBrowserIdle } from './web-preload';
+import { onPageSettled, setPagePathResolver, whenSettled } from './settled';
 import type { RouteLocation, RouteLocationRaw, Router, RouterOptions } from './types';
 
 /** One KeepAlive slot per history stack entry. Path alone is not enough:
@@ -127,32 +130,6 @@ export function createRouter(options: WebRouterOptions): FjsWebRouter {
   return router;
 }
 
-/** Runs the route's lazy `() => import(...)` (the generated web table's
- * shape); the browser keeps the module, so the navigation's own import
- * resolves from cache. A synchronous component is already loaded. */
-async function preloadRecord(matcher: Matcher, to: RouteLocationRaw): Promise<void> {
-  const record = matcher.record(matcher.resolve(to).path);
-  const component = record?.component;
-  if (typeof component !== 'function' || isComponentFunction(component)) return;
-  await (component as () => Promise<unknown>)();
-}
-
-/** A functional component or a class-style one, not a lazy loader. */
-function isComponentFunction(fn: object): boolean {
-  return 'props' in fn || 'setup' in fn || 'render' in fn || '__vccOpts' in fn;
-}
-
-/** requestIdleCallback where there is one (Safari has none), bounded so a
- * page that is never idle still gets its modules. */
-function whenBrowserIdle(): Promise<void> {
-  return new Promise((resolve) => {
-    const ric = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void })
-      .requestIdleCallback;
-    if (typeof ric === 'function') ric(() => resolve(), { timeout: 2000 });
-    else setTimeout(resolve, 50);
-  });
-}
-
 // ---- page settled ----------------------------------------------------------
 //
 // State lives in ./settled so <canvas> can read it without pulling
@@ -160,35 +137,47 @@ function whenBrowserIdle(): Promise<void> {
 // public API, so the two platforms' 'fjs/router' surfaces stay identical
 // (specs/027).
 
-/** Runs `cb` once this page's route transition has finished.
- *
- * Expensive first-paint work costs frames, and during a navigation those are
- * the frames the page transition is animating. Always asynchronous, even
- * when the page has already settled, so a caller in setup() can finish its
- * own initialisation first. Fires at most once.
- *
- * `<canvas>` already does this for its first `@resize`, so a charting page
- * usually needs nothing — this is for everything else. */
-export function onPageSettled(cb: () => void): void {
-  let path: string | undefined;
+/** What the enableVapor shell provides to each vapor page (specs/167) —
+ * the same symbols the Flutter router provides, so page code is shared. */
+export const ROUTER_KEY = Symbol.for('fjs.router');
+export const ROUTE_KEY = Symbol.for('fjs.route');
+
+setPagePathResolver(() => {
+  if (hasVaporInjectionContext()) {
+    const route = vaporInject(ROUTE_KEY, null) as { fullPath?: string } | null;
+    return route?.fullPath ?? active?.currentRoute?.fullPath;
+  }
   try {
     // inside a page's setup this is that page's route; outside it falls back
     // to whatever the router is on
-    path = (vueUseRoute() as unknown as { fullPath?: string })?.fullPath;
+    return (vueUseRoute() as unknown as { fullPath?: string })?.fullPath;
   } catch {
-    path = active?.currentRoute?.fullPath;
+    return active?.currentRoute?.fullPath;
   }
-  whenSettled(path, cb);
-}
+});
+
+export { onPageSettled };
 
 export function useRouter(): Router {
   if (!active) throw new Error('useRouter(): no router — call createFjsApp first');
   return active;
 }
 
-/** vue-router's own useRoute: reactive, and correct inside a page that is
- * not the currently active one (kept-alive views). */
-export const useRoute = vueUseRoute as unknown as () => RouteLocation;
+/** A vapor page (specs/167): the route its shell provided — this page's,
+ * a `reactive` copy like the Flutter router's. vue-router's own useRoute
+ * inside a VDOM component. Outside both, the router's current route. */
+export function useRoute(): RouteLocation {
+  if (hasVaporInjectionContext()) {
+    const provided = vaporInject(ROUTE_KEY, null) as RouteLocation | null;
+    if (provided) return provided;
+  }
+  if (getCurrentInstance()) return vueUseRoute() as unknown as RouteLocation;
+  const current = active?.vueRouter.currentRoute.value;
+  if (!current) {
+    throw new Error('useRoute(): no router — call createFjsApp first');
+  }
+  return current as unknown as RouteLocation;
+}
 
 /** No-op on web: page components are imported by the generated route
  * table instead of registering themselves from a chunk. */

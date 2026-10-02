@@ -1,0 +1,31 @@
+{
+  "name": "vapor-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "fjs dev",
+    "dev:web": "vite --host 0.0.0.0",
+    "build": "fjs build",
+    "build:web": "fjs build --web",
+    "build:vite": "vite build",
+    "check": "fjs build check/main.ts --ts-style --out dist/check && ../../packages/flutter_fjs/native/build-native/fjsrun --pump 200 dist/check/app/bundle.js",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "pinia": "3.0.4",
+    "vue": "3.5.43"
+  },
+  "devDependencies": {
+    "@ufjs/cli": "workspace:*",
+    "@ufjs/runtime": "workspace:*",
+    "@vitejs/plugin-vue": "^6.0.3",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2",
+    "vue-tsc": "^3.3.11"
+  },
+  "fjs": {
+    "shared": [
+      "pinia"
+    ]
+  }
+}

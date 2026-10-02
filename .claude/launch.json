@@ -69,6 +69,22 @@
         "dev:pages"
       ],
       "port": 38900
+    },
+    {
+      "name": "vapor-app-web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "examples/vapor-app",
+        "exec",
+        "vite",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "5185",
+        "--strictPort"
+      ],
+      "port": 5185
     }
   ]
 }

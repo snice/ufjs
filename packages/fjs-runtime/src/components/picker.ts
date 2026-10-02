@@ -23,10 +23,11 @@ import {
   defineComponent,
   h,
   ref,
-  resolveDynamicComponent,
   watch,
   type PropType,
 } from '@vue/runtime-core';
+// tag names resolve through the vapor runtime too (specs/171)
+import { resolveDynamicComponent } from '../vapor/instance';
 import {
   columnsFor,
   reflow,

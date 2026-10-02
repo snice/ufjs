@@ -33,14 +33,14 @@
     "echarts": "^6.1.0",
     "pixi.js": "^7.4.3",
     "three": "0.170.0",
-    "vue": "3.6.0-rc.9"
+    "vue": "3.5.43"
   },
   "devDependencies": {
     "@types/three": "0.170.0",
     "@ufjs/cli": "workspace:*",
     "@ufjs/runtime": "workspace:*",
     "@vitejs/plugin-vue": "^6.0.3",
-    "@vue/runtime-core": "3.6.0-rc.9",
+    "@vue/runtime-core": "3.5.43",
     "typescript": "^5.9.3",
     "vite": "^8.2.2",
     "vue-tsc": "^3.3.11"

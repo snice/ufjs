@@ -16,7 +16,9 @@ import {
   writeModuleTypes,
   type FjsModule,
 } from './project/modules.js';
-import { isNativeTagFor, prepareVaporSfcSource, runtimeDir } from './bundler/vue-plugin.js';
+import { isNativeTagFor, isVaporSfcFile, runtimeDir, vaporWrapperModule, compileVaporSfcModule, usesEnableVapor } from './bundler/vue-plugin.js';
+import { usesVaporInterop } from './bundler/vdom-libs.js';
+import { transform } from 'esbuild';
 import { readConfig } from './project/config.js';
 import { swiperChildrenTransform } from './template/swiper-children.js';
 import { copyLocalDir, copyModuleDataForWeb, HTML_DIR } from './bundler/build.js';
@@ -50,6 +52,7 @@ interface ResolvedViteConfig {
 }
 
 interface ViteServer {
+  ws: { send(data: unknown): void };
   moduleGraph: {
     getModuleById(id: string): unknown;
     invalidateModule(mod: unknown): void;
@@ -72,6 +75,7 @@ interface ViteMiddlewareResponse {
 }
 
 interface ViteDevServer {
+  ws: { send(data: unknown): void };
   middlewares: {
     use(handler: (
       req: ViteMiddlewareRequest,
@@ -89,7 +93,7 @@ interface VitePlugin {
   configureServer(server: ViteDevServer): void;
   writeBundle(options: { dir?: string }): void | Promise<void>;
   resolveId(id: string, importer?: string): string | null;
-  load(id: string): string | null;
+  load(id: string): string | null | Promise<string | null>;
   transform(code: string, id: string): string | null;
   handleHotUpdate(ctx: HotUpdateContext): Promise<void>;
 }
@@ -139,6 +143,11 @@ export function fjs(): VitePlugin {
   // warn about an unresolved component for something only Flutter renders
   let nativeTags: string[] = [];
   let modules: FjsModule[] = [];
+  // specs/166: the app entry declared `enableVapor: true` (default entry
+  // src/main.ts, the same convention dev and build follow)
+  let enableVapor = false;
+  // specs/182: an enableVapor app with a VDOM component library (vant)
+  let interop = false;
   return {
     name: 'fjs-vite',
     enforce: 'pre',
@@ -152,6 +161,8 @@ export function fjs(): VitePlugin {
       writeModuleTypes(root, modules);
       writeAutoimportTypes(root);
       nativeTags = widgetNativeTags(modules, 'web');
+      enableVapor = usesEnableVapor(root);
+      interop = usesVaporInterop(root);
       const runtime = runtimeDir();
       return {
         resolve: {
@@ -164,11 +175,33 @@ export function fjs(): VitePlugin {
             })),
             // `@/x` -> `<root>/src/x`, matching what `fjs build` resolves.
             { find: /^@\//, replacement: `${path.join(root, 'src')}/` },
-            { find: /^fjs\/app$/, replacement: path.join(runtime, 'src', 'app', 'web.ts') },
-            { find: /^fjs\/router$/, replacement: path.join(runtime, 'src', 'router', 'web.ts') },
+            // enableVapor (specs/166): the pure-vapor shell — same reason
+            // as the `vue` alias below, the vdom shell stays out of the graph
+            { find: /^fjs\/app$/, replacement: path.join(runtime, 'src', 'app', enableVapor ? 'web-vapor.ts' : 'web.ts') },
+            { find: /^fjs\/router$/, replacement: path.join(runtime, 'src', 'router', enableVapor ? 'web-vapor.ts' : 'web.ts') },
             { find: /^fjs\/web$/, replacement: path.join(runtime, 'src', 'web', 'index.ts') },
+            // generated <style> injection (specs/168): the leaf module
+            { find: /^fjs\/web-style$/, replacement: path.join(runtime, 'src', 'web', 'inject-style.ts') },
             { find: /^fjs\/vue$/, replacement: path.join(runtime, 'src', 'vue', 'index.ts') },
-            { find: /^fjs\/vapor$/, replacement: path.join(runtime, 'src', 'vapor', 'web.ts') },
+            { find: /^fjs\/vapor$/, replacement: path.join(runtime, 'src', 'vapor', enableVapor && !interop ? 'web-pure.ts' : 'web.ts') },
+            // ONE runtime-core for the whole web app — the shim's 3.5
+            // standalone, exactly what the esbuild --web build pins
+            // (vuePinPlugin). Left alone, vite prebundles '@vue/runtime-core'
+            // as a single dep entry shared by vue 3.6 (the demo's version)
+            // and the fjs runtime's 3.5.42 — whichever version wins, the
+            // other's instances cross into it and die (`instance.scope.on is
+            // not a function` on unmount, dead lifecycle hooks, split
+            // reactivity) — specs/165. vue 3.5.42 here is the same copy
+            // fjs-runtime links, so realpath dedupe yields a single graph.
+            // enableVapor (specs/166): `vue` is runtime-core — the vue
+            // package's entry is runtime-dom, which a pure-vapor app must
+            // not reach. vue-router needs nothing beyond runtime-core.
+            // specs/167: through vue-pure.ts, which adds the vapor-aware
+            // lifecycle/provide/inject for composables (pinia, vueuse)
+            // specs/182: with a VDOM component library, runtime-dom on top
+            ...(enableVapor
+              ? [{ find: /^vue$/, replacement: path.join(runtime, 'src', 'vapor', interop ? 'vue-interop.ts' : 'vue-pure.ts') }]
+              : [{ find: /^vue$/, replacement: path.join(runtime, 'node_modules', 'vue', 'dist', 'vue.runtime.esm-bundler.js') }]),
             { find: /^fjs$/, replacement: path.join(runtime, 'src', 'index.ts') },
           ],
         },
@@ -287,13 +320,77 @@ export function fjs(): VitePlugin {
     resolveId(id, importer) {
       if (id === 'fjs/pages') return VIRTUAL_PAGES;
       if (id === 'fjs/plugins') return VIRTUAL_PLUGINS;
+      // specs/171: a component-backed fjs tag a vapor template uses
+      if (id.startsWith('fjs/tag/')) {
+        const file = path.join(runtimeDir(), 'src', 'vapor', 'tags', 'web', `${id.slice('fjs/tag/'.length)}.ts`);
+        return fs.existsSync(file) ? file : null;
+      }
       // what a module's prepare hook generated for this project
       if (id.startsWith('fjs/data/') && importer) {
-        return resolveModuleData(root, modules, importer, id);
+        // a module's SFC compiled as vapor imports from its virtual id
+        // (specs/181: IconMindWeb under enableVapor)
+        return resolveModuleData(root, modules, importer.replace(/^\0fjs-vapor-(?:sfc|wrapper):/, ''), id);
+      }
+      // a VDOM module importing a Vapor SFC gets the compile-time wrapper
+      // (specs/161 §3.2): the \0 prefix keeps plugin-vue from touching it.
+      // The route table imports pages by absolute path (`component: () =>
+      // import(<abs>)`), so absolute ids resolve as themselves — relative
+      // ids keep the importer-relative resolution (specs/165). The
+      // wrapper's own `import __vapor from <file>` lands on the compiled
+      // SFC module instead — plugin-vue must never compile a vapor SFC:
+      // its output imports useCssVars from 'vue', which the enableVapor
+      // runtime-core pin does not carry (and its vdom shape is useless
+      // here). Under enableVapor the router mounts vapor pages natively —
+      // no wrapper — but the SFC still compiles through the own compiler
+      // (specs/166): the virtual id routes there directly.
+      if (id.endsWith('.vue') && importer) {
+        const bare = id.split('?')[0];
+        const file = bare.startsWith('.')
+          ? path.resolve(path.dirname(importer.split('?')[0]), bare)
+          : path.isAbsolute(bare)
+            ? bare
+            : null;
+        if (file && fs.existsSync(file) && isVaporSfcFile(file, readConfig(root).vapor?.libs !== false, enableVapor)) {
+          if (importer.startsWith('\0fjs-vapor-wrapper:')) return '\0fjs-vapor-sfc:' + file;
+          return enableVapor ? '\0fjs-vapor-sfc:' + file : '\0fjs-vapor-wrapper:' + file;
+        }
       }
       return null;
     },
-    load(id) {
+    async load(id) {
+      if (id.startsWith('\0fjs-vapor-wrapper:')) {
+        return vaporWrapperModule(id.slice('\0fjs-vapor-wrapper:'.length));
+      }
+      if (id.startsWith('\0fjs-vapor-sfc:')) {
+        const file = id.slice('\0fjs-vapor-sfc:'.length);
+        const res = await compileVaporSfcModule(file, {
+          web: true,
+          moduleTags: new Set(nativeTags),
+          root,
+          enableVapor,
+        });
+        if ('errors' in res) {
+          // vite reports a load failure through a thrown error
+          throw new Error('[fjs] vapor SFC compile failed:\n' + res.errors.map((e) => e.text).join('\n'));
+        }
+        // compileScript emits TS (the SFC says lang="ts"); the esbuild build
+        // transpiles after the plugin, vite never sees this id — do it here
+        const js = await transform(res.code, {
+          loader: 'ts',
+          format: 'esm',
+          target: 'esnext',
+          sourcefile: file,
+        });
+        // the module's id is virtual, so vite cannot resolve the page's own
+        // RELATIVE imports against it (`../stores/counter` failed with
+        // "Does the file exist?" — specs/167). Anchor them at the real file;
+        // absolute paths still get vite's extension resolution, and a
+        // relative .vue import lands on the absolute-path branch above.
+        return js.code.replace(
+          /(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])(\.{1,2}\/[^'"]+)\2/g,
+          (_m, lead: string, q: string, rel: string) => `${lead}${q}${path.resolve(path.dirname(file), rel)}${q}`,
+        );
+      }
       if (VUE_ROUTE_BLOCK_RE.test(id)) return 'export default {}';
       if (id === VIRTUAL_PLUGINS) {
         return pluginTableSource(pluginsFor(root, 'web'), scanModules(root), 'web');
@@ -313,16 +410,19 @@ export function fjs(): VitePlugin {
     // with that rule, and NutUI's <view>s rely on it. A raw scss block is
     // skipped for the same reason: its nesting would fool the rule scanner.
     transform(code, id) {
-      // Vapor SFCs (specs/148): see prepareVaporSfcSource
-      if (id.endsWith('.vue')) {
-        return prepareVaporSfcSource(code, id, readConfig(root).vapor?.libs !== false);
-      }
       if (VUE_STYLE_BLOCK_RE.test(id)) {
         return rewriteFjsCss(code, { flexDefault: !/[&?]lang\.(?!css\b)/.test(id) });
       }
       return PLAIN_CSS_RE.test(id) ? expandFlexDefault(code) : null;
     },
     async handleHotUpdate(ctx) {
+      // a vapor SFC compiles under a virtual id (\0fjs-vapor-sfc:) that no
+      // module-graph node owns, so vite cannot invalidate it — a full reload
+      // is the honest update (specs/165)
+      if (isVaporSfcFile(ctx.file, readConfig(root).vapor?.libs !== false, enableVapor)) {
+        ctx.server.ws.send({ type: 'full-reload' });
+        return;
+      }
       // an edit can change what a module generates — the icons a page names,
       // the strings it translates — so the hooks run again before the reload
       if (ctx.file.includes(`${path.sep}src${path.sep}`) && modules.some((m) => m.prepare)) {

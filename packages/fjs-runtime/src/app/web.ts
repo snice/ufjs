@@ -27,7 +27,7 @@ import {
   markPageSettled,
 } from '../router/settled';
 import { installFjsWeb } from '../web/index';
-import { trackWebApp } from '../vapor/web-apps';
+import { createVaporWebApp } from './web-vapor';
 import { applyPlugins, type FjsPlugin } from './plugin';
 import type {
   NavKind,
@@ -73,6 +73,17 @@ export interface FjsAppOptions extends WebRouterOptions {
    * Flutter side does (the base page is swapped in place, no native
    * route, no transition). */
   transition?: TransitionOption;
+  /** specs/166: every page is a Vapor SFC. The whole app — shell included —
+   * mounts through the vapor runtime's DOM backend and `vue` resolves to
+   * the runtime-core shim, so runtime-dom (the DOM vdom renderer) never
+   * enters the bundle. `setup` and [plugins] run once against the app
+   * shell (specs/167); vue-router still drives navigation (use 'fjs/router'
+   * in pages). VDOM components inside vapor pages are not available in
+   * this mode. */
+  enableVapor?: boolean;
+  /** Global components (enableVapor): what a vapor page's
+   * `resolveComponent` may name. */
+  components?: Record<string, unknown>;
 }
 
 export interface FjsApp {
@@ -88,6 +99,11 @@ function isTabRoute(route: { meta?: Record<string, unknown> }): boolean {
 }
 
 export function createFjsApp(options: FjsAppOptions): FjsApp {
+  if (options.enableVapor) {
+    // the pure-vapor shell (specs/166): no runtime-dom, pages mount through
+    // the DOM backend of the own runtime
+    return createVaporWebApp(options as never) as unknown as FjsApp;
+  }
   const router = createRouter(options);
   const shell = options.shell as Component | undefined;
 
@@ -386,7 +402,6 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
   });
 
   const vueApp = createVueApp(root);
-  trackWebApp(vueApp);
   installFjsWeb(vueApp);
   vueApp.use(vueRouter);
   applyPlugins(vueApp, options.plugins);

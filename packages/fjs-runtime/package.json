@@ -10,7 +10,15 @@
   },
   "homepage": "https://github.com/snice/ufjs#readme",
   "bugs": "https://github.com/snice/ufjs/issues",
-  "keywords": ["flutter", "javascript", "typescript", "vue", "quickjs", "runtime", "fjs"],
+  "keywords": [
+    "flutter",
+    "javascript",
+    "typescript",
+    "vue",
+    "quickjs",
+    "runtime",
+    "fjs"
+  ],
   "type": "module",
   "main": "src/index.ts",
   "module": "src/index.ts",
@@ -42,16 +50,18 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@vue/reactivity": "3.6.0-rc.9",
-    "@vue/runtime-core": "3.6.0-rc.9",
-    "@vue/runtime-vapor": "3.6.0-rc.9",
-    "@vue/shared": "3.6.0-rc.9",
-    "vue": "3.6.0-rc.9",
+    "@vue/reactivity": "^3.5.43",
+    "@vue/runtime-core": "^3.5.43",
+    "@vue/shared": "^3.5.43",
+    "vue": "^3.5.43",
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
-    "@vue/runtime-dom": "3.6.0-rc.9",
+    "@vue/compiler-sfc": "3.5.43",
+    "@vue/compiler-vapor": "3.6.0-rc.9",
     "happy-dom": "^20.12.0",
+    "pinia": "3.0.4",
+    "solid-js": "^1.9.15",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"
   }

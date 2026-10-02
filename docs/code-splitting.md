@@ -104,6 +104,23 @@ fjs build --pages --release --apk -- --target-platform android-arm64
 `--apk` 必须配合 `--release` 或 `--profile`；单独执行会报错
 （`fjs build --profile --apk` 打的是量性能用的 profile 包）。
 
+## release 的 shared.js 只导出页面用到的名字（specs/169）
+
+页面 chunk 通过 `globalThis.__FJS_SHARED[specifier]` 取共享模块。dev 下 shared.js 用
+`import * as` 整命名空间挂上去——热更新时重新 eval 的页面可能用到之前没人用过的名字。
+`--release` 构建没有热更新，所有 chunk 同次产出，于是构建先以 ESM 预构建一遍入口与全部页面
+（共享说明符 external），收集每个共享说明符被 import 的名字，shared 入口改为只具名导入这些名字：
+runtime-core 里页面从不用的部分（VDOM 渲染引擎之于 enableVapor 应用、Suspense / KeepAlive 之于
+大多数应用）就能被摇掉。
+
+- 某个说明符被任一 chunk 以 `import * as`、默认导入、`export * from` 或动态 `import()` 使用 →
+  该说明符回退整命名空间。
+- 函数导出作为普通属性共享（页面每次调用不走 getter），其余值保留 getter（ESM 活绑定语义）。
+- 页面运行期以字符串动态取共享模块的名字（`vue[name]`）在 release 下取不到——只认静态 import。
+
+实测（2026-10-01）：hello-fjs shared.js 436.3 → 375.9 KB，demo 809.4 → 652.9 KB，
+enableVapor 的 vapor-app 336.4 → 207.3 KB。
+
 ## dev 模式
 
 ```bash

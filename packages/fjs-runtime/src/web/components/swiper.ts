@@ -7,6 +7,7 @@ import {
   defineComponent,
   h,
   onBeforeUnmount,
+  onMounted,
   ref,
   watch,
   watchEffect,
@@ -24,7 +25,9 @@ const TRACK_CELL = 'fjs-swiper-item';
  * here came from a render function or a <slot>: it still gets a page — a
  * wrapper of our own — and a warning, the way Flutter's adapter does. */
 function trackCell(page: VNode, key: PropertyKey | undefined): VNode {
-  if (page.type === FjsSwiperItem || page.type === 'swiper-item') {
+  // a vapor page's <swiper-item> reaches here as a host marker carrying its
+  // tag (vapor/render-host.ts, specs/171)
+  if (page.type === FjsSwiperItem || page.type === 'swiper-item' || (page.props as { __fjsTag?: unknown } | null)?.__fjsTag === 'swiper-item') {
     return key === undefined
       ? cloneVNode(page, { class: TRACK_CELL })
       : cloneVNode(page, { class: TRACK_CELL, key });
@@ -61,6 +64,10 @@ function swiperPages(nodes: VNode[]): VNode[] {
       continue;
     }
     if (vnode.type === Comment) continue;
+    // a vapor list's anchor / a blank text node, as a render-host marker
+    // (specs/175): no page, like a Comment
+    const host = (vnode.props as { __host?: Node } | null)?.__host;
+    if (host && host.nodeType !== 1 && (host.nodeType !== 3 || String(host.textContent ?? '').trim() === '')) continue;
     if (vnode.type === Text && String(vnode.children ?? '').trim() === '') continue;
     out.push(vnode);
   }
@@ -98,6 +105,28 @@ export const FjsSwiper = defineComponent({
      * decided at setup time, when there were still zero pages, and autoplay
      * silently never started. */
     const pageCount = ref(0);
+    /** specs/175: in a pure-vapor app the pages are LIVE hosts (render-host
+     * markers), which cannot be copied the way a vnode can — a copied
+     * marker mounts the same node twice. The two circular clone cells are
+     * then empty cells filled with a DOM snapshot of the last / first page
+     * (refreshClones), taken right before a clone can come into view. */
+    const headClone = ref<HTMLElement | null>(null);
+    const tailClone = ref<HTMLElement | null>(null);
+    let livePages: HTMLElement[] = [];
+    const fillClone = (cell: HTMLElement | null, page: HTMLElement | undefined): void => {
+      if (!cell || !page) return;
+      for (const attr of [...page.attributes]) {
+        if (attr.name !== 'id') cell.setAttribute(attr.name, attr.value);
+      }
+      cell.setAttribute('aria-hidden', 'true');
+      cell.replaceChildren(...[...page.childNodes].map((n) => n.cloneNode(true)));
+    };
+    const refreshClones = (): void => {
+      if (!props.circular || livePages.length < 2) return;
+      fillClone(headClone.value, livePages[livePages.length - 1]);
+      fillClone(tailClone.value, livePages[0]);
+    };
+    onMounted(refreshClones);
     let lastRequestedCurrent: number | undefined;
     let held = false;
     let timer: ReturnType<typeof setInterval> | null = null;
@@ -130,6 +159,8 @@ export const FjsSwiper = defineComponent({
         ? wrapIndex(next, pageCount.value)
         : Math.max(0, Math.min(pageCount.value - 1, next));
       const slot = props.circular && next !== real ? slotOf(next) : slotOf(real);
+      // crossing the edge shows a clone: snapshot the page it stands for
+      if (props.circular && next !== real) refreshClones();
       setOffset(slot * extent(), animate);
       if (props.circular && next !== real) {
         // landed on a clone: after the animation, jump to the real page with
@@ -185,6 +216,8 @@ export const FjsSwiper = defineComponent({
       const el = track.value;
       if (!el || (event.pointerType === 'mouse' && event.button !== 0)) return;
       held = true;
+      // a drag past either edge reveals a clone
+      refreshClones();
       drag = { at: pointerPos(event), from: scrollOffset() };
       // an enclosing scroll-view pans on drags too; the page under a
       // PageView does not move with it on Flutter either
@@ -246,13 +279,22 @@ export const FjsSwiper = defineComponent({
       const slots_: VNode[] = pages.map((page) => trackCell(page, undefined));
       // Clones make the wrap seamless, the way Flutter's unbounded PageView
       // does. `@change` still reports the real index either way.
+      const hostOf = (page: VNode) => (page.props as { __host?: HTMLElement } | null)?.__host;
+      const live = pages.length > 0 && pages.every((page) => hostOf(page) !== undefined);
+      livePages = live ? pages.map((page) => hostOf(page)!) : [];
       const children =
         props.circular && pageCount.value > 1
-          ? [
-              cloneCell(pages[pageCount.value - 1], '__fjs-swiper-head'),
-              ...slots_,
-              cloneCell(pages[0], '__fjs-swiper-tail'),
-            ]
+          ? live
+            ? [
+                h('swiper-item', { class: TRACK_CELL, key: '__fjs-swiper-head', ref: headClone }),
+                ...slots_,
+                h('swiper-item', { class: TRACK_CELL, key: '__fjs-swiper-tail', ref: tailClone }),
+              ]
+            : [
+                cloneCell(pages[pageCount.value - 1], '__fjs-swiper-head'),
+                ...slots_,
+                cloneCell(pages[0], '__fjs-swiper-tail'),
+              ]
           : slots_;
 
       if (props.indicatorDots && pageCount.value > 0) {

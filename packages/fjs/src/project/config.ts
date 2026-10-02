@@ -87,20 +87,23 @@ export interface MpPreloadRule {
 export interface FjsConfig {
   /** Flutter host project directory, relative to the project root. */
   flutterDir?: string;
-  /** Build-time style prewarm (specs/119): `fjs build` / `fjs run` mount
-   * every static route in Node and ship each page's style caches with it.
-   * Set false to skip the step. Default true; `fjs dev` never runs it. */
+  /** @deprecated specs/172 removed the build-time style snapshot; the key is
+   * ignored (`fjs build` warns when it is present). */
   styleSnapshot?: boolean;
   /** Build-time performance budgets. */
   performance?: {
     /** Warn when a page's statically estimated first frame renders more nodes. */
     nodeBudget?: number;
   };
-  /** Vue Vapor (specs/148). A component opts in with `<script setup vapor>`;
+  /** Vue Vapor (specs/148). A component opts in with `<script setup vapor>`
+   * (in an `enableVapor` app every project SFC is Vapor already, specs/177);
    * `.vue` files shipped in node_modules that only have `<script setup>` are
    * compiled as Vapor automatically unless `libs` is false. */
   vapor?: {
     libs?: boolean;
+    /** specs/182: bundle the Vue renderer + interop in an enableVapor app
+     * (third-party VDOM components such as vant). Detected when omitted. */
+    interop?: boolean;
   };
   /** Extra bare specifiers to put in the shared chunk of a `--pages`
    * build, on top of the built-in vue/fjs set. See [sharedBare]. */
