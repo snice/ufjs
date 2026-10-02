@@ -55,8 +55,11 @@ export interface VaporWebAppOptions extends Omit<HistoryRouterOptions, 'shell'> 
    * family name (default 'fjs-page'), `false`, or a function of the
    * navigation; a page's `meta.transition` overrides it. */
   transition?: TransitionOption;
-  /** Pages kept alive (mounted hosts retained). Default 16. */
-  keepAlive?: number;
+  /** Pages kept alive, as in the VDOM shell (specs/183): the ones on the
+   * history stack (default `true`) — a popped or replaced page is destroyed,
+   * so pushing its path again starts fresh — a number to also cap how many
+   * stay mounted, or `false` to keep only the page on screen. */
+  keepAlive?: boolean | number;
 }
 
 export interface VaporWebApp {
@@ -89,11 +92,13 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
   const shell = createVaporAppShell(appContext);
   applyPlugins(shell as unknown as App, options.plugins);
   options.setup?.(shell as unknown as App);
-  const keepAlive = options.keepAlive ?? 16;
+  const keepAlive = options.keepAlive ?? true;
+  const cap = typeof keepAlive === 'number' ? keepAlive : Infinity;
 
-  // fullPath → mounted page. A pop hides the leaving page's host but keeps
-  // the instance (its scroll position and state ride the DOM); the LRU cap
-  // unmounts the coldest entry when the cache overflows.
+  // fullPath → mounted page. Only pages on the history stack (and parked
+  // tabs) stay — a page under the one on screen is hidden with its state
+  // and scroll position; a popped / replaced page is destroyed, as the VDOM
+  // shell's KeepAlive `include` and a Flutter Navigator pop do (specs/183).
   const pages = new Map<string, PageInstance>();
   const shots = new Map<string, { top: number; left: number }[]>();
 
@@ -180,7 +185,7 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
     // LRU: freshen, then evict the coldest beyond the cap (never the live one)
     pages.delete(fullPath);
     pages.set(fullPath, page);
-    while (pages.size > keepAlive) {
+    while (pages.size > cap) {
       const coldest = pages.keys().next().value as string | undefined;
       if (coldest === undefined || coldest === fullPath) break;
       const gone = pages.get(coldest);
@@ -208,6 +213,44 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
     let previous = '';
     let previousLocation: RouteLocation | null = null;
     const isTab = (loc: RouteLocation): boolean => typeof loc.meta?.tab === 'number';
+    // the history stack as the shell sees it, and the tab pages parked by a
+    // tab → tab replace (the VDOM shell's `stack` / `tabs`, app/web.ts)
+    const stack: string[] = [];
+    const tabs: string[] = [];
+    const tabPaths = new Set<string>();
+    const kept = (path: string): boolean => keepAlive !== false && (stack.includes(path) || tabs.includes(path));
+    const destroy = (path: string): void => {
+      const page = pages.get(path);
+      if (!page) return;
+      page.unmount();
+      pages.delete(path);
+      shots.delete(path);
+    };
+    const track = (current: CurrentPage): void => {
+      const path = current.location.fullPath;
+      if (isTab(current.location)) tabPaths.add(path);
+      const top = stack[stack.length - 1];
+      if (current.kind === 'initial') {
+        stack.splice(0, stack.length, path);
+      } else if (current.kind === 'pop') {
+        // back (or the browser's back / forward): everything above the
+        // arrived page leaves the stack; an address the stack does not hold
+        // (a forward, an edited hash) lands on top
+        while (stack.length && stack[stack.length - 1] !== path) stack.pop();
+        if (!stack.length) stack.push(path);
+      } else if (current.kind === 'replace') {
+        const parkGone = keepAlive !== false && top !== undefined && top !== path && tabPaths.has(top) && isTab(current.location);
+        if (parkGone && !tabs.includes(top)) tabs.push(top);
+        // the base page left the tab group: the parked tabs go with it
+        if (!isTab(current.location)) tabs.length = 0;
+        if (stack.length) stack[stack.length - 1] = path;
+        else stack.push(path);
+      } else if (top !== path) {
+        stack.push(path);
+      }
+      const parked = tabs.indexOf(path);
+      if (parked >= 0) tabs.splice(parked, 1);
+    };
     const scope = new EffectScope(true);
     withScope(scope, () => {
       // tracks the router's `current` ref: every navigation re-runs the
@@ -236,6 +279,7 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
         // teleported layers (vant's Popover) close instead of staying over
         // the next page (specs/181)
         leaving?.deactivate();
+        track(current);
         // the leaving side first: a new page mounts (and its onMounted
         // measures) with the old one already out of the flow
         const hooks = name === false || !leaving ? null : createTransitionHooks({ name });
@@ -248,9 +292,19 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
           saveShot(leavingPath, leaving!.host);
           hooks.leave([leaving!.host], () => {
             leaving!.host.style.display = 'none';
+            // off the stack by the time its leave is over (and not brought
+            // back meanwhile): destroyed, as a popped Navigator route is
+            if (!kept(leavingPath) && pages.get(leavingPath) === leaving && leavingPath !== previous) destroy(leavingPath);
           });
         }
         show(current, container, hooks ? [`${name}-enter-from`, `${name}-enter-active`] : null);
+        // what left the stack goes now — except a page still playing its
+        // leave, which goes when that is over (above)
+        for (const path of [...pages.keys()]) {
+          if (path === fullPath || kept(path)) continue;
+          if (hooks && path === leavingPath) continue;
+          destroy(path);
+        }
         const entering = pages.get(fullPath)!.host;
         if (!hooks) markPageSettled(fullPath);
         else hooks.enter([entering], () => markPageSettled(fullPath));

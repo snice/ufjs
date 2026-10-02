@@ -509,7 +509,10 @@ CLI 在构建期读这个开关（扫入口源码），runtime 在挂载期执�
   （`<van-grid><van-grid-item>`、Tabs/Tab、Collapse、Steps、Sidebar）经插槽桥接仍是父子；
   `showToast()` 等命令式 API（`createApp`）可用。`package.json` 的 `fjs.vapor.interop: true | false`
   强制开关。只用 composable 库（pinia、@vueuse/core）或 `h()` 写的 render 函数组件的应用不开，包体不变。
-- **web 壳**比 vdom 壳简单：visited 页常驻 LRU 缓存（默认 16）不按历史栈销毁；离开页面时对它跑
+- **web 壳的页面缓存与 vdom 壳一致（specs/183）**：只留历史栈上的页面——push 时下层页面隐藏并保留状态，
+  pop / replace 掉的页面（离场动画结束后）销毁，再进来是新页面；tab → tab 的 replace 停放离开的 tab，
+  离开 tab 组时一起销毁；`keepAlive` 同样接受 `true` / 数字 / `false`。下层页面留在 DOM 里 `display: none`
+  （vdom 壳由 KeepAlive 摘出 DOM），离开页面时对它跑
   `onDeactivated`、回来时 `onActivated`（与 VDOM 壳的 KeepAlive 一致，含页面里经 interop 挂的 VDOM
   组件——vant 的 Popover / Popup 靠它收起 teleport 出去的浮层，specs/181）。页面转场与
   vdom 壳一致（specs/178）：同一个 `transition` 选项 / `meta.transition`、同一套 `fjs-page-*` 类名与
@@ -527,7 +530,7 @@ CLI 在构建期读这个开关（扫入口源码），runtime 在挂载期执�
 | `onBeforeMount` | setup 返回后、块插入宿主之前 |
 | `onMounted` | 块进入宿主树之后**同步**触发（`mount()` 返回前；收养路径在节点放进占位元素后），子先于父；v-if 翻转、v-for 新增项里新建的组件在那次更新结束时触发 |
 | `onBeforeUnmount` | 宿主节点移除**前**，父先于子 |
-| `onUnmounted` | 移除之后，子先于父。页面卸载、v-if 切走、v-for 删项、web 壳 LRU 逐出都会触发 |
+| `onUnmounted` | 移除之后，子先于父。页面卸载（含 web 壳 pop / replace 掉的页面）、v-if 切走、v-for 删项都会触发 |
 | `provide` / `inject` / `hasInjectionContext` | Vue 语义：inject 读父组件的 provides，链尾是 app 级（`app.provide`）；`runWithContext` 内可读 app 级 |
 | `onActivated` / `onDeactivated` | `<KeepAlive>` 缓存的分支（specs/174）与 web 壳缓存的页面（specs/181）切走 / 切回时触发 |
 | `onUpdated` / `onBeforeUpdate` | 只在 render 函数组件（render-host）上有意义（它们会重渲染）；vapor 模板组件没有「整组件更新」 |

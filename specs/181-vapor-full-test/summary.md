@@ -30,7 +30,7 @@ pinia）。本文是测试结论与两种模式的对照。
 | 自定义指令 | 对象式 | 函数式 + **对象式适配**（specs/181：created … unmounted，`vnode.props` 给出元素上绑定的值，`v-motion` 可用） |
 | fjs 内置标签 / 组件 | VDOM 组件 | render-host 执行同一份实现（specs/171） |
 | 三方 VDOM 组件库（vant、NutUI） | ✅ | ✅ 按需带 interop（specs/182，自动检测，`fjs.vapor.interop` 可强制） |
-| 路由（web） | vue-router + KeepAlive 页面栈 | 自写 history 驱动（specs/173），LRU 页面缓存 16 页，切页跑 deactivated / activated |
+| 路由（web） | vue-router + KeepAlive 页面栈 | 自写 history 驱动（specs/173），页面缓存与 vdom 壳同规则：只留历史栈上的页面（specs/183），切页跑 deactivated / activated |
 | `app.use` / `app.provide` / `app.component` / `app.directive` | ✅ | ✅（app 外壳，specs/167；directive 自 specs/181） |
 | `app.mixin`、第二次 mount | ✅ | 告警忽略 |
 | Suspense | ✅ | ❌ |
@@ -72,8 +72,8 @@ demo（spec 182）：自动检测 + interop 别名、web interop 换成 runtime-
 ## 6. 已知差异 / 限制
 
 - **元素结构**：vapor 在 Flutter 端用零尺寸 `view` 做锚点，内联文本折叠进元素本身——元素数与 VDOM 不同，画面一致。
-- **web 页面缓存**：vapor 壳把离开的页面留在 DOM 里（`display: none`，LRU 16 页），VDOM 壳用 KeepAlive 摘出 DOM。依赖
-  「离开页面即销毁」的代码在 vapor 下要改用 `onDeactivated`。
+- **web 页面缓存**：规则与 VDOM 壳一致（只留历史栈上的页面，pop / replace 即销毁，specs/183）；区别只在栈下的页面
+  vapor 壳留在 DOM 里 `display: none`，VDOM 壳由 KeepAlive 摘出 DOM。
 - **`getCurrentInstance()` 为 null**：vapor 组件里读实例的库代码走无实例分支（vueuse 正常）。
 - **interop 的边界**：VDOM 组件是独立的渲染根，经插槽桥接维持父子 inject；VDOM 组件之间依赖 `parent.subTree` 排序子组件
   （vant 的 useChildren）时，写在 vapor 模板里的子组件按挂载顺序排。

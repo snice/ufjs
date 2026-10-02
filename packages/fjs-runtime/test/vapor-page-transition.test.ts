@@ -71,7 +71,7 @@ describe('enableVapor web page transitions (specs/178)', () => {
     expect(log).toEqual(['settled detail']);
   });
 
-  it('pop plays the same family mirrored (data-nav="pop") and brings the cached page back', async () => {
+  it('pop plays the same family mirrored (data-nav="pop"), brings the page underneath back and drops the popped one', async () => {
     const a = await app({ transition: 'fjs-fade' });
     await a.router.push('/detail');
     await tick(400);
@@ -83,7 +83,8 @@ describe('enableVapor web page transitions (specs/178)', () => {
     expect(entry('home').style.display).toBe('');
     expect(classes(entry('home')).some((c) => c.startsWith('fjs-fade-enter'))).toBe(true);
     await tick(400);
-    expect(entry('detail').style.display).toBe('none');
+    // popped off the history stack: destroyed once its leave is over (specs/183)
+    expect(document.querySelector('.detail')).toBeNull();
     expect(classes(entry('home'))).toEqual([]);
   });
 
