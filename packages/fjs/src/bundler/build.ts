@@ -40,6 +40,7 @@ import {
   tagModulePlugin,
   srcAliasPlugin,
 } from './vue-plugin.js';
+import { usesVaporInterop } from './vdom-libs.js';
 import { loadViteAppHooks, viteAppHooksPlugin } from '../project/vite-plugins.js';
 import { pageChunkSource, pagesFor, writeRouteTypes, type PageRoute } from '../project/pages.js';
 import { writeAssetTypes } from '../project/assets.js';
@@ -563,7 +564,7 @@ async function bundleSingle(
     moduleDataPlugin(root, modules),
     tagModulePlugin(false),
   ];
-  const alias = { ...flutterAliases(enableVapor), ...moduleAliases(root, modules) };
+  const alias = { ...flutterAliases(enableVapor, usesVaporInterop(root, entry)), ...moduleAliases(root, modules) };
   if (!fs.existsSync(entry)) {
     throw new Error(`entry not found: ${entry}`);
   }
@@ -806,7 +807,7 @@ async function appModuleGraph(
     format: 'iife',
     target: 'es2019', /* PrimJS engine (spec 088) */
     ...flutterEsbuildPlatform(),
-    alias: { ...flutterAliases(usesEnableVapor(root, entry)), ...moduleAliases(root, fjsModules) },
+    alias: { ...flutterAliases(usesEnableVapor(root, entry), usesVaporInterop(root, entry)), ...moduleAliases(root, fjsModules) },
     plugins: [
       nodeBuiltinStubs(),
       pagesPlugin(pages, 'app', false),
@@ -948,7 +949,7 @@ async function buildPages(opts: BuildOptions, outDir: string): Promise<BuildResu
     target: 'es2019', /* PrimJS engine (spec 088) */
     ...flutterEsbuildPlatform(),
     minify: opts.minify,
-    alias: { ...flutterAliases(enableVapor), ...moduleAliases(root, modules) },
+    alias: { ...flutterAliases(enableVapor, usesVaporInterop(root, entry)), ...moduleAliases(root, modules) },
     plugins: [
       nodeBuiltinStubs(),
       pagesPlugin(pages, 'app', false),
@@ -1125,7 +1126,7 @@ async function buildWeb(opts: BuildOptions, outDir: string): Promise<BuildResult
     target: 'es2020',
     platform: 'browser',
     minify: opts.minify,
-    alias: { ...webAliases(enableVapor), ...moduleAliases(root, webModules) },
+    alias: { ...webAliases(enableVapor, usesVaporInterop(root, entry)), ...moduleAliases(root, webModules) },
     plugins: [
       nodeBuiltinStubs(),
       pagesPlugin(pagesFor(root, 'web'), 'web', false),
@@ -1138,7 +1139,7 @@ async function buildWeb(opts: BuildOptions, outDir: string): Promise<BuildResult
       ...(enableVapor ? [] : [vaporWrapperPlugin()]),
       // enableVapor: `vue` pins to runtime-core — runtime-dom (the DOM
       // vdom renderer) must not be reachable from a pure-vapor bundle
-      ...(enableVapor ? [webPureVaporPinPlugin()] : [webPinPlugin()]),
+      ...(enableVapor ? [webPureVaporPinPlugin(usesVaporInterop(root, entry))] : [webPinPlugin()]),
       srcAliasPlugin(root),
       moduleDataPlugin(root, webModules),
       tagModulePlugin(true),

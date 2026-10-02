@@ -496,16 +496,22 @@ CLI 在构建期读这个开关（扫入口源码），runtime 在挂载期执�
   rich-text / textarea / defer，都是 render 函数写的组件，enableVapor 下由 vapor 运行时的
   **render-host**（`vapor/render-host.ts`）执行——每个组件仍只有一份实现。编译器给用到这些标签
   的页面注入 `import "fjs/tag/<tag>"`，只打包实际用到的标签；只用 view / text 的应用不带
-  render-host。限制：vant 等**三方** VDOM 库仍不可用（需要完整渲染器，报
-  `a render-function (VDOM) component reached a pure-vapor app`）；自写的组件请写成
-  `<script setup vapor>`；swiper 的 `circular` 在纯 vapor web 下用首尾页的 DOM 快照做克隆页（specs/175，见 web.md）；rich-text 在 vapor
-  页里拿不到页面的 scoped 样式。Flutter 端以前靠互操作能用，代价是整个 VDOM
-  渲染器进包；现在 `fjs/app` / `fjs/vapor` / `fjs/vue` 在 enableVapor 下别名到纯 vapor 面
+  render-host。自写的组件请写成 `<script setup vapor>`；swiper 的 `circular` 在纯 vapor web 下用首尾页的 DOM 快照做克隆页（specs/175，见 web.md）；rich-text 在 vapor
+  页里拿不到页面的 scoped 样式。`fjs/app` / `fjs/vapor` / `fjs/vue` 在 enableVapor 下别名到纯 vapor 面
   （`app/flutter-vapor.ts` / `vapor/flutter-pure.ts` / `vue/index-vapor.ts`），渲染器不进图。
-  非 enableVapor 应用（VDOM 页嵌 vapor 组件、vapor 页嵌 vant）不受影响。
-- **代价（有意为之，都写进了 spec）**：web 端 Vapor 页内嵌 VDOM 组件（vant）不可用——web 的 vdom 互操作依赖
-  runtime-dom 的渲染器，这正是这个模式要省掉的东西（Flutter 端互操作照旧可用，代价只是
-  包体）。web 壳比 vdom 壳简单：visited 页常驻 LRU 缓存（默认 16）不按历史栈销毁。页面转场与
+- **三方 VDOM 组件库按需带 interop（specs/182）**：构建 / dev 时扫描源码导入的三方包，包里有从 `vue`
+  导入 `createVNode` / `openBlock` / `createElementBlock` / `createBlock` 的产物（vant、NutUI 这类编译好的
+  组件库）就判定需要互操作，打印一次 `VDOM component library detected (…)`，并把 Vue 渲染器带进来：web
+  的 `fjs/vapor` 改用带 interop 的 `vapor/web.ts`、`vue` 改用 `vapor/vue-interop.ts`（runtime-dom + vapor
+  双模生命周期），Flutter 的 `fjs/vapor` / `fjs/vue` 改用完整面。页面、壳、项目组件仍是 vapor；三方组件经
+  渲染器挂载（web 用 runtime-dom 本身，style 对象 / DOM prop / vShow / vModel / Transition 都是真实现），
+  能 inject 到 vapor 祖先与 app 的 provide、解析 app 注册的组件；写在 vapor 模板里的父子组件
+  （`<van-grid><van-grid-item>`、Tabs/Tab、Collapse、Steps、Sidebar）经插槽桥接仍是父子；
+  `showToast()` 等命令式 API（`createApp`）可用。`package.json` 的 `fjs.vapor.interop: true | false`
+  强制开关。只用 composable 库（pinia、@vueuse/core）或 `h()` 写的 render 函数组件的应用不开，包体不变。
+- **web 壳**比 vdom 壳简单：visited 页常驻 LRU 缓存（默认 16）不按历史栈销毁；离开页面时对它跑
+  `onDeactivated`、回来时 `onActivated`（与 VDOM 壳的 KeepAlive 一致，含页面里经 interop 挂的 VDOM
+  组件——vant 的 Popover / Popup 靠它收起 teleport 出去的浮层，specs/181）。页面转场与
   vdom 壳一致（specs/178）：同一个 `transition` 选项 / `meta.transition`、同一套 `fjs-page-*` 类名与
   `data-nav`，`onPageSettled` 等进场结束。
 - 参考实现：`examples/vapor-app`（pinia store + 生命周期；`pnpm run check` 是 fjsrun 断言 harness，
@@ -523,7 +529,10 @@ CLI 在构建期读这个开关（扫入口源码），runtime 在挂载期执�
 | `onBeforeUnmount` | 宿主节点移除**前**，父先于子 |
 | `onUnmounted` | 移除之后，子先于父。页面卸载、v-if 切走、v-for 删项、web 壳 LRU 逐出都会触发 |
 | `provide` / `inject` / `hasInjectionContext` | Vue 语义：inject 读父组件的 provides，链尾是 app 级（`app.provide`）；`runWithContext` 内可读 app 级 |
-| `onUpdated` / `onBeforeUpdate` / `onActivated` / `onDeactivated` / `onErrorCaptured` / `onRenderTracked` / `onRenderTriggered` / `onServerPrefetch` | ❌ 不支持，调用时警告一次 |
+| `onActivated` / `onDeactivated` | `<KeepAlive>` 缓存的分支（specs/174）与 web 壳缓存的页面（specs/181）切走 / 切回时触发 |
+| `onUpdated` / `onBeforeUpdate` | 只在 render 函数组件（render-host）上有意义（它们会重渲染）；vapor 模板组件没有「整组件更新」 |
+| `onErrorCaptured` / `onRenderTracked` / `onRenderTriggered` / `onServerPrefetch` | ❌ 不支持，调用时警告一次 |
+| setup 抛错 | 交给 `app.config.errorHandler`（没有就 console.error），该组件渲染为空，父组件照常（specs/181） |
 
 `.ts` 里的 composable（pinia、vueuse）从 `'vue'` 导入这些函数同样生效：Flutter 端 `vue`
 是 vue-shim，enableVapor 的 web 端 `vue` 钉在 `vapor/vue-pure.ts`，两者导出的是同一套「双模」

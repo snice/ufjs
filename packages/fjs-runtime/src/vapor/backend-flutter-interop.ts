@@ -4,14 +4,15 @@
 // runtime-core's whole rendering engine. `fjs/vapor` (vapor/index.ts) loads
 // it; the enableVapor surface (vapor/flutter-pure.ts) does not, so a pure
 // vapor app ships without the engine — exactly like web's web-interop.ts.
-import { effect, stop as stopRunner } from '@vue/reactivity';
-import { childElementIds, elementById, nodeOps, registerAdoptHook, type HostNode } from '../vue/host-ops';
+import { EffectScope, effect, stop as stopRunner } from '@vue/reactivity';
+import { childElementIds, elementById, nodeOps, patchProp, registerAdoptHook, type HostNode } from '../vue/host-ops';
 import { render } from '../vue/renderer';
-import { h } from '../vue/vue-shim';
+import { getCurrentInstance, h } from '../vue/vue-shim';
 import { flutterBackend } from './backend-flutter';
 import { blockOf, type Block, type Slots, type VaporBackend } from './runtime';
+import { markVdomOwner, runVdomKeepAliveHooks, vdomAppContext, type VdomMountContext } from './vdom-context';
 
-const mountVdomComponent: NonNullable<VaporBackend['mountVdomComponent']> = (comp, props, slots: Slots, parent, anchor) => {
+const mountVdomComponent: NonNullable<VaporBackend['mountVdomComponent']> = (comp, props, slots: Slots, parent, anchor, ctx) => {
     // vant et al: render through our own renderer into a detached container,
     // then keep the component's roots positioned at this spot of the vapor
     // tree. runtime-core COPIES a component's props into its own reactive
@@ -30,6 +31,9 @@ const mountVdomComponent: NonNullable<VaporBackend['mountVdomComponent']> = (com
       slotRenders.set(id, renderSlot);
       vdomSlots[name] = () => {
         slotPending = id;
+        // the VDOM component calling the slot (its render is running): the
+        // parent a VDOM component inside the content injects from (specs/182)
+        slotOwners.set(id, getCurrentInstance());
         return h('fjs-vapor-slot', { 'data-fjs-slot': String(id) });
       };
     }
@@ -46,11 +50,18 @@ const mountVdomComponent: NonNullable<VaporBackend['mountVdomComponent']> = (com
       }
     };
     let alive = true;
+    const appContext = vdomAppContext(ctx as VdomMountContext | undefined);
+    let lastVnode: unknown = null;
+    (ctx as VdomMountContext | undefined)?.onKeepAlive?.((kind) => runVdomKeepAliveHooks(lastVnode, kind));
     const runner = effect(
       () => {
         const snapshot: Record<string, unknown> = {};
         for (const k in props) snapshot[k] = (props as Record<string, unknown>)[k];
-        render(h(comp as never, snapshot as never, vdomSlots as never), container as never);
+        const vnode = h(comp as never, snapshot as never, vdomSlots as never);
+        // inject() / global components reach the vapor side (specs/182)
+        (vnode as { appContext: unknown }).appContext = appContext;
+        render(vnode, container as never);
+        lastVnode = vnode;
         reposition();
       },
       {
@@ -106,6 +117,7 @@ function flushVdom(): void {
 // ---- slot bridging (a Vapor slot into a VDOM component) -----------------------
 
 const slotRenders = new Map<number, () => unknown>();
+const slotOwners = new Map<number, unknown>();
 let slotSeq = 0;
 /** set by the createElement call, consumed immediately after */
 let slotPending: number | null = null;
@@ -118,12 +130,18 @@ registerAdoptHook({
     slotPending = null;
     const renderSlot = slotRenders.get(id);
     const wrapper = nodeOps.createElement('view');
+    // no box of its own: the slot content joins the VDOM parent's flex line
+    // (vant's tabbar items stacked into a column inside it) — the web
+    // bridge's `display: contents`, which the Flutter renderer now honours
+    patchProp(wrapper as never, 'style', null, { display: 'contents' });
     if (renderSlot) {
       // the slot block belongs to the child's tree; dropping the wrapper
       // takes it with it (backend remove is a subtree walk)
       let block: Block;
+      const scope = new EffectScope(true);
+      markVdomOwner(scope, slotOwners.get(id));
       try {
-        block = blockOf(renderSlot());
+        block = scope.run(() => blockOf(renderSlot()))!;
       } catch (e) {
         console.log(`[fjs vapor] slot render THREW: ${String(e)}`);
         block = { nodes: [] };

@@ -144,3 +144,35 @@ op 编码。
 `leave` 结束再移除节点。离场中的节点在根位置列表里仍列进 `nodes`，整体移除时一并清掉。
 位置读取走 `TransitionBackend.rectOf`（web `getBoundingClientRect`，Flutter `boundingRectOf`）。
 
+## 活节点列表：多根块（specs/181）
+
+`blockOf([...])` 的各部分里有多节点块（组件、v-if / v-for 片段、render-host 块）时，返回的块的
+`nodes` 是各部分节点拼起来的**活列表**：片段原地改自己的 `nodes`（切分支、增删项、render-host 重渲染）
+后调 `nodesChanged(nodes)`，派生它的块跟着重拼并继续向上通知。v-if 分支的 `nodes` 直接共享内容块的
+数组（不再拷贝），所以「分支内容本身是片段」也能跟上。只有一项的数组就是那一项（共享 `nodes`，
+`switchOf` / `listOf` 仍能按数组找到片段）。各部分的 scope 不并入（与之前一样归各自的所有者）。
+
+插槽 `<slot>` 按模板的所有者取插槽：插槽内容里是插槽作者，组件自己的模板里是该组件——不是「正在渲染
+的组件」（specs/181：写在组件型标签里的 `<slot/>` 曾取到那个标签自己的插槽、无限递归）。
+
+## VDOM 互操作：enableVapor 按需带 interop（specs/182）
+
+`VaporBackend.mountVdomComponent(comp, props, slots, parent, anchor, ctx)` 是可选成员：纯 vapor 面
+（`web-pure.ts` / `flutter-pure.ts`）没有它，三方 VDOM 组件库在场时 CLI 改用带它的面（`web.ts` /
+`index.ts`）。`ctx` 由组件层传入：
+
+- `provides` / `appContext`：vapor 父组件的 provides 与 app 上下文。后端据此给 VDOM 根 vnode 设
+  `appContext`（`vapor/vdom-context.ts`），runtime-core 的 inject 从这里取值，`components` /
+  `directives` 是 app 的注册。
+- `onKeepAlive(run)`：后端把「对整棵 VDOM 子树跑 activated / deactivated 钩子」的函数交回组件层，
+  组件层挂到 vapor 父实例的 `a` / `da` 上——KeepAlive 和 web 壳的页面缓存都经它走到 VDOM 组件。
+
+插槽桥接：vapor 插槽给 VDOM 组件时，每次调用渲染一个 `fjs-vapor-slot` 占位元素（`display: contents`，
+两端都不生成盒），挂载后把插槽块的节点放进去。桥接用的 effect scope 记下调用插槽的 VDOM 组件实例
+（`markVdomOwner`），插槽内容里再挂的 VDOM 组件以它为父取 provides——`<van-grid><van-grid-item>`
+写在 vapor 模板里仍是父子。插槽在没有 vapor 当前实例时运行（由 VDOM 组件调用），内容归插槽作者，
+其中的 vapor 组件挂在作者的实例树上。
+
+块形状：VDOM 子树的顶层宿主沿组件 `subTree` 一路下钻取（组件套组件、根是 Fragment / Teleport 时取
+起止锚点之间的全部节点），重渲染后变化经 `nodesChanged` 通知包含它的块（specs/181 的活节点列表）。
+

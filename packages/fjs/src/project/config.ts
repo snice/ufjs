@@ -101,6 +101,9 @@ export interface FjsConfig {
    * compiled as Vapor automatically unless `libs` is false. */
   vapor?: {
     libs?: boolean;
+    /** specs/182: bundle the Vue renderer + interop in an enableVapor app
+     * (third-party VDOM components such as vant). Detected when omitted. */
+    interop?: boolean;
   };
   /** Extra bare specifiers to put in the shared chunk of a `--pages`
    * build, on top of the built-in vue/fjs set. See [sharedBare]. */

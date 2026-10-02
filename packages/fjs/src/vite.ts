@@ -17,6 +17,7 @@ import {
   type FjsModule,
 } from './project/modules.js';
 import { isNativeTagFor, isVaporSfcFile, runtimeDir, vaporWrapperModule, compileVaporSfcModule, usesEnableVapor } from './bundler/vue-plugin.js';
+import { usesVaporInterop } from './bundler/vdom-libs.js';
 import { transform } from 'esbuild';
 import { readConfig } from './project/config.js';
 import { swiperChildrenTransform } from './template/swiper-children.js';
@@ -145,6 +146,8 @@ export function fjs(): VitePlugin {
   // specs/166: the app entry declared `enableVapor: true` (default entry
   // src/main.ts, the same convention dev and build follow)
   let enableVapor = false;
+  // specs/182: an enableVapor app with a VDOM component library (vant)
+  let interop = false;
   return {
     name: 'fjs-vite',
     enforce: 'pre',
@@ -159,6 +162,7 @@ export function fjs(): VitePlugin {
       writeAutoimportTypes(root);
       nativeTags = widgetNativeTags(modules, 'web');
       enableVapor = usesEnableVapor(root);
+      interop = usesVaporInterop(root);
       const runtime = runtimeDir();
       return {
         resolve: {
@@ -179,7 +183,7 @@ export function fjs(): VitePlugin {
             // generated <style> injection (specs/168): the leaf module
             { find: /^fjs\/web-style$/, replacement: path.join(runtime, 'src', 'web', 'inject-style.ts') },
             { find: /^fjs\/vue$/, replacement: path.join(runtime, 'src', 'vue', 'index.ts') },
-            { find: /^fjs\/vapor$/, replacement: path.join(runtime, 'src', 'vapor', enableVapor ? 'web-pure.ts' : 'web.ts') },
+            { find: /^fjs\/vapor$/, replacement: path.join(runtime, 'src', 'vapor', enableVapor && !interop ? 'web-pure.ts' : 'web.ts') },
             // ONE runtime-core for the whole web app — the shim's 3.5
             // standalone, exactly what the esbuild --web build pins
             // (vuePinPlugin). Left alone, vite prebundles '@vue/runtime-core'
@@ -194,8 +198,9 @@ export function fjs(): VitePlugin {
             // not reach. vue-router needs nothing beyond runtime-core.
             // specs/167: through vue-pure.ts, which adds the vapor-aware
             // lifecycle/provide/inject for composables (pinia, vueuse)
+            // specs/182: with a VDOM component library, runtime-dom on top
             ...(enableVapor
-              ? [{ find: /^vue$/, replacement: path.join(runtime, 'src', 'vapor', 'vue-pure.ts') }]
+              ? [{ find: /^vue$/, replacement: path.join(runtime, 'src', 'vapor', interop ? 'vue-interop.ts' : 'vue-pure.ts') }]
               : [{ find: /^vue$/, replacement: path.join(runtime, 'node_modules', 'vue', 'dist', 'vue.runtime.esm-bundler.js') }]),
             { find: /^fjs$/, replacement: path.join(runtime, 'src', 'index.ts') },
           ],
@@ -322,7 +327,9 @@ export function fjs(): VitePlugin {
       }
       // what a module's prepare hook generated for this project
       if (id.startsWith('fjs/data/') && importer) {
-        return resolveModuleData(root, modules, importer, id);
+        // a module's SFC compiled as vapor imports from its virtual id
+        // (specs/181: IconMindWeb under enableVapor)
+        return resolveModuleData(root, modules, importer.replace(/^\0fjs-vapor-(?:sfc|wrapper):/, ''), id);
       }
       // a VDOM module importing a Vapor SFC gets the compile-time wrapper
       // (specs/161 §3.2): the \0 prefix keeps plugin-vue from touching it.

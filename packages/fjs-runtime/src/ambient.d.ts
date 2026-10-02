@@ -73,3 +73,9 @@ declare module 'fjs/plugins' {
   export const plugins: FjsPlugin[];
   export default plugins;
 }
+
+// specs/182: vapor/vue-interop.ts re-exports the vue package's runtime build
+// by path (the bare 'vue' is aliased back to that module in the app)
+declare module 'vue/dist/vue.runtime.esm-bundler.js' {
+  export * from 'vue';
+}

@@ -4,10 +4,10 @@
 // alias) carries neither this code nor the runtime-core renderer engine it
 // is built on — a pure-vapor app cannot mount VDOM components, which is the
 // documented trade for a bundle without any vdom machinery.
-import { effect, stop as stopRunner } from '@vue/reactivity';
-import { isOn } from '@vue/shared';
-import { createRenderer, h } from 'vue';
-import { blockOf, disposeBlock, mountVaporComponentForAdopt, type Block, type VaporAppContext, type VaporBackend, type VaporComponent } from './runtime';
+import { EffectScope, effect, shallowReactive, stop as stopRunner } from '@vue/reactivity';
+import { getCurrentInstance, h, render } from 'vue';
+import { blockOf, disposeBlock, mountVaporComponentForAdopt, nodesChanged, type Block, type VaporAppContext, type VaporBackend, type VaporComponent } from './runtime';
+import { markVdomOwner, runVdomKeepAliveHooks, vdomAppContext, type VdomMountContext } from './vdom-context';
 import { domBackend } from './web-dom';
 
 // the VDOM interop effect re-runs outside any vapor component scope — it is
@@ -27,105 +27,119 @@ function flushVdom(): void {
 
 // ---- slot bridging (a Vapor slot into a VDOM component) -----------------------
 
-const slotRenders = new Map<number, () => unknown>();
-let slotSeq = 0;
-/** set by the createElement call, consumed immediately after */
-let slotPending: number | null = null;
+/** A Vapor slot as a VDOM slot: the slot function returns one placeholder
+ * element (`display: contents`, so the content joins the parent's flex line)
+ * whose vnode hooks fill it with the slot block's hosts once it is in the
+ * DOM and dispose the block when the VDOM drops it. Slot props (a scoped
+ * slot) ride on the vnode; an update writes them into the block's reactive
+ * copy instead of rebuilding the content. */
+function bridgeSlot(renderSlot: (...args: unknown[]) => unknown): (props?: Record<string, unknown>) => unknown {
+  type HookVNode = { el: Element | null };
+  const live = new WeakMap<object, { scope: EffectScope; state: Record<string, unknown>; block: Block }>();
+  // per placeholder vnode: its slot props and the VDOM component calling
+  // the slot — kept off the vnode's props, which runtime-dom would write
+  // onto the element as attributes
+  const data = new WeakMap<object, { props: Record<string, unknown>; owner: unknown }>();
+  return (props?: Record<string, unknown>) => {
+    const vnode = h('fjs-vapor-slot', {
+      style: 'display: contents',
+      onVnodeMounted(raw: unknown) {
+        const el = (raw as HookVNode).el;
+        if (!el) return;
+        const d = data.get(raw as object);
+        const state = shallowReactive({ ...(d?.props ?? {}) });
+        const scope = new EffectScope(true);
+        markVdomOwner(scope, d?.owner);
+        const block = scope.run(() => blockOf(renderSlot(state)))!;
+        for (const node of block.nodes) el.appendChild(node as Node);
+        live.set(el, { scope, state, block });
+      },
+      onVnodeUpdated(raw: unknown) {
+        const el = (raw as HookVNode).el;
+        const rec = el && live.get(el);
+        const d = data.get(raw as object);
+        if (rec && d) Object.assign(rec.state, d.props);
+      },
+      onVnodeBeforeUnmount(raw: unknown) {
+        const el = (raw as HookVNode).el;
+        const rec = el && live.get(el);
+        if (!rec) return;
+        live.delete(el!);
+        disposeBlock(rec.block);
+        rec.scope.stop();
+      },
+    });
+    // the slot is called from the VDOM component's render
+    data.set(vnode, { props: props ?? {}, owner: getCurrentInstance() });
+    return vnode;
+  };
+}
 
-let vdomRender: (vnode: unknown, container: Element) => void;
-{
-  const { render } = createRenderer<Node, Node>({
-    createElement: (tag) => {
-      if (tag === 'fjs-vapor-slot') {
-        // set by the slot function, consumed here — one placeholder at a time
-        const id = slotPending;
-        slotPending = null;
-        const wrapper = document.createElement('div');
-        const renderSlot = id === null ? null : slotRenders.get(id);
-        if (renderSlot) {
-          // the slot block belongs to the child's tree: removing the
-          // wrapper (an ordinary element to the VDOM) takes it with it
-          for (const node of blockOf(renderSlot()).nodes) wrapper.appendChild(node as Node);
-        }
-        return wrapper;
-      }
-      return document.createElement(tag);
-    },
-    createText: (text) => document.createTextNode(text),
-    createComment: (text) => document.createComment(text),
-    setText: (node, text) => {
-      (node as Text).nodeValue = text;
-    },
-    setElementText: (el, text) => {
-      (el as Element).textContent = text;
-    },
-    insert: (child, parent, anchor) => {
-      parent.insertBefore(child, anchor ?? null);
-    },
-    remove: (child) => {
-      const parent = child.parentNode;
-      if (parent) parent.removeChild(child);
-    },
-    parentNode: (node) => node.parentNode,
-    nextSibling: (node) => node.nextSibling,
-    querySelector: (sel) => document.querySelector(sel),
-    patchProp: (el, key, prev, next) => {
-      if (key === 'class') (el as Element).className = String(next ?? '');
-      else if (key === 'style') (el as HTMLElement).style.cssText = String(next ?? '');
-      else if (isOn(key)) {
-        // a custom renderer's patchProp owns event binding — without this
-        // an on* prop lands as a stringified attribute and never fires
-        // (vant's clicks, specs/165)
-        const name = key.slice(2).toLowerCase();
-        if (typeof prev === 'function') (el as Element).removeEventListener(name, prev);
-        if (typeof next === 'function') (el as Element).addEventListener(name, next);
-      }
-      else if (next == null || next === false) (el as Element).removeAttribute(key);
-      else (el as Element).setAttribute(key, next === true ? '' : String(next));
-    },
-  });
-  vdomRender = render as unknown as typeof vdomRender;
+/** The component's top-level hosts: down through components whose root is
+ * another component (vant's ActionSheet renders a Popup), then the root
+ * element, or a fragment's / teleport's span from its start to its end
+ * anchor. A root-level mount (no insertion point) is placed by the vapor
+ * side from exactly this list — a node missing here stays in the detached
+ * container. */
+function rootsOf(vnode: unknown): Node[] {
+  type V = { component?: { subTree?: V } | null; el?: Node | null; anchor?: Node | null };
+  let v = vnode as V | undefined;
+  while (v?.component?.subTree) v = v.component.subTree;
+  const el = v?.el ?? null;
+  if (!el) return [];
+  const end = v?.anchor ?? null;
+  if (!end || end === el) return [el];
+  const out: Node[] = [];
+  for (let n: Node | null = el; n; n = n.nextSibling) {
+    out.push(n);
+    if (n === end) break;
+  }
+  return out;
 }
 
 /** the backend's mountVdomComponent — assigned onto [domBackend] below */
-const mountVdomComponent: VaporBackend['mountVdomComponent'] = (comp, props, slots, parent, anchor) => {
-    // vant et al on web: a real-vue renderer over the DOM, same as the web
-    // adapter's VDOM path. runtime-core copies props into its own container
-    // at mount, so this effect tracks every getter and re-renders with a
-    // plain snapshot — the child's props diff runs as under a VDOM parent.
-    // Slots bridge directly: a Vapor slot function returns hosts, and the
-    // browser slot hands back a fragment of them per render.
+const mountVdomComponent: VaporBackend['mountVdomComponent'] = (comp, props, slots, parent, anchor, ctx) => {
+    // vant et al on web: runtime-dom's own renderer (specs/182 — it used to
+    // be a reduced createRenderer whose patchProp stringified style objects
+    // and knew no DOM props), into a detached container whose children are
+    // then kept at this spot of the vapor tree. runtime-core copies props
+    // into its own container at mount, so this effect tracks every getter
+    // and re-renders with a plain snapshot — the child's props diff runs as
+    // under a VDOM parent.
     const container = document.createElement('div');
     const reposition = (): void => {
       if (!parent) return;
       let cursor: Node | null = (anchor ?? null) as Node | null;
-      for (const child of [...container.childNodes]) {
-        (parent as Node).insertBefore(child, cursor);
-        cursor = child;
+      const kids = [...container.childNodes];
+      for (let i = kids.length - 1; i >= 0; i--) {
+        (parent as Node).insertBefore(kids[i], cursor);
+        cursor = kids[i];
       }
     };
-    // Vapor slots → the VDOM slot contract, same shape as the flutter
-    // backend: the slot renders an `fjs-vapor-slot` placeholder whose
-    // createElement fills the slot block's hosts into a wrapper. A slot fn
-    // returning raw DOM would be normalized into a `[object DocumentFragment]`
-    // text node by runtime-core (specs/165).
-    const vdomSlots: Record<string, () => unknown> = {};
-    for (const name in slots) {
-      const renderSlot = slots[name];
-      const id = ++slotSeq;
-      slotRenders.set(id, renderSlot);
-      vdomSlots[name] = () => {
-        slotPending = id;
-        return h('fjs-vapor-slot', { 'data-fjs-slot': String(id), style: { display: 'contents' } });
-      };
-    }
+    const vdomSlots: Record<string, unknown> = {};
+    for (const name in slots) vdomSlots[name] = bridgeSlot(slots[name]);
+    const appContext = vdomAppContext(ctx as VdomMountContext | undefined);
+    let lastVnode: unknown = null;
+    (ctx as VdomMountContext | undefined)?.onKeepAlive?.((kind) => runVdomKeepAliveHooks(lastVnode, kind));
     let alive = true;
+    const roots: unknown[] = [];
     const runner = effect(
       () => {
         const snapshot: Record<string, unknown> = {};
         for (const k in props) snapshot[k] = (props as Record<string, unknown>)[k];
-        vdomRender(h(comp as never, snapshot as never, vdomSlots as never), container);
+        const vnode = h(comp as never, snapshot as never, vdomSlots as never);
+        // inject() / global components reach the vapor side (specs/182)
+        (vnode as unknown as { appContext: unknown }).appContext = appContext;
+        render(vnode, container);
+        lastVnode = vnode;
+        // the first render lands in the container; later patches happen in
+        // place, wherever the roots are
         reposition();
+        const now = rootsOf(vnode);
+        if (now.length !== roots.length || now.some((n, i) => n !== roots[i])) {
+          roots.splice(0, roots.length, ...now);
+          nodesChanged(roots);
+        }
       },
       {
         scheduler: () => {
@@ -137,7 +151,6 @@ const mountVdomComponent: VaporBackend['mountVdomComponent'] = (comp, props, slo
         },
       },
     );
-    const roots = [...container.childNodes] as unknown[];
     const block: Block = {
       nodes: roots,
       scopes: [],
@@ -145,11 +158,10 @@ const mountVdomComponent: VaporBackend['mountVdomComponent'] = (comp, props, slo
         () => {
           alive = false;
           stopRunner(runner);
-          if (roots.every((r) => !(r as Node).isConnected)) {
-            // the vapor tree already dropped the subtree
-          } else {
-            vdomRender(null, container);
-          }
+          // unmount through the renderer either way: the component's
+          // unmount hooks run, and its hosts leave their parent, wherever
+          // the vapor tree put them
+          render(null, container);
         },
       ],
     };

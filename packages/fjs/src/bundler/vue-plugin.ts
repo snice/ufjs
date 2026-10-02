@@ -1004,7 +1004,7 @@ export function sharedStubPlugin(
  * pure-vapor app may touch the DOM renderer: the shell is vapor, pages are
  * vapor, and vue-router only needs runtime-core's reactivity and component
  * APIs (it is never installed on a Vue app here). */
-export function webPureVaporPinPlugin(): Plugin {
+export function webPureVaporPinPlugin(interop = false): Plugin {
   return {
     name: 'fjs-web-pure-vapor-pin',
     setup(build) {
@@ -1012,8 +1012,9 @@ export function webPureVaporPinPlugin(): Plugin {
       const pinned: Record<string, string> = {
         // specs/167: runtime-core + the vapor-aware lifecycle/provide/inject
         // (the module re-exports the same runtime-core dist the vapor
-        // runtime links, so reactivity stays one copy)
-        vue: path.join(runtimeDir(), 'src', 'vapor', 'vue-pure.ts'),
+        // runtime links, so reactivity stays one copy). specs/182: with a
+        // VDOM component library, runtime-dom on top of it
+        vue: path.join(runtimeDir(), 'src', 'vapor', interop ? 'vue-interop.ts' : 'vue-pure.ts'),
         'vue-router': path.join(nm, 'vue-router', 'dist', 'vue-router.mjs'),
       };
       build.onResolve({ filter: /^(vue|vue-router)$/ }, (args) => {
@@ -1030,7 +1031,7 @@ export function webPureVaporPinPlugin(): Plugin {
  * enableVapor (specs/166) `fjs/app` is the pure-vapor shell: the vdom
  * shell's `createApp`/`Transition` imports cannot even resolve against the
  * runtime-core pin, so it must stay out of the graph entirely. */
-export function webAliases(enableVapor = false): Record<string, string> {
+export function webAliases(enableVapor = false, interop = false): Record<string, string> {
   const root = runtimeDir();
   return withPackageAliases({
     fjs: path.join(root, 'src', 'index.ts'),
@@ -1043,13 +1044,14 @@ export function webAliases(enableVapor = false): Record<string, string> {
     'fjs/router': path.join(root, 'src', 'router', enableVapor ? 'web-vapor.ts' : 'web.ts'),
     'fjs/app': path.join(root, 'src', 'app', enableVapor ? 'web-vapor.ts' : 'web.ts'),
     // enableVapor: the interop-free vapor surface — no createRenderer, no
-    // adopt machinery, no runtime-core renderer engine in the bundle
-    'fjs/vapor': path.join(root, 'src', 'vapor', enableVapor ? 'web-pure.ts' : 'web.ts'),
+    // adopt machinery, no runtime-core renderer engine in the bundle —
+    // unless a VDOM component library needs the interop (specs/182)
+    'fjs/vapor': path.join(root, 'src', 'vapor', enableVapor && !interop ? 'web-pure.ts' : 'web.ts'),
   });
 }
 
 /** Resolve aliases for a Flutter build. */
-export function flutterAliases(enableVapor = false): Record<string, string> {
+export function flutterAliases(enableVapor = false, interop = false): Record<string, string> {
   const root = runtimeDir();
   return withPackageAliases({
     ...runtimeAliases(),
@@ -1061,8 +1063,11 @@ export function flutterAliases(enableVapor = false): Record<string, string> {
     ...(enableVapor
       ? {
           'fjs/app': path.join(root, 'src', 'app', 'flutter-vapor.ts'),
-          'fjs/vapor': path.join(root, 'src', 'vapor', 'flutter-pure.ts'),
-          'fjs/vue': path.join(root, 'src', 'vue', 'index-vapor.ts'),
+          // specs/182: a VDOM component library keeps the interop surface
+          'fjs/vapor': path.join(root, 'src', 'vapor', interop ? 'index.ts' : 'flutter-pure.ts'),
+          // specs/182: the interop keeps the full surface (createApp —
+          // what an app-side patch of vant's imperative mounts imports)
+          'fjs/vue': path.join(root, 'src', 'vue', interop ? 'index.ts' : 'index-vapor.ts'),
         }
       : { 'fjs/app': path.join(root, 'src', 'app', 'flutter.ts') }),
   });

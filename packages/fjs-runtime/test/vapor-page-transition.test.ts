@@ -118,4 +118,40 @@ describe('enableVapor web page transitions (specs/178)', () => {
     expect(host().getAttribute('data-nav')).toBe('none');
     expect(classes(entry('t1'))).toEqual([]);
   });
+
+  it('a cached page is deactivated when left and activated when back — its VDOM components too (specs/181)', async () => {
+    const vue = (await import('../src/vapor/web')) as unknown as Record<string, unknown>;
+    const { defineComponent, h, onActivated, onDeactivated } = await import('vue');
+    const Layer = defineComponent({
+      setup() {
+        onDeactivated(() => log.push('vdom da'));
+        onActivated(() => log.push('vdom a'));
+        return () => h('i');
+      },
+    });
+    const home = compileSfc(
+      `<script setup>
+import { onActivated, onDeactivated } from 'vue'
+import Layer from './Layer'
+onDeactivated(() => globalThis.__log.push('home da'))
+onActivated(() => globalThis.__log.push('home a'))
+</script>
+<template><view><text class="home">home</text><Layer /></view></template>`,
+      { vapor: true, runtime: vue, imports: { './Layer': Layer } },
+    ).component;
+    const detail = compileSfc(`<template><text class="detail">detail</text></template>`, { vapor: true, runtime: vue }).component;
+    const a = await app({ transition: false }, [
+      { path: '/', component: home },
+      { path: '/detail', component: detail },
+    ]);
+    log.length = 0;
+    await a.router.push('/detail');
+    await tick(20);
+    expect(log).toEqual(['vdom da', 'home da']);
+    log.length = 0;
+    a.router.back();
+    await tick(50);
+    // (the earlier cases' apps hear the popstate too)
+    expect(log.filter((l) => !l.startsWith('settled'))).toEqual(['vdom a', 'home a']);
+  });
 });
