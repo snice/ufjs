@@ -403,16 +403,31 @@ Widget decorateNode(
       return out;
     }
 
-    final decoration = BoxDecoration(
-      color: background,
-      gradient: style.gradient,
-      // a % radius rides a relative size and resolves in the LayoutBuilder
-      // that owns the box's width/height (spec 079)
-      borderRadius: fractionRadius ?? borderRadius,
-      border: border,
-      // an overflow-hidden box paints its shadow outside the clip (below)
-      boxShadow: style.overflowHidden ? null : style.boxShadows,
-    );
+    // specs/189: with no % radius in play, this is a pure function of the
+    // style — and interned styles are shared by every node with the same
+    // style id — so build it once per style instead of per node per mount
+    // (the mount profile's top allocator: object allocation + old-gen
+    // marking inside buildScope). A % radius resolves per SIZE through
+    // [fractionRadius] (and a built-in's default colour/radius makes it
+    // node-specific); those cases keep the per-call build.
+    final decoration = fractionRadius == null &&
+            defaultBackgroundColor == null &&
+            defaultBorderColor == null &&
+            defaultBorderRadius == null
+        ? (style.cachedDecoration ??= BoxDecoration(
+            color: background,
+            gradient: style.gradient,
+            borderRadius: borderRadius,
+            border: border,
+            boxShadow: style.overflowHidden ? null : style.boxShadows,
+          ))
+        : BoxDecoration(
+            color: background,
+            gradient: style.gradient,
+            borderRadius: fractionRadius ?? borderRadius,
+            border: border,
+            boxShadow: style.overflowHidden ? null : style.boxShadows,
+          );
     Widget buildBox(Decoration decoration, Widget? inner) {
       return _decoratedBox(
         key: foregroundKey,

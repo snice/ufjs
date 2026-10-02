@@ -247,9 +247,24 @@ class FjsStyle {
   bool _opacityReady = false;
   List<BoxShadow>? _boxShadows;
   bool _boxShadowsReady = false;
+  FjsTransitions? _transitions;
+  bool _transitionsReady = false;
+  Gradient? _gradient;
+  bool _gradientReady = false;
+  List<FjsBackgroundLayer>? _backgroundLayers;
+  bool _backgroundLayersReady = false;
+  BoxDecoration? _cachedDecoration;
+
+  /// decorateNode's style-only BoxDecoration, built once per interned style
+  /// and shared by every node with this style id (specs/189) — immutable, so
+  /// sharing is safe and DecoratedBox's identical-instance check short-circuits
+  /// shouldRepaint. decoration.dart owns the assembly; only built-ins that
+  /// pass their own default colours keep the per-node build.
+  BoxDecoration? get cachedDecoration => _cachedDecoration;
+  set cachedDecoration(BoxDecoration? value) => _cachedDecoration = value;
+
   TextOverflow? _overflow;
-  bool _overflowReady = false;
-  double? _fontSize;
+  bool _overflowReady = false;  double? _fontSize;
   bool _fontSizeReady = false;
   FontWeight? _fontWeight;
   bool _fontWeightReady = false;
@@ -904,17 +919,25 @@ class FjsStyle {
   ({double width, Color? color, FjsBorderStyle kind})? get borderShorthand =>
       parseBorder(_v('border'));
 
-  Gradient? get gradient => backgroundLayers != null
-      ? null
-      : parseGradient(_v('backgroundImage')) ?? parseGradient(_backgroundPaint);
+  Gradient? get gradient {
+    if (_gradientReady) return _gradient;
+    _gradientReady = true;
+    return _gradient = backgroundLayers != null
+        ? null
+        : parseGradient(_v('backgroundImage')) ?? parseGradient(_backgroundPaint);
+  }
 
   /// Layered background images (see [FjsBackgroundLayer]); null for the
   /// single full-box gradient [gradient] paints.
-  List<FjsBackgroundLayer>? get backgroundLayers => parseBackgroundLayers(
-    _v('backgroundImage'),
-    _v('backgroundSize'),
-    _v('backgroundPosition'),
-  );
+  List<FjsBackgroundLayer>? get backgroundLayers {
+    if (_backgroundLayersReady) return _backgroundLayers;
+    _backgroundLayersReady = true;
+    return _backgroundLayers = parseBackgroundLayers(
+      _v('backgroundImage'),
+      _v('backgroundSize'),
+      _v('backgroundPosition'),
+    );
+  }
 
   List<BoxShadow>? get boxShadows {
     if (_boxShadowsReady) return _boxShadows;
@@ -994,7 +1017,16 @@ class FjsStyle {
   /// CSS transition support for paint-only wrappers. The native renderer
   /// currently animates `transform` and `opacity`; layout properties still
   /// jump to their new value.
-  FjsTransitions? get transitions => parseTransitions(style);
+  ///
+  /// Memoized (specs/189): transitionNode and decorateNode's _liveTrack read
+  /// this for every node on every build — parseTransitions walked the
+  /// declared list each time, ~14 ms of the mount frame's buildScope on the
+  /// 4050 profile.
+  FjsTransitions? get transitions {
+    if (_transitionsReady) return _transitions;
+    _transitionsReady = true;
+    return _transitions = parseTransitions(style);
+  }
 
   /// `touch-action`: which gestures this node takes away from whatever
   /// would otherwise handle them (a scrollable, usually). Parsed in
