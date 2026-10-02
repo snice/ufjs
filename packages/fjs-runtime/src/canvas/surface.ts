@@ -11,8 +11,9 @@
 // their own command writers and attach them here through attachOpWriter —
 // this file only knows "extra op streams exist", not which one is which.
 import { getWriter, registerPreFlush, scheduleFlush } from '../host';
-import { nodeHandler } from '../ui/element';
-import { resolveContext } from './context-registry';
+import { nodeHandler, setCanvasHooks } from '../ui/element';
+import { registerContextType, resolveContext } from './context-registry';
+import { FjsCanvasRenderingContext2D } from './context-2d';
 import { CanvasWriter } from './display-list';
 import {
   canvasToDataURL,
@@ -185,3 +186,13 @@ function installDrain(): void {
     for (const surface of pending) surface.flush();
   });
 }
+
+// specs/185: the element layer reaches this file only through its hook —
+// whoever imports it (the canvas component's Flutter registration) brings
+// the 2d implementation along
+setCanvasHooks({ attach: attachCanvas, detach: detachCanvas });
+registerContextType('2d', (target) => {
+  if (target.domCanvas) return target.domCanvas.getContext('2d');
+  if (!target.surface) return null;
+  return new FjsCanvasRenderingContext2D(target.surface, target.canvas);
+});

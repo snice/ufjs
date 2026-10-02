@@ -2,7 +2,6 @@
 // h()/element functions; ops are batched per microtask and flushed to the
 // native host in one frame (mirrors React Native's batched shadow commits).
 import { getWriter, scheduleFlush, flushNow, hasNativeHost, invokeHost } from '../host';
-import { attachCanvas, detachCanvas } from '../canvas/surface';
 import type { FjsCanvasRenderingContext2D } from '../canvas/context-2d';
 
 /** The drawing surface's tag. `canvas` is the COMPONENT a page writes
@@ -639,16 +638,41 @@ export interface CanvasElement extends Element {
   readonly height: number;
 }
 
+// ---- canvas surfaces (specs/185) -------------------------------------------
+//
+// The 2d implementation (canvas/surface → context-2d, path2d, the display
+// list) is not imported here: every app carries this file, few draw. The
+// canvas COMPONENT's Flutter registrations import canvas/surface, which
+// installs itself through this seam — an app without <canvas> ships none
+// of it.
+
+interface CanvasHooks {
+  attach(
+    el: Record<string, unknown> & { id: number },
+    register: (type: number, handler: (id: number, payload?: string) => void) => void,
+  ): void;
+  detach(el: { __canvas?: unknown }): void;
+}
+let canvasHooks: CanvasHooks | null = null;
+let warnedNoSurface = false;
+
+/** @internal canvas/surface.ts registers itself */
+export function setCanvasHooks(hooks: CanvasHooks): void {
+  canvasHooks = hooks;
+}
+
 export function create(tag: string): Element {
   const id = nextId++;
   getWriter().create(id, tag);
   scheduleFlush();
   const el = makeElement(id, tag);
   if (tag === INNER_CANVAS_TAG) {
-    attachCanvas(
-      el as unknown as Record<string, unknown> & { id: number },
-      registerSystemHandler,
-    );
+    if (canvasHooks) {
+      canvasHooks.attach(el as unknown as Record<string, unknown> & { id: number }, registerSystemHandler);
+    } else if (!warnedNoSurface) {
+      warnedNoSurface = true;
+      console.warn('[fjs] an inner-canvas element was created but no canvas surface is loaded — use the <canvas> component (it brings the 2d implementation)');
+    }
   }
   return el;
 }
@@ -690,7 +714,7 @@ const ELEMENT_PROTO = {
     getWriter().remove(child.id);
     forgetHandlers(child.id);
     forgetElementStyle(child.id);
-    if (child.tag === INNER_CANVAS_TAG) detachCanvas(child as { __canvas?: unknown });
+    if (child.tag === INNER_CANVAS_TAG) canvasHooks?.detach(child as { __canvas?: unknown });
     scheduleFlush();
     return child;
   },
@@ -1014,7 +1038,7 @@ export function insert(parent: Element, child: Element, index?: number): void {
 export function remove(el: Element): void {
   getWriter().remove(el.id);
   forgetHandlers(el.id);
-  if (el.tag === INNER_CANVAS_TAG) detachCanvas(el as { __canvas?: unknown });
+  if (el.tag === INNER_CANVAS_TAG) canvasHooks?.detach(el as { __canvas?: unknown });
   devtoolsStructuralVersion.value++;
   scheduleFlush();
 }
