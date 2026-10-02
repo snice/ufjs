@@ -283,6 +283,23 @@ export interface VaporBackend {
   createElement?(tag: string): HostNode;
   /** The host's current parent (render-host re-places a changed root). */
   parentNode?(host: HostNode): HostNode | null;
+  /** <Transition>'s platform half (specs/174); without it Transition only
+   * runs its JS hooks. */
+  transition?: TransitionBackend;
+}
+
+/** What <Transition> needs from a platform: class flips that survive the
+ * template's own class writes, a two-frame hop, and "this element's
+ * transition / animation is over". */
+export interface TransitionBackend {
+  addClass(host: HostNode, cls: string): void;
+  removeClass(host: HostNode, cls: string): void;
+  nextFrame(cb: () => void): void;
+  /** Calls `cb` when the element's running transition / animation ends;
+   * `explicitMs` (the `duration` prop) overrides the measurement. */
+  whenEnds(host: HostNode, explicitMs: number | undefined, cb: () => void): void;
+  /** Only elements animate (anchors, text runs do not). */
+  isElement(host: HostNode): boolean;
 }
 
 let backend: VaporBackend | null = null;
@@ -885,120 +902,274 @@ export function renderEffect(fn: () => unknown): void {
 }
 
 
-// ---- v-if ---------------------------------------------------------------------------
+// ---- switching fragments (v-if, :key, <component :is>) ------------------------------
 
-/** A v-if position: an invisible anchor holds the spot; each branch renders
- * into a fresh scope whose effects die with the branch. `flags` carry the
- * compiler's shape / keyed-index / once hints — the general path is correct
- * for all of them, so they are not read. */
-export function createIf(condition: () => unknown, positive?: () => unknown, negative?: () => unknown, flags = 1): Block {
-  void flags;
-  const { parent, anchor: before } = takeInsertionState();
-  const anchor = makeAnchor('if');
-  if (parent) be().attach(anchor, parent, before);
+/** One rendered branch of a switching fragment. `owner` / `insts` let the
+ * component layer find the components mounted directly in it (KeepAlive
+ * matches and activates them, specs/174). */
+export interface Branch {
+  key: unknown;
+  nodes: HostNode[];
+  scope: unknown;
+  cleanups: (() => void)[];
+  owner: unknown;
+  insts?: unknown[];
+  /** In KeepAlive's hands: a leave animation still owes it the move into
+   * storage — unless a switch back took it first. */
+  retiring?: boolean;
+}
+
+/** What <Transition> hangs on a fragment (specs/174). `enter` / `leave`
+ * get the branch's hosts; `leave`'s done removes them. */
+export interface SwitchTransition {
+  readonly mode?: unknown;
+  enter(nodes: readonly HostNode[], done?: () => void): void;
+  leave(nodes: readonly HostNode[], done: () => void): void;
+}
+
+/** What <KeepAlive> hangs on a fragment (specs/174). */
+export interface SwitchKeepAlive {
+  /** Whether this branch is to be kept instead of destroyed. */
+  wants(branch: Branch): boolean;
+  /** The branch left (its deactivated hooks); nodes still in place. */
+  deactivate(branch: Branch): void;
+  /** Its nodes may go now (after any leave animation). */
+  store(branch: Branch): void;
+  /** A kept branch for this key, removed from the cache. */
+  take(key: unknown): Branch | undefined;
+  /** A kept branch is back in the tree. */
+  activate(branch: Branch): void;
+}
+
+export interface SwitchState {
+  current: Branch | null;
+  transition: SwitchTransition | null;
+  keepAlive: SwitchKeepAlive | null;
+}
+
+/** Fragment → its switch, keyed by the fragment's own `nodes` array: blockOf
+ * copies a Block but shares that array, so the switch is still found behind
+ * a slot or a component boundary. */
+const switches = new WeakMap<readonly HostNode[], SwitchState>();
+
+/** The switch behind a block a slot / component returned, if it is one. */
+export function switchOf(block: unknown): SwitchState | undefined {
+  const nodes = (block as Block | null)?.nodes;
+  return nodes ? switches.get(nodes) : undefined;
+}
+
+/** The branch being rendered right now (the component layer records the
+ * components mounted in it), and who owns it. */
+let renderingBranch: Branch | null = null;
+let branchOwner: () => unknown = () => null;
+
+export function setBranchOwnerResolver(fn: () => unknown): void {
+  branchOwner = fn;
+}
+
+export function currentBranch(): Branch | null {
+  return renderingBranch;
+}
+
+/** Stops a branch's scope and runs its cleanups, its hosts left alone. The
+ * beforeStop pass first: beforeUnmount hooks still see their hosts. */
+function disposeBranch(branch: Branch): void {
+  beforeStop(branch.scope);
+  needRx().stopScope(branch.scope);
+  for (const cleanup of branch.cleanups) cleanup();
+}
+
+/** The shared machinery of v-if, keyed blocks and dynamic components: an
+ * anchor holds the spot, each branch renders into a fresh scope whose
+ * effects die with it. `swap` replaces the branch; a <Transition> or
+ * <KeepAlive> around the fragment changes how the old one leaves and where
+ * the new one comes from (specs/174). */
+function createSwitch(label: string): {
+  frag: Block & { nodes: HostNode[]; scopes: unknown[]; cleanups: (() => void)[] };
+  swap: (key: unknown, render: () => unknown) => void;
+} {
+  const { parent: insertedInto, anchor: before } = takeInsertionState();
+  const anchor = makeAnchor(label);
+  if (insertedInto) be().attach(anchor, insertedInto, before);
   const frag: Block & { nodes: HostNode[]; scopes: unknown[]; cleanups: (() => void)[] } = { nodes: [anchor], scopes: [], cleanups: [] };
-  let current: { scope: unknown; cleanups: (() => void)[] } | null = null;
-  const teardown = (): void => {
-    if (current) beforeStop(current.scope);
-    for (let i = frag.nodes.length - 1; i >= 1; i--) be().remove(frag.nodes[i]);
+  const state: SwitchState = { current: null, transition: null, keepAlive: null };
+  switches.set(frag.nodes, state);
+  const owner = currentScope;
+  /** Hosts of left branches whose leave animation is still running. */
+  const leaving = new Set<HostNode>();
+  let outIn: { key: unknown; render: () => unknown } | null = null;
+  let outInLeaving = false;
+  let disposed = false;
+
+  // a fragment created as a component's / slot's root had no insertion
+  // point: it joined the tree with its block, so ask where it is now
+  const parentNow = (): HostNode | null => insertedInto ?? be().parentNode?.(anchor) ?? null;
+
+  const renderBranch = (key: unknown, render: () => unknown): Branch => {
+    const scope = needRx().createScope();
+    const branch: Branch = { key, nodes: [], scope, cleanups: [], owner: branchOwner() };
+    const prev = renderingBranch;
+    renderingBranch = branch;
+    let block: Block;
+    try {
+      block = withScope(scope, () => blockOf(render()));
+    } catch (e) {
+      needRx().stopScope(scope);
+      throw e;
+    } finally {
+      renderingBranch = prev;
+    }
+    branch.nodes = [...block.nodes];
+    if (block.cleanups) branch.cleanups.push(...block.cleanups);
+    return branch;
+  };
+
+  const mount = (key: unknown, render: () => unknown, animate: boolean, afterEnter?: () => void): void => {
+    const cached = state.keepAlive?.take(key);
+    if (cached) cached.retiring = false;
+    const branch = cached ?? withScope(owner, () => renderBranch(key, render));
+    const parent = parentNow();
+    if (parent) for (const node of branch.nodes) be().attach(node, parent, anchor);
+    frag.nodes.push(...branch.nodes);
+    frag.scopes.length = 0;
+    frag.scopes.push(branch.scope);
+    state.current = branch;
+    // Vue's KeepAlive activates a kept component on its first mount too
+    const keep = state.keepAlive;
+    if (cached) keep!.activate(cached);
+    else if (keep && keep.wants(branch)) keep.activate(branch);
+    const t = state.transition;
+    if (animate && t) t.enter(branch.nodes, afterEnter);
+    else afterEnter?.();
+  };
+
+  /** Takes the current branch out of the fragment and lets it go: kept by a
+   * KeepAlive or destroyed, its hosts removed (or stored) once any leave
+   * animation is over. */
+  const retire = (branch: Branch, after?: () => void): void => {
     frag.nodes.length = 1;
-    if (current) {
-      needRx().stopScope(current.scope);
-      for (const cleanup of current.cleanups) cleanup();
-      current = null;
-      frag.scopes.length = 0;
+    frag.scopes.length = 0;
+    state.current = null;
+    const keep = state.keepAlive;
+    const kept = keep !== null && keep.wants(branch);
+    const t = state.transition && !disposed ? state.transition : null;
+    if (kept) {
+      keep.deactivate(branch);
+      branch.retiring = true;
+    } else if (t) {
+      // unmounted now (as Vue does); the hosts stay for the leave animation
+      disposeBranch(branch);
+    } else {
+      // no animation: beforeUnmount sees its hosts, unmounted sees them gone
+      beforeStop(branch.scope);
+    }
+    const finish = (): void => {
+      for (const node of branch.nodes) leaving.delete(node);
+      if (kept) {
+        if (branch.retiring) {
+          branch.retiring = false;
+          keep.store(branch);
+        }
+      } else {
+        for (let i = branch.nodes.length - 1; i >= 0; i--) be().remove(branch.nodes[i]);
+        if (!t) {
+          needRx().stopScope(branch.scope);
+          for (const cleanup of branch.cleanups) cleanup();
+        }
+      }
+      after?.();
+    };
+    if (t) {
+      for (const node of branch.nodes) leaving.add(node);
+      t.leave(branch.nodes, finish);
+    } else {
+      finish();
     }
   };
-  const owner = currentScope;
+
+  const swap = (key: unknown, render: () => unknown): void => {
+    const old = state.current;
+    const t = state.transition;
+    const mode = t?.mode;
+    if (mode === 'out-in' && (old || outInLeaving)) {
+      // the new branch renders once the old one has left; a switch in the
+      // meantime only changes WHICH branch that will be
+      outIn = { key, render };
+      if (outInLeaving) return;
+      outInLeaving = true;
+      retire(old!, () => {
+        outInLeaving = false;
+        const next = outIn;
+        outIn = null;
+        if (next && !disposed) mount(next.key, next.render, true);
+      });
+      return;
+    }
+    if (old && mode === 'in-out') {
+      frag.nodes.length = 1;
+      state.current = null;
+      mount(key, render, true, () => {
+        if (!disposed) retire(old);
+      });
+      return;
+    }
+    if (old) retire(old);
+    mount(key, render, old !== null);
+  };
+
+  // an enclosing removal: the current branch goes with the fragment's hosts
+  // (removeBlock removes frag.nodes, stops frag.scopes, then runs these)
+  frag.cleanups.push(() => {
+    disposed = true;
+    const cur = state.current;
+    if (cur) {
+      needRx().stopScope(cur.scope);
+      for (const cleanup of cur.cleanups) cleanup();
+    }
+    for (const node of leaving) be().remove(node);
+    leaving.clear();
+  });
+  return { frag, swap };
+}
+
+/** A v-if position. The branch only changes when the condition's TRUTH
+ * does (specs/167): `v-if="n > 5"` going 6 → 7 re-ran this effect, and it
+ * used to tear the branch down and rebuild it — losing every bit of state
+ * inside. `flags` carry the compiler's shape / keyed-index / once hints —
+ * the general path is correct for all of them, so they are not read. */
+export function createIf(condition: () => unknown, positive?: () => unknown, negative?: () => unknown, flags = 1): Block {
+  void flags;
+  const { frag, swap } = createSwitch('if');
   const savedFx = fxTag;
   fxTag = 'ifFx';
-  withScope(
-    owner,
-    () => {
-      // the branch only changes when the condition's TRUTH does (specs/167):
-      // `v-if="n > 5"` going 6 → 7 re-ran this effect, and it used to tear
-      // the branch down and rebuild it — losing every bit of state inside
-      let shown: boolean | null = null;
-      renderEffect(() => {
-        const next = !!condition();
-        if (next === shown) return;
-        shown = next;
-        teardown();
-        const branchScope = needRx().createScope();
-        let branch: Block;
-        try {
-          branch = withScope(branchScope, () => blockOf(next ? positive?.() : negative?.()));
-        } catch (e) {
-          needRx().stopScope(branchScope);
-          throw e;
-        }
-        if (parent) insertBlock(branch, parent, anchor);
-        frag.nodes.push(...branch.nodes);
-        for (const scope of branch.scopes ?? []) frag.scopes.push(scope);
-        frag.scopes.push(branchScope);
-        current = { scope: branchScope, cleanups: branch.cleanups ? [...branch.cleanups] : [] };
-      });
-    },
-  );
-  fxTag = savedFx;
-  // an enclosing removal stops the branch scope and runs its cleanups after
-  // the hosts are gone (removeBlock orders nodes, scopes, then cleanups)
-  frag.cleanups.push(() => {
-    if (current) needRx().stopScope(current.scope);
-    for (const cleanup of current?.cleanups ?? []) cleanup();
+  withScope(currentScope, () => {
+    let shown: boolean | null = null;
+    renderEffect(() => {
+      const next = !!condition();
+      if (next === shown) return;
+      shown = next;
+      swap(next, () => (next ? positive?.() : negative?.()));
+    });
   });
+  fxTag = savedFx;
   return frag;
 }
 
 /** A block keyed on a value (specs/170): `<view :key="k">`, `<template v-if
- * :key>` — when the key changes the content is torn down and rebuilt in a
- * fresh scope, exactly like a v-if flipping. Same anchor/teardown shape as
- * createIf; the switch is identity of the key instead of truthiness. */
-export function createKeyedFragment(key: () => unknown, render: () => unknown): Block {
-  const { parent, anchor: before } = takeInsertionState();
-  const anchor = makeAnchor('key');
-  if (parent) be().attach(anchor, parent, before);
-  const frag: Block & { nodes: HostNode[]; scopes: unknown[]; cleanups: (() => void)[] } = { nodes: [anchor], scopes: [], cleanups: [] };
-  let current: { scope: unknown; cleanups: (() => void)[] } | null = null;
-  const teardown = (): void => {
-    if (current) beforeStop(current.scope);
-    for (let i = frag.nodes.length - 1; i >= 1; i--) be().remove(frag.nodes[i]);
-    frag.nodes.length = 1;
-    if (current) {
-      needRx().stopScope(current.scope);
-      for (const cleanup of current.cleanups) cleanup();
-      current = null;
-      frag.scopes.length = 0;
-    }
-  };
-  const owner = currentScope;
+ * :key>`, `<component :is>` (specs/174) — when the key changes the content
+ * is torn down and rebuilt in a fresh scope, exactly like a v-if flipping. */
+export function createKeyedFragment(key: () => unknown, render: (key: unknown) => unknown): Block {
+  const { frag, swap } = createSwitch('key');
   let built = false;
   let last: unknown;
-  withScope(owner, () => {
+  withScope(currentScope, () => {
     renderEffect(() => {
       const k = key();
       if (built && Object.is(k, last)) return;
       built = true;
       last = k;
-      teardown();
-      const scope = needRx().createScope();
-      let block: Block;
-      try {
-        block = withScope(scope, () => blockOf(render()));
-      } catch (e) {
-        needRx().stopScope(scope);
-        throw e;
-      }
-      if (parent) insertBlock(block, parent, anchor);
-      frag.nodes.push(...block.nodes);
-      for (const sc of block.scopes ?? []) frag.scopes.push(sc);
-      frag.scopes.push(scope);
-      current = { scope, cleanups: block.cleanups ? [...block.cleanups] : [] };
+      swap(k, () => render(k));
     });
-  });
-  frag.cleanups.push(() => {
-    if (current) needRx().stopScope(current.scope);
-    for (const cleanup of current?.cleanups ?? []) cleanup();
   });
   return frag;
 }

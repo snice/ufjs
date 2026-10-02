@@ -6,6 +6,7 @@
 // with a one-time warning instead (constitution V). Semantics follow
 // @vue/runtime-vapor 3.6.0-rc.9; the hydration branches are left out.
 import { camelize, extend as sharedExtend, looseEqual, looseToNumber, normalizeClass, normalizeStyle, toDisplayString } from '@vue/shared';
+import { showTransitionOf } from './transition';
 import {
   addListener,
   be,
@@ -77,9 +78,25 @@ export function setHtml(el: unknown, value: unknown): void {
 
 export function applyVShow(target: unknown, source: () => unknown): void {
   const hosts = hostsOf(target);
+  let shown: boolean | null = null;
   renderEffect(() => {
-    const visible = source();
-    for (const host of hosts) showHost(host, visible);
+    const visible = !!source();
+    const first = shown === null;
+    if (visible === shown) return;
+    shown = visible;
+    for (const host of hosts) {
+      // a <Transition> around the element (specs/174) registers itself after
+      // this first run — the initial state never animates (appear does that)
+      const t = first ? undefined : showTransitionOf(host);
+      if (!t) {
+        showHost(host, visible);
+      } else if (visible) {
+        showHost(host, true);
+        t.enter([host]);
+      } else {
+        t.leave([host], () => showHost(host, false));
+      }
+    }
   });
 }
 

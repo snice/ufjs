@@ -111,3 +111,19 @@ class）、`textModel`（文本 v-model 的事件名与取值）、`applyChoiceM
 
 纪律：contract 与 element API 两层不得出现框架名；绑定层不得绕过 backend seam 直接摸
 op 编码。
+
+## 分支切换：Transition / KeepAlive 的挂点（specs/174）
+
+`createIf`、`createKeyedFragment`（`:key` 与 `<component :is>`）共用 host.ts 的 `createSwitch`：
+每次切换 = 旧分支退场 + 新分支进场。compiler-vapor 不给 `<Transition>` / `<KeepAlive>` 任何标记，
+外层组件在 slot 渲染完之后用 `switchOf(block)` 找到 switch（以 frag 的 `nodes` 数组为键，`blockOf`
+的拷贝共享它），事后挂上 `transition` / `keepAlive`：
+
+- `transition`：旧分支先 dispose（与 Vue 一致），节点等 leave 结束再移除；`out-in` 等 leave 完才渲染
+  新分支；`in-out` 新分支 enter 完再 leave 旧的。类名时序在 `vapor/transition.ts`，平台落地走
+  `VaporBackend.transition`（`addClass` / `removeClass` / `nextFrame` / `whenEnds` / `isElement`）。
+- `keepAlive`：被要走的分支不 dispose，节点 attach 进存储容器；新分支先问缓存要。分支里直属外层组件的
+  子实例记在 `branch.insts`（`setBranchOwnerResolver` 由组件层注入），供按名字匹配和触发 activated。
+
+作为组件 / slot 根的分支，切换时父节点用 `be().parentNode(anchor)` 兜底。
+

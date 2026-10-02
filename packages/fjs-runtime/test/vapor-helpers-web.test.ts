@@ -321,7 +321,7 @@ globalThis.__items = items
     expect(cells()).toBe('0:z,1:b');
   });
 
-  it('Transition / KeepAlive / Teleport render their content and warn once', () => {
+  it('Transition / KeepAlive / Teleport render their content (specs/174: only Teleport is still degraded)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const Page = sfc(`
 <script setup>
@@ -339,7 +339,8 @@ const on = ref(true)
     const root = mount(Page);
     expect(['.tr', '.tr2', '.ka', '.tp'].map((c) => !!root.querySelector(c))).toEqual([true, true, true, true]);
     const msgs = warn.mock.calls.map((c) => String(c[0]));
-    expect(msgs.filter((m) => m.includes('<Transition>')).length).toBe(1);
+    expect(msgs.some((m) => m.includes('<Transition>'))).toBe(false);
+    // a KeepAlive around a plain element has nothing to keep — said once
     expect(msgs.some((m) => m.includes('<KeepAlive>'))).toBe(true);
     expect(msgs.some((m) => m.includes('<Teleport>'))).toBe(true);
   });

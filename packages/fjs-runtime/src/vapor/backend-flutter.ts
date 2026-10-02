@@ -3,6 +3,8 @@
 // template instance is native-cloned by libfjs-style when it can be
 // (specs/152), falling back to node-by-node createElement otherwise.
 import { effect, stop as stopRunner, type ReactiveEffectRunner } from '@vue/reactivity';
+import type { Element } from '../ui/element';
+import { addTransitionClass, nextFrame, removeTransitionClass, whenTransitionEnds } from '../vue/transition-timing';
 import type { HostNode } from '../vue/host-ops';
 import {
   childElementIds,
@@ -23,6 +25,7 @@ import {
   __zoneEnter,
   __zoneExit,
   insertZoneName,
+  isAnchorHost,
   type Block,
   type TemplateDef,
   type VaporBackend,
@@ -285,6 +288,17 @@ export const flutterBackend: VaporBackend = {
     return (nodeOps.parentNode(host as never) as HostNode | null) ?? null;
   },
 
+
+  // specs/174: the vapor <Transition> on the same timing as the VDOM one
+  // (vue-shim.ts): classes in the style engine, the end read off the
+  // computed animation / transition durations
+  transition: {
+    addClass: (host, cls) => addTransitionClass(host as unknown as Element, cls),
+    removeClass: (host, cls) => removeTransitionClass(host as unknown as Element, cls),
+    nextFrame,
+    whenEnds: (host, ms, cb) => whenTransitionEnds(host as unknown as Element, ms, cb),
+    isElement: (host) => !isAnchorHost(host) && typeof (host as { id?: unknown }).id === 'number',
+  },
 
   // <style> v-bind() on a Vapor component (specs/166): the vars ride the
   // style engine's inline-custom-props channel — the same one the VDOM

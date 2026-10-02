@@ -74,6 +74,11 @@ export interface VaporInstance {
   renderHost?: boolean;
   bu?: Hook[] | null;
   u?: Hook[] | null;
+  /** Live child instances — KeepAlive activates a kept subtree (specs/174). */
+  children?: Set<VaporInstance>;
+  /** onActivated / onDeactivated (specs/174). */
+  a?: Hook[] | null;
+  da?: Hook[] | null;
 }
 
 const EMPTY_PROVIDES: Record<string | symbol, unknown> = Object.freeze(Object.create(null)) as never;
@@ -86,7 +91,7 @@ function appProvides(ctx: VaporAppContext | null): Record<string | symbol, unkno
 
 export function createVaporInstance(parent: VaporInstance | null, appContext: VaporAppContext | null): VaporInstance {
   const ctx = appContext ?? parent?.appContext ?? null;
-  return {
+  const inst: VaporInstance = {
     parent,
     appContext: ctx,
     // inherits the parent's (or the app's) provides until the first own
@@ -100,6 +105,13 @@ export function createVaporInstance(parent: VaporInstance | null, appContext: Va
     isUnmounting: false,
     isUnmounted: false,
   };
+  if (parent) (parent.children ??= new Set()).add(inst);
+  return inst;
+}
+
+/** An instance went away: its parent stops listing it. */
+export function detachVaporInstance(inst: VaporInstance): void {
+  inst.parent?.children?.delete(inst);
 }
 
 let current: VaporInstance | null = null;
@@ -238,8 +250,26 @@ export function runBeforeUpdate(inst: VaporInstance): void {
 export function runUpdated(inst: VaporInstance): void {
   callHooks(inst.u ?? null, 'updated hook');
 }
-export const onActivated = unsupported('onActivated', rcOnActivated);
-export const onDeactivated = unsupported('onDeactivated', rcOnDeactivated);
+// specs/174: fired by <KeepAlive> for the kept subtree; outside a KeepAlive
+// they never run, as in Vue
+export const onActivated = (fn: Hook, target?: unknown): void => {
+  if (current && target === undefined) (current.a ??= []).push(fn);
+  else rcOnActivated(fn, target as never);
+};
+export const onDeactivated = (fn: Hook, target?: unknown): void => {
+  if (current && target === undefined) (current.da ??= []).push(fn);
+  else rcOnDeactivated(fn, target as never);
+};
+
+/** Runs the activated / deactivated hooks of `roots` and everything under
+ * them, children first (Vue's order). */
+export function runKeepAliveHooks(roots: readonly VaporInstance[], kind: 'a' | 'da'): void {
+  const walk = (inst: VaporInstance): void => {
+    for (const child of inst.children ?? []) walk(child);
+    callHooks(inst[kind] ?? null, kind === 'a' ? 'activated hook' : 'deactivated hook');
+  };
+  for (const root of roots) walk(root);
+}
 export const onErrorCaptured = unsupported('onErrorCaptured', rcOnErrorCaptured);
 export const onRenderTracked = unsupported('onRenderTracked', rcOnRenderTracked);
 export const onRenderTriggered = unsupported('onRenderTriggered', rcOnRenderTriggered);

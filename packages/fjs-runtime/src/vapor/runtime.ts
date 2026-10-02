@@ -9,24 +9,30 @@ import { camelize, hyphenate, isArray, toHandlerKey } from '@vue/shared';
 import {
   be,
   blockOf,
+  createKeyedFragment,
+  currentBranch,
   emptyBlock,
   insertBlock,
   isAnchorHost,
   makeAnchor,
   removeBlock,
   renderEffect,
+  setBranchOwnerResolver,
   setHostReactivity,
   setVaporErrorReporter,
   setVaporJobHook,
+  switchOf,
   takeInsertionState,
   withScope as hostWithScope,
   type Block,
+  type Branch,
   type HostNode,
   type Slots,
   TplNode,
   template,
 } from './host';
 import { patchHostProps, warnVaporOnce } from './helpers';
+import { createTransitionHooks, setShowTransition } from './transition';
 import { discardCssVarsBucket, popAndApplyCssVars, pushCssVarsBucket } from './css-vars';
 import {
   createVaporInstance,
@@ -37,6 +43,10 @@ import {
   runBeforeUnmount,
   runMounted,
   runUnmounted,
+  onMounted,
+  onUnmounted,
+  runKeepAliveHooks,
+  detachVaporInstance,
   setCurrentVaporInstance,
   setVaporComponentResolver,
   type VaporAppContext,
@@ -59,6 +69,9 @@ function ownerOfActiveScope(): VaporInstance | null {
   const active = getCurrentScope();
   return (active && scopeOwner.get(active)) ?? null;
 }
+
+// a branch belongs to the component rendering it (specs/174)
+setBranchOwnerResolver(() => activeInstance());
 
 function activeInstance(): VaporInstance | null {
   return currentVaporInstance() ?? ownerOfActiveScope();
@@ -85,6 +98,7 @@ let stopDepth = 0;
 let disposed: VaporInstance[] = [];
 
 function onInstanceDisposed(inst: VaporInstance): void {
+  detachVaporInstance(inst);
   if (stopDepth > 0) disposed.push(inst);
   else runUnmounted(inst);
 }
@@ -393,6 +407,10 @@ function mountVaporComponent(
   // die with it, and no parent to inherit provides from
   const parent = root ? null : activeInstance();
   const inst = createVaporInstance(parent, appContext ?? parent?.appContext ?? null);
+  // a component mounted straight into a v-if / dynamic-component branch:
+  // KeepAlive keys, matches and activates by it (specs/174)
+  const branch = currentBranch();
+  if (branch && branch.owner === parent) (branch.insts ??= []).push(inst);
   inst.type = comp;
   const scope = new EffectScope(root);
   scopeOwner.set(scope, inst);
@@ -563,9 +581,10 @@ export function createDynamicComponent(
   rawProps?: Record<string, unknown>,
   rawSlots?: Slots,
 ): Block {
-  // evaluated once: a true dynamic swap needs keyed-fragment plumbing that
-  // no page in this repo uses yet
-  return createComponentWithFallback(getComp(), rawProps, rawSlots);
+  // specs/174: keyed on the resolved component — `is` changing to another
+  // component rebuilds, re-renders of the same one do not (it used to be
+  // evaluated once, so `<component :is>` never switched)
+  return createKeyedFragment(getComp, (comp) => createComponentWithFallback(comp, rawProps, rawSlots));
 }
 
 
@@ -803,14 +822,125 @@ function degraded(name: string, what: string, props: string[]): VaporComponent {
   });
 }
 
-export const VaporTransition = degraded('Transition', 'does not animate', [
-  'name', 'appear', 'mode', 'css', 'type', 'duration', 'persisted',
-  'enterFromClass', 'enterActiveClass', 'enterToClass', 'appearFromClass', 'appearActiveClass', 'appearToClass',
-  'leaveFromClass', 'leaveActiveClass', 'leaveToClass',
-]);
-export const VaporTransitionGroup = degraded('TransitionGroup', 'does not animate', ['name', 'tag', 'moveClass', 'appear']);
-export const VaporKeepAlive = degraded('KeepAlive', 'does not cache', ['include', 'exclude', 'max']);
-export const VaporTeleport = degraded('Teleport', 'does not move content (rendered in place)', ['to', 'disabled', 'defer']);
+/** Vapor <Transition> (specs/174): renders its slot, then hangs the class
+ * timeline on what came back — the v-if / `:key` / `<component :is>`
+ * fragment's switches, or the v-show element's toggles. */
+export const VaporTransition = /* @__PURE__ */ defineVaporComponent({
+  name: 'Transition',
+  props: [
+    'name', 'appear', 'mode', 'css', 'type', 'duration', 'persisted',
+    'enterFromClass', 'enterActiveClass', 'enterToClass', 'appearFromClass', 'appearActiveClass', 'appearToClass',
+    'leaveFromClass', 'leaveActiveClass', 'leaveToClass',
+    'onBeforeEnter', 'onEnter', 'onAfterEnter', 'onEnterCancelled',
+    'onBeforeLeave', 'onLeave', 'onAfterLeave', 'onLeaveCancelled',
+    'onBeforeAppear', 'onAppear', 'onAfterAppear', 'onAppearCancelled',
+  ],
+  setup(props: Record<string, unknown>) {
+    const block = createSlot('default');
+    const hooks = createTransitionHooks(props);
+    const sw = switchOf(block);
+    if (sw) {
+      sw.transition = hooks;
+    } else {
+      // v-show on a plain element: applyVShow asks at each toggle
+      for (const host of block.nodes) setShowTransition(host, hooks);
+    }
+    const appear = props.appear;
+    if (appear !== undefined && appear !== false && appear !== 'false') {
+      onMounted(() => hooks.appear(sw ? sw.current?.nodes ?? [] : block.nodes));
+    }
+    return block;
+  },
+});
+export const VaporTransitionGroup = /* @__PURE__ */ degraded('TransitionGroup', 'does not animate', ['name', 'tag', 'moveClass', 'appear']);
+type NameMatcher = string | RegExp | (string | RegExp)[] | null | undefined;
+
+function nameMatches(pattern: NameMatcher, name: string): boolean {
+  if (Array.isArray(pattern)) return pattern.some((p) => nameMatches(p, name));
+  if (typeof pattern === 'string') return pattern.split(',').map((p) => p.trim()).includes(name);
+  if (pattern instanceof RegExp) {
+    pattern.lastIndex = 0;
+    return pattern.test(name);
+  }
+  return false;
+}
+
+function branchName(branch: Branch): string {
+  const type = (branch.insts?.[0] as VaporInstance | undefined)?.type as { name?: string; __name?: string } | undefined;
+  return type?.name ?? type?.__name ?? '';
+}
+
+/** Vapor <KeepAlive> (specs/174): the v-if / `<component :is>` fragment it
+ * wraps keeps a left component instead of destroying it — its hosts move
+ * into a storage element that is never attached (Flutter's remove destroys
+ * elements, so storage is an insert, as runtime-core's KeepAlive does), its
+ * effects and state stay. Back in the tree: onActivated; out: onDeactivated. */
+export const VaporKeepAlive = /* @__PURE__ */ defineVaporComponent({
+  name: 'KeepAlive',
+  props: ['include', 'exclude', 'max'],
+  setup(props: Record<string, unknown>) {
+    const block = createSlot('default');
+    const sw = switchOf(block);
+    if (!sw) {
+      warnVaporOnce('keepalive-child', '<KeepAlive> keeps a v-if branch or a <component :is> — its content is neither, so nothing is cached');
+      return block;
+    }
+    const b = be();
+    const storage = b.createElement ? b.createElement('view') : template('<view></view>')().host;
+    /** Kept branches by key, least recently used first. */
+    const cache = new Map<unknown, Branch>();
+    const destroy = (branch: Branch): void => {
+      removeBlock({ nodes: branch.nodes, scopes: [branch.scope], cleanups: branch.cleanups });
+    };
+    const insts = (branch: Branch): VaporInstance[] => (branch.insts ?? []) as VaporInstance[];
+    sw.keepAlive = {
+      wants(branch) {
+        if (!branch.insts?.length) return false; // only components are kept
+        const name = branchName(branch);
+        if (props.include != null && props.include !== '' && !nameMatches(props.include as NameMatcher, name)) return false;
+        if (props.exclude != null && props.exclude !== '' && nameMatches(props.exclude as NameMatcher, name)) return false;
+        return true;
+      },
+      deactivate(branch) {
+        cache.delete(branch.key);
+        cache.set(branch.key, branch);
+        runKeepAliveHooks(insts(branch), 'da');
+      },
+      store(branch) {
+        // still cached (not evicted meanwhile): park the hosts
+        if (cache.get(branch.key) === branch) for (const node of branch.nodes) b.attach(node, storage, null);
+      },
+      take(key) {
+        const branch = cache.get(key);
+        if (branch) cache.delete(key);
+        return branch;
+      },
+      activate(branch) {
+        runKeepAliveHooks(insts(branch), 'a');
+        // `max` counts the live component too (Vue's rule): the least
+        // recently used kept one goes once there is no room
+        const max = Number(props.max);
+        if (max > 0) {
+          while (cache.size + 1 > max) {
+            const [oldestKey, oldest] = cache.entries().next().value as [unknown, Branch];
+            cache.delete(oldestKey);
+            destroy(oldest);
+          }
+        }
+      },
+    };
+    onMounted(() => {
+      const cur = sw.current;
+      if (cur && sw.keepAlive!.wants(cur)) runKeepAliveHooks(insts(cur), 'a');
+    });
+    onUnmounted(() => {
+      for (const branch of cache.values()) destroy(branch);
+      cache.clear();
+    });
+    return block;
+  },
+});
+export const VaporTeleport = /* @__PURE__ */ degraded('Teleport', 'does not move content (rendered in place)', ['to', 'disabled', 'defer']);
 
 // the core's surface IS the compiled face — component layer adds the rest
 export * from './host';

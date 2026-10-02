@@ -33,7 +33,7 @@ import type { Element } from '../ui/element';
 // host primitives only (specs/169): every 'vue' import goes through here, and
 // the renderer module would pin runtime-core's rendering engine into it
 import { styleEngine } from './host-ops';
-import { trackTransitionClass, untrackTransitionClass, transitionClassesOf } from './transition-classes';
+import { addTransitionClass, removeTransitionClass, nextFrame, whenTransitionEnds, type ElementFlags } from './transition-timing';
 export * from '@vue/runtime-core';
 // specs/167: lifecycle + provide/inject that also serve a vapor setup — a
 // composable importing them from 'vue' reaches the vapor instance. Outside
@@ -93,123 +93,6 @@ function callHook(hook: Hook | undefined, el: Element, done?: () => void): void 
 
 const hasExplicitCallback = (hook: Hook | undefined): boolean =>
   Array.isArray(hook) ? hook.some((h) => h.length > 1) : (hook?.length ?? 0) > 1;
-
-/** The DOM classes are engine state here, not DOM attributes: read the
- * current list, mutate, write back. The engine restyles on its next flush,
- * which is what starts the `-active` animation — and what stops it when the
- * classes come off again. */
-function addTransitionClass(el: Element, cls: string): void {
-  for (const c of cls.split(/\s+/)) {
-    if (!c) continue;
-    trackTransitionClass(el, c);
-    const cur = styleEngine.classesOf(el.id);
-    if (!cur.includes(c)) styleEngine.setClasses(el.id, [...cur, c].join(' '));
-  }
-}
-
-function removeTransitionClass(el: Element, cls: string): void {
-  for (const c of cls.split(/\s+/)) {
-    if (!c) continue;
-    untrackTransitionClass(el, c);
-    const cur = styleEngine.classesOf(el.id);
-    if (cur.includes(c)) styleEngine.setClasses(el.id, cur.filter((x) => x !== c).join(' '));
-  }
-}
-
-/** DOM's nextFrame is two rAFs: one frame to paint the `-from` state, a
- * second to flip to `-to`. The engine flushes styles per microtask and the
- * peer applies ops per frame, so two hops keep the same ordering; without a
- * native host (tests) rAF does not exist and a 16ms timeout stands in. */
-function nextFrame(cb: () => void): void {
-  const hop = (inner: () => void): void => {
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => inner());
-    else setTimeout(inner, 16);
-  };
-  hop(() => hop(cb));
-}
-
-function parseMs(v: unknown): number {
-  if (typeof v === 'number') return v * 1000;
-  const s = typeof v === 'string' ? v.trim() : '';
-  if (s.endsWith('ms')) return parseFloat(s) || 0;
-  if (s.endsWith('s')) return (parseFloat(s) || 0) * 1000;
-  return 0;
-}
-
-/** `'0.3s, 2s'` lists map onto the animation-name list — the element is
- * done when its longest layer is. */
-function maxLayerTimeout(durations: unknown, delays: unknown): number {
-  const dur = String(durations ?? '').split(',').map(parseMs);
-  const delay = String(delays ?? '').split(',').map(parseMs);
-  if (!dur.length || dur.every((d) => d <= 0)) return 0;
-  let max = 0;
-  for (let i = 0; i < dur.length; i++) max = Math.max(max, dur[i] + (delay[i] ?? delay[0] ?? 0));
-  return max;
-}
-
-const TIME = /^[-+]?(\d*\.)?\d+m?s$/;
-
-/** The longest `transition` layer. The engine hands the shorthand through
- * as written (`transform .3s`, `opacity .2s ease 100ms`), so each layer's
- * first time token is its duration and the second its delay — the
- * transition-* longhands, when declared, win over it (the peer resolves
- * them the same way, style_parse.dart parseTransitions). */
-function transitionTimeout(style: Record<string, unknown>): number {
-  const layers = String(style.transition ?? '').split(',').map((layer) => {
-    const times = layer.trim().split(/\s+/).filter((t) => TIME.test(t)).map(parseMs);
-    return { duration: times[0] ?? 0, delay: times[1] ?? 0 };
-  });
-  const durations = style.transitionDuration != null ? String(style.transitionDuration).split(',').map(parseMs) : null;
-  const delays = style.transitionDelay != null ? String(style.transitionDelay).split(',').map(parseMs) : null;
-  const n = Math.max(layers.length, durations?.length ?? 0, delays?.length ?? 0);
-  let max = 0;
-  for (let i = 0; i < n; i++) {
-    const layer = layers[i % layers.length];
-    const duration = durations ? durations[i % durations.length] : layer.duration;
-    const delay = delays ? delays[i % delays.length] : layer.delay;
-    if (duration > 0) max = Math.max(max, duration + delay);
-  }
-  return max;
-}
-
-interface ElementFlags {
-  _enterCancelled?: boolean;
-  _isLeaving?: boolean;
-  _endId?: number;
-}
-
-/** DOM listens for transitionend/animationend; there are no events on this
- * side — the peer runs the animation on its own ticker. The computed
- * animation / transition durations and delays (the `-active` class landed
- * one flush ago) decide when the classes come off. Neither = resolve now,
- * like vue's `if (!type) resolve()`. */
-function whenTransitionEnds(el: Element, explicitTimeout: number | undefined, resolve: () => void): void {
-  const flagged = el as Element & ElementFlags;
-  flagged._endId = (flagged._endId ?? 0) + 1;
-  const id = flagged._endId;
-  const resolveIfNotStale = (): void => {
-    if (flagged._endId === id) resolve();
-  };
-  if (explicitTimeout != null) {
-    setTimeout(resolveIfNotStale, explicitTimeout);
-    return;
-  }
-  // vue's getTransitionInfo: no declared `type` → whichever of the element's
-  // animation / transition runs longer decides. vant's overlay fades are
-  // animations; its popup slides and dialog bounce are transitions
-  const style = styleEngine.computedOf(el.id) ?? {};
-  const timeout = Math.max(
-    maxLayerTimeout(style.animationDuration, style.animationDelay),
-    transitionTimeout(style),
-  );
-  if (timeout <= 0) {
-    resolveIfNotStale();
-    return;
-  }
-  // one frame of slack over the native `timeout + 1`, which counted on end
-  // events arriving faster than the fallback timer
-  setTimeout(resolveIfNotStale, timeout + 32);
-}
 
 function resolveTransitionProps(raw: RawProps): BaseTransitionProps {
   const baseProps: Record<string, unknown> = {};

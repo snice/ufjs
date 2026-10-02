@@ -29,6 +29,61 @@ import { normalizeStyleValues } from '../web/style';
 import { touchBindings } from '../web/components/touch';
 import { addListener, renderEffect } from './runtime';
 import { createInvoker } from './helpers';
+import { trackTransitionClass, transitionClassesOf, untrackTransitionClass } from '../vue/transition-classes';
+
+/** runtime-dom's getTransitionInfo, reduced: the longest layer of the
+ * element's transition / animation, from its computed style. */
+function domTransitionTimeout(el: Element): number {
+  if (typeof getComputedStyle !== 'function') return 0;
+  const cs = getComputedStyle(el);
+  const ms = (v: string): number => {
+    const t = v.trim();
+    if (t.endsWith('ms')) return parseFloat(t) || 0;
+    if (t.endsWith('s')) return (parseFloat(t) || 0) * 1000;
+    return 0;
+  };
+  const longest = (durations: string, delays: string): number => {
+    const d = (durations || '').split(',').map(ms);
+    const l = (delays || '').split(',').map(ms);
+    let max = 0;
+    for (let i = 0; i < d.length; i++) if (d[i] > 0) max = Math.max(max, d[i] + (l[i] ?? l[0] ?? 0));
+    return max;
+  };
+  return Math.max(
+    longest(cs.transitionDuration, cs.transitionDelay),
+    longest(cs.animationDuration, cs.animationDelay),
+  );
+}
+
+/** Done at the element's own transitionend / animationend, or when its
+ * longest layer must be over (an event that never comes — a property that
+ * did not change — would otherwise hang the transition). */
+function whenDomTransitionEnds(host: unknown, explicitMs: number | undefined, cb: () => void): void {
+  const el = host as Element;
+  if (explicitMs != null) {
+    setTimeout(cb, explicitMs);
+    return;
+  }
+  const timeout = domTransitionTimeout(el);
+  if (timeout <= 0) {
+    cb();
+    return;
+  }
+  let done = false;
+  const finish = (): void => {
+    if (done) return;
+    done = true;
+    el.removeEventListener('transitionend', onEnd);
+    el.removeEventListener('animationend', onEnd);
+    cb();
+  };
+  const onEnd = (e: Event): void => {
+    if (e.target === el) finish();
+  };
+  el.addEventListener('transitionend', onEnd);
+  el.addEventListener('animationend', onEnd);
+  setTimeout(finish, timeout + 1);
+}
 
 // ---- v-model on DOM controls (specs/170) ------------------------------------------
 // runtime-dom's vModelCheckbox / vModelRadio / vModelSelect, on the vapor
@@ -352,7 +407,36 @@ export const domBackend: VaporBackend = {
   },
 
   setClasses(host, value) {
-    (host as Element).setAttribute('class', value);
+    // a running <Transition>'s classes ride along (runtime-dom's `_vtc`):
+    // a :class re-render mid-animation must not drop them (specs/174)
+    const vtc = transitionClassesOf(host as object);
+    (host as Element).setAttribute('class', vtc.length ? (value ? value + ' ' : '') + vtc.join(' ') : value);
+  },
+
+  transition: {
+    addClass(host, cls) {
+      for (const c of cls.split(/\s+/)) {
+        if (!c) continue;
+        trackTransitionClass(host as object, c);
+        (host as Element).classList.add(c);
+      }
+    },
+    removeClass(host, cls) {
+      for (const c of cls.split(/\s+/)) {
+        if (!c) continue;
+        untrackTransitionClass(host as object, c);
+        (host as Element).classList.remove(c);
+      }
+    },
+    nextFrame: (cb) => {
+      const hop = (inner: () => void): void => {
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => inner());
+        else setTimeout(inner, 16);
+      };
+      hop(() => hop(cb));
+    },
+    whenEnds: whenDomTransitionEnds,
+    isElement: (host) => (host as Node).nodeType === 1,
   },
 
   patchStyle(host, prev, next) {
