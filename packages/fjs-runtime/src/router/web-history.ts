@@ -32,6 +32,9 @@ export interface CurrentPage {
   component: unknown;
   /** The history entry's position (history.state.position). */
   position: number;
+  /** How this page arrived (specs/178: the shell picks the page
+   * transition by it). `initial` is the first page the router opened. */
+  kind: 'initial' | NavKind;
 }
 
 export interface HistoryRouter extends Router {
@@ -139,7 +142,7 @@ export function createHistoryRouter(options: HistoryRouterOptions): HistoryRoute
     } else {
       history.replaceState({ ...(history.state ?? {}), position }, '', href(loc.fullPath));
     }
-    current.value = { location: loc, component, position };
+    current.value = { location: loc, component, position, kind: current.value ? kind : 'initial' };
     const restore = kind === 'pop' ? scrolls.get(position) : undefined;
     scrollWindow(restore ?? { left: 0, top: 0 });
   };

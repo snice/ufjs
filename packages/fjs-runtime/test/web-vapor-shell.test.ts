@@ -53,7 +53,9 @@ describe('enableVapor: the pure-vapor web shell', () => {
         { path: '/other', component: other.component as never },
       ],
       el: '#app',
-    });
+      // navigation and caching here; page transitions: vapor-page-transition.test.ts
+      transition: false,
+    } as never);
     document.body.innerHTML = '<div id="app"></div>';
     app.mount();
     // the first page mounts once the initial navigation resolves (specs/167:
@@ -68,7 +70,7 @@ describe('enableVapor: the pure-vapor web shell', () => {
     expect(text('.other')).toBe('7');
     // the visited page is cached hidden, not unmounted
     expect(text('.count')).toBe('0');
-    expect((document.querySelector('.count') as HTMLElement).closest('fjs-page')?.style.display).toBe('none');
+    expect((document.querySelector('.count') as HTMLElement).closest('fjs-page-entry')?.style.display).toBe('none');
 
     // state rides the hidden host: taps while hidden survive the round trip
     (document.querySelector('.count') as HTMLElement).click();
@@ -178,18 +180,19 @@ describe('enableVapor (web): the vapor shell', () => {
         { path: '/other', meta: { title: 'Other' }, component: other.component as never },
       ],
       el: '#app',
+      transition: false,
     } as never);
     app.mount();
     await new Promise((r) => setTimeout(r, 0));
     const visible = (): HTMLElement =>
-      [...document.querySelectorAll<HTMLElement>('fjs-page')].find((p) => p.style.display !== 'none') as HTMLElement;
+      [...document.querySelectorAll<HTMLElement>('fjs-page-entry')].find((p) => p.style.display !== 'none') as HTMLElement;
     expect(visible().querySelector('.title')?.textContent).toBe('Home');
     expect(visible().querySelector('.back')).toBeNull();
     await app.router.push('/other');
     await new Promise((r) => setTimeout(r, 0));
     expect(visible().querySelector('.title')?.textContent).toBe('Other');
     // the hidden home page's shell keeps ITS title
-    expect(document.querySelector('fjs-page .title')?.textContent).toBe('Home');
+    expect(document.querySelector('fjs-page-entry .title')?.textContent).toBe('Home');
     (visible().querySelector('.back') as HTMLElement).click();
     await new Promise((r) => setTimeout(r, 30));
     expect(visible().querySelector('.title')?.textContent).toBe('Home');

@@ -32,9 +32,10 @@ import { createInvoker } from './helpers';
 import { trackTransitionClass, transitionClassesOf, untrackTransitionClass } from '../vue/transition-classes';
 
 /** runtime-dom's getTransitionInfo, reduced: the longest layer of the
- * element's transition / animation, from its computed style. */
-function domTransitionTimeout(el: Element): number {
-  if (typeof getComputedStyle !== 'function') return 0;
+ * element's transition / animation, from its computed style, and how many
+ * end events that layer kind sends (one per property / animation). */
+function domTransitionInfo(el: Element): { timeout: number; propCount: number } {
+  if (typeof getComputedStyle !== 'function') return { timeout: 0, propCount: 0 };
   const cs = getComputedStyle(el);
   const ms = (v: string): number => {
     const t = v.trim();
@@ -49,10 +50,12 @@ function domTransitionTimeout(el: Element): number {
     for (let i = 0; i < d.length; i++) if (d[i] > 0) max = Math.max(max, d[i] + (l[i] ?? l[0] ?? 0));
     return max;
   };
-  return Math.max(
-    longest(cs.transitionDuration, cs.transitionDelay),
-    longest(cs.animationDuration, cs.animationDelay),
-  );
+  const transition = longest(cs.transitionDuration, cs.transitionDelay);
+  const animation = longest(cs.animationDuration, cs.animationDelay);
+  const count = (v: string) => (v ? v.split(',').length : 0);
+  return transition >= animation
+    ? { timeout: transition, propCount: transition > 0 ? count(cs.transitionDuration) : 0 }
+    : { timeout: animation, propCount: count(cs.animationDuration) };
 }
 
 /** Done at the element's own transitionend / animationend, or when its
@@ -64,12 +67,15 @@ function whenDomTransitionEnds(host: unknown, explicitMs: number | undefined, cb
     setTimeout(cb, explicitMs);
     return;
   }
-  const timeout = domTransitionTimeout(el);
+  const { timeout, propCount } = domTransitionInfo(el);
   if (timeout <= 0) {
     cb();
     return;
   }
   let done = false;
+  // every property's end, as runtime-dom counts them: one property's early
+  // end (a transition reversed before it got anywhere) is not the end
+  let ended = 0;
   const finish = (): void => {
     if (done) return;
     done = true;
@@ -78,7 +84,7 @@ function whenDomTransitionEnds(host: unknown, explicitMs: number | undefined, cb
     cb();
   };
   const onEnd = (e: Event): void => {
-    if (e.target === el) finish();
+    if (e.target === el && ++ended >= propCount) finish();
   };
   el.addEventListener('transitionend', onEnd);
   el.addEventListener('animationend', onEnd);

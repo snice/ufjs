@@ -98,6 +98,23 @@ describe('<TransitionGroup> (specs/176)', () => {
     expect(a.getAttribute('class')).not.toContain('list-move');
   });
 
+  it('a new item has its enter-from class before the move pass reads layout', async () => {
+    const root = page(LIST);
+    await wait();
+    const seen: string[] = [];
+    const spy = rectSpy!.getMockImplementation()!;
+    rectSpy!.mockImplementation(function (this: Element) {
+      const fresh = root.querySelector('.r-z');
+      if (fresh) seen.push(fresh.getAttribute('class') ?? '');
+      return spy.call(this);
+    });
+    items().value = ['z', 'a', 'b', 'c'];
+    await wait(0);
+    // the layout reads after the update all see the new row hidden
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((c) => c.includes('list-enter-from'))).toBe(true);
+  });
+
   it('a content that is not a v-for renders as is, with one warning', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const root = page(`

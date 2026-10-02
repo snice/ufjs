@@ -8,7 +8,8 @@
 //
 // Deliberately smaller than the vdom shell (app/web.ts): visited pages stay
 // in an LRU cache instead of being destroyed on pop (a pop hides the host;
-// the cap recycles), transitions play no animation, and there is no tab
+// the cap recycles), page transitions run on the vapor <Transition> engine
+// with the VDOM shell's class names and CSS (specs/178), and there is no tab
 // parking — the cache IS the visited set. vue plugins (pinia) install on
 // the app shell (specs/167, app/vapor-app.ts) and run once; a VDOM
 // component inside a vapor page cannot work here (the web vdom interop
@@ -25,7 +26,10 @@ import '../vapor/web-dom';
 import { installBaseCss } from '../web/base-css';
 import { createHistoryRouter, type CurrentPage, type HistoryRouter, type HistoryRouterOptions } from '../router/web-history';
 import { ROUTE_KEY, ROUTER_KEY } from '../router/web-vapor';
-import type { Router } from '../router/types';
+import type { NavKind, RouteLocation, Router, TransitionOption } from '../router/types';
+import { resolveTransition } from '../router/transition';
+import { beginPageTransition, markPageSettled } from '../router/settled';
+import { createTransitionHooks } from '../vapor/transition';
 import { applyPlugins, type FjsPlugin } from './plugin';
 import { createVaporAppShell } from './vapor-app';
 
@@ -47,6 +51,10 @@ export interface VaporWebAppOptions extends Omit<HistoryRouterOptions, 'shell'> 
   shell?: unknown;
   /** Global components vapor pages resolve by name. */
   components?: Record<string, unknown>;
+  /** Page transition, as in the VDOM shell (app/web.ts, specs/178): a CSS
+   * family name (default 'fjs-page'), `false`, or a function of the
+   * navigation; a page's `meta.transition` overrides it. */
+  transition?: TransitionOption;
   /** Pages kept alive (mounted hosts retained). Default 16. */
   keepAlive?: number;
 }
@@ -133,7 +141,9 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
     const page = withVaporShell(comp, options.shell, () => route);
     // the host joins the document BEFORE the page mounts: onMounted runs
     // synchronously at mount (specs/167 Q1) and must see attached nodes
-    const host = document.createElement('fjs-page');
+    // the VDOM shell's page element: base-css's page transition and
+    // stacking rules are written against it (specs/178)
+    const host = document.createElement('fjs-page-entry');
     container.appendChild(host);
     const app = createVaporApp(page, { components: appContext.components, provides });
     app.mount(host as never);
@@ -184,6 +194,8 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
     const container = document.createElement('fjs-page-host');
     host.appendChild(container);
     let previous = '';
+    let previousLocation: RouteLocation | null = null;
+    const isTab = (loc: RouteLocation): boolean => typeof loc.meta?.tab === 'number';
     const scope = new EffectScope(true);
     withScope(scope, () => {
       // tracks the router's `current` ref: every navigation re-runs the
@@ -194,9 +206,38 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
         if (!current) return;
         const fullPath = current.location.fullPath;
         if (fullPath === previous) return;
-        if (previous) hide(previous);
+        // the VDOM shell's rules (app/web.ts): which family, which way, and
+        // when the arriving page counts as settled
+        const kind: NavKind =
+          current.kind === 'replace' && previousLocation && isTab(previousLocation) && isTab(current.location)
+            ? 'tab'
+            : current.kind;
+        const name =
+          options.transition === false
+            ? false
+            : resolveTransition(options.transition, { to: current.location, from: previousLocation ?? current.location, kind });
+        container.setAttribute('data-nav', name === false ? 'none' : kind);
+        beginPageTransition(fullPath);
+        const leavingPath = previous;
+        const leaving = leavingPath ? pages.get(leavingPath) : undefined;
         show(current, container);
+        const entering = pages.get(fullPath)!.host;
+        if (name === false || !leaving) {
+          if (leavingPath) hide(leavingPath);
+          markPageSettled(fullPath);
+        } else {
+          // both pages overlap for the length of it (base-css positions the
+          // -active ones); the leaving page hides once its leave is over —
+          // an enter on it first (back before it finished) cancels that
+          const hooks = createTransitionHooks({ name });
+          saveShot(leavingPath, leaving.host);
+          hooks.leave([leaving.host], () => {
+            leaving.host.style.display = 'none';
+          });
+          hooks.enter([entering], () => markPageSettled(fullPath));
+        }
         previous = fullPath;
+        previousLocation = current.location;
       });
     });
   };

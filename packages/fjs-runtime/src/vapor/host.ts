@@ -1430,9 +1430,14 @@ export function createFor(
     const before = new Set(items);
     t.beforeUpdate?.(itemHosts(items));
     reconcile();
-    // kept items that moved slide (FLIP); new ones play their enter
-    t.afterUpdate?.(itemHosts(items.filter((it) => before.has(it))));
+    // new items take their enter-from classes FIRST: the move pass below
+    // reads layout, and a style flush that saw a new item without them
+    // starts a visible→hidden transition the enter then cuts short (the
+    // order Vue's TransitionGroup has — enter hooks run during the patch,
+    // the move pass after it)
     for (const it of items) if (!before.has(it)) t.enter(it.block.nodes);
+    // kept items that moved slide (FLIP)
+    t.afterUpdate?.(itemHosts(items.filter((it) => before.has(it))));
   };
   const reconcile = (): void => {
           // a root-level list is in the tree once its anchor is

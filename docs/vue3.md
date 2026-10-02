@@ -505,8 +505,9 @@ CLI 在构建期读这个开关（扫入口源码），runtime 在挂载期执�
   非 enableVapor 应用（VDOM 页嵌 vapor 组件、vapor 页嵌 vant）不受影响。
 - **代价（有意为之，都写进了 spec）**：web 端 Vapor 页内嵌 VDOM 组件（vant）不可用——web 的 vdom 互操作依赖
   runtime-dom 的渲染器，这正是这个模式要省掉的东西（Flutter 端互操作照旧可用，代价只是
-  包体）。web 壳比 vdom 壳简单：visited 页常驻 LRU 缓存（默认 16）不按历史栈销毁、无进场
-  过场动画。
+  包体）。web 壳比 vdom 壳简单：visited 页常驻 LRU 缓存（默认 16）不按历史栈销毁。页面转场与
+  vdom 壳一致（specs/178）：同一个 `transition` 选项 / `meta.transition`、同一套 `fjs-page-*` 类名与
+  `data-nav`，`onPageSettled` 等进场结束。
 - 参考实现：`examples/vapor-app`（pinia store + 生命周期；`pnpm run check` 是 fjsrun 断言 harness，
   `pnpm run build:web` 后 bundle 无 runtime-dom / wrapper / createRenderer 痕迹）。
 
