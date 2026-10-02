@@ -81,6 +81,7 @@ class _TextNodeAdapter extends FjsNodeAdapter {
     return buildText(
       context.node,
       context.style,
+      context: context.flutterContext,
       tree: context.tree,
       childNodes: context.childNodes,
       buildNode: (child) => context.buildNode(context.flutterContext, child),
@@ -462,7 +463,7 @@ class _SafeAreaNodeAdapter extends FjsNodeAdapter {
     // edges="top bottom": only the named edges take the inset; omitted means
     // all four. Same attribute the web stylesheet and the mini-program
     // component read.
-    final raw = context.node.props['edges'];
+    final raw = context.node.prop('edges');
     final named = raw == null
         ? null
         : raw
@@ -693,14 +694,14 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
   /// is no general inline formatting context (css-compat.md).
   static bool _isInlineParagraph(FjsNodeAdapterContext context) {
     final node = context.node;
-    if (node.props['htmlBlock'] != true) return false;
+    if (node.prop('htmlBlock') != true) return false;
     final display = context.style.display;
     if (display != null && display != 'block') return false;
     final kids = context.childNodes;
     final ownText = node.text != null && node.text!.isNotEmpty;
     if (kids.isEmpty || (kids.length < 2 && !ownText)) return false;
     for (final kid in kids) {
-      if (kid.tag != 'text' || kid.props['htmlBlock'] == true) return false;
+      if (kid.tag != 'text' || kid.prop('htmlBlock') == true) return false;
       final style = FjsStyle.of(kid);
       final d = style.display;
       if (d != null && d != 'inline') return false;
@@ -767,7 +768,7 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
       final style = FjsStyle.of(kid);
       final inFlow = !isOutOfFlowPosition(style.position);
       if (inFlow &&
-          (kid.styleMap['float'] ?? kid.props['float'])?.toString() ==
+          (kid.styleMap['float'] ?? kid.prop('float'))?.toString() ==
               'right') {
         floated.add(kids[i]);
         changed = true;
@@ -780,7 +781,7 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
       // price is an inline-block div)
       final textRun =
           kid.tag == 'text' &&
-          kid.props['htmlBlock'] != true &&
+          kid.prop('htmlBlock') != true &&
           (d == null || d == 'inline');
       final box =
           d == 'inline-block' ||
@@ -841,6 +842,7 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
           buildText(
             context.node,
             context.style,
+            context: context.flutterContext,
             tree: context.tree,
             childNodes: context.childNodes,
             buildNode: (child) =>
@@ -869,13 +871,21 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
       // bookkeeping (percent widths, culling)
       return buildBox(
         context.style,
-        [buildText(context.node, context.style, childNodes: const []), ...kids],
+        [
+          buildText(
+            context.node,
+            context.style,
+            context: context.flutterContext,
+            childNodes: const [],
+          ),
+          ...kids,
+        ],
         [null, ...context.childNodes],
         growChildren: context.isRoot,
-        htmlBlock: context.node.props['htmlBlock'] == true,
+        htmlBlock: context.node.prop('htmlBlock') == true,
       );
     }
-    if (context.node.props['htmlBlock'] == true &&
+    if (context.node.prop('htmlBlock') == true &&
         (context.style.display == null || context.style.display == 'block')) {
       final flow = _buildBlockFlow(context, kids);
       if (flow != null) return flow;
@@ -885,7 +895,7 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
       kids,
       context.childNodes,
       growChildren: context.isRoot,
-      htmlBlock: context.node.props['htmlBlock'] == true,
+      htmlBlock: context.node.prop('htmlBlock') == true,
     );
   }
 }

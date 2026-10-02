@@ -75,3 +75,7 @@ SCREENS.forEach((screen, i) => {
 });
 
 show(0);
+
+// 脚本手柄（specs/190）：真机上 `fjs eval '__helloTab(2)'` 切到压测屏，再用
+// 该屏自己的手柄（__flat4050 等）驱动——不必手点。
+(globalThis as Record<string, unknown>).__helloTab = show;

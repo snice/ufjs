@@ -64,14 +64,20 @@ const nameOf = (idx) => {
 };
 const stamps = s.samples.map((x) => x.timestamp);
 const cutoff = Math.max(...stamps) - seconds * 1e6;
-const win = s.samples.filter((x) => x.timestamp >= cutoff);
+// FILTER=<substring>: only samples with a frame whose name contains it
+// (FILTER=drawFrame isolates the frame pipeline from JS and messages)
+const only = process.env.FILTER;
+const win = s.samples.filter(
+  (x) => x.timestamp >= cutoff && (!only || (x.stack ?? []).some((fr) => nameOf(fr).includes(only))),
+);
 const period = s.samplePeriod || 1000; // µs per tick
 
 const self = new Map();
 const total = new Map();
 for (const sm of win) {
   if (!sm.stack || sm.stack.length === 0) continue;
-  const leaf = sm.stack[sm.stack.length - 1];
+  // getCpuSamples stacks are leaf-first: stack[0] is the running frame
+  const leaf = sm.stack[0];
   self.set(leaf, (self.get(leaf) ?? 0) + 1);
   const seen = new Set();
   for (const fr of sm.stack) {
@@ -84,7 +90,7 @@ const ms = (ticks) => ((ticks * period) / 1000).toFixed(1);
 const top = (m) =>
   [...m.entries()]
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 28)
+    .slice(0, Number(process.env.TOP ?? 28))
     .map(([idx, c]) => `${ms(c).padStart(8)} ms  ${nameOf(idx)}`);
 console.log(
   `samplePeriod ${period}µs, window ${seconds}s → ${win.length}/${s.samples.length} samples\n` +

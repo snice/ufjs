@@ -211,7 +211,7 @@ class FjsStyle {
 
   /// [hasPressedStyle] for a node, covering the interned path.
   static bool nodeHasPressedStyle(MirrorNode node) =>
-      node.activeStyle != null || node.props['activeStyle'] is Map;
+      node.activeStyle != null || node.prop('activeStyle') is Map;
 
   /// Whether the node carries a page-authored `:hover` style (op 12). Only
   /// these nodes get a MouseRegion — wrapping every node would cost a
@@ -309,7 +309,9 @@ class FjsStyle {
   bool? _overflowHidden;
   bool? _hasDecoration;
 
-  Object? _v(String key) => style[key] ?? props[key];
+  // props is the node's own map, usually the empty `const {}` (see
+  // MirrorNode.prop)
+  Object? _v(String key) => style[key] ?? (props.isEmpty ? null : props[key]);
 
   double? _num(String key) => parseLength(_v(key));
 
