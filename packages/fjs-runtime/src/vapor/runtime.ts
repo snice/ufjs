@@ -5,7 +5,7 @@
 // Compiled SFCs import this via the CLI's `vue` → `fjs/vapor` rewrite; the
 // export surface equals the core's plus the component layer.
 import { EffectScope, effect, getCurrentScope, onScopeDispose, shallowRef, stop as stopRunner } from '@vue/reactivity';
-import { camelize, capitalize, hyphenate, isArray, toHandlerKey } from '@vue/shared';
+import { camelize, capitalize, hyphenate, isArray, normalizeClass, normalizeStyle, toHandlerKey } from '@vue/shared';
 import {
   be,
   blockOf,
@@ -455,7 +455,13 @@ const exposedOf = new WeakMap<object, Record<string, unknown>>();
 /** A component block's ref value (its exposed object), the block itself
  * when it is not a component's. */
 export function exposedRefOf(block: unknown): unknown {
-  return block && typeof block === 'object' && exposedOf.has(block) ? exposedOf.get(block) : block;
+  if (block && typeof block === 'object') {
+    if (exposedOf.has(block)) return exposedOf.get(block);
+    // a VDOM component mounted through the interop (specs/182)
+    const vdomRef = (block as { vdomRef?: () => unknown }).vdomRef;
+    if (typeof vdomRef === 'function') return vdomRef() ?? block;
+  }
+  return block;
 }
 
 type RenderHost = (
@@ -587,11 +593,64 @@ export function normalizeSlots(rawSlots?: Slots | (() => unknown)): Slots {
   return out;
 }
 
+/** compiler-vapor puts props written next to a `v-bind="obj"` into `$`: an
+ * array of sources, each a getter returning an object (the v-bind) or a
+ * literal object of getters / constants. Flattened here into the plain
+ * getter shape the rest of the component layer reads (specs/181 follow-up:
+ * `<van-watermark v-bind="o" :width="125">` lost width — `$` was never
+ * read). Vue's order: a later source wins, the sources over the plain keys;
+ * `class` / `style` merge across all of them. Keys are the ones present at
+ * mount. */
+function flattenDynamicProps(raw: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  const sources = raw?.$;
+  if (!isArray(sources)) return raw;
+  const resolve = (src: unknown): Record<string, unknown> => {
+    const obj = typeof src === 'function' ? (src as () => unknown)() : src;
+    return obj && typeof obj === 'object' ? (obj as Record<string, unknown>) : {};
+  };
+  // a literal source holds getters (or constants); a v-bind object holds values
+  const valueOf = (src: unknown, obj: Record<string, unknown>, key: string): unknown => {
+    const v = obj[key];
+    return typeof src !== 'function' && typeof v === 'function' ? (v as () => unknown)() : v;
+  };
+  const plainValue = (key: string): unknown => {
+    const v = (raw as Record<string, unknown>)[key];
+    return typeof v === 'function' ? (v as () => unknown)() : v;
+  };
+  const keys = new Set<string>();
+  for (const k of Object.keys(raw!)) if (k !== '$') keys.add(k);
+  for (const src of sources) for (const k of Object.keys(resolve(src))) keys.add(k);
+  const out: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (key === 'class' || key === 'style') {
+      out[key] = () => {
+        const parts: unknown[] = [];
+        if (key in raw!) parts.push(plainValue(key));
+        for (const src of sources) {
+          const obj = resolve(src);
+          if (key in obj) parts.push(valueOf(src, obj, key));
+        }
+        return key === 'class' ? normalizeClass(parts) : normalizeStyle(parts);
+      };
+      continue;
+    }
+    out[key] = () => {
+      for (let i = sources.length - 1; i >= 0; i--) {
+        const obj = resolve(sources[i]);
+        if (key in obj) return valueOf(sources[i], obj, key);
+      }
+      return plainValue(key);
+    };
+  }
+  return out;
+}
+
 export function createComponent(
   comp: unknown,
-  rawProps?: Record<string, unknown>,
+  rawPropsIn?: Record<string, unknown>,
   rawSlots?: Slots | (() => unknown),
 ): Block {
+  const rawProps = flattenDynamicProps(rawPropsIn);
   // the slots are this template's: whoever wrote it authors their content
   const slots = authorSlots(normalizeSlots(rawSlots), slotAuthor() ?? activeInstance());
   const { parent, anchor } = takeInsertionState();
@@ -625,11 +684,18 @@ export function createComponent(
   // runtime-core instance, not on the vapor component mounting it — but its
   // inject() sees the vapor parent's provides (specs/182)
   const owner = activeInstance();
+  // the page's scoped styles reach the VDOM component's root as they do a
+  // vapor child's (specs/181 follow-up: with the interop on, fjs's own
+  // component tags — scroll-view, button — mount here too, and a page's
+  // `.page { padding }` / `.hero-btn { … }` stopped applying)
+  const scopeSource = slotAuthor() ?? owner;
+  const scopeId = (scopeSource?.type as { __scopeId?: unknown } | undefined)?.__scopeId;
   const prevInst = setCurrentVaporInstance(null);
   try {
     return interop(comp as Record<string, unknown>, props, slots, parent, anchor, {
       provides: owner?.provides ?? null,
       appContext: owner?.appContext ?? null,
+      scopeId: typeof scopeId === 'string' && scopeId ? scopeId : null,
       // a kept vapor subtree (KeepAlive, the web shell's page cache)
       // deactivates the VDOM components inside it too: vant's Popup closes
       // a teleported layer there (specs/181)
@@ -850,6 +916,8 @@ const isRefLike = (r: unknown): r is RefLike => !!r && typeof r === 'object' && 
 function refValueOf(el: unknown): unknown {
   if (el instanceof TplNode) return el.host;
   if (el && typeof el === 'object' && exposedOf.has(el)) return exposedOf.get(el);
+  const vdomRef = el && typeof el === 'object' ? (el as { vdomRef?: () => unknown }).vdomRef : undefined;
+  if (typeof vdomRef === 'function') return vdomRef() ?? (el as Block).nodes[0] ?? null;
   if (el && typeof el === 'object' && Array.isArray((el as Block).nodes)) return (el as Block).nodes[0] ?? null;
   return el ?? null;
 }

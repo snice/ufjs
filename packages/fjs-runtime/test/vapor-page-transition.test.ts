@@ -154,4 +154,29 @@ onActivated(() => globalThis.__log.push('home a'))
     // (the earlier cases' apps hear the popstate too)
     expect(log.filter((l) => !l.startsWith('settled'))).toEqual(['vdom a', 'home a']);
   });
+
+  it("a page's onMounted already sees it in its enter state and the old page leaving (Vue's insert order)", async () => {
+    const vue = (await import('../src/vapor/web')) as unknown as Record<string, unknown>;
+    const seen = compileSfc(
+      `<script setup>
+import { onMounted } from 'vue'
+onMounted(() => {
+  const hosts = [...document.querySelectorAll('fjs-page-entry')]
+  globalThis.__log.push(hosts.map((h) => (h.getAttribute('class') || '-').split(' ').sort().join('+')).join(' | '))
+})
+</script>
+<template><text class="seen">seen</text></template>`,
+      { vapor: true, runtime: vue },
+    ).component;
+    const home = compileSfc(`<template><text class="home">home</text></template>`, { vapor: true, runtime: vue }).component;
+    const a = await app({ transition: 'fjs-slide' }, [
+      { path: '/', component: home },
+      { path: '/seen', component: seen },
+    ]);
+    log.length = 0;
+    await a.router.push('/seen');
+    await tick(0);
+    expect(log[0]).toBe('fjs-slide-leave-active+fjs-slide-leave-from | fjs-slide-enter-active+fjs-slide-enter-from');
+  });
 });
+

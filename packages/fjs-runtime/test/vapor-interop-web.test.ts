@@ -84,4 +84,27 @@ globalThis.__open = open
     expect(root.querySelector('.box .popup')?.textContent).toBe('sheet');
     expect(root.querySelector('.box .overlay')).not.toBeNull();
   });
+
+  it("a VDOM component's root takes the page's scoped-style id, also inside slot content", async () => {
+    const vue = (await import('../src/vapor/web')) as unknown as Record<string, unknown> & {
+      createVaporApp: (c: unknown) => { mount: (el: unknown) => void };
+    };
+    const Btn = defineComponent({ setup: (_p, { slots }) => () => h('button', { class: 'vbtn' }, slots.default?.()) });
+    const Wrap = defineComponent({ setup: (_p, { slots }) => () => h('div', { class: 'wrap' }, slots.default?.()) });
+    const page = compileSfc(`<script setup>
+import Btn from './Btn'
+import Wrap from './Wrap'
+</script>
+<template><view><Btn class="a">x</Btn><Wrap><Btn class="b">y</Btn></Wrap></view></template>
+<style scoped>.a{} .b{}</style>`, { vapor: true, web: true, runtime: vue, imports: { './Btn': Btn, './Wrap': Wrap } });
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    vue.createVaporApp(page.component).mount(root);
+    await wait();
+    expect(root.querySelector('.a')?.hasAttribute(page.scopeId)).toBe(true);
+    expect(root.querySelector('.wrap')?.hasAttribute(page.scopeId)).toBe(true);
+    // written in the page's template, inside Wrap's slot: still the page's
+    expect(root.querySelector('.b')?.hasAttribute(page.scopeId)).toBe(true);
+  });
 });
+

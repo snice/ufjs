@@ -6,7 +6,7 @@
 // `components` / `directives` are the app's registrations (a library that
 // resolves its own children by name). Built by hand: the Flutter 'vue' has
 // no createApp, and a real app here would be a second app to install into.
-import { getCurrentScope, type EffectScope } from '@vue/reactivity';
+import { getCurrentScope, proxyRefs, type EffectScope } from '@vue/reactivity';
 import type { VaporAppContext } from './instance';
 
 /** What a VDOM component instance offers its descendants: its provides and
@@ -108,3 +108,24 @@ export function vdomAppContext(ctx: VdomMountContext | undefined): unknown {
   cache.set(key, made);
   return made;
 }
+
+/** What a template ref to a VDOM component holds — runtime-core's
+ * getComponentPublicInstance: its expose()d object (with `$el` & co. still
+ * reachable), else its public proxy. A vapor page doing
+ * `page.value.$el.getBoundingClientRect()` on a `<scroll-view ref="page">`
+ * got the interop's block instead (specs/181 follow-up: vant Sticky offsets). */
+export function vdomPublicInstance(vnode: unknown): unknown {
+  type I = { exposed?: Record<string, unknown> | null; exposeProxy?: unknown; proxy?: Record<string | symbol, unknown> | null };
+  const inst = (vnode as { component?: I | null } | null)?.component;
+  if (!inst) return null;
+  if (!inst.exposed) return inst.proxy ?? null;
+  if (!inst.exposeProxy) {
+    const exposed = proxyRefs(inst.exposed) as Record<string | symbol, unknown>;
+    inst.exposeProxy = new Proxy(exposed, {
+      get: (target, key) => (key in target ? target[key] : typeof key === 'string' && key.startsWith('$') ? inst.proxy?.[key] : undefined),
+      has: (target, key) => key in target || (typeof key === 'string' && key.startsWith('$') && !!inst.proxy && key in inst.proxy),
+    });
+  }
+  return inst.exposeProxy;
+}
+

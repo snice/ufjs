@@ -71,6 +71,12 @@ demo `enableVapor: true` 逐步跑通时遇到并修掉的问题：
 | Flutter 构建失败：`fjs/vue` 没有 `createApp` | demo 的 vant 补丁让命令式 mount 从 `fjs/vue` 取 createApp | interop 时 Flutter 的 `fjs/vue` 用完整面 |
 | Flutter 上 vant Tabbar 竖排溢出 | Flutter 插槽桥接的包装 view 是真实的盒 | Dart 渲染器支持 `display: contents`（收集子节点时展开、脏标记沿它向上），包装节点设 `display: contents` |
 | 离页后 vant Popover（teleport 到 body）仍盖在下一页上 | 壳缓存页面不跑 deactivated；VDOM 组件渲染的插槽里的 vapor 组件不在页面实例树上 | 壳切页时 deactivate / activate；interop 把 VDOM 子树的钩子挂到 vapor 父实例；无当前实例时插槽内容归插槽作者 |
+| web 上 vapor 模式页面样式错位（页面根背景 / 内边距、按钮颜色丢失） | interop 挂载的组件（开 interop 后 fjs 的组件型标签 scroll-view / button 也走这里）根元素没拿到父组件的 scoped id | 父组件（插槽内容为插槽作者）的 `__scopeId` 设到 VDOM 根 vnode 上，由 runtime-core 落到根元素 |
+| 全页水印尺寸回落默认值 | `v-bind="obj"` 与其它 prop 混写时 compiler-vapor 把 props 放进 `$` 动态源，组件层只读顶层 key | createComponent 入口摊平 `$`：后写的覆盖先写的，class / style 合并 |
+| float 页 Sticky 进页即判吸顶（top 468） | vapor web 壳先插入新页、挂载后才加转场类，新页 onMounted 时排在旧页下面量位置；模板 ref 拿到的是 interop 块 | 壳先处理离场、新页插入前就带 enter 类（Vue `<Transition>` 的顺序）；interop 组件的模板 ref 为组件公开实例 |
+
+页面样式对比：demo 16 个路由在 390×844 下逐元素比对位置、尺寸与 18 项计算样式，vapor 与 VDOM 一致（剩余差异只来自网络时序、
+旋转中的 loading 图标与跑马灯）。
 
 验收：demo web 17 个路由静态 + 点击探针（含组件式 / 命令式弹层、表单 v-model、Collapse / Tabs / Sidebar /
 Picker / 数字键盘、Popover 跨页）全部可用、无新增报错；iOS 16 个路由无报错，Tabbar / Grid / ActionSheet

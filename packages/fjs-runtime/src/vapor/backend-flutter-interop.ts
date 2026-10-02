@@ -10,7 +10,7 @@ import { render } from '../vue/renderer';
 import { getCurrentInstance, h } from '../vue/vue-shim';
 import { flutterBackend } from './backend-flutter';
 import { blockOf, type Block, type Slots, type VaporBackend } from './runtime';
-import { markVdomOwner, runVdomKeepAliveHooks, vdomAppContext, type VdomMountContext } from './vdom-context';
+import { markVdomOwner, runVdomKeepAliveHooks, vdomAppContext, vdomPublicInstance, type VdomMountContext } from './vdom-context';
 
 const mountVdomComponent: NonNullable<VaporBackend['mountVdomComponent']> = (comp, props, slots: Slots, parent, anchor, ctx) => {
     // vant et al: render through our own renderer into a detached container,
@@ -60,6 +60,8 @@ const mountVdomComponent: NonNullable<VaporBackend['mountVdomComponent']> = (com
         const vnode = h(comp as never, snapshot as never, vdomSlots as never);
         // inject() / global components reach the vapor side (specs/182)
         (vnode as { appContext: unknown }).appContext = appContext;
+        // runtime-core puts a component vnode's scopeId on its root element
+        if (ctx?.scopeId) (vnode as unknown as { scopeId: string }).scopeId = ctx.scopeId;
         render(vnode, container as never);
         lastVnode = vnode;
         reposition();
@@ -95,6 +97,8 @@ const mountVdomComponent: NonNullable<VaporBackend['mountVdomComponent']> = (com
         },
       ],
     };
+    // a template ref to this component holds its public instance
+    (block as Block & { vdomRef?: () => unknown }).vdomRef = () => vdomPublicInstance(lastVnode);
     return block;
   };
 

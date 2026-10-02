@@ -7,7 +7,7 @@
 import { EffectScope, effect, shallowReactive, stop as stopRunner } from '@vue/reactivity';
 import { getCurrentInstance, h, render } from 'vue';
 import { blockOf, disposeBlock, mountVaporComponentForAdopt, nodesChanged, type Block, type VaporAppContext, type VaporBackend, type VaporComponent } from './runtime';
-import { markVdomOwner, runVdomKeepAliveHooks, vdomAppContext, type VdomMountContext } from './vdom-context';
+import { markVdomOwner, runVdomKeepAliveHooks, vdomAppContext, vdomPublicInstance, type VdomMountContext } from './vdom-context';
 import { domBackend } from './web-dom';
 
 // the VDOM interop effect re-runs outside any vapor component scope — it is
@@ -130,6 +130,8 @@ const mountVdomComponent: VaporBackend['mountVdomComponent'] = (comp, props, slo
         const vnode = h(comp as never, snapshot as never, vdomSlots as never);
         // inject() / global components reach the vapor side (specs/182)
         (vnode as unknown as { appContext: unknown }).appContext = appContext;
+        // runtime-core puts a component vnode's scopeId on its root element
+        if (ctx?.scopeId) (vnode as unknown as { scopeId: string }).scopeId = ctx.scopeId;
         render(vnode, container);
         lastVnode = vnode;
         // the first render lands in the container; later patches happen in
@@ -165,6 +167,8 @@ const mountVdomComponent: VaporBackend['mountVdomComponent'] = (comp, props, slo
         },
       ],
     };
+    // a template ref to this component holds its public instance
+    (block as Block & { vdomRef?: () => unknown }).vdomRef = () => vdomPublicInstance(lastVnode);
     return block;
 };
 

@@ -118,7 +118,7 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
     });
   };
 
-  const buildPage = (current: CurrentPage, container: HTMLElement): PageInstance => {
+  const buildPage = (current: CurrentPage, container: HTMLElement, enterClasses: readonly string[] | null): PageInstance => {
     const { location: matched, component } = current;
     const comp = component as VaporComponent | undefined;
     if (!comp) {
@@ -146,6 +146,11 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
     // the VDOM shell's page element: base-css's page transition and
     // stacking rules are written against it (specs/178)
     const host = document.createElement('fjs-page-entry');
+    // an arriving page starts in its enter state, as Vue's <Transition>
+    // inserts it: base-css takes `-active` pages out of the flow, so the
+    // page's onMounted measures where it will be — not stacked under the
+    // page it replaces (specs/181 follow-up: vant Sticky read a 468px top)
+    if (enterClasses) host.classList.add(...enterClasses);
     container.appendChild(host);
     const app = createVaporApp(page, { components: appContext.components, directives: appContext.directives, provides });
     app.mount(host as never);
@@ -160,11 +165,11 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
     };
   };
 
-  const show = (current: CurrentPage, container: HTMLElement): void => {
+  const show = (current: CurrentPage, container: HTMLElement, enterClasses: readonly string[] | null = null): void => {
     const fullPath = current.location.fullPath;
     let page = pages.get(fullPath);
     if (!page) {
-      page = buildPage(current, container);
+      page = buildPage(current, container, enterClasses);
       pages.set(fullPath, page);
     } else {
       page.host.style.display = '';
@@ -231,22 +236,24 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
         // teleported layers (vant's Popover) close instead of staying over
         // the next page (specs/181)
         leaving?.deactivate();
-        show(current, container);
-        const entering = pages.get(fullPath)!.host;
-        if (name === false || !leaving) {
+        // the leaving side first: a new page mounts (and its onMounted
+        // measures) with the old one already out of the flow
+        const hooks = name === false || !leaving ? null : createTransitionHooks({ name });
+        if (!hooks) {
           if (leavingPath) hide(leavingPath);
-          markPageSettled(fullPath);
         } else {
           // both pages overlap for the length of it (base-css positions the
           // -active ones); the leaving page hides once its leave is over —
           // an enter on it first (back before it finished) cancels that
-          const hooks = createTransitionHooks({ name });
-          saveShot(leavingPath, leaving.host);
-          hooks.leave([leaving.host], () => {
-            leaving.host.style.display = 'none';
+          saveShot(leavingPath, leaving!.host);
+          hooks.leave([leaving!.host], () => {
+            leaving!.host.style.display = 'none';
           });
-          hooks.enter([entering], () => markPageSettled(fullPath));
         }
+        show(current, container, hooks ? [`${name}-enter-from`, `${name}-enter-active`] : null);
+        const entering = pages.get(fullPath)!.host;
+        if (!hooks) markPageSettled(fullPath);
+        else hooks.enter([entering], () => markPageSettled(fullPath));
         previous = fullPath;
         previousLocation = current.location;
       });

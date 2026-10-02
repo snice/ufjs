@@ -230,6 +230,28 @@ import Bad from './Bad.vue'
     }
   });
 
+  it('props written next to v-bind="obj" reach the child; later wins, class merges', async () => {
+    const Child = sfc(`<script setup>
+const p = defineProps({ w: { type: Number, default: 100 }, h: { type: Number, default: 100 }, tone: String })
+</script>
+<template><text class="kid">{{ p.w }}x{{ p.h }}:{{ p.tone }}</text></template>`);
+    const Page = sfc(`<script setup>
+import { ref } from 'vue'
+import Child from './Child.vue'
+const o = ref({ w: 1, tone: 'a', class: 'from-bind' })
+globalThis.__bind = o
+</script>
+<template><view><Child class="own" v-bind="o" :h="40" /><Child v-bind="o" :w="125" /></view></template>`, { './Child.vue': Child });
+    const root = mount(Page);
+    await wait();
+    expect(texts(root)).toEqual(['1x40:a', '125x100:a']);
+    const first = root.querySelector('.kid')!;
+    expect(first.classList.contains('own') && first.classList.contains('from-bind')).toBe(true);
+    (g.__bind as { value: Record<string, unknown> }).value = { w: 2, tone: 'b' };
+    await wait();
+    expect(texts(root)).toEqual(['2x40:b', '125x100:b']);
+  });
+
   it('a multi-root component template with a live v-if root', async () => {
     const Two = sfc(`<script setup>
 import { ref } from 'vue'

@@ -248,6 +248,9 @@ export interface VaporBackend {
     ctx?: {
       provides?: Record<string | symbol, unknown> | null;
       appContext?: unknown;
+      /** the scoped-style id the component's root takes (Vue: the parent's,
+       * or the slot author's for slot content) */
+      scopeId?: string | null;
       /** registers the VDOM subtree's activated / deactivated runner */
       onKeepAlive?: (run: (kind: 'a' | 'da') => void) => void;
     },
