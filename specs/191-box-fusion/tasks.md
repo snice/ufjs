@@ -44,3 +44,12 @@ FjsBox 仍是 DecoratedBox、渲染对象仍是 RenderDecoratedBox——按 Deco
 - 挂载帧两条路径都降了 ~30 ms（-38% / -42%），比 hello-js 的降幅更大：hello-fjs 的格子
   同样只有 40 种段落、同样是 margin + 背景盒，Vue 组件节点不在 Dart 侧多出 widget。
 - 改 1 格、JS 段不受影响（Dart 渲染器只管挂载 / 卸载那一帧），读数在原有波动内。
+
+# 修复：只改颜色的文本不更新（specs/190 共享段落引入）
+
+现象：hello-fjs 4050 页 VDOM ⇄ Vapor 切换后，模式按钮的文字看不见——选中态的白字
+在按钮变白后仍画白色。原因：RenderParagraph 把只影响绘制的 span 变化（颜色、装饰）
+当作 paint-only，`markNeedsPaint` 不重排；共享 painter 只在 performLayout 里按 key
+换，于是一直画旧颜色。修复：RenderFjsParagraph 覆写 `text` setter，span 有任何
+变化即 `markNeedsLayout`（命中缓存时重排近乎零成本）。回归测试
+`test/shared_paragraph_test.dart`（去掉修复必挂）；模拟器两向切换验证；flutter test 564 通过。

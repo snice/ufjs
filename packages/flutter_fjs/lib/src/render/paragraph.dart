@@ -83,14 +83,31 @@ class RenderFjsParagraph extends RenderParagraph {
     super.textHeightBehavior,
   });
 
-  // RenderParagraph treats an alignment change as paint-only, but the
-  // shared painter is keyed (and laid out) per alignment
+  // RenderParagraph treats a span change that only repaints (a colour, a
+  // decoration) as paint-only and lets its own painter pick it up at paint.
+  // The shared painter is keyed by the whole span and only swapped in
+  // performLayout, so such a change must relayout here — otherwise the old
+  // colour keeps painting (specs/191: the mode tabs' white-on-blue label
+  // stayed white after the tab turned white).
+  @override
+  set text(InlineSpan value) {
+    final changed = text.compareTo(value) != RenderComparison.identical;
+    super.text = value;
+    if (changed) markNeedsLayout();
+  }
+
+  // the same for an alignment change: paint-only there, part of the key here
   @override
   set textAlign(TextAlign value) {
     if (value == textAlign) return;
     super.textAlign = value;
     markNeedsLayout();
   }
+
+  /// The span the shared painter actually paints — what a test reads to
+  /// see a style change land.
+  @visibleForTesting
+  InlineSpan? get debugPaintedSpan => _shared?.painter.text;
 
   /// The painter this paragraph laid out with and paints.
   _Shared? _shared;
