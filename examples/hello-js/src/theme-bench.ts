@@ -23,8 +23,11 @@ import {
   create,
   flush,
   hasNativeHost,
+  host as nativeHost,
   insert,
+  NativeStyleEngine,
   nowMs,
+  registerPreFlush,
   remove,
   setOpSink,
   setProps,
@@ -218,6 +221,16 @@ const DARK: Record<string, string> = {
 
 const ROW_CHOICES = [200, 1000, 2000];
 
+// registerPreFlush 没有反注册，每次挂载都注册一个闭包会无限累积——模块级只挂
+// 一个，挂载时把当前引擎换进来（同 flat4050.ts 的注释）。
+let activeEngine: StyleEngine | NativeStyleEngine | null = null;
+let preFlushWired = false;
+function wireEnginePreFlush(): void {
+  if (preFlushWired) return;
+  preFlushWired = true;
+  registerPreFlush(() => activeEngine?.flushPending());
+}
+
 /** 一个活对象大约由「对象 + 数组 + 字符串」三份组成，所以 20000 轮 ≈ 6 万个
  * 活对象，正好是 hello-fjs 主题页的量级。必须**留着**引用：被回收掉的压载
  * 不会被标记扫描走到，也就压不了任何东西。 */
@@ -247,14 +260,35 @@ export function mountThemeBench(host: Element): () => void {
    * 才会走到真实的（绕过 memo 的）序列化路径上。 */
   const hadActiveStyle = new Set<number>();
 
-  const engine = new StyleEngine(parentOf, childrenOf, (id, style, activeStyle) => {
+  // 引擎选择与 vue/host-ops.ts 同一条（specs/187）：Flutter 宿主带 libfjs-style
+  // 时逐元素工作全在 native，TS 引擎只在 web / fjsrun / --ts-style 上兜底。
+  // 之前这里直接实例化未 attach 的 TS 引擎，真机上量的是
+  // 被 specs/150/172 淘汰的路径（flat4050 屏实测样式 flush ~26ms/次挂载）。recomputeSubtree 照旧调——native 下是 no-op，
+  // libfjs-style 自己读 Insert / Remove op。
+  const applyStyle = (id: number, style: Record<string, unknown>, activeStyle: Record<string, unknown> | null): void => {
     const el = elements.get(id);
     if (!el) return;
     if (activeStyle === null && !hadActiveStyle.has(id)) return setStyle(el, style);
     if (activeStyle) hadActiveStyle.add(id);
     else hadActiveStyle.delete(id);
     setStyle(el, style, activeStyle);
-  });
+  };
+
+  function makeFallbackEngine(): StyleEngine {
+    return new StyleEngine(parentOf, childrenOf, applyStyle);
+  }
+
+  let engine: StyleEngine | NativeStyleEngine;
+  // 本函数参数也叫 host（tab 壳的 stage 元素）——导入用别名，同 flat4050.ts
+  const fns = nativeHost;
+  const native = fns?.styleAttach !== undefined ? new NativeStyleEngine(applyStyle) : null;
+  if (native !== null && native.attachNative(fns!)) {
+    engine = native;
+  } else {
+    engine = makeFallbackEngine();
+  }
+  activeEngine = engine;
+  wireEnginePreFlush();
   engine.register(null, SHEET);
 
   function el(tag: string, cls: string | undefined, parent: Element | null): Element {
@@ -696,6 +730,7 @@ export function mountThemeBench(host: Element): () => void {
     // destroy 里那一条 Remove 就把整棵子树从镜像树上摘掉了（Dart 侧
     // `_removeDeep` 递归到底并自己脱钩），不需要再补一条 removeChild
     destroy(page);
+    activeEngine = null;
     delete (globalThis as Record<string, unknown>).__themeBench;
     ballast = null;
   };
