@@ -2,7 +2,7 @@
 {"title": "表单"}
 </route>
 
-<script setup vapor lang="ts">
+<script setup lang="ts">
 // fjs's own controls in a pure-vapor page (specs/171): every tag below is a
 // render-function component, run by the vapor render host on both ends —
 // the page itself stays a vapor template.

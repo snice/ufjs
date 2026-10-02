@@ -2,7 +2,7 @@
 {"title": "动画与缓存"}
 </route>
 
-<script setup vapor lang="ts">
+<script setup lang="ts">
 // specs/174: <Transition> (v-if, v-show, out-in dynamic component) and
 // <KeepAlive> in a vapor page
 import { ref, shallowRef } from 'vue'

@@ -1,4 +1,4 @@
-<script setup vapor lang="ts">
+<script setup lang="ts">
 // The app shell (specs/167 §8): [nav bar | page]. Every page is wrapped in
 // it on both ends — the nav bar's back arrow is the in-app way back (the
 // browser's back and the iOS edge swipe work as well). It must be a vapor

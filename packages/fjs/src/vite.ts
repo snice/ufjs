@@ -343,7 +343,7 @@ export function fjs(): VitePlugin {
           : path.isAbsolute(bare)
             ? bare
             : null;
-        if (file && fs.existsSync(file) && isVaporSfcFile(file, readConfig(root).vapor?.libs !== false)) {
+        if (file && fs.existsSync(file) && isVaporSfcFile(file, readConfig(root).vapor?.libs !== false, enableVapor)) {
           if (importer.startsWith('\0fjs-vapor-wrapper:')) return '\0fjs-vapor-sfc:' + file;
           return enableVapor ? '\0fjs-vapor-sfc:' + file : '\0fjs-vapor-wrapper:' + file;
         }
@@ -412,7 +412,7 @@ export function fjs(): VitePlugin {
       // a vapor SFC compiles under a virtual id (\0fjs-vapor-sfc:) that no
       // module-graph node owns, so vite cannot invalidate it — a full reload
       // is the honest update (specs/165)
-      if (isVaporSfcFile(ctx.file, readConfig(root).vapor?.libs !== false)) {
+      if (isVaporSfcFile(ctx.file, readConfig(root).vapor?.libs !== false, enableVapor)) {
         ctx.server.ws.send({ type: 'full-reload' });
         return;
       }

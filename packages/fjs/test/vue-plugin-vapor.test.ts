@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import * as esbuild from 'esbuild';
 import { describe, expect, it } from 'vitest';
-import { isAutoVapor, isVaporSfcFile, sharedBare, stripJsComments, usesVapor, usesEnableVapor, vaporWrapperModule, vueSfcPlugin, vuePinPlugin, vaporWrapperPlugin, webAliases } from '../src/bundler/vue-plugin';
+import { isAutoVapor, isVaporSfcFile, sharedBare, stripJsComments, usesVapor, usesEnableVapor, vaporWrapperModule, vueSfcPlugin, vuePinPlugin, vaporWrapperPlugin, webAliases, sfcCompilesAsVapor } from '../src/bundler/vue-plugin';
 
 const VDOM = `<script setup lang="ts">
 const n: number = 1
@@ -74,6 +74,10 @@ describe('Vapor SFC compile', () => {
     expect(usesVapor(vapor)).toBe(true);
     expect(sharedBare(vapor)).toContain('fjs/vapor');
     expect(usesVapor(lib)).toBe(true);
+    // specs/177: an enableVapor app needs no attribute anywhere
+    const app = project({ 'src/A.vue': VDOM, 'src/main.ts': "createFjsApp({ enableVapor: true, routes: [] })" });
+    expect(usesVapor(app)).toBe(true);
+    expect(sharedBare(app)).toContain('fjs/vapor');
   });
 
   it('an empty <script setup vapor> is still Vapor (specs/168)', async () => {
@@ -262,24 +266,57 @@ describe('enableVapor (specs/166)', () => {
     expect(js).toContain('template(');
   });
 
-  it('an enableVapor app names its VDOM SFCs — they would mount as nothing', async () => {
-    const dir = project({ 'Page.vue': VDOM, 'entry.ts': "import Page from './Page.vue'; export default Page;" });
+  it('specs/177: under enableVapor a plain <script setup> and a template-only SFC compile as vapor; only Options API stays VDOM (and warns)', async () => {
+    const OPTIONS = `<script>\nexport default { data: () => ({ n: 1 }) }\n</script>\n<template><view>{{ n }}</view></template>`;
+    const TEMPLATE_ONLY = `<template><view class="t"><text>hi</text></view></template>`;
+    const dir = project({
+      'Page.vue': VDOM,
+      'Bare.vue': TEMPLATE_ONLY,
+      'Old.vue': OPTIONS,
+      'entry.ts': "import Page from './Page.vue'; import Bare from './Bare.vue'; import Old from './Old.vue'; export { Page, Bare, Old };",
+    });
     const warns: string[] = [];
     const orig = console.warn;
     console.warn = (m: string) => warns.push(m);
+    let js = '';
     try {
-      await esbuild.build({
+      const out = await esbuild.build({
         entryPoints: [path.join(dir, 'entry.ts')],
         absWorkingDir: dir, bundle: true, write: false, format: 'esm',
         external: ['vue', 'fjs/vue', 'fjs/vapor'],
         plugins: [vueSfcPlugin({ enableVapor: true })],
         logLevel: 'silent',
       });
+      js = out.outputFiles[0].text;
     } finally {
       console.warn = orig;
     }
-    expect(warns.join('\n')).toContain('Page.vue');
-    expect(warns.join('\n')).toContain('no vapor attribute');
+    // Page and Bare: vapor modules (template() + the marker), Old: a render fn
+    expect(js.match(/__vapor = true/g)?.length).toBe(2);
+    expect(js).toContain('<view class=t>');
+    expect(warns.join('\n')).toContain('Old.vue');
+    expect(warns.join('\n')).toContain('Options API');
+    expect(warns.join('\n')).not.toContain('Page.vue');
+    expect(warns.join('\n')).not.toContain('Bare.vue');
+  });
+
+  it('specs/177: the decision table', () => {
+    const setup = { script: null, scriptSetup: {} };
+    const options = { script: {}, scriptSetup: null };
+    const bare = { script: null, scriptSetup: null };
+    const at = (f: string) => path.join('/proj', f);
+    const nm = '/proj/node_modules/lib/X.vue';
+    // explicit vapor: always
+    expect(sfcCompilesAsVapor(at('A.vue'), setup, { explicit: true, enableVapor: false, libs: true })).toBe(true);
+    // project SFCs follow the switch
+    expect(sfcCompilesAsVapor(at('A.vue'), setup, { explicit: false, enableVapor: true, libs: true })).toBe(true);
+    expect(sfcCompilesAsVapor(at('A.vue'), bare, { explicit: false, enableVapor: true, libs: true })).toBe(true);
+    expect(sfcCompilesAsVapor(at('A.vue'), setup, { explicit: false, enableVapor: false, libs: true })).toBe(false);
+    // Options API never
+    expect(sfcCompilesAsVapor(at('A.vue'), options, { explicit: false, enableVapor: true, libs: true })).toBe(false);
+    // node_modules: the library rule, whatever the switch
+    expect(sfcCompilesAsVapor(nm, setup, { explicit: false, enableVapor: false, libs: true })).toBe(true);
+    expect(sfcCompilesAsVapor(nm, setup, { explicit: false, enableVapor: true, libs: false })).toBe(false);
   });
 });
 

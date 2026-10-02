@@ -1,4 +1,4 @@
-<script setup vapor lang="ts">
+<script setup lang="ts">
 // specs/174: a component kept by <KeepAlive> on the motion page — its
 // count survives switching tabs, and the hooks say when it comes and goes
 import { ref, onActivated, onDeactivated } from 'vue'

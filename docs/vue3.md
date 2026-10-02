@@ -442,6 +442,12 @@ createFjsApp({ enableVapor: true, routes: [...], ... });
 
 CLI 在构建期读这个开关（扫入口源码），runtime 在挂载期执行它。语义：
 
+- **SFC 默认就是 vapor**（specs/177）：项目里的 `.vue`（`<script setup>`，或只有 `<template>`）
+  不用写 `vapor` 属性，一律按 vapor 编译；写了也无害。只有 Options API 组件（只有普通
+  `<script>`）编不成 vapor，构建时告警。关掉开关，没写 `vapor` 的文件回到 VDOM——同一份源码
+  靠这一个开关切换；显式写了 `vapor` 的文件在 VDOM 应用里仍是 vapor（混用，specs/161）。
+  `node_modules` 里的库 SFC 照旧按 `fjs.vapor.libs`。
+
 - **页面原生挂载**：不再生成编译期 wrapper——Flutter 路由的 `mount()` 直接
   `createVaporApp(page)` 挂进页面根，没有每页一个 Vue app、没有收养；web 壳本身也是 vapor
   （`createVaporApp` 起根）。导航由一层很薄的 history 驱动（`router/web-history.ts`，specs/173）
@@ -475,7 +481,7 @@ CLI 在构建期读这个开关（扫入口源码），runtime 在挂载期执�
   `config.errorHandler` 收 vapor effect 与生命周期钩子里的异常，签名
   `(err, null, info)`——vapor 没有组件实例可传；没设时 `console.error`，且一个 effect 抛错
   不会连累同批其他 effect。
-- **外壳 `shell` 必须是 vapor 组件**（`<script setup vapor>`）：两端都把每个 vapor 页包进它
+- **外壳 `shell` 必须是 vapor 组件**（开着 enableVapor 时普通 `<script setup>` 即是）：两端都把每个 vapor 页包进它
   （props `route` = 本页路由，默认插槽 = 页面），导航栏和返回键就放在这里。VDOM 的 shell
   在 enableVapor 下没有渲染器可用，会警告一次并不包壳——页面就没有导航栏 / 返回键
   （specs/167 §8）。`transition: false` 在 iOS 上同时关掉右滑返回。

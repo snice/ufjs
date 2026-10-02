@@ -309,12 +309,15 @@ demo 里实测：about 页加一行 `storeToRefs` 后，`dist/app/pages/about.js
 4707 B；登记 `fjs.shared` 后回到 1848 B，`shared.js` 只多 1.6 KB。
 
 `fjs/vapor`（自研 Vapor 运行时，specs/161）不用手动登记：应用里有 Vapor 组件时
-（`src/` 下有 `<script setup vapor>`，或开着 `fjs.vapor.libs` 且某个直接依赖发了 `.vue` 文件），
+（入口写了 `enableVapor: true`，`src/` 下有 `<script setup vapor>`，或开着 `fjs.vapor.libs` 且某个
+直接依赖发了 `.vue` 文件），
 构建自动把它放进共享 chunk，保证整个 VM 只有一份；没有就不带。
 
 ### Vue Vapor：`fjs.vapor`
 
-组件写 `<script setup vapor>` 即按 Vapor 编译（用法与取舍见 [vue3.md](vue3.md#vue-vapor可选specs148)）。
+组件写 `<script setup vapor>` 即按 Vapor 编译（用法与取舍见 [vue3.md](vue3.md#vue-vapor可选specs148)）；
+入口开了 `enableVapor: true` 时项目里所有 `<script setup>` / 纯模板 SFC 默认就按 Vapor 编译，
+不必逐个写（specs/177）。
 node_modules 里以 `.vue` 发布、只有 `<script setup>` 的库组件默认也按 Vapor 编译，关掉：
 
 ```json

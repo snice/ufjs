@@ -20,6 +20,8 @@ import { compileVaporSfc, isVaporDescriptor } from '../../../fjs-runtime/src/vap
 import {
   isAutoVapor,
   isNativeTagFor,
+  isOptionsApiSfc,
+  sfcCompilesAsVapor,
   sfcParseOptions,
   vaporCompilerOptions,
   webIsNativeTag,
@@ -32,6 +34,7 @@ import {
 export {
   isAutoVapor,
   isNativeTagFor,
+  sfcCompilesAsVapor,
   sfcParseOptions,
   vaporCompilerOptions,
   webIsNativeTag,
@@ -97,22 +100,23 @@ export function templateCompilerOptions({
 
 const vaporSfcCache = new Map<string, boolean>();
 
-/** Whether [file] is a Vapor SFC: an explicit `<script setup vapor>`, or —
- * with fjs.vapor.libs on — a node_modules SFC with only `<script setup>`
- * (specs/148's auto-vapor, judged with the compiler's parse). Resolution
- * time, so a VDOM module importing a Vapor component can be redirected to
- * its wrapper before anything compiles. */
-export function isVaporSfcFile(file: string, libs: boolean): boolean {
-  const cached = vaporSfcCache.get(file);
+/** Whether [file] compiles as a Vapor SFC (sfcCompilesAsVapor, specs/177):
+ * an explicit `<script setup vapor>`; a node_modules SFC under specs/148's
+ * auto-vapor; and, in an `enableVapor` app, every project SFC that can be.
+ * Resolution time, so a VDOM module importing a Vapor component can be
+ * redirected to its wrapper before anything compiles. */
+export function isVaporSfcFile(file: string, libs: boolean, enableVapor = false): boolean {
+  const key = enableVapor ? file + '\0vapor' : file;
+  const cached = vaporSfcCache.get(key);
   if (cached !== undefined) return cached;
   let hit = false;
   try {
     const { descriptor } = parse(fs.readFileSync(file, 'utf8'), { filename: path.basename(file), ...sfcParseOptions() });
-    hit = isVaporDescriptor(descriptor) || isAutoVapor(file, descriptor, libs);
+    hit = sfcCompilesAsVapor(file, descriptor, { explicit: isVaporDescriptor(descriptor), enableVapor, libs });
   } catch {
     hit = false;
   }
-  vaporSfcCache.set(file, hit);
+  vaporSfcCache.set(key, hit);
   return hit;
 }
 
@@ -333,7 +337,7 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
       build.onLoad({ filter: /\.vue$/, namespace: 'file' }, async (args) => {
         const source = fs.readFileSync(args.path, 'utf8');
         const filename = path.basename(args.path);
-        let { descriptor, errors } = parse(source, { filename, ...sfcParseOptions({ web, moduleTags }) });
+        const { descriptor, errors } = parse(source, { filename, ...sfcParseOptions({ web, moduleTags }) });
         if (errors.length) {
           return { errors: errors.map((e) => ({ text: String(e.message ?? e) })) };
         }
@@ -341,16 +345,19 @@ export function vueSfcPlugin(options: SfcOptions = {}): Plugin {
         // `<script setup>`-only SFC. Re-parsed from the edited source rather
         // than flagged on the descriptor: compiler-sfc caches descriptors by
         // source, and the flag would leak into anything sharing it.
-        if (!isVaporDescriptor(descriptor) && isAutoVapor(args.path, descriptor, vaporLibs(build))) {
-          ({ descriptor, errors } = parse(source.replace(/<script(\s[^>]*)?\ssetup\b/, (m) => `${m} vapor`), { filename, ...sfcParseOptions({ web, moduleTags }) }));
-        }
-        const vapor = isVaporDescriptor(descriptor);
-        if (enableVapor && !vapor && !warnedVdom.has(args.path) && !args.path.includes('node_modules')) {
+        // specs/177: an `enableVapor` app compiles every project SFC that can
+        // be vapor as vapor, attribute or not (compileVaporSfc adds it)
+        const vapor = sfcCompilesAsVapor(args.path, descriptor, {
+          explicit: isVaporDescriptor(descriptor),
+          enableVapor,
+          libs: vaporLibs(build),
+        });
+        if (enableVapor && !vapor && isOptionsApiSfc(descriptor) && !warnedVdom.has(args.path) && !args.path.includes('node_modules')) {
           warnedVdom.add(args.path);
           console.warn(
-            `[fjs] ${filename}: enableVapor is on but this SFC has no vapor attribute — ` +
-              'the router mounts pages natively and a VDOM page renders as nothing. ' +
-              'Add `vapor` to its <script setup> or drop enableVapor.',
+            `[fjs] ${filename}: enableVapor is on but this is an Options API component (no <script setup>) — ` +
+              'it stays VDOM, and a pure-vapor app has no VDOM renderer to mount it. ' +
+              'Rewrite it with <script setup> or drop enableVapor.',
           );
         }
 
@@ -847,7 +854,8 @@ export function warnVueRouterInVapor(file: string, source: string): void {
 }
 
 /** Whether the app has a Vapor component (specs/148): its own
- * `<script setup vapor>` under src/, or — with fjs.vapor.libs on — a direct
+ * `enableVapor: true` in the entry (specs/177), a `<script setup vapor>`
+ * under src/, or — with fjs.vapor.libs on — a direct
  * dependency that ships `.vue` files. A `--pages` build then shares
  * `fjs/vapor` (runtime-vapor and the DOM shell) from the shared chunk: one
  * runtime-vapor per VM, however many page chunks have Vapor components.
@@ -870,7 +878,9 @@ export function usesVapor(root: string): boolean {
     }
     return false;
   };
-  hit = vueFiles(path.join(root, 'src'), 12, (f) => /<script\b[^>]*\svapor\b/.test(fs.readFileSync(f, 'utf8')));
+  // specs/177: an enableVapor app compiles its SFCs as vapor with or
+  // without the attribute — the entry's switch is the answer
+  hit = usesEnableVapor(root) || vueFiles(path.join(root, 'src'), 12, (f) => /<script\b[^>]*\svapor\b/.test(fs.readFileSync(f, 'utf8')));
   if (!hit && readConfig(root).vapor?.libs !== false) {
     let deps: string[] = [];
     try {

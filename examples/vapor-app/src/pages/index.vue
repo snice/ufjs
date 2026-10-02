@@ -2,7 +2,7 @@
 {"title": "Vapor 首页"}
 </route>
 
-<script setup vapor lang="ts">
+<script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'fjs/router'
 import { useCounter } from '../stores/counter'

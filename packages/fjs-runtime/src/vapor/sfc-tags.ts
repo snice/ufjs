@@ -145,6 +145,31 @@ export function sfcParseOptions({
 /** A library's SFC (under node_modules) is compiled as Vapor when all it
  * has is `<script setup>` — the only script form Vapor supports — unless
  * the app sets `fjs.vapor.libs: false` (specs/148). */
+/** Whether an SFC compiles as vapor (specs/177) — the one rule both build
+ * paths (CLI esbuild plugin, vite plugin) apply:
+ *   - an explicit `vapor` attribute: always (a vapor island in a VDOM app);
+ *   - node_modules: the library rule (isAutoVapor, specs/148);
+ *   - a project SFC under `enableVapor`: whenever it can be — it has a
+ *     `<script setup>`, or no script at all (template-only). An Options API
+ *     component (a plain `<script>` only) stays VDOM.
+ * `explicit` is the caller's isVaporDescriptor answer for this descriptor. */
+export function sfcCompilesAsVapor(
+  file: string,
+  descriptor: { script: unknown; scriptSetup: unknown },
+  opts: { explicit: boolean; enableVapor: boolean; libs: boolean },
+): boolean {
+  if (opts.explicit) return true;
+  if (/[\\/]node_modules[\\/]/.test(file)) return isAutoVapor(file, descriptor, opts.libs);
+  if (!opts.enableVapor) return false;
+  return !!descriptor.scriptSetup || !descriptor.script;
+}
+
+/** An SFC that stays VDOM under enableVapor because it cannot be vapor: an
+ * Options API component (specs/177). */
+export function isOptionsApiSfc(descriptor: { script: unknown; scriptSetup: unknown }): boolean {
+  return !!descriptor.script && !descriptor.scriptSetup;
+}
+
 export function isAutoVapor(
   file: string,
   descriptor: { script: unknown; scriptSetup: unknown },

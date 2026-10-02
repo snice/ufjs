@@ -2,7 +2,7 @@
 {"title": "关于"}
 </route>
 
-<script setup vapor lang="ts">
+<script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'fjs/router'
 import { useCounter } from '../stores/counter'

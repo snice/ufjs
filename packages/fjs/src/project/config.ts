@@ -95,7 +95,8 @@ export interface FjsConfig {
     /** Warn when a page's statically estimated first frame renders more nodes. */
     nodeBudget?: number;
   };
-  /** Vue Vapor (specs/148). A component opts in with `<script setup vapor>`;
+  /** Vue Vapor (specs/148). A component opts in with `<script setup vapor>`
+   * (in an `enableVapor` app every project SFC is Vapor already, specs/177);
    * `.vue` files shipped in node_modules that only have `<script setup>` are
    * compiled as Vapor automatically unless `libs` is false. */
   vapor?: {

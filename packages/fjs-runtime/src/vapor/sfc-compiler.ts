@@ -69,6 +69,11 @@ export function compileVaporSfc(
     moduleTags: Set<string>;
   },
 ): VaporSfcResult | { errors: { text: string }[] } {
+  // a template-only SFC (specs/177): enableVapor compiles it as vapor too,
+  // and the script transform needs a setup block to splice the template
+  // into. Appended, so the template's line numbers do not move; a comment,
+  // so the parser does not drop it as empty.
+  if (!/<script\b/i.test(source)) source += '\n<script setup vapor>\n// template-only SFC (specs/177)\n</script>\n';
   const filename = opts.file.split(/[\\/]/).pop() ?? opts.file;
   const parseOpts = sfcParseOptions({ web: opts.web, moduleTags: opts.moduleTags });
   const parsed = parseDescriptor(source, filename, parseOpts);
