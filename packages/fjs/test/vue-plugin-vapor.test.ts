@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import * as esbuild from 'esbuild';
 import { describe, expect, it } from 'vitest';
-import { isAutoVapor, isVaporSfcFile, sharedBare, stripJsComments, usesVapor, usesEnableVapor, vaporWrapperModule, vueSfcPlugin, vuePinPlugin, vaporWrapperPlugin } from '../src/bundler/vue-plugin';
+import { isAutoVapor, isVaporSfcFile, sharedBare, stripJsComments, usesVapor, usesEnableVapor, vaporWrapperModule, vueSfcPlugin, vuePinPlugin, vaporWrapperPlugin, webAliases } from '../src/bundler/vue-plugin';
 
 const VDOM = `<script setup lang="ts">
 const n: number = 1
@@ -280,5 +280,12 @@ describe('enableVapor (specs/166)', () => {
     }
     expect(warns.join('\n')).toContain('Page.vue');
     expect(warns.join('\n')).toContain('no vapor attribute');
+  });
+});
+
+describe('web fjs/router alias (specs/173)', () => {
+  it('enableVapor gets the history router, a VDOM web app keeps the vue-router facade', () => {
+    expect(webAliases(true)['fjs/router']).toMatch(/router[\\/]web-vapor\.ts$/);
+    expect(webAliases(false)['fjs/router']).toMatch(/router[\\/]web\.ts$/);
   });
 });

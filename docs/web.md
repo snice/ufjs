@@ -35,7 +35,7 @@ element API，产品层面已经是那个设想想要的东西。只有当「Flu
 | 渲染器 | fjs 自定义 renderer → op 帧 → Widget | Vue runtime-dom |
 | `<view>` `<swiper>` … | Dart 侧 widget 映射 | `fjs/web` 里的 Vue 组件 |
 | `<style scoped>` | fjs 样式引擎（自己做 cascade / 继承） | 真 CSS（`compileStyle` 注入 `<style>`） |
-| 路由 | 原生 Navigator | vue-router（hash 模式） |
+| 路由 | 原生 Navigator | vue-router（hash 模式）；enableVapor 下是自带的 history 驱动（同样的 URL，无 vue-router，specs/173） |
 | `toast()` | 原生浮层 | DOM 浮层 |
 | `new Worker('/workers/x.js')`（`src/workers/x.ts`，specs/049） | fetch 脚本 → Dart isolate + 独立 QuickJS | 真 Web Worker（路径即 URL；vite dev 中间件按需编译，构建写 `workers/`） |
 

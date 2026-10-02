@@ -1029,7 +1029,8 @@ export function webAliases(enableVapor = false): Record<string, string> {
     // what generated SFC code imports for <style> (specs/168): the leaf
     // module, not the 'fjs/web' entry and its whole component table
     'fjs/web-style': path.join(root, 'src', 'web', 'inject-style.ts'),
-    'fjs/router': path.join(root, 'src', 'router', 'web.ts'),
+    // enableVapor (specs/173): the history router, no vue-router in the graph
+    'fjs/router': path.join(root, 'src', 'router', enableVapor ? 'web-vapor.ts' : 'web.ts'),
     'fjs/app': path.join(root, 'src', 'app', enableVapor ? 'web-vapor.ts' : 'web.ts'),
     // enableVapor: the interop-free vapor surface — no createRenderer, no
     // adopt machinery, no runtime-core renderer engine in the bundle

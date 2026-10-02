@@ -174,7 +174,7 @@ export function fjs(): VitePlugin {
             // enableVapor (specs/166): the pure-vapor shell — same reason
             // as the `vue` alias below, the vdom shell stays out of the graph
             { find: /^fjs\/app$/, replacement: path.join(runtime, 'src', 'app', enableVapor ? 'web-vapor.ts' : 'web.ts') },
-            { find: /^fjs\/router$/, replacement: path.join(runtime, 'src', 'router', 'web.ts') },
+            { find: /^fjs\/router$/, replacement: path.join(runtime, 'src', 'router', enableVapor ? 'web-vapor.ts' : 'web.ts') },
             { find: /^fjs\/web$/, replacement: path.join(runtime, 'src', 'web', 'index.ts') },
             // generated <style> injection (specs/168): the leaf module
             { find: /^fjs\/web-style$/, replacement: path.join(runtime, 'src', 'web', 'inject-style.ts') },

@@ -1,9 +1,9 @@
 // createFjsApp for web in enableVapor mode (specs/166): every page is a
 // Vapor SFC and the SHELL is vapor too — the app root is createVaporApp over
-// the DOM backend, vue-router drives navigation without ever being
-// installed on a Vue app (its currentRoute ref is the reactive source the
-// shell's effect tracks; pages read it through useRoute's no-instance
-// fallback), and nothing imports runtime-dom — `vue` resolves to the
+// the DOM backend, the history router (router/web-history.ts, specs/173 —
+// no vue-router) drives navigation (its `current` ref is the reactive
+// source the shell's effect tracks; pages read their route from the
+// provides), and nothing imports runtime-dom — `vue` resolves to the
 // runtime-core shim, so the DOM renderer never enters the bundle.
 //
 // Deliberately smaller than the vdom shell (app/web.ts): visited pages stay
@@ -23,12 +23,13 @@ import { createVaporApp, renderEffect, withScope, withVaporShell, type VaporAppC
 // registration either way.
 import '../vapor/web-dom';
 import { installBaseCss } from '../web/base-css';
-import { createRouter, ROUTE_KEY, ROUTER_KEY, type FjsWebRouter, type WebRouterOptions } from '../router/web';
+import { createHistoryRouter, type CurrentPage, type HistoryRouter, type HistoryRouterOptions } from '../router/web-history';
+import { ROUTE_KEY, ROUTER_KEY } from '../router/web-vapor';
 import type { Router } from '../router/types';
 import { applyPlugins, type FjsPlugin } from './plugin';
 import { createVaporAppShell } from './vapor-app';
 
-export interface VaporWebAppOptions extends Omit<WebRouterOptions, 'shell'> {
+export interface VaporWebAppOptions extends Omit<HistoryRouterOptions, 'shell'> {
   /** Runs once with the app shell (specs/167): `app.use(createPinia())`. */
   setup?: (app: App) => void;
   /** App plugins, applied in order before [setup] — against the shell. */
@@ -70,8 +71,7 @@ interface PageInstance {
 }
 
 export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
-  const router: FjsWebRouter = createRouter(options as unknown as WebRouterOptions);
-  const vueRouter = router.vueRouter;
+  const router: HistoryRouter = createHistoryRouter(options as unknown as HistoryRouterOptions);
   const appContext: VaporAppContext = {
     components: { ...options.components },
     provides: Object.create(null) as Record<string | symbol, unknown>,
@@ -108,27 +108,23 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
     });
   };
 
-  const buildPage = (fullPath: string, container: HTMLElement): PageInstance => {
-    const matched = vueRouter.resolve(fullPath as never);
-    const record = matched.matched[matched.matched.length - 1];
-    const comp = record?.components?.default as VaporComponent | undefined;
+  const buildPage = (current: CurrentPage, container: HTMLElement): PageInstance => {
+    const { location: matched, component } = current;
+    const comp = component as VaporComponent | undefined;
     if (!comp) {
-      throw new Error(`[fjs] no component for ${fullPath} — check the route table`);
+      throw new Error(`[fjs] no component for ${matched.fullPath} — check the route table`);
     }
     // this page's own context (specs/167): the app's provides plus its
     // router and route — a reactive copy, the Flutter router's shape. The
     // cache keys pages by fullPath, so a page's route never changes in place
     const provides = Object.create(appContext.provides ?? null) as Record<string | symbol, unknown>;
     provides[ROUTER_KEY] = router;
-    // fjs's RouteLocation shape (not vue-router's resolved object: that one
-    // carries the matched records and their components, which a deep
-    // reactive() would proxy)
     const route = reactive({
       path: matched.path,
       fullPath: matched.fullPath,
-      name: typeof matched.name === 'string' ? matched.name : undefined,
-      params: { ...(matched.params as Record<string, string>) },
-      query: { ...(matched.query as Record<string, string>) },
+      name: matched.name,
+      params: { ...matched.params },
+      query: { ...matched.query },
       meta: { ...matched.meta },
     });
     provides[ROUTE_KEY] = route;
@@ -150,10 +146,11 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
     };
   };
 
-  const show = (fullPath: string, container: HTMLElement): void => {
+  const show = (current: CurrentPage, container: HTMLElement): void => {
+    const fullPath = current.location.fullPath;
     let page = pages.get(fullPath);
     if (!page) {
-      page = buildPage(fullPath, container);
+      page = buildPage(current, container);
       pages.set(fullPath, page);
     } else {
       page.host.style.display = '';
@@ -189,21 +186,16 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
     let previous = '';
     const scope = new EffectScope(true);
     withScope(scope, () => {
-      // tracks vue-router's currentRoute ref: every navigation re-runs the
+      // tracks the router's `current` ref: every navigation re-runs the
       // swap. The DOM writes here cannot loop — that ref only changes on a
-      // real navigation.
+      // real navigation, after the page's module has loaded.
       renderEffect(() => {
-        const current = vueRouter.currentRoute.value as { fullPath?: string; matched: unknown[] };
-        // START_LOCATION (before the initial navigation resolves) matches
-        // nothing, and its fullPath '/' would be built from the route
-        // table's LAZY loader — an empty page that the real '/' then never
-        // replaces (same fullPath). Wait for the navigation: vue-router has
-        // loaded the page component into the record by then (specs/167)
-        if (current.matched.length === 0) return;
-        const fullPath = String(current.fullPath ?? '/');
+        const current = router.current.value;
+        if (!current) return;
+        const fullPath = current.location.fullPath;
         if (fullPath === previous) return;
         if (previous) hide(previous);
-        show(fullPath, container);
+        show(current, container);
         previous = fullPath;
       });
     });
@@ -228,18 +220,8 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
         host = el as HTMLElement;
       }
       startShell(host);
-      // vue-router starts its initial navigation — which honors the URL the
-      // page was opened at and registers the history (back/forward)
-      // listeners — only inside install(), and a pure-vapor app never
-      // installs it on a Vue app. Replicate the start: install does exactly
-      // this push when it runs (the history instance rides the public
-      // router options).
-      const history = (
-        vueRouter as unknown as { options: { history?: { location: string } } }
-      ).options.history;
-      if (history && vueRouter.currentRoute.value.matched.length === 0) {
-        void vueRouter.push(history.location).catch(() => undefined);
-      }
+      // the first navigation honors the address the page was opened at
+      void router.start();
     },
   };
 }

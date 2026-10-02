@@ -445,7 +445,10 @@ CLI 在构建期读这个开关（扫入口源码），runtime 在挂载期执�
 
 - **页面原生挂载**：不再生成编译期 wrapper——Flutter 路由的 `mount()` 直接
   `createVaporApp(page)` 挂进页面根，没有每页一个 Vue app、没有收养；web 壳本身也是 vapor
-  （`createVaporApp` 起根，vue-router 只当导航驱动，不装到任何 Vue app 上）。
+  （`createVaporApp` 起根）。导航由一层很薄的 history 驱动（`router/web-history.ts`，specs/173）
+  负责：hash / history 两种模式、`popstate`、懒加载页面模块、窗口滚动复位，匹配沿用与 Flutter
+  共用的 `router/match.ts`——**enableVapor 的 web 包里没有 vue-router**（vapor-app 小 24 KB）。
+  `fjs/router` 在这种构建里别名到 `router/web-vapor.ts`，API 不变。
 - **web 不打 runtime-dom**：`vue` 别名到 runtime-core dist（`vue` 包的入口是 runtime-dom，
   纯 vapor 应用碰不到 DOM 渲染器）；`fjs/app` 别名到纯 vapor 壳（`app/web-vapor.ts`）、
   `fjs/vapor` 别名到无 interop 面（`vapor/web-pure.ts`）——vdom 渲染引擎、wrapper、adopt
@@ -554,7 +557,7 @@ compiler-vapor 能生成的每个运行时 helper，四个 vapor 入口都有导
 | 项 | 状态 | 说明 |
 |---|---|---|
 | `v-model` | ❌ 不可用 | 指令助手面向 DOM（el.addEventListener）。替代：`:value="draft" @text-changed="t => draft = t"` |
-| vue-router | ❌ 不可用 | 路由走 `fjs/router`（web 构建内部才用 vue-router） |
+| vue-router | ❌ 不可用 | 路由走 `fjs/router`（VDOM web 构建内部用 vue-router；enableVapor web 用自带的 history 驱动，specs/173） |
 | pinia | ✅ 可用 | 已在 QuickJS 上验证。用 `fjs add pinia` 装，它会把实例写在 `src/plugins/pinia.ts` 的模块作用域里——Flutter 上每个页面是独立的 Vue app，实例建在函数里会让每页各拿一套 store。见 [toolchain.md 的「添加三方库」](toolchain.md#添加三方库) |
 | `vue` 包 | ⚠️ 被别名 | alias 到 `@vue/runtime-core`，避免拉入 DOM 运行时；runtime-dom 才有的名字由 vue-shim 补（见上节）。Vapor 组件的 `vue` 导入由 CLI 改到 `fjs/vapor`（vue-shim + 自研运行时） |
 | 元素上的 DOM 形状 API | ✅ 可用 | 一小组 DOM 形状的成员，供组件库直接调用（vant 依赖它们），清单见上文表格；`@x.passive/.capture/.once` 修饰符按 Vue 的规则处理，`.once` 生效 |

@@ -64,3 +64,26 @@ export function whenNoTransition(cb: () => void): void {
   for (const entry of pending.values()) last = entry;
   last?.waiting.push(cb);
 }
+
+/** Which page is asking — the web router installed in this bundle answers
+ * (specs/173): vue-router's useRoute for a VDOM page, the vapor page's
+ * provided route under enableVapor. Injected so <defer> (and anything else
+ * shared by both web apps) never imports either router module. */
+let pagePathOf: () => string | undefined = () => undefined;
+
+export function setPagePathResolver(fn: () => string | undefined): void {
+  pagePathOf = fn;
+}
+
+/** Runs `cb` once this page's route transition has finished.
+ *
+ * Expensive first-paint work costs frames, and during a navigation those are
+ * the frames the page transition is animating. Always asynchronous, even
+ * when the page has already settled, so a caller in setup() can finish its
+ * own initialisation first. Fires at most once.
+ *
+ * `<canvas>` already does this for its first `@resize`, so a charting page
+ * usually needs nothing — this is for everything else. */
+export function onPageSettled(cb: () => void): void {
+  whenSettled(pagePathOf(), cb);
+}

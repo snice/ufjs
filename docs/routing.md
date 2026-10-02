@@ -7,7 +7,7 @@
 
 | | Flutter | Web |
 |---|---|---|
-| 谁在管页面栈 | Flutter 的 `Navigator`（原生路由） | vue-router |
+| 谁在管页面栈 | Flutter 的 `Navigator`（原生路由） | vue-router（enableVapor：自带的 history 驱动，specs/173） |
 | 转场动画 | 平台自带（iOS 右滑推入、Android 系统转场） | CSS transition |
 | 返回手势 | 平台自带（iOS 边缘滑动、Android 返回键 / 手势） | 浏览器后退 |
 | 一个页面 = | 一个 `.js` / `.fjsbundle` chunk，按需加载 | 一个 esbuild chunk，`import()` 按需加载 |
