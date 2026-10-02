@@ -6,6 +6,7 @@ import 'dart:async' show Timer;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
+import 'box.dart';
 import 'dashed_border.dart';
 import 'length.dart';
 import 'style.dart';
@@ -118,7 +119,9 @@ Widget _decoratedBox({
   }
   // the key goes on the outermost widget, as it went on the Container
   final outerIsDecoration = foregroundDecoration == null && !tight;
-  current = DecoratedBox(key: outerIsDecoration ? key : null, decoration: decoration, child: current);
+  // FjsBox: no inherited dependencies for an image-less decoration, and a
+  // margin decorateNode can fold into it later (render/box.dart, specs/191)
+  current = FjsBox(key: outerIsDecoration ? key : null, decoration: decoration, child: current);
   if (foregroundDecoration != null) {
     current = DecoratedBox(
       key: tight ? null : key,
@@ -676,7 +679,15 @@ Widget decorateNode(
         ),
       );
     } else if (style.margin != null) {
-      w = _animatedEdges(marginTrack, style.margin!, child: w);
+      final m = style.margin!;
+      final live = marginTrack != null && marginTrack.duration > Duration.zero;
+      // the margin wraps the background box directly (nothing sized,
+      // clipped or offset in between): one render object for both
+      if (!live && w is FjsBox && w.margin == EdgeInsets.zero) {
+        w = FjsBox(key: w.key, decoration: w.decoration, margin: m, child: w.child);
+      } else {
+        w = _animatedEdges(marginTrack, m, child: w);
+      }
     }
   }
   // `position: relative` nudges the painted box; the slot it was laid out

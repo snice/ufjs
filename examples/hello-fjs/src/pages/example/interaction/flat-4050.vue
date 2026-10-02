@@ -106,6 +106,10 @@ function setMode(next: 'vdom' | 'vapor') {
 }
 
 const fmt = (v: number | null) => (v == null ? '—' : `${v} ms`);
+
+// 脚本手柄（specs/191）：真机上用 `fjs eval` 驱动，与 hello-js 的 __flat4050
+// 同一组读数——`__flat4050vue.setMode('vapor'); __flat4050vue.toggle()`。
+(globalThis as Record<string, unknown>).__flat4050vue = { toggle, bump, setMode };
 </script>
 
 <template>
