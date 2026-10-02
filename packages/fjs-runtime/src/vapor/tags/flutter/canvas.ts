@@ -7,5 +7,8 @@ import { registerTagComponent } from '../../runtime';
 // view / text alone never carries it
 import '../../render-host';
 import { createFjsCanvas } from '../../../components/canvas';
+// the 2d surface the inner-canvas element gets (specs/185: element.ts no
+// longer imports it for every app)
+import '../../../canvas/surface';
 
 registerTagComponent('canvas', createFjsCanvas('inner-canvas'));

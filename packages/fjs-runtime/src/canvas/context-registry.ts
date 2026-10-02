@@ -15,7 +15,7 @@
 // could hand back real contexts for anything the browser has — and that is
 // precisely why it does not: a page that works in the browser and paints
 // nothing in the app is the failure constitution I exists to prevent.
-import { FjsCanvasRenderingContext2D, type CanvasSurface } from './context-2d';
+import type { CanvasSurface } from './context-2d';
 import { warnCanvasOnce } from './warn';
 
 /** What a factory is handed. Exactly one of `surface` / `domCanvas` is set:
@@ -81,7 +81,11 @@ export function resolveContext(
     cache.set(type, null);
     return null;
   }
-  const factory = factories.get(type);
+  // the browser's own 2d context on web; on Flutter canvas/surface.ts
+  // registers the display-list one when the canvas component brings it in
+  // (specs/185 — no top-level registration here, so an app that never
+  // draws does not carry the 2d implementation)
+  const factory = factories.get(type) ?? (type === '2d' && target.domCanvas ? domCanvas2d : undefined);
   if (!factory) {
     warnCanvasOnce(
       `context:${type}`,
@@ -98,8 +102,4 @@ export function resolveContext(
   return context;
 }
 
-registerContextType('2d', (target) => {
-  if (target.domCanvas) return target.domCanvas.getContext('2d');
-  if (!target.surface) return null;
-  return new FjsCanvasRenderingContext2D(target.surface, target.canvas);
-});
+const domCanvas2d: CanvasContextFactory = (target) => target.domCanvas?.getContext('2d') ?? null;

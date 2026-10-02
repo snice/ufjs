@@ -915,6 +915,27 @@ JS 里的样式引擎到此为止：每元素约 6 µs（十几个状态字段�
   对 VDOM 应用同样生效：hello-fjs 436.3 → 375.9 KB、demo 809.4 → 652.9 KB。剩下的大头是 TS
   样式引擎 `css/style.ts` 41.9 KB（有原生样式引擎时仍进包，另立 spec）。
 
+### 2026-10 复测与优化（specs/184–185）
+
+vapor-app（此时已含 Transition / KeepAlive / TransitionGroup / Teleport 等）Flutter shared.js，fjsrun 在 Mac 上单独求值，
+30 次中位数、减去进程启动：
+
+| | VDOM | Vapor（优化前） | Vapor（184+185 后） |
+|---|---|---|---|
+| 开发构建 `--pages` | 316.6 KB / 26.3 ms | 342.7 KB / 28.6 ms | **294.5 KB / gz 101.5 KB / 24.5 ms** |
+| release shared.js | 247.3 KB / gz 89.6 KB / 21.3 ms | 225.0 KB / gz 79.3 KB / 19.0 ms | **204.6 KB / gz 73.2 KB / 17.9 ms** |
+| release 字节码 shared.fjsbundle | 736 KB / 3.8 ms | 663 KB / 3.1 ms | **607 KB / 3.2 ms** |
+
+- **开发构建比 VDOM 还大的原因**：shared 入口对 `vue` / `@vue/runtime-core` / `fjs/vapor` 整模块导出（热重载的页面可能
+  用任何名字），runtime-core 的渲染引擎（`createRenderer` / `createHydrationRenderer`）、`Suspense`、`KeepAlive`、`ssrUtils`
+  全部可达（70 KB），vapor 运行时又叠在上面。specs/184：纯 vapor 应用的开发构建对这三个模块导出「全部导出名 − 这些
+  VDOM 专属名字」（导出名构建时从模块读出），runtime-core 70 → 27.7 KB。
+- **canvas 2d（specs/185）**：`ui/element.ts` 静态引入 canvas surface，context-registry 顶层注册 2d 工厂，所有应用都带
+  context-2d / path2d / display-list。改为 canvas 组件的 Flutter 注册引入 surface、2d 工厂随 surface 注册：没用 `<canvas>`
+  的应用 release 再省约 20 KB（VDOM 应用的 `app/flutter.ts` 注册了 canvas 组件，仍然带）。
+- 未做：把 list-view / picker / form 等组件型标签与 render-host 挪进页面分包（约 20 KB）。它们以相对路径引用 vapor 运行时
+  与 host-ops，放进页面分包会带第二份运行时与元素注册表；收益（字节码载入 < 0.3 ms）不抵改动面。
+
 ## 样式引擎下沉 C++：libfjs-style（2026-09，specs/150）
 
 specs/146 / 147 / 149 连续三轮之后，样式引擎在 JS 里每元素仍约 6 µs（十几个状态字段的读写、几次 Map

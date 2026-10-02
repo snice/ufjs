@@ -5,6 +5,8 @@ import { CanvasWriter } from '../../src/canvas/display-list';
 import { resetCanvasWarnings } from '../../src/canvas/warn';
 import type { CanvasSurface } from '../../src/canvas/context-2d';
 import type { FjsCanvasOpWriter } from '../../src/canvas/surface';
+// the Flutter 2d factory registers with the surface (specs/185)
+import '../../src/canvas/surface';
 
 /** The test stands in for the real FjsCanvasSurface: same members a context
  * module sees (attachOpWriter / markDirty live on the class, not the 2d

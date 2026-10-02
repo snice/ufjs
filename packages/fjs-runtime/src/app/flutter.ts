@@ -9,6 +9,9 @@ import { createRouter, onPageSettled, type FlutterRouterOptions } from '../route
 import '../router/flutter-vdom';
 import type { Router } from '../router/types';
 import { createFjsCanvas } from '../components/canvas';
+// the inner-canvas surface (specs/185): registered by whoever registers the
+// canvas component, not by the element layer
+import '../canvas/surface';
 import { createDefer } from '../components/defer';
 import { FjsForm } from '../components/form';
 import { FjsListView } from '../components/list-view';
