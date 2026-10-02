@@ -28,6 +28,7 @@ import {
   create,
   flush,
   host as nativeHost,
+  invokeHost,
   insert,
   NativeStyleEngine,
   nowMs,
@@ -521,6 +522,9 @@ export function mountFlat4050(host: Element): () => void {
     show: () => (grid ? Promise.resolve({} as Reading) : toggle()),
     hide: () => (grid ? toggle() : Promise.resolve({} as Reading)),
     bump,
+    // specs/193：开关 Dart 侧的自绘表面（'auto' | 'off' | 'force'），免重编对照开 / 关。
+    // 模拟器的语义树一直是开着的，'auto' 在那里会回退，所以测自绘要用 'force'。
+    setFlat: (m: 'auto' | 'off' | 'force') => invokeHost('fjs.dev.flat', m),
     setMode: (m: 'node' | 'clone') => {
       if (grid) {
         tearGrid();

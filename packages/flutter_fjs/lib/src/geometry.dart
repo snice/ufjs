@@ -18,6 +18,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
+import 'flat/flat_surface.dart' show RenderFlatSurface;
 import 'mirror_tree.dart';
 import 'registry/host.dart';
 import 'render/style.dart' show FjsStyle;
@@ -71,7 +72,17 @@ void registerGeometryHostModules({
     // paint of the incoming route, paid on the JS call stack. Skip it; the
     // engine's post-dispatch notify lays the page out on the next frame.
     if (_suppressReflow == 0) _reflow(tree, flushPending);
-    final element = tree.node(id.toInt())?.element;
+    final node = tree.node(id.toInt());
+    // specs/193: a node inside a flat surface has no element of its own; the
+    // surface answers with the rect its layout gave it
+    final host = node?.flatHost;
+    if (host is RenderFlatSurface) {
+      final r = host.globalRectOf(node!);
+      return r == null
+          ? null
+          : '[${_num(r.left)},${_num(r.top)},${_num(r.width)},${_num(r.height)}]';
+    }
+    final element = node?.element;
     if (element is! Element || !element.mounted) return null;
     final box = element.findRenderObject();
     if (box is! RenderBox || !box.attached || !box.hasSize) return null;

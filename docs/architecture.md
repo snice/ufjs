@@ -215,6 +215,42 @@ dispose → fjs_vm_destroy
 `reset()` 销毁 VM 并清空镜像树，全局对象随之消失，因此 prelude（分包出来的
 共享运行时）由 engine 在新 VM 里重新 eval，宿主不必自己排序。
 
+## 自绘表面：纯展示子树不建 widget（specs/192 / 193）
+
+渲染层的成本随节点数线性增长：每节点一个 widget + element + RenderObject，4050 节点的挂载帧里 build 约占 75%、layout
+约 19%、paint 约 5%（specs/192 占比表）。**纯展示子树**（只有 `view` / `text`，没有事件、`id`、`:active`、transition、
+也没有表里之外的样式键）改由 **一个** RenderObject 排版并绘制：
+
+```
+mirror 树 ──(门控)──► 自绘根 ──► FlatEngine（SoA 节点 + 约束传递排版）──► 一个 RenderFlatSurface（画矩形 / 圆角 / 文字）
+```
+
+| 部分 | 文件 | 说明 |
+|---|---|---|
+| 门控 | `lib/src/flat/flat_gate.dart` | 以**最顶层可进入的节点**为自绘根；子树纯度与节点数缓存在 `MirrorNode.flatPure/flatSize`，`flushDirty` 沿父链清缓存；`FjsFlatMode { auto, off, force }` |
+| 样式白名单 | `lib/src/flat/flat_style.dart` | 受支持的键（子集见 [css-compat.md](css-compat.md#自绘表面的样式子集)）；子集外的键 / 值让整个子树**回退**现有渲染器，不近似 |
+| 排版 | `lib/src/flat/flat_layout.dart` | **不是 CSS flexbox**：逐函数镜像现有路径的 widget 链（`margin → 定宽高 → padding → RenderFlex`，含 Flexible、`FjsShrinkStretchFlex` 两趟、`startsNow`），`BoxConstraints` 进 `Size` 出；增量（脏链 + 约束缓存，只重排受影响的路径） |
+| 表面 | `lib/src/flat/flat_surface.dart` | `RenderFlatSurface`；视口裁剪（`render/cull.dart` 的 `fjsVisibleWindowOf`，滚动时重绘）；`fjs.ui.rect` 经 `MirrorNode.flatHost` 回答子树内节点的几何 |
+| 文字 | `render/paragraph.dart` 的 `FjsSharedPainter`、`widgets/text.dart` 的 `fjsPlainTextSpec` | 与 `_FjsText.build` 同源的键，落到 specs/190 的共享段落缓存，盒子大小逐盒一致 |
+
+行为契约：**画面与现有渲染器逐像素一致**。这条由 `test/flat_parity_test.dart`（生成式 + 手写）、
+`test/flat_incremental_test.dart`（随机变更序列，增量 == 全量）、`test/flat_geometry_test.dart`、
+`test/flat_cull_test.dart` 守住；一个样式键进白名单当且仅当有对拍用例。
+
+三个开关（只在 Dart 侧，页面源码不变）：
+
+- `FjsFlatMode.auto`（默认）：门控满足、**没有语义客户端**、子树 ≥ `fjsFlatMinNodes`（16）才自绘。
+  自绘不生成语义，所以 VoiceOver / TalkBack 开着时整体回退（`SemanticsBinding` 变化时 `FjsView` 会让全树重新过门控）。
+- `off`：永不自绘（`--dart-define=FJS_FLAT=off`）；`force`：忽略语义与节点数阈值（测试 / 基准 /
+  模拟器，**模拟器与 flutter_test 里语义客户端一直在**，`auto` 在那里不会自绘）。
+- dev 构建里 JS 可调 `invokeHost('fjs.dev.flat', 'auto' | 'off' | 'force')` 免重编 A/B（hello-js 的
+  `__flat4050.setFlat`）；release 构建不注册。
+
+C++ 排版**不进主线**：specs/192 的 C++ 探针（代码未保留，数据在 specs/192、193 的 spec.md）mount 1.9–2.0 ms、无增量；
+Dart 版共享文字 spec / painter 后 mount 2.5–2.7 ms（C++ 的 132–136%）、改 1 格 0.95 ms（48–51%），
+未超过事先定下的 1.5 倍判据，省掉 `native/` 改动与预编译产物重建。数据见
+[performance.md](performance.md#自绘表面纯展示子树不建-widgetspecs192--193)。
+
 ## 关键文件索引
 
 | 层 | 文件 |
@@ -228,6 +264,7 @@ dispose → fjs_vm_destroy
 | 引擎宿主 | `packages/flutter_fjs/lib/src/engine.dart` |
 | 镜像树 | `packages/flutter_fjs/lib/src/mirror_tree.dart` |
 | 渲染层 | `packages/flutter_fjs/lib/src/render/`（renderer 分发 + flex/decoration/gesture/style）|
+| 自绘表面 | `packages/flutter_fjs/lib/src/flat/`（门控 / 样式白名单 / 排版引擎 / RenderFlatSurface）|
 | 单个标签组件 | `packages/flutter_fjs/lib/src/widgets/` |
 | 注册表 | `packages/flutter_fjs/lib/src/registry/`（host 模块 / Dart 组件）|
 | canvas（Dart）| `packages/flutter_fjs/lib/src/canvas/`（显示列表解码 / 保留 / 回放 / measureText 等 host 模块）|

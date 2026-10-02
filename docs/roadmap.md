@@ -888,6 +888,21 @@ spec 088 删掉 quickjs-ng 时留下了对比与退路缺口，补上
 - 明确不做：release / 字节码、小程序、web（Vite 自有 map）、`<style>` 断点。
   template 行有映射就停，不作为一一对应的承诺。
 
+## 自绘表面：纯展示子树不建 widget（已完成 2026-10，specs/192 / 193）
+
+- ✅ **占比与探针（specs/192）**：4050 树 mount 帧 build ≈ 75% / layout ≈ 19% / paint ≈ 5%；C++ 排版 + 单个自绘
+  RenderObject 的探针 mount 58 → 2 ms，据此立项。
+- ✅ **阶段零（specs/193）**：同一设计用 Dart 写排版，与 C++ 探针对比——Dart 版 mount 132–136%、改 1 格 48–51%，
+  未超 1.5 倍判据，**C++ 排版不进主线**。
+- ✅ **门控 + 自绘表面进主线**：纯展示子树（`view` / `text`，无事件 / `id` / 伪类 / transition，样式在白名单内）自动走
+  `RenderFlatSurface`；子集外一律回退；语义客户端开启时回退。增量布局、视口裁剪、`fjs.ui.rect` 几何都在。
+  画面与现有渲染器逐像素一致（生成式 + 手写对拍、随机变更序列的增量 == 全量）。
+  详见 [architecture.md](architecture.md#自绘表面纯展示子树不建-widgetspecs192--193)、
+  [performance.md](performance.md#自绘表面纯展示子树不建-widgetspecs192--193)。
+- ⏳ **真机 profile 复核**（模拟器 debug 的绝对值不可信）。
+- 后续（各自立 spec）：扩样式子集（`border` / `opacity` / `overflow` / 百分比…，先加对拍再进白名单）；
+  交叉轴显式尺寸 + stretch 父；手势 / `:active` / transition 的「岛屿」；自绘语义（把文字节点暴露给无障碍）。
+
 ## 近期计划
 
 - **App 侧真机对拍挂账**：078/079 的示例页（过渡演示新增面板、百分比间距与

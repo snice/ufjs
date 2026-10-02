@@ -321,6 +321,27 @@ App 端按压**不画** 10% 黑色遮罩，与 web 上遮罩伪元素被藏掉�
 （`widgets/button.dart` 的 `fjsButtonCursorAllowsPress`）。没写 `cursor`
 （App 端常态，web 基础样式表不进 App）保持遮罩。
 
+## 自绘表面的样式子集
+
+Flutter 侧的纯展示子树可由一个自绘表面渲染（[architecture.md](architecture.md#自绘表面纯展示子树不建-widgetspecs192--193)）。
+**画面与现有渲染器逐像素一致**；表面只认下面这份白名单，**不在白名单里的键 / 值让整个子树回退**现有渲染器（不近似）：
+
+- 布局：`flex-direction`（row / column）、`justify-content`、`align-items`（center / flex-start / flex-end / stretch）、
+  `flex-grow`、`flex`（仅裸数字）、`flex-shrink`（无影响，被忽略）、px 的 `width` / `height` / `margin` / `padding` / `gap`、
+  `display`（none / flex / block）、`box-sizing: border-box`。
+- 绘制：`background-color`、`border-radius`（px，非 %）。
+- 文字：`font-size` / `color` / `font-weight` / `font-style` / `font-family` / `line-height` / `letter-spacing` /
+  `text-decoration` / `text-shadow` / `text-transform` / `white-space` / `text-overflow` / `text-align` / `max-lines`，
+  含多行换行与省略。
+- 行方向默认 `align-items: center`（现有路径的历史语义，与 CSS 的 stretch 不同）原样保留。
+
+回退条件（任一）：tag 不是 `view` / `text`；带事件 prop（`on*`）或 `id`、`htmlBlock`、`:active` / `:hover`；
+样式键 / 值在白名单之外（`%` / `calc` / `fit-content`、auto margin、`flex-wrap` / `flex-basis`、`position`、`overflow`、
+`border`、`opacity`、阴影 / 渐变、min / max、transform、transition 等）；`view` 自带裸文本；text 带子节点；
+**stretch 的父里带交叉轴显式尺寸的项**（现有路径给它套 `Align`，v1 未建模）；语义客户端开启（`auto` 模式）。
+
+扩子集的流程：先在 `test/flat_parity_test.dart` 加对拍用例，再放进 `flat_style.dart` 的白名单。
+
 ## 4. 状态伪类（`:active` / `:hover`）与结构伪类
 
 ### 按压态 `:active`

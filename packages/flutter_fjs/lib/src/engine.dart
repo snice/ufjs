@@ -15,6 +15,7 @@ import 'canvas/images.dart';
 import 'dev_client.dart';
 import 'ffi.dart';
 import 'font_loader.dart';
+import 'flat/flat_gate.dart' show registerFlatDevModule;
 import 'geometry.dart';
 import 'http.dart';
 import 'idle_gate.dart';
@@ -85,6 +86,7 @@ class FjsEngine extends ChangeNotifier {
       tree: tree,
       flushPending: _flushUiNotifyNow,
     );
+    registerFlatDevModule(host: host, tree: tree);
     _http.register(host);
     _setupAsyncInvokeModule();
     _idle.attach();
