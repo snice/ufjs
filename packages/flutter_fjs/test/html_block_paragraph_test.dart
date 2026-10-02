@@ -74,7 +74,7 @@ Widget _render(MirrorTree tree) => MaterialApp(
 );
 
 String _paragraphs(WidgetTester tester) => tester
-    .widgetList<RichText>(find.byType(RichText))
+    .widgetList<RichText>(find.byWidgetPredicate((w) => w is RichText))
     .map((r) => r.text.toPlainText())
     .join('|');
 

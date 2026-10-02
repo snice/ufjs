@@ -76,7 +76,7 @@ Widget _render(MirrorTree tree) {
 }
 
 Color? _textColor(WidgetTester tester) =>
-    tester.widget<Text>(find.byType(Text)).style?.color;
+    tester.widget<Text>(find.byWidgetPredicate((w) => w is Text)).style?.color;
 
 Map<String, Object?> _props(String color, {bool transition = true}) => {
   'style': {
@@ -129,7 +129,7 @@ void main() {
     expect(_textColor(tester), const Color(0xFF000000));
 
     final press = await tester.startGesture(
-      tester.getCenter(find.byType(Text)),
+      tester.getCenter(find.byWidgetPredicate((w) => w is Text)),
     );
     await tester.pump(); // the pressed style mounts, the tween starts
     expect(_textColor(tester), const Color(0xFF000000));

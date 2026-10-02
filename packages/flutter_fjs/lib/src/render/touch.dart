@@ -76,6 +76,7 @@ const _touchProps = <String>[
 
 /// Whether the node listens for any touch event.
 bool hasTouchEvents(MirrorNode node) {
+  if (node.props.isEmpty) return false;
   for (final prop in _touchProps) {
     if (node.props[prop] == true) return true;
   }

@@ -887,7 +887,7 @@ void main() {
       ..insert(1, 2, 0)
       ..insert(1, 3, 1);
     await _pump(tester, w);
-    final texts = tester.widgetList<RichText>(find.byType(RichText)).toList();
+    final texts = tester.widgetList<RichText>(find.byWidgetPredicate((w) => w is RichText)).toList();
     final one = texts.firstWhere((t) => t.text.toPlainText().startsWith('静态'));
     final wrap = texts.firstWhere(
       (t) => t.text.toPlainText().startsWith('会换行'),

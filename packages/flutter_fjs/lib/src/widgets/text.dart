@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import '../geometry.dart' show lastTapPosition;
 import '../mirror_tree.dart';
 import '../render/renderer.dart';
+import '../render/paragraph.dart' show FjsPlainText;
 import '../render/style.dart';
 import '../render/flex.dart' show isOutOfFlowPosition, stackOutOfFlow;
 import '../render/gesture.dart' show dispatchTap, hasTapEvent;
@@ -145,12 +146,187 @@ TextStyle fjsSpanStyle(FjsStyle style) {
   );
 }
 
+/// specs/190: a paragraph whose build reads its environment without
+/// dependencies, and whose plain runs share their laid-out painter.
+///
+/// [Text]'s build (plus RichText's createRenderObject) registers seven
+/// inherited dependencies — DefaultTextStyle, MediaQuery twice, the
+/// selection container and style, Directionality, Localizations. On the 4050
+/// grid that is 14000 registrations made at mount and unregistered again at
+/// unmount. [_FjsText] takes the same values through ONE dependency:
+/// [FjsTextEnvScope] at the page root resolves them once and re-publishes
+/// them as [_FjsTextEnv], which notifies the paragraphs when any changes.
+///
+/// Still a [Text] (`find.text` matches it, in our tests and in apps'), only
+/// the build differs. A plain run (no child spans) goes to [FjsPlainText],
+/// whose painter is shared between equal paragraphs (render/paragraph.dart).
+/// No scope above, a selection container above the page (an app wrapping
+/// its FjsView in SelectionArea), or a fade overflow: [Text.build] as is.
+Widget _paragraph(
+  BuildContext? context, {
+  String? text,
+  InlineSpan? span,
+  required TextStyle style,
+  StrutStyle? strutStyle,
+  TextAlign? textAlign,
+  int? maxLines,
+  TextOverflow? overflow,
+}) => span == null
+    ? _FjsText(
+        text ?? '',
+        style: style,
+        strutStyle: strutStyle,
+        textAlign: textAlign,
+        maxLines: maxLines,
+        overflow: overflow,
+      )
+    : _FjsText.rich(
+        span,
+        style: style,
+        strutStyle: strutStyle,
+        textAlign: textAlign,
+        maxLines: maxLines,
+        overflow: overflow,
+      );
+
+class _FjsText extends Text {
+  const _FjsText(
+    super.data, {
+    super.style,
+    super.strutStyle,
+    super.textAlign,
+    super.maxLines,
+    super.overflow,
+  });
+
+  const _FjsText.rich(
+    super.textSpan, {
+    super.style,
+    super.strutStyle,
+    super.textAlign,
+    super.maxLines,
+    super.overflow,
+  }) : super.rich();
+
+  @override
+  Widget build(BuildContext context) {
+    final env = context.dependOnInheritedWidgetOfExactType<_FjsTextEnv>();
+    if (env == null || env.selectable || overflow == TextOverflow.fade) {
+      return super.build(context);
+    }
+    final ambient = env.ambient;
+    final own = style!;
+    var effective = own.inherit ? ambient.style.merge(own) : own;
+    if (env.boldText) {
+      effective = effective.merge(const TextStyle(fontWeight: FontWeight.bold));
+    }
+    final resolvedOverflow = overflow ?? effective.overflow ?? ambient.overflow;
+    // the span tree Text.build makes: the effective style at the root
+    final root = TextSpan(
+      style: effective,
+      text: data,
+      children: textSpan == null ? null : [textSpan!],
+    );
+    final align = textAlign ?? ambient.textAlign ?? TextAlign.start;
+    final lines = maxLines ?? ambient.maxLines;
+    final heightBehavior = ambient.textHeightBehavior ?? env.heightBehavior;
+    if (textSpan == null && resolvedOverflow != TextOverflow.fade) {
+      return FjsPlainText(
+        text: root,
+        textAlign: align,
+        textDirection: env.direction,
+        softWrap: ambient.softWrap,
+        overflow: resolvedOverflow,
+        textScaler: env.textScaler,
+        maxLines: lines,
+        locale: env.locale,
+        strutStyle: strutStyle,
+        textWidthBasis: ambient.textWidthBasis,
+        textHeightBehavior: heightBehavior,
+      );
+    }
+    return RichText(
+      text: root,
+      textAlign: align,
+      textDirection: env.direction,
+      softWrap: ambient.softWrap,
+      overflow: resolvedOverflow,
+      textScaler: env.textScaler,
+      maxLines: lines,
+      locale: env.locale,
+      strutStyle: strutStyle,
+      textWidthBasis: ambient.textWidthBasis,
+      textHeightBehavior: heightBehavior,
+    );
+  }
+}
+
+/// The text environment [_FjsText] reads, resolved once per page.
+class _FjsTextEnv extends InheritedWidget {
+  const _FjsTextEnv({
+    required this.ambient,
+    required this.textScaler,
+    required this.boldText,
+    required this.heightBehavior,
+    required this.direction,
+    required this.locale,
+    required this.selectable,
+    required super.child,
+  });
+
+  final DefaultTextStyle ambient;
+  final TextScaler textScaler;
+  final bool boldText;
+  final TextHeightBehavior? heightBehavior;
+  final TextDirection direction;
+  final Locale? locale;
+  final bool selectable;
+
+  @override
+  bool updateShouldNotify(_FjsTextEnv old) =>
+      old.ambient.style != ambient.style ||
+      old.ambient.textAlign != ambient.textAlign ||
+      old.ambient.softWrap != ambient.softWrap ||
+      old.ambient.overflow != ambient.overflow ||
+      old.ambient.maxLines != ambient.maxLines ||
+      old.ambient.textWidthBasis != ambient.textWidthBasis ||
+      old.ambient.textHeightBehavior != ambient.textHeightBehavior ||
+      old.textScaler != textScaler ||
+      old.boldText != boldText ||
+      old.heightBehavior != heightBehavior ||
+      old.direction != direction ||
+      old.locale != locale ||
+      old.selectable != selectable;
+}
+
+/// The page-root half of [_FjsText]: depends on the ambient text
+/// environment once for every paragraph under it, and re-publishes it as
+/// [_FjsTextEnv] — the one dependency each paragraph registers.
+class FjsTextEnvScope extends StatelessWidget {
+  const FjsTextEnvScope({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => _FjsTextEnv(
+    ambient: DefaultTextStyle.of(context),
+    textScaler: MediaQuery.maybeTextScalerOf(context) ?? TextScaler.noScaling,
+    boldText: MediaQuery.maybeBoldTextOf(context) ?? false,
+    heightBehavior: DefaultTextHeightBehavior.maybeOf(context),
+    direction: Directionality.maybeOf(context) ?? TextDirection.ltr,
+    locale: Localizations.maybeLocaleOf(context),
+    selectable: SelectionContainer.maybeOf(context) != null,
+    child: child,
+  );
+}
+
 /// [childNodes] are the visible children the renderer already collected;
 /// [tree] resolves deeper spans; [buildNode] builds a non-text child as a
 /// regular node view (its own decoration, press state and signals).
 Widget buildText(
   MirrorNode node,
   FjsStyle style, {
+  BuildContext? context,
   MirrorTree? tree,
   List<MirrorNode> childNodes = const [],
   Widget Function(MirrorNode node)? buildNode,
@@ -166,7 +342,7 @@ Widget buildText(
           ? TextOverflow.ellipsis
           : null);
 
-  final richSpans = node.props['richSpans'];
+  final richSpans = node.prop('richSpans');
   if (richSpans != null) {
     assert(() {
       _warnRichSpansOnce(node, richSpans, childNodes);
@@ -184,8 +360,9 @@ Widget buildText(
     }
     return _animatedParagraphColor(style, (color) {
       final paragraphStyle = fjsTextStyle(style, color: color);
-      return Text.rich(
-        TextSpan(style: paragraphStyle, children: runs),
+      return _paragraph(
+        context,
+        span: TextSpan(style: paragraphStyle, children: runs),
         style: paragraphStyle,
         textAlign: textAlign,
         maxLines: maxLines,
@@ -216,6 +393,7 @@ Widget buildText(
       buildText(
         node,
         style,
+        context: context,
         tree: tree,
         childNodes: inFlow,
         buildNode: buildNode,
@@ -254,8 +432,9 @@ Widget buildText(
     }
     return _animatedParagraphColor(style, (color) {
       final textStyle = fjsTextStyle(style, color: color);
-      return Text(
-        _transformed(style, _lineEdgesTrimmed(style, node.text ?? '')),
+      return _paragraph(
+        context,
+        text: _transformed(style, _lineEdgesTrimmed(style, node.text ?? '')),
         style: textStyle,
         strutStyle: StrutStyle.fromTextStyle(textStyle, forceStrutHeight: true),
         textAlign: textAlign,
@@ -277,8 +456,9 @@ Widget buildText(
   // node only: a span has no box to align or clamp.
   return _animatedParagraphColor(style, (color) {
     final paragraphStyle = fjsTextStyle(style, color: color);
-    return Text.rich(
-      TextSpan(style: paragraphStyle, children: spans),
+    return _paragraph(
+      context,
+      span: TextSpan(style: paragraphStyle, children: spans),
       strutStyle: placeholdersOnly
           ? StrutStyle.fromTextStyle(paragraphStyle)
           : null,
@@ -414,7 +594,7 @@ InlineSpan _span(
   // inherit) takes its enclosing span's style. fjsTextStyle would pin the
   // 14px #333333 defaults instead, turning a run inside `<b style="color:
   // red">` back to grey.
-  final textStyle = style.style.isEmpty && kid.props['style'] == null
+  final textStyle = style.style.isEmpty && kid.prop('style') == null
       ? null
       : fjsTextStyle(style, span: true);
   // Flutter asks only the innermost span under the finger for a
@@ -449,7 +629,7 @@ InlineSpan _span(
 final Expando<TapGestureRecognizer> _spanRecognizers = Expando();
 
 TapGestureRecognizer? _spanTap(MirrorNode kid, FjsDispatch dispatch) {
-  if (!hasTapEvent(kid) || fjsBool(kid.props['disabled'])) return null;
+  if (!hasTapEvent(kid) || fjsBool(kid.prop('disabled'))) return null;
   final recognizer = _spanRecognizers[kid] ??= TapGestureRecognizer();
   recognizer
     ..onTapUp = ((details) => lastTapPosition = details.globalPosition)

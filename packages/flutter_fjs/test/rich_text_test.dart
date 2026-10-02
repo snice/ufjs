@@ -155,7 +155,7 @@ void main() {
         ..setText(1, 'hello')
         ..insert(0, 1, 0),
     );
-    final text = tester.widget<Text>(find.byType(Text));
+    final text = tester.widget<Text>(find.byWidgetPredicate((w) => w is Text));
     expect(text.data, 'hello');
     expect(text.textSpan, isNull);
   });

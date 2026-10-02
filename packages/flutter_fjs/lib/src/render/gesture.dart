@@ -12,7 +12,7 @@ import 'touch.dart';
 /// Whether the node asked for tap handling. `onClick` is the alias Vue
 /// templates reach for; both arrive as a `true` prop, not a function.
 bool hasTapEvent(MirrorNode node) =>
-    node.props['onTap'] == true || node.props['onClick'] == true;
+    node.prop('onTap') == true || node.prop('onClick') == true;
 
 void dispatchTap(MirrorNode node, FjsDispatch dispatch) =>
     dispatch(node.id, FjsEvent.tap);
@@ -43,12 +43,12 @@ Widget gestureNode(
   // second inert state — kept tag-scoped, since the prop means nothing on
   // any other tag.
   final inert =
-      fjsBool(node.props['disabled']) ||
-      (node.tag == 'button' && fjsBool(node.props['loading']));
+      fjsBool(node.prop('disabled')) ||
+      (node.tag == 'button' && fjsBool(node.prop('loading')));
   final onTap = hasTapEvent(node) && !inert
       ? () => dispatch(node.id, FjsEvent.tap)
       : null;
-  final onLongPress = node.props['onLongPress'] == true && !inert
+  final onLongPress = node.prop('onLongPress') == true && !inert
       ? () => dispatch(node.id, FjsEvent.longPress)
       : null;
   if (onTap == null && onLongPress == null) return withTouch;

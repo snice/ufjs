@@ -47,6 +47,12 @@ class MirrorNode {
   Map<String, Object?> props = const {};
   final List<int> children = [];
 
+  /// `props[key]`, short-circuited for the common node with no props at
+  /// all (specs/190): a miss on the shared `const {}` still hashes the key
+  /// through the const map's canonical path, and the renderer asks a dozen
+  /// such questions per node — ~5 ms of the 4050 grid's mount frame.
+  Object? prop(String key) => props.isEmpty ? null : props[key];
+
   /// Interned computed style, set by SET_STYLE. Null when the node has never
   /// received one — including every node built by the legacy path that
   /// carried the style inside [props].
@@ -88,7 +94,7 @@ class MirrorNode {
   Map<String, Object?> get styleMap {
     final interned = style;
     if (interned != null) return interned.map;
-    final legacy = props['style'];
+    final legacy = prop('style');
     return legacy is Map<String, Object?> ? legacy : const {};
   }
 
@@ -97,7 +103,7 @@ class MirrorNode {
     final interned = activeStyle;
     if (interned != null) return interned.map;
     if (style != null) return null; // interned path: no active means none
-    final legacy = props['activeStyle'];
+    final legacy = prop('activeStyle');
     return legacy is Map<String, Object?> ? legacy : null;
   }
 

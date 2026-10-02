@@ -13,6 +13,10 @@ import { bootIfEnabled } from './devtools';
 bootIfEnabled();
 
 export { h, create, createRoot, insert, remove, setText, setProps, setStyle, flush } from './ui/element';
+// Hand-rolled clone mounts (specs/188): allocIds reserves a block of ids for
+// a native cloneMany, adoptElement wraps an existing id in an Element handle
+// — the same two host-ops uses to fill clone bookkeeping.
+export { adoptElement, allocIds } from './ui/element';
 export type { Element, CanvasElement } from './ui/element';
 // canvas: the page-facing half. The display-list encoder and the surface
 // bookkeeping stay internal — a page reaches them through getContext().
@@ -45,6 +49,12 @@ export type {
   FjsCanvasTextMetrics,
 } from './canvas/types';
 export { invokeHost, nowMs, gc, engineInfo, setTimeout, setInterval, clearTimeout, clearInterval, toast, setToastHandler, hasNativeHost, setOpSink } from './host';
+// Hand-rolled apps (no Vue) need the same engine wiring host-ops does: pick
+// the native-backed engine when the host has libfjs-style, fall back to the
+// TS one otherwise, and commit the native backend's pending styles before
+// each frame goes out. specs/187.
+export { host } from './host';
+export { registerPreFlush } from './host';
 // Promise-shaped host module calls (spec 039); rejects without a native host
 export { invokeHostAsync } from './host-async';
 // Dart object modules (spec 159): registerDartModuleStub backs the same
@@ -62,5 +72,6 @@ export type { RichTextNode, RichTextElementNode, RichTextTextNode, RichTextSpace
 // and any other adapter (or a benchmark) constructs its own the same way —
 // see docs/custom-renderer.md.
 export { StyleEngine } from './css/style';
+export { NativeStyleEngine } from './css/style-native';
 export type { CssRule, Selector } from './css/parser';
 export type { FjsTouch, FjsTouchEvent, FjsTouchType, FjsEventTarget } from './ui/touch';

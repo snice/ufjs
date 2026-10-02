@@ -381,13 +381,13 @@ chunk、Vue、路由、3500 个元素状态），基准里只有基准自己。�
 ## 拆掉 Vue：examples/hello-js 的主题压测屏
 
 上一节的数字是「Vue + 样式引擎 + 桥 + Flutter」四层叠在一起的总账。要知道钱花
-在哪一层，需要一份**同构但没有 Vue** 的对照：`examples/hello-js` 的第一屏就是
+在哪一层，需要一份**同构但没有 Vue** 的对照：`examples/hello-js` 的「主题压测」屏就是
 它——底层 element API + `StyleEngine` 手搭出和 `example/interaction/theme` 一样的树（同一份
 CSS、同样 12 个自定义属性、同样的 `:active`、同样七行一个徽章），但没有 vnode、
 没有 patch、没有路由、没有页面 chunk。屏上四格和那一页一一对应，可以直接对读。
 
 ```bash
-cd examples/hello-js && fjs run ios      # 第一屏就是压测；「组件总览」在另一个 tab
+cd examples/hello-js && fjs run ios      # 「4050 压测」「主题压测」「组件总览」三个 tab
 ```
 
 iPhone 17 Pro 模拟器、debug、CSS 变量写法、每次都是刚启动的 VM：
@@ -754,6 +754,12 @@ article mount 12.2ms (render 12.1 · bridge 0.1 · gc before 8.1)
 点一下，挂 50 × 40 格（每格 view + text，约 4050 个元素）。页面把点击 → nextTick 的 JS 拆成
 过桥 / 样式 flush / 样式 mark / 其余；`examples/bench` 的 `flat-bench.ts` 在 fjsrun 里把「其余」
 再按样式引擎登记、元素层、Vue 分开（包装计时自身约 0.55 µs/次，报表另给扣除后的 `.net`）。
+
+**没有 Vue 的对照组**（specs/186）：`examples/hello-js` 的「4050 压测」tab 用底层 element API +
+`StyleEngine` 搭同一棵树、同一套量法（JS / 上屏 / 最慢帧 + 同款拆账），没有 vnode、没有 patch——
+它的「其余」就是纯 element 层的账，和这一页的「其余」（Vue + element 层）对着读，差额即 Vue。
+console 行同前缀 `[flat-4050]`（第二段是 `element`，本页是 `vdom` / `vapor`），可以一起 grep；
+`globalThis.__flat4050` 的 `show / hide / bump` 返回读数，供 fjsrun 离线驱动。
 
 iPhone 12，`fjs run ios --profile`：
 

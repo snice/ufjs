@@ -3,6 +3,7 @@
 // that dominated the display frame on an iPhone (specs/154). flat-4050's cell
 // (a decorated view with a margin, holding a text) was 13 Elements; this pins
 // what it is now, so a wrapper added to every node shows up here first.
+// specs/191: the margin folds into the background box (FjsBox), 9/6 → 8/5.
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -74,6 +75,6 @@ void main() {
     }
 
     walk(top);
-    expect((elements, renderObjects), (9, 6));
+    expect((elements, renderObjects), (8, 5));
   });
 }

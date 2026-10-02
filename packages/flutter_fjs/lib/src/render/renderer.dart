@@ -30,6 +30,7 @@ import '../node/node_adapters.dart';
 import '../registry/component.dart';
 import '../ffi.dart' show FjsEvent;
 import '../widgets/dispatch.dart';
+import '../widgets/text.dart' show FjsTextEnvScope;
 import 'animation.dart' show keyframeNode;
 import 'decoration.dart'
     show FjsSizeTransitionEnd, decorateNode, transitionNode;
@@ -72,15 +73,18 @@ class FjsNodeRenderer extends StatelessWidget {
           ),
     ];
     // the page root: out-of-flow boxes that overflow their parents still
-    // take the pointer there (overflow_hit.dart)
-    if (children.length == 1) {
-      return FjsOverflowHitScope(child: children.single);
-    }
-    return FjsOverflowHitScope(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: children,
+    // take the pointer there (overflow_hit.dart); the paragraphs below read
+    // the text environment through FjsTextEnvScope's single dependency
+    // (specs/190, widgets/text.dart)
+    return FjsTextEnvScope(
+      child: FjsOverflowHitScope(
+        child: children.length == 1
+            ? children.single
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: children,
+              ),
       ),
     );
   }
@@ -97,7 +101,7 @@ class FjsNodeRenderer extends StatelessWidget {
 
   /// `display: contents`: the node's children are laid out in its place.
   static bool isContents(MirrorNode node) {
-    final display = node.styleMap['display'] ?? node.props['display'];
+    final display = node.styleMap['display'] ?? node.prop('display');
     return display != null && display.toString() == 'contents';
   }
 
@@ -105,7 +109,7 @@ class FjsNodeRenderer extends StatelessWidget {
     // Read `display` straight off the maps instead of through FjsStyle: this
     // is called twice per node build plus once per child of every parent, and
     // an FjsStyle per call is an allocation for a single lookup.
-    final display = node.styleMap['display'] ?? node.props['display'];
+    final display = node.styleMap['display'] ?? node.prop('display');
     if (display != null && display.toString() == 'none') return true;
     // A paragraph rich-text sends as one node carries its words in the
     // `richSpans` prop, with no element text and no children — it looks
@@ -113,14 +117,14 @@ class FjsNodeRenderer extends StatelessWidget {
     if (node.tag != 'text' ||
         (node.text != null && node.text!.isNotEmpty) ||
         node.children.isNotEmpty ||
-        node.props['richSpans'] != null) {
+        node.prop('richSpans') != null) {
       return false;
     }
     // An empty text is a v-if comment anchor — unless it declares a box of
     // its own: vant's skeleton title is an empty <h3> with width/height and
     // a background, which web paints as a bare box (specs/073).
-    final width = node.styleMap['width'] ?? node.props['width'];
-    final height = node.styleMap['height'] ?? node.props['height'];
+    final width = node.styleMap['width'] ?? node.prop('width');
+    final height = node.styleMap['height'] ?? node.prop('height');
     return width == null && height == null;
   }
 }
@@ -156,7 +160,7 @@ Widget _nodeView(
     // A node the page named with `id` gets a global key so whatever refers
     // to it can find its render object (scroll-into-view). Everything else
     // keeps the cheap value key — see mirror_tree.dart's _globalKeys.
-    key: node.props['id'] != null ? tree.globalKeyFor(id) : ValueKey<int>(id),
+    key: node.prop('id') != null ? tree.globalKeyFor(id) : ValueKey<int>(id),
     tree: tree,
     nodeId: id,
     isRoot: isRoot,
@@ -256,7 +260,7 @@ class _FjsNodeView extends StatefulWidget {
         // State-tracking nodes therefore keep both wrappers throughout.
         stableTransform: stable || tracksPress || tracksHover,
         stableOpacity: tracksPress || tracksHover,
-        onTransitionEnd: node.props['onTransitionend'] == true
+        onTransitionEnd: node.prop('onTransitionend') == true
             ? () => dispatch(node.id, FjsEvent.transitionEnd)
             : null,
       );
@@ -311,7 +315,7 @@ class _FjsNodeView extends StatefulWidget {
       _ownsPressedPseudo(node);
 
   static bool _pressesWithOwner(MirrorNode node) =>
-      node.props['pressWithOwner'] == true;
+      node.prop('pressWithOwner') == true;
 
   /// Whether a pseudo box of this node (the renderer puts ::before first and
   /// ::after last) switches with this node's press — then the node tracks
@@ -412,13 +416,22 @@ class _FjsNodeView extends StatefulWidget {
       final inner = decorated;
       decorated = NotificationListener<FjsSizeTransitionEnd>(
         onNotification: (_) {
-          if (node.props['onTransitionend'] == true) {
+          if (node.prop('onTransitionend') == true) {
             dispatch(node.id, FjsEvent.transitionEnd);
           }
           return true;
         },
         child: inner,
       );
+    }
+    // specs/188: opt-in per-node repaint boundary. By default a page shares
+    // one layer — a single text change re-records every visible cell's
+    // display list (~25 ms for the 4050 grid on an iPhone). A boundary on a
+    // row/section cuts the re-record to that subtree; the cost is one layer
+    // per opted-in node. Rendering hint only: the web substrate (real DOM
+    // under the browser compositor) needs no counterpart.
+    if (node.prop('repaintBoundary') == true) {
+      decorated = RepaintBoundary(child: decorated);
     }
     return gestureNode(node, style, decorated, dispatch);
   }
