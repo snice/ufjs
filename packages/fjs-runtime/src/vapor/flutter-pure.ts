@@ -11,7 +11,7 @@ export * from './runtime';
 
 // the runtime's slot/resolve helpers win over runtime-core's same-named
 // exports (those need a VDOM currentInstance, which Vapor code never has)
-export { resolveComponent, useSlots, type Slots } from './runtime';
+export { resolveComponent, resolveDirective, useSlots, type Slots } from './runtime';
 export {
   onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext, useAttrs, resolveDynamicComponent,
 } from './instance';

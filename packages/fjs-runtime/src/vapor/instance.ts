@@ -49,6 +49,8 @@ type InjectionKey = string | symbol | object;
  * an app; a page gets its own context whose provides inherit the app's. */
 export interface VaporAppContext {
   components: Record<string, unknown>;
+  /** app.directive registrations (specs/181) */
+  directives?: Record<string, unknown>;
   provides?: Record<string | symbol, unknown>;
 }
 
@@ -331,7 +333,10 @@ export function setVaporComponentResolver(fn: (name: string) => unknown): void {
   vaporResolver = fn;
 }
 export function resolveDynamicComponent(comp: unknown): unknown {
-  if (current && vaporResolver && typeof comp === 'string') return vaporResolver(comp) ?? comp;
+  // a render-host re-render runs with no vapor setup on the stack, and no
+  // runtime-core instance either — still the vapor app's lookup, not
+  // runtime-core's (which warns and gives the name back)
+  if (vaporResolver && typeof comp === 'string' && (current || !rcInstance())) return vaporResolver(comp) ?? comp;
   return rcResolveDynamicComponent(comp);
 }
 

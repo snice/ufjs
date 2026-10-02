@@ -26,9 +26,10 @@ import {
 } from './runtime';
 import { hyphenate, looseEqual, looseIndexOf, looseToNumber } from '@vue/shared';
 import { normalizeStyleValues } from '../web/style';
+import { isRichSpans } from '../rich-text/spans';
 import { touchBindings } from '../web/components/touch';
 import { addListener, renderEffect } from './runtime';
-import { createInvoker } from './helpers';
+import { createInvoker, warnVaporOnce } from './helpers';
 import { trackTransitionClass, transitionClassesOf, untrackTransitionClass } from '../vue/transition-classes';
 
 /** runtime-dom's getTransitionInfo, reduced: the longest layer of the
@@ -467,6 +468,14 @@ export const domBackend: VaporBackend = {
   },
 
   setAttr(host, key, value) {
+    // rich-text's paragraph runs on a plain <text> element: what FjsText
+    // renders on the VDOM web path and text.dart builds on Flutter — in a
+    // pure-vapor app `text` is no component, so the element takes them
+    // (specs/181: the runs were dropped as a `richspans` attribute)
+    if (key === 'richSpans') {
+      renderRichSpans(host as Element, value);
+      return;
+    }
     if (value === false || value == null) (host as Element).removeAttribute(key);
     else (host as Element).setAttribute(key, value === true ? '' : String(value));
   },
@@ -544,6 +553,30 @@ export const domBackend: VaporBackend = {
 setVaporBackend(domBackend);
 export function enableVapor(): void {}
 
+function renderRichSpans(el: Element, runs: unknown): void {
+  el.textContent = '';
+  if (!isRichSpans(runs)) {
+    if (runs != null) warnVaporOnce('text:richSpans', '<text> internal prop richSpans is malformed; rendered empty');
+    return;
+  }
+  for (const run of runs) {
+    if (typeof run === 'string') {
+      el.appendChild(document.createTextNode(run));
+      continue;
+    }
+    const span = document.createElement('span');
+    const style = normalizeStyleValues(run.s) as Record<string, unknown>;
+    for (const k in style) {
+      const v = style[k];
+      if (v == null || v === '') continue;
+      if (k.startsWith('--')) span.style.setProperty(k, String(v));
+      else (span.style as unknown as Record<string, string>)[k] = String(v);
+    }
+    span.textContent = run.t;
+    el.appendChild(span);
+  }
+}
+
 // Compiled vapor imports template / createFor / repeatTemplate from this
 // module on web (vue-plugin's webAliases point fjs/vapor here). The rest of
 // the vue surface rides `export * from '@vue/runtime-core'` — NOT 'vue':
@@ -600,6 +633,7 @@ export {
   repeatTemplate,
   repeatTemplateLive,
   resolveComponent,
+  resolveDirective,
   setAttr,
   setClass,
   setClassName,

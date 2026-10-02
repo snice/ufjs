@@ -76,6 +76,8 @@ export function createFjsApp(options: VaporWebAppOptions): VaporWebApp {
 interface PageInstance {
   host: HTMLElement;
   unmount: () => void;
+  deactivate: () => void;
+  activate: () => void;
 }
 
 export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
@@ -145,7 +147,7 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
     // stacking rules are written against it (specs/178)
     const host = document.createElement('fjs-page-entry');
     container.appendChild(host);
-    const app = createVaporApp(page, { components: appContext.components, provides });
+    const app = createVaporApp(page, { components: appContext.components, directives: appContext.directives, provides });
     app.mount(host as never);
     return {
       host,
@@ -153,6 +155,8 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
         app.unmount();
         host.remove();
       },
+      deactivate: app.deactivate,
+      activate: app.activate,
     };
   };
 
@@ -164,6 +168,9 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
       pages.set(fullPath, page);
     } else {
       page.host.style.display = '';
+      // a cached page back on screen: onActivated, as the VDOM shell's
+      // KeepAlive runs it (specs/181)
+      page.activate();
     }
     // LRU: freshen, then evict the coldest beyond the cap (never the live one)
     pages.delete(fullPath);
@@ -220,6 +227,10 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
         beginPageTransition(fullPath);
         const leavingPath = previous;
         const leaving = leavingPath ? pages.get(leavingPath) : undefined;
+        // the page being left is deactivated now, as KeepAlive does it — its
+        // teleported layers (vant's Popover) close instead of staying over
+        // the next page (specs/181)
+        leaving?.deactivate();
         show(current, container);
         const entering = pages.get(fullPath)!.host;
         if (name === false || !leaving) {

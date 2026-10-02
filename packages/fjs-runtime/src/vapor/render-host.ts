@@ -21,7 +21,7 @@
 // renderEffect and the new tree is compared with the last — because that is
 // how these components are written. They are leaf controls with a handful
 // of nodes each; the vapor fine-grained path stays for page templates.
-import { EffectScope, isRef, shallowReactive, shallowRef, type Ref } from '@vue/reactivity';
+import { EffectScope, getCurrentScope, isRef, shallowReactive, shallowRef, type Ref } from '@vue/reactivity';
 import { cloneVNode, Comment, createVNode, Fragment, isVNode, Teleport, Text, type VNode } from '@vue/runtime-core';
 import { isArray } from '@vue/shared';
 import { patchHostProps, setElementText, warnVaporOnce } from './helpers';
@@ -36,6 +36,7 @@ import {
   insertBlock,
   isVaporComponent,
   makeAnchor,
+  nodesChanged,
   removeBlock,
   renderEffect,
   setInsertionState,
@@ -439,12 +440,11 @@ function vaporSlotBlock(result: unknown): Block | null {
   if (isVNode(result)) return null;
   if (isArray(result)) {
     if (result.some((r) => isVNode(r) || typeof r === 'string' || typeof r === 'number')) return null;
-    const parts = result.map((r) => vaporSlotBlock(r)).filter((b): b is Block => b !== null);
-    return {
-      nodes: parts.flatMap((b) => b.nodes),
-      scopes: parts.flatMap((b) => b.scopes ?? []),
-      cleanups: parts.flatMap((b) => b.cleanups ?? []),
-    };
+    // host.ts's list block follows its parts in place (specs/181): a
+    // flattened copy went stale when a v-if inside the slot switched, and
+    // the next re-render put the removed hosts back (three-gltf's mask).
+    // The parts' scopes are children of the slot's own scope, stopped with it.
+    return blockOf(result.filter((r) => r != null && r !== false));
   }
   if (typeof result === 'object') return blockOf(result);
   return null;
@@ -462,7 +462,7 @@ interface SlotCacheEntry {
  * call order — the i-th `slots.default({ item })` of this render reuses
  * the i-th block of the last one, its slot props updated in place — so a
  * re-render does not rebuild (and reset) the parent's content. */
-function vnodeSlots(raw: Slots, owner: { cache: Map<string, SlotCacheEntry[]>; counters: Map<string, number> }): Slots {
+function vnodeSlots(raw: Slots, owner: { cache: Map<string, SlotCacheEntry[]>; counters: Map<string, number>; home: EffectScope | undefined }): Slots {
   const out: Slots = {};
   for (const name of Object.keys(raw)) {
     const fn = raw[name];
@@ -477,7 +477,13 @@ function vnodeSlots(raw: Slots, owner: { cache: Map<string, SlotCacheEntry[]>; c
         Object.assign(entry.props, p);
       } else {
         const state = shallowReactive({ ...p });
-        const scope = new EffectScope();
+        // a child of the component's own scope, not of whatever runs the
+        // slot: a render function may call it lazily from INSIDE another
+        // component's slot (canvas hands its slot to the box), and that
+        // one stops its own throwaway scope right after — this one with it,
+        // killing every effect of the content (specs/181: a v-if mask that
+        // never went away)
+        const scope = owner.home ? owner.home.run(() => new EffectScope())! : new EffectScope();
         const result = scope.run(() => fn(state));
         const block = vaporSlotBlock(result);
         if (block) {
@@ -519,6 +525,7 @@ export function renderBlock(render: () => unknown, hooks?: { before?: () => void
     const parent = be().parentNode?.(end) ?? null;
     root = patch(root, tree, parent);
     block.nodes.splice(0, block.nodes.length, ...root.hosts(), end);
+    nodesChanged(block.nodes);
     hooks?.after?.();
   });
   (block as Block & { cleanups?: (() => void)[] }).cleanups = [
@@ -557,7 +564,7 @@ function wrapperOf(comp: RenderComponent): VaporComponent {
     setup(props, ctx) {
       const inst = currentVaporInstance();
       if (inst) inst.renderHost = true;
-      const owner = { cache: new Map<string, SlotCacheEntry[]>(), counters: new Map<string, number>() };
+      const owner = { cache: new Map<string, SlotCacheEntry[]>(), counters: new Map<string, number>(), home: getCurrentScope() };
       const slots = vnodeSlots(ctx.slots, owner);
       const result = comp.setup?.(props, { ...ctx, slots });
       const render =
@@ -574,6 +581,12 @@ function wrapperOf(comp: RenderComponent): VaporComponent {
       return renderBlock(
         () => {
           owner.counters.clear();
+          // Vue updates a component whenever a prop changes, whether its
+          // render reads that prop or not — onUpdated is where FjsScrollView
+          // applies scroll-into-view / scroll-top. Depend on every prop so
+          // the same change re-renders here too (specs/181: the sticky
+          // demo's group jumps did nothing)
+          for (const k in props) void (props as Record<string, unknown>)[k];
           let tree = render();
           if (inherit && isVNode(tree) && Object.keys(ctx.attrs).length) {
             const attrs: Record<string, unknown> = {};

@@ -580,7 +580,7 @@ class FlutterRouter implements Router {
     provides[ROUTER_KEY] = this;
     provides[ROUTE_KEY] = entry.route;
     provides[PAGE_KEY] = entry;
-    return { components: app.components, provides };
+    return { components: app.components, directives: app.directives, provides };
   }
 
   private teardown(entry: PageEntry | undefined): void {

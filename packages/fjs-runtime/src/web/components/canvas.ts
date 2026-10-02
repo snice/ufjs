@@ -68,6 +68,11 @@ export const FjsCanvasSurface = defineComponent({
       // element to it is what makes the web surface agree with Flutter,
       // where the styled box size was always the only size there was.
       const box = canvas.parentElement ?? canvas;
+      // a page under the one on screen is display:none here; on Flutter it
+      // keeps its size. Reporting 0 x 0 would clear the bitmap and hand the
+      // page a size it never has there (hello-fjs' clip demo drew an arc of
+      // radius -8) — wait for it to be rendered again (specs/181)
+      if (box.getClientRects().length === 0) return;
       const rect = box.getBoundingClientRect();
       const dpr = globalThis.devicePixelRatio || 1;
       const width = Math.max(0, Math.round(rect.width));

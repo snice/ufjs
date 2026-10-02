@@ -5,16 +5,18 @@
 // Compiled SFCs import this via the CLI's `vue` → `fjs/vapor` rewrite; the
 // export surface equals the core's plus the component layer.
 import { EffectScope, effect, getCurrentScope, onScopeDispose, shallowRef, stop as stopRunner } from '@vue/reactivity';
-import { camelize, hyphenate, isArray, toHandlerKey } from '@vue/shared';
+import { camelize, capitalize, hyphenate, isArray, toHandlerKey } from '@vue/shared';
 import {
   be,
   blockOf,
+  boundPropsOf,
   createKeyedFragment,
   currentBranch,
   emptyBlock,
   insertBlock,
   isAnchorHost,
   makeAnchor,
+  recordBoundProps,
   removeBlock,
   renderEffect,
   setBranchOwnerResolver,
@@ -105,8 +107,12 @@ function authorSlots(slots: Slots, author: VaporInstance | null): Slots {
       // inside the slot content — a v-if flipping — is scoped the same way
       const scope = new EffectScope();
       slotAuthorOf.set(scope, author);
-      const owner = activeInstance();
-      if (owner) scopeOwner.set(scope, owner);
+      // rendered by a VDOM component (the interop's slot bridge) there is
+      // no vapor instance on the stack: the content belongs to its author —
+      // its components join the author's instance tree, so a kept page's
+      // deactivated / activated reach them (specs/181)
+      const owner = activeInstance() ?? author;
+      scopeOwner.set(scope, owner);
       const prev = currentSlotAuthor;
       currentSlotAuthor = author;
       try {
@@ -232,6 +238,17 @@ function withPendingCapture<T>(fn: () => T): { value: T; mounted: VaporInstance[
 // ---- component context -------------------------------------------------------------------
 
 let currentSlots: Slots | null = null;
+/** Each instance's slots: a `<slot>` resolves against the component whose
+ * template it is in — inside slot content that is the slot's AUTHOR, not
+ * the component rendering it (specs/181: a shell's `<slot/>` written inside
+ * a component-backed `<scroll-view>` read scroll-view's own default slot,
+ * i.e. itself, and recursed until the stack ran out). */
+const slotsOf = new WeakMap<VaporInstance, Slots>();
+
+function templateSlots(): Slots | null {
+  const inst = slotAuthor() ?? activeInstance();
+  return (inst && slotsOf.get(inst)) ?? currentSlots;
+}
 /** Runs fn with [scope] as the enclosing one — the binding's slots-aware
  * wrapper over the core's withScope. Slot content renders while a child
  * mounts but belongs to the slot functions the parent passed. */
@@ -286,10 +303,17 @@ const tagComponents = new Map<string, unknown>();
 export function registerTagComponent(tag: string, comp: unknown): void {
   tagComponents.set(tag, comp);
 }
-setVaporComponentResolver((name) => activeInstance()?.appContext?.components[name] ?? tagComponents.get(name) ?? null);
+/** Vue's asset lookup: as written, camelized, then PascalCase — vant
+ * registers `VanButton`, a template says `<van-button>`. */
+function assetOf(map: Record<string, unknown> | undefined, name: string): unknown {
+  if (!map) return undefined;
+  return map[name] ?? map[camelize(name)] ?? map[capitalize(camelize(name))];
+}
+
+setVaporComponentResolver((name) => assetOf(activeInstance()?.appContext?.components, name) ?? tagComponents.get(name) ?? null);
 
 export function resolveComponent(name: string): unknown {
-  const resolved = activeInstance()?.appContext?.components[name] ?? tagComponents.get(name);
+  const resolved = assetOf(activeInstance()?.appContext?.components, name) ?? tagComponents.get(name);
   if (resolved) return resolved;
   throw new Error(`[fjs vapor] component <${name}> is not registered on the app — import it and use the imported name instead`);
 }
@@ -469,6 +493,7 @@ function mountVaporComponent(
   const prevAuthor = currentSlotAuthor;
   currentSlotAuthor = null;
   const inst = createVaporInstance(parent, appContext ?? parent?.appContext ?? null);
+  if (root) lastRootInstance = inst;
   // a component mounted straight into a v-if / dynamic-component branch:
   // KeepAlive keys, matches and activates by it (specs/174)
   const branch = currentBranch();
@@ -483,6 +508,7 @@ function mountVaporComponent(
   const { props, attrs } = splitProps(rawProps, comp);
   inst.attrs = attrs;
   const slots = rawSlots ?? {};
+  slotsOf.set(inst, slots);
   let exposed: Record<string, unknown> = {};
   const ctx = {
     // the listener the parent passed (rawProps hold getters returning it):
@@ -516,7 +542,12 @@ function mountVaporComponent(
     setCurrentVaporInstance(prevInst);
     currentSlotAuthor = prevAuthor;
     scope.stop();
-    throw e;
+    if (root) throw e;
+    // Vue's handling of a throwing setup: reported, the component renders
+    // nothing, its parent carries on — a page whose setup threw used to
+    // blank the whole page, nav bar included (specs/181)
+    handleVaporError(e, 'setup function');
+    return emptyBlock();
   }
   setCurrentVaporInstance(prevInst);
   withScope(scope, () => popAndApplyCssVars(block, (fn) => renderEffect(fn)));
@@ -591,10 +622,26 @@ export function createComponent(
     );
   }
   // the VDOM component's own setup must register its hooks on ITS
-  // runtime-core instance, not on the vapor component mounting it
+  // runtime-core instance, not on the vapor component mounting it — but its
+  // inject() sees the vapor parent's provides (specs/182)
+  const owner = activeInstance();
   const prevInst = setCurrentVaporInstance(null);
   try {
-    return interop(comp as Record<string, unknown>, props, slots, parent, anchor);
+    return interop(comp as Record<string, unknown>, props, slots, parent, anchor, {
+      provides: owner?.provides ?? null,
+      appContext: owner?.appContext ?? null,
+      // a kept vapor subtree (KeepAlive, the web shell's page cache)
+      // deactivates the VDOM components inside it too: vant's Popup closes
+      // a teleported layer there (specs/181)
+      onKeepAlive: owner
+        ? (run: (kind: 'a' | 'da') => void) => {
+            // ahead of the owner's own, like the descendants' hooks Vue's
+            // KeepAlive prepends onto its root
+            (owner.a ??= []).unshift(() => run('a'));
+            (owner.da ??= []).unshift(() => run('da'));
+          }
+        : undefined,
+    });
   } finally {
     setCurrentVaporInstance(prevInst);
   }
@@ -692,7 +739,7 @@ function makeSlotProps(rawProps: unknown): Record<string, unknown> {
 export function createSlot(name: string | (() => string) = 'default', rawProps?: unknown, fallback?: () => unknown): Block {
   const { parent, anchor } = takeInsertionState();
   const slotName = typeof name === 'function' ? name() : name;
-  const slotFn = currentSlots?.[slotName];
+  const slotFn = templateSlots()?.[slotName];
   const render = slotFn ? () => slotFn(makeSlotProps(rawProps)) : fallback;
   if (!render) {
     if (!parent) return emptyBlock();
@@ -706,7 +753,7 @@ export function createSlot(name: string | (() => string) = 'default', rawProps?:
 }
 
 export function useSlots(): Slots {
-  return currentSlots ?? {};
+  return templateSlots() ?? {};
 }
 
 // ---- app mount ---------------------------------------------------------------------------
@@ -718,10 +765,21 @@ export function useSlots(): Slots {
 export function createVaporApp(comp: VaporComponent, appContext: VaporAppContext | null = null): {
   mount: (container: HostNode) => void;
   unmount: () => void;
+  /** a cached page going out of / back into view (specs/181): its
+   * onDeactivated / onActivated, as Vue's KeepAlive runs them */
+  deactivate: () => void;
+  activate: () => void;
 } {
   const { value: built, mounted } = withPendingCapture(() => mountVaporComponent(comp, undefined, undefined, appContext, true));
+  const root = lastRootInstance;
   let block: Block | null = built;
   return {
+    deactivate: () => {
+      if (root && block) runKeepAliveHooks([root], 'da');
+    },
+    activate: () => {
+      if (root && block) runKeepAliveHooks([root], 'a');
+    },
     mount: (container: HostNode) => {
       insertBlock(block as Block, container, null);
       flushMounted(mounted);
@@ -734,6 +792,8 @@ export function createVaporApp(comp: VaporComponent, appContext: VaporAppContext
 }
 
 let warnedVdomShell = false;
+/** the instance the last root mount created — createVaporApp keeps it */
+let lastRootInstance: VaporInstance | null = null;
 
 /** A vapor page wrapped in the app's shell (enableVapor, specs/167 §8): the
  * shell gets `route` (the page's own) and renders the page in its default
@@ -859,19 +919,74 @@ export function setTemplateRefBinding(el: unknown, getter: () => unknown, refFor
 
 type VaporDirective = (el: unknown, source?: () => unknown, arg?: string, modifiers?: Record<string, boolean>) => void | (() => void);
 
+type ObjectDirective = Partial<Record<'created' | 'beforeMount' | 'mounted' | 'beforeUpdate' | 'updated' | 'beforeUnmount' | 'unmounted', (el: unknown, binding: unknown, vnode: unknown, prev: unknown) => void>>;
+
+/** `v-foo` with no local `vFoo`: the app's registration (app.directive). */
+export function resolveDirective(name: string): unknown {
+  const dir = assetOf(activeInstance()?.appContext?.directives, name);
+  if (!dir) {
+    warnVaporOnce(`directive:${name}`, `directive v-${name} is not registered on the app (app.directive / a plugin)`);
+    return undefined;
+  }
+  // its element's bound props go on the stand-in vnode (see host.ts)
+  if (typeof dir === 'object') recordBoundProps();
+  return dir;
+}
+
 /** `v-foo` on an element: a vapor directive is a function called once with
- * the host and a value getter; a returned function is its cleanup. The
- * VDOM object-hook form has no lifecycle to hang off here — warned. */
+ * the host and a value getter; a returned function is its cleanup. An
+ * object-hook (VDOM) directive — what libraries ship (`v-motion`) — runs
+ * through an adapter (specs/181): created / beforeMount now, mounted once
+ * the element is in the tree, beforeUpdate / updated when the bound value
+ * changes, beforeUnmount / unmounted when its scope goes. Its `vnode` is a
+ * stand-in: `el`, and `props` holding the element's bound values. */
 export function withVaporDirectives(node: unknown, dirs: unknown[][]): void {
   const host = refValueOf(node);
   for (const [dir, source, arg, modifiers] of dirs) {
     if (typeof dir === 'function') {
       const cleanup = (dir as VaporDirective)(host, source as (() => unknown) | undefined, arg as string | undefined, modifiers as Record<string, boolean> | undefined);
       if (typeof cleanup === 'function') onScopeDispose(cleanup, true);
-    } else {
-      warnVaporOnce('vdom-directive', 'an object-hook (VDOM) directive reached a vapor template — write it as a vapor directive function (el, source, arg, modifiers) => cleanup');
+    } else if (dir && typeof dir === 'object') {
+      runObjectDirective(host, dir as ObjectDirective, source as (() => unknown) | undefined, arg as string | undefined, modifiers as Record<string, boolean> | undefined);
     }
   }
+}
+
+function runObjectDirective(host: unknown, dir: ObjectDirective, source: (() => unknown) | undefined, arg: string | undefined, modifiers: Record<string, boolean> | undefined): void {
+  const binding = { value: undefined as unknown, oldValue: undefined as unknown, arg, modifiers: modifiers ?? {}, instance: null, dir };
+  const vnode = { el: host, props: boundPropsOf(host), key: null, dirs: null };
+  const call = (hook: keyof ObjectDirective): void => {
+    const fn = dir[hook];
+    if (fn) fn(host, binding, vnode, null);
+  };
+  let first = true;
+  // reads the value inside an effect (it is the dependency) — the first run
+  // is the initial value, later runs are updates
+  renderEffect(() => {
+    const value = source ? source() : undefined;
+    if (first) {
+      binding.value = value;
+      return;
+    }
+    binding.oldValue = binding.value;
+    binding.value = value;
+    call('beforeUpdate');
+    call('updated');
+  });
+  first = false;
+  call('created');
+  call('beforeMount');
+  let alive = true;
+  // the element joins the tree when the enclosing block is inserted — in
+  // this same task, after the current setup / effect run
+  const inst = currentVaporInstance();
+  if (inst && !inst.isMounted) onMounted(() => alive && call('mounted'));
+  else queueMicrotask(() => alive && call('mounted'));
+  onScopeDispose(() => {
+    alive = false;
+    call('beforeUnmount');
+    call('unmounted');
+  }, true);
 }
 
 // ---- built-in components (specs/170, 174–176) -------------------------------------------

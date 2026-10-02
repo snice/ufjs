@@ -8,3 +8,9 @@ export * from '@vue/runtime-core';
 export {
   onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated, onActivated, onDeactivated, onErrorCaptured, onRenderTracked, onRenderTriggered, onServerPrefetch, provide, inject, hasInjectionContext, useAttrs, resolveDynamicComponent,
 } from './instance';
+// runtime-dom names a library may import from 'vue' (specs/181: @vueuse/core
+// imports TransitionGroup, so @vueuse/motion failed to load at all). The
+// vapor implementations stand in: the transitions are vapor components, the
+// event helpers are web-dom's DOM-event versions.
+export { VaporTransition as Transition, VaporTransitionGroup as TransitionGroup } from './runtime';
+export { withKeys, withModifiers } from './web-dom';

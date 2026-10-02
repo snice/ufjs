@@ -6,7 +6,7 @@
 // implements the part of the App surface those installs use, against the
 // VaporAppContext every vapor page resolves through (provides → vapor
 // inject, components → resolveComponent). What has no vapor counterpart
-// (mixins, directives, a second mount) warns once instead of vanishing.
+// (mixins, a second mount) warns once instead of vanishing.
 //
 // Not a real runtime-core App on purpose: createRenderer().createApp would
 // drag the renderer engine back into the enableVapor web bundle.
@@ -29,7 +29,8 @@ export interface FjsVaporApp {
   component(name: string, comp: unknown): FjsVaporApp;
   runWithContext<T>(fn: () => T): T;
   mixin(mixin: unknown): FjsVaporApp;
-  directive(name: string, directive?: unknown): FjsVaporApp;
+  directive(name: string): unknown;
+  directive(name: string, directive: unknown): FjsVaporApp;
   mount(): FjsVaporApp;
   unmount(): void;
 }
@@ -70,8 +71,11 @@ export function createVaporAppShell(ctx: VaporAppContext): FjsVaporApp {
       warnOnce('mixin');
       return app;
     },
-    directive() {
-      warnOnce('directive');
+    // object-hook directives run through the vapor adapter (specs/181)
+    directive(name: string, directive?: unknown) {
+      const dirs = (ctx.directives ??= Object.create(null) as Record<string, unknown>);
+      if (directive === undefined) return dirs[name];
+      dirs[name] = directive;
       return app;
     },
     // createFjsApp owns mounting; a plugin calling these is a misuse

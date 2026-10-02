@@ -11,7 +11,7 @@ export { adoptVaporComponent, mountAdoptNodes, releaseAdopt } from './interop';
 
 // the runtime's slot/resolve helpers win over runtime-core's same-named
 // exports (those need a VDOM currentInstance, which Vapor code never has)
-export { resolveComponent, useSlots, type Slots } from './runtime';
+export { resolveComponent, resolveDirective, useSlots, type Slots } from './runtime';
 // specs/167: vapor-aware lifecycle + provide/inject (the shim above already
 // re-exports the same bindings; spelled out so the surface is explicit)
 export {

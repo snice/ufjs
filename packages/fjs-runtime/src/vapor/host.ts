@@ -244,6 +244,13 @@ export interface VaporBackend {
     slots: Slots,
     parent: HostNode | null,
     anchor: HostNode | null,
+    /** the vapor parent's provides and app context (specs/182) */
+    ctx?: {
+      provides?: Record<string | symbol, unknown> | null;
+      appContext?: unknown;
+      /** registers the VDOM subtree's activated / deactivated runner */
+      onKeepAlive?: (run: (kind: 'a' | 'da') => void) => void;
+    },
   ): Block;
   /** v-bind() in CSS (specs/166): write the useVaporCssVars variable map
    * onto [host] as inline custom properties. Optional — a backend without
@@ -335,11 +342,67 @@ export interface Block {
 
 export const emptyBlock = (): Block => ({ nodes: [] });
 
+// ---- live node lists (specs/181) ----------------------------------------------------
+//
+// A fragment (v-if / v-for / dynamic component) changes its `nodes` IN
+// PLACE when it switches. A block built over several parts — a multi-root
+// template or slot returning `[text, <Comp/>, <view v-if>]` — lists the
+// parts' hosts flattened, so it has to hear about those changes, or the
+// enclosing removal would leave the new hosts behind.
+
+const nodeWatchers = new WeakMap<readonly HostNode[], Set<() => void>>();
+
+/** A `nodes` array was changed in place: blocks derived from it follow. */
+export function nodesChanged(nodes: readonly HostNode[]): void {
+  const set = nodeWatchers.get(nodes);
+  if (set) for (const fn of [...set]) fn();
+}
+
+function watchNodes(nodes: readonly HostNode[], fn: () => void): () => void {
+  let set = nodeWatchers.get(nodes);
+  if (!set) nodeWatchers.set(nodes, (set = new Set()));
+  set.add(fn);
+  return () => set!.delete(fn);
+}
+
+const isBlockLike = (node: unknown): node is Block =>
+  !!node && typeof node === 'object' && !(node instanceof TplNode) && Array.isArray((node as Block).nodes);
+
 /** What setup() may return: a template node, a bare host, a block, a list,
  * nothing (a component that renders only anchors). */
 export function blockOf(node: unknown): Block {
   if (node instanceof TplNode) return { nodes: [node.host] };
-  if (Array.isArray(node)) return { nodes: node.map(hostOf) };
+  if (Array.isArray(node)) {
+    // a one-item list is that item — sharing its `nodes` keeps a fragment
+    // findable by switchOf / listOf (a <Transition> slot returns `[frag]`)
+    if (node.length === 1) {
+      const only = blockOf(node[0]);
+      return { nodes: only.nodes };
+    }
+    const parts = node.map((n) => (Array.isArray(n) || isBlockLike(n) ? blockOf(n) : hostOf(n)));
+    if (!parts.some(isBlockLike)) return { nodes: parts as HostNode[] };
+    // the parts' scopes stay with whoever owns them (as before): this list
+    // only tracks where their hosts are
+    const nodes: HostNode[] = [];
+    const sync = (): void => {
+      const flat: HostNode[] = [];
+      for (const p of parts) {
+        if (isBlockLike(p)) flat.push(...p.nodes);
+        else flat.push(p);
+      }
+      nodes.splice(0, nodes.length, ...flat);
+    };
+    sync();
+    for (const p of parts) {
+      if (isBlockLike(p)) {
+        watchNodes(p.nodes, () => {
+          sync();
+          nodesChanged(nodes);
+        });
+      }
+    }
+    return { nodes };
+  }
   if (node && typeof node === 'object' && Array.isArray((node as Block).nodes)) {
     const b = node as Block;
     return { nodes: b.nodes, scopes: b.scopes, cleanups: b.cleanups };
@@ -664,7 +727,26 @@ export function setStyle(node: TplNode, value: Record<string, unknown>): void {
   styleRecords.set(node.host as object, merged);
 }
 
+/** Bound values per element, once an object-hook (VDOM) directive is in
+ * use: such a directive reads its element's props off `vnode.props`
+ * (@vueuse/motion's `:initial` / `:enter`), and a vapor element has no
+ * vnode — the adapter in runtime.ts hands it this record (specs/181). Off
+ * until the first such directive resolves, so plain pages pay one branch. */
+let recordProps = false;
+const boundProps = new WeakMap<object, Record<string, unknown>>();
+
+export function recordBoundProps(): void {
+  recordProps = true;
+}
+
+export function boundPropsOf(host: HostNode): Record<string, unknown> {
+  let rec = boundProps.get(host as object);
+  if (!rec) boundProps.set(host as object, (rec = {}));
+  return rec;
+}
+
 export function setAttr(node: TplNode, key: string, value: unknown): void {
+  if (recordProps) boundPropsOf(node.host)[key] = value;
   be().setAttr(node.host, key, value);
 }
 
@@ -1029,6 +1111,7 @@ function createSwitch(label: string): {
   let outIn: { key: unknown; render: () => unknown } | null = null;
   let outInLeaving = false;
   let disposed = false;
+  let unwatchBranch: (() => void) | null = null;
 
   // a fragment created as a component's / slot's root had no insertion
   // point: it joined the tree with its block, so ask where it is now
@@ -1048,7 +1131,9 @@ function createSwitch(label: string): {
     } finally {
       renderingBranch = prev;
     }
-    branch.nodes = [...block.nodes];
+    // shared, not copied: content that is itself a fragment changes it in
+    // place, and the switch follows (specs/181)
+    branch.nodes = block.nodes as HostNode[];
     if (block.cleanups) branch.cleanups.push(...block.cleanups);
     return branch;
   };
@@ -1060,6 +1145,13 @@ function createSwitch(label: string): {
     const parent = parentNow();
     if (parent) for (const node of branch.nodes) be().attach(node, parent, anchor);
     frag.nodes.push(...branch.nodes);
+    unwatchBranch?.();
+    unwatchBranch = watchNodes(branch.nodes, () => {
+      if (state.current !== branch) return;
+      frag.nodes.splice(1, frag.nodes.length - 1, ...branch.nodes);
+      nodesChanged(frag.nodes);
+    });
+    nodesChanged(frag.nodes);
     frag.scopes.length = 0;
     frag.scopes.push(branch.scope);
     state.current = branch;
@@ -1077,6 +1169,9 @@ function createSwitch(label: string): {
    * animation is over. */
   const retire = (branch: Branch, after?: () => void): void => {
     frag.nodes.length = 1;
+    unwatchBranch?.();
+    unwatchBranch = null;
+    nodesChanged(frag.nodes);
     frag.scopes.length = 0;
     state.current = null;
     const keep = state.keepAlive;
@@ -1136,6 +1231,7 @@ function createSwitch(label: string): {
     }
     if (old && mode === 'in-out') {
       frag.nodes.length = 1;
+      nodesChanged(frag.nodes);
       state.current = null;
       mount(key, render, true, () => {
         if (!disposed) retire(old);
@@ -1223,11 +1319,42 @@ function withListApi<T extends Block>(block: T): T & { onReset: (fn: () => void)
 }
 
 interface ForItem {
+  /** identity: the `:key` value (the index without one) */
   key: unknown;
   item: { value: unknown };
+  /** the template's second alias: the index (array / number / iterable)
+   * or the property name (object) — NOT the `:key` value */
   keyRef: { value: unknown };
+  indexRef: { value: unknown };
   scope: unknown;
   block: Block;
+}
+
+/** A v-for source read the way Vue reads it (specs/181): a number counts
+ * 1..N, arrays and strings by index, other iterables (Map, Set) through
+ * their iterator, a plain object by its own keys. `key(i)` is what the
+ * template's second alias sees. */
+interface ForSource {
+  count: number;
+  value(i: number): unknown;
+  key(i: number): unknown;
+}
+
+function forSource(src: unknown): ForSource {
+  if (typeof src === 'number') return { count: src, value: (i) => i + 1, key: (i) => i };
+  if (Array.isArray(src) || typeof src === 'string') {
+    const list = src as ArrayLike<unknown>;
+    return { count: list.length, value: (i) => list[i], key: (i) => i };
+  }
+  if (src && typeof src === 'object') {
+    if (typeof (src as { [Symbol.iterator]?: unknown })[Symbol.iterator] === 'function') {
+      const list = Array.from(src as Iterable<unknown>);
+      return { count: list.length, value: (i) => list[i], key: (i) => i };
+    }
+    const keys = Object.keys(src);
+    return { count: keys.length, value: (i) => (src as Record<string, unknown>)[keys[i]], key: (i) => keys[i] };
+  }
+  return { count: 0, value: () => undefined, key: (i) => i };
 }
 
 /** Compiler bit: the v-for source is a static expression or v-once, so the
@@ -1272,9 +1399,9 @@ function forOutOfOrder(prev: readonly ForItem[], wanted: readonly ForItem[], fre
  * every item to where it already was, is the whole mount cost of a static
  * keyed list. */
 export function createFor(
-  source: () => number | unknown[],
-  getItem: (item: { value: unknown }, key: { value: unknown }) => unknown,
-  getKey?: (item: unknown, index: number) => unknown,
+  source: () => unknown,
+  getItem: (item: { value: unknown }, key: { value: unknown }, index: { value: unknown }) => unknown,
+  getKey?: (item: unknown, key: unknown, index: number) => unknown,
   flags = 0,
 ): Block {
   const once = (flags & FOR_ONCE) !== 0;
@@ -1316,37 +1443,36 @@ export function createFor(
       const listScope = needRx().createScope();
       listBlock.scopes.push(listScope);
       withScope(listScope, () => {
-        const src = source();
-        const count = typeof src === 'number' ? src : src.length;
-        // v-for="r in N" iterates r = 1..N (the index param stays 0-based) —
-        // getItem's item box is the VALUE, so the number source is i + 1
-        const value = (i: number): unknown => (typeof src === 'number' ? i + 1 : src[i]);
+        // v-for="r in N" iterates r = 1..N (the index param stays 0-based)
+        const src = forSource(source());
         const built: HostNode[] = [];
-        for (let i = 0; i < count; i++) {
-          const v = value(i);
-          const key = getKey ? getKey(v, i) : i;
-          const block = blockOf(getItem({ value: v }, { value: key }));
+        for (let i = 0; i < src.count; i++) {
+          const block = blockOf(getItem({ value: src.value(i) }, { value: src.key(i) }, { value: i }));
           if (parent) insertBlock(block, parent, slot);
           else built.push(...block.nodes);
         }
         ensureAnchor();
-        if (rootLevel) listBlock.nodes.splice(0, listBlock.nodes.length, ...built, anchor);
+        if (rootLevel) {
+          listBlock.nodes.splice(0, listBlock.nodes.length, ...built, anchor);
+          nodesChanged(listBlock.nodes);
+        }
       });
     });
     return withListApi(listBlock);
   }
   const box = (v: unknown): { value: unknown } => needRx().box(v);
 
-  const buildItem = (value: unknown, key: unknown): ForItem => {
+  const buildItem = (value: unknown, key: unknown, srcKey: unknown, index: number): ForItem => {
     if (!__on) {
       const scope = needRx().createScope();
       const item = box(value);
-      const keyRef = box(key);
-      const block = withScope(scope, () => blockOf(getItem(item, keyRef)));
+      const keyRef = box(srcKey);
+      const indexRef = box(index);
+      const block = withScope(scope, () => blockOf(getItem(item, keyRef, indexRef)));
       if (!block.scopes) block.scopes = [];
       block.scopes.push(scope);
       if (parent) insertBlock(block, parent, slot);
-      return { key, item, keyRef, scope, block };
+      return { key, item, keyRef, indexRef, scope, block };
     }
     __zoneEnter('item');
     __zoneEnter('scope');
@@ -1354,15 +1480,16 @@ export function createFor(
     __zoneExit('scope');
     __zoneEnter('refs');
     const item = box(value);
-    const keyRef = box(key);
+    const keyRef = box(srcKey);
+    const indexRef = box(index);
     __zoneExit('refs');
     __zoneEnter('body');
-    const block = withScope(scope, () => blockOf(getItem(item, keyRef)));
+    const block = withScope(scope, () => blockOf(getItem(item, keyRef, indexRef)));
     __zoneExit('body');
     if (!block.scopes) block.scopes = [];
     block.scopes.push(scope);
     if (parent) withInsertZone('ins1', () => insertBlock(block, parent, slot));
-    const rec = { key, item, keyRef, scope, block };
+    const rec = { key, item, keyRef, indexRef, scope, block };
     __zoneExit('item');
     return rec;
   };
@@ -1413,6 +1540,7 @@ export function createFor(
     for (const node of leaving) nodes.push(node);
     nodes.push(anchor);
     listBlock.nodes.splice(0, listBlock.nodes.length, ...nodes);
+    nodesChanged(listBlock.nodes);
   };
   let firstRun = true;
   const itemHosts = (list: readonly ForItem[]): HostNode[] => {
@@ -1442,10 +1570,9 @@ export function createFor(
   const reconcile = (): void => {
           // a root-level list is in the tree once its anchor is
           if (rootLevel) parent = be().parentNode?.(anchor) ?? null;
-          const src = source();
-          const count = typeof src === 'number' ? src : src.length;
-          // number source: item is the VALUE (1..N), same as the ONCE path
-          const value = (i: number): unknown => (typeof src === 'number' ? i + 1 : src[i]);
+          const src = forSource(source());
+          const count = src.count;
+          const value = src.value;
 
           if (getKey == null) {
             // non-keyed: the same-length prefix updates in place (the
@@ -1454,9 +1581,10 @@ export function createFor(
             let i = 0;
             for (; i < Math.min(items.length, count); i++) {
               items[i].item.value = value(i);
-              items[i].keyRef.value = i;
+              items[i].keyRef.value = src.key(i);
+              items[i].indexRef.value = i;
             }
-            for (; i < count; i++) items.push(buildItem(value(i), i));
+            for (; i < count; i++) items.push(buildItem(value(i), i, src.key(i), i));
             for (let k = items.length - 1; k >= count; k--) dropItem(items[k]);
             if (items.length > count) items.length = count;
             syncScopes();
@@ -1475,15 +1603,16 @@ export function createFor(
           const fresh = new Set<ForItem>();
           const used = new Set<unknown>();
           for (let i = 0; i < count; i++) {
-            const key = getKey(value(i), i);
+            const key = getKey(value(i), src.key(i), i);
             const existing = kept.get(key);
             if (existing && !used.has(key)) {
               used.add(key);
               existing.item.value = value(i);
-              existing.keyRef.value = key;
+              existing.keyRef.value = src.key(i);
+              existing.indexRef.value = i;
               wanted.push(existing);
             } else {
-              const built = buildItem(value(i), key);
+              const built = buildItem(value(i), key, src.key(i), i);
               fresh.add(built);
               wanted.push(built);
             }
@@ -1543,9 +1672,9 @@ function repeatTextIndex(def: TemplateDef): number | null {
  * else stays on createFor. */
 export function repeatTemplate(
   tpl: CompiledTemplate,
-  source: () => number | unknown[],
-  textAt: (item: { value: unknown }, key: { value: unknown }) => unknown,
-  getKey?: (item: unknown, index: number) => unknown,
+  source: () => unknown,
+  textAt: (item: { value: unknown }, key: { value: unknown }, index: { value: unknown }) => unknown,
+  getKey?: (item: unknown, key: unknown, index: number) => unknown,
   flags = 0,
 ): Block {
   const def = tpl.def;
@@ -1553,10 +1682,10 @@ export function repeatTemplate(
   if ((flags & FOR_ONCE) === 0 || def == null || textIdx == null) {
     return createFor(
       source,
-      (item, key) => {
+      (item, key, index) => {
         const n = tpl();
         const target = n.def.nodes[n.idx].inline || n.def.nodes[n.idx].kind === 'text' ? n : txt(child(n));
-        setText(target, textAt(item, key));
+        setText(target, textAt(item, key, index));
         return n;
       },
       getKey,
@@ -1574,8 +1703,8 @@ export function repeatTemplate(
   } else if (parent) {
     slot = null;
   }
-  const src = source();
-  const count = typeof src === 'number' ? src : src.length;
+  const src = forSource(source());
+  const count = src.count;
   const asElement = def.nodes[textIdx].kind !== 'text';
   const rootIdx = def.nodes[0].children[0];
   // one op for the whole list (specs/162): the initial texts ride with the
@@ -1585,8 +1714,7 @@ export function repeatTemplate(
   const texts: string[] | null = count > 0 ? new Array(count) : null;
   if (texts !== null) {
     for (let i = 0; i < count; i++) {
-      const v = typeof src === 'number' ? i + 1 : src[i];
-      const text = textAt({ value: v }, { value: getKey ? getKey(v, i) : i });
+      const text = textAt({ value: src.value(i) }, { value: src.key(i) }, { value: i });
       texts[i] = text == null ? '' : String(text);
     }
   }
@@ -1605,6 +1733,9 @@ export function repeatTemplate(
     }
   }
   if (!anchorPlaced && parent) be().attach(anchor, parent, null);
+  // a slot / component root (no insertion point): the cells join the tree
+  // with the block, so they are its nodes (specs/181 — they were dropped)
+  if (!parent) listBlock.nodes.splice(0, 0, ...copies.map((hosts) => hosts[rootIdx]));
   return withListApi(listBlock);
 }
 
@@ -1620,9 +1751,9 @@ export function repeatTemplate(
  * every effect. */
 export function repeatTemplateLive(
   tpl: CompiledTemplate,
-  source: () => number | unknown[],
-  textAt: (item: { value: unknown }, key: { value: unknown }) => unknown,
-  getKey?: (item: unknown, index: number) => unknown,
+  source: () => unknown,
+  textAt: (item: { value: unknown }, key: { value: unknown }, index: { value: unknown }) => unknown,
+  getKey?: (item: unknown, key: unknown, index: number) => unknown,
   flags = 0,
 ): Block {
   const def = tpl.def;
@@ -1632,10 +1763,10 @@ export function repeatTemplateLive(
     // renderEffect used to do must stay reactive — re-create it here.
     return createFor(
       source,
-      (item, key) => {
+      (item, key, index) => {
         const n = tpl();
         const target = n.def.nodes[n.idx].inline || n.def.nodes[n.idx].kind === 'text' ? n : txt(child(n));
-        renderEffect(() => setText(target, textAt(item, key)));
+        renderEffect(() => setText(target, textAt(item, key, index)));
         return n;
       },
       getKey,
@@ -1653,8 +1784,8 @@ export function repeatTemplateLive(
   } else if (parent) {
     slot = null;
   }
-  const src = source();
-  const count = typeof src === 'number' ? src : src.length;
+  const src = forSource(source());
+  const count = src.count;
   const asElement = def.nodes[textIdx].kind !== 'text';
   const rootIdx = def.nodes[0].children[0];
   // the list in one op (specs/162), roots inserted by the engine; texts
@@ -1671,14 +1802,13 @@ export function repeatTemplateLive(
     listBlock.scopes.push(listScope);
     withScope(listScope, () => {
       for (let i = 0; i < count; i++) {
-        const v = typeof src === 'number' ? i + 1 : src[i];
-        const key = getKey ? getKey(v, i) : i;
         // hoisted boxes: one allocation per cell, reused by every re-run
-        const item = { value: v };
-        const k = { value: key };
+        const item = { value: src.value(i) };
+        const k = { value: src.key(i) };
+        const idx = { value: i };
         const host = cells[i][textIdx];
         renderEffect(() => {
-          const s = textAt(item, k);
+          const s = textAt(item, k, idx);
           const text = s == null ? '' : String(s);
           if (asElement) be().setElementText(host, text);
           else be().setText(host, text);
@@ -1688,6 +1818,8 @@ export function repeatTemplateLive(
       if (!anchorPlaced && parent) be().attach(anchor, parent, null);
     });
   });
+  // root position: the cells are the block's nodes (specs/181)
+  if (!parent) listBlock.nodes.splice(0, 0, ...cells.map((hosts) => hosts[rootIdx]));
   return withListApi(listBlock);
 }
 
