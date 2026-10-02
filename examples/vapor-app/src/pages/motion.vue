@@ -11,6 +11,17 @@ import TabB from '../components/TabB.vue'
 
 const showIf = ref(true)
 const maskOpen = ref(false)
+let nextId = 4
+const rows = ref([1, 2, 3])
+const addRow = () => {
+  rows.value.splice(Math.floor(Math.random() * (rows.value.length + 1)), 0, nextId++)
+}
+const removeRow = (id: number) => {
+  rows.value = rows.value.filter((r) => r !== id)
+}
+const shuffle = () => {
+  rows.value = [...rows.value].sort(() => Math.random() - 0.5)
+}
 const page = ref(0)
 const showShow = ref(true)
 const tab = shallowRef(TabA)
@@ -24,7 +35,7 @@ const flipKept = () => {
 </script>
 
 <template>
-  <view class="page">
+  <scroll-view scroll-y class="page">
     <text class="h">v-if · fade</text>
     <text class="btn" @tap="showIf = !showIf">切换</text>
     <Transition name="fade">
@@ -49,6 +60,15 @@ const flipKept = () => {
       <component :is="kept" />
     </KeepAlive>
 
+    <text class="h">TransitionGroup（点行删除）</text>
+    <view class="ops">
+      <text class="btn add-row" @tap="addRow">添加</text>
+      <text class="btn shuffle" @tap="shuffle">打乱</text>
+    </view>
+    <TransitionGroup name="list" tag="view" class="rows">
+      <view v-for="id in rows" :key="id" class="row" @tap="removeRow(id)"><text>第 {{ id }} 行</text></view>
+    </TransitionGroup>
+
     <text class="h">swiper circular（当前 {{ page }}）</text>
     <swiper class="sw" circular indicator-dots @change="(i: string) => (page = Number(i))">
       <swiper-item v-for="n in 3" :key="n" :class="'slide s' + n"><text>第 {{ n }} 页</text></swiper-item>
@@ -61,17 +81,23 @@ const flipKept = () => {
         <view v-if="maskOpen" class="mask" @tap="maskOpen = false"><text class="mask-text">点任意处关闭</text></view>
       </Transition>
     </Teleport>
-  </view>
+  </scroll-view>
 </template>
 
 <style scoped>
-.page { padding: 16px; }
+.page { flex: 1; padding: 16px; }
 .h { font-size: 13px; color: #969799; margin-top: 16px; }
 .btn { color: #1989fa; padding: 8px 0; }
 .box { height: 56px; border-radius: 8px; align-items: center; justify-content: center; }
 .if-box { background-color: #d9ecff; }
 .show-box { background-color: #e1f3d8; }
 .sw { height: 120px; margin-top: 8px; }
+.ops { flex-direction: row; }
+.ops .btn { margin-right: 24px; }
+.row { height: 40px; justify-content: center; padding-left: 12px; margin-bottom: 4px; background-color: #f2f3f5; border-radius: 6px; }
+.list-enter-active, .list-leave-active { transition: opacity 0.3s, transform 0.3s; }
+.list-enter-from, .list-leave-to { opacity: 0; transform: translateX(40px); }
+.list-move { transition: transform 0.3s; }
 .slide { align-items: center; justify-content: center; }
 .s1 { background-color: #fde2e2; }
 .s2 { background-color: #e1f3d8; }

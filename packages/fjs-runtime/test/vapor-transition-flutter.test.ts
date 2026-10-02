@@ -142,3 +142,28 @@ globalThis.__toff = off
   });
 });
 
+describe('vapor <TransitionGroup> on Flutter (specs/176)', () => {
+  it('items enter and leave through the style engine; a removed item goes after its leave', async () => {
+    const root = mount(`
+<script setup>
+import { ref } from 'vue'
+const items = ref(['a', 'b'])
+globalThis.__fitems = items
+</script>
+<template><TransitionGroup name="l" tag="view" :duration="60"><text v-for="i in items" :key="i" :class="'it i-' + i">{{ i }}</text></TransitionGroup></template>`);
+    await wait();
+    const list = g.__fitems as { value: string[] };
+    list.value = ['a', 'b', 'c'];
+    await wait(1);
+    const [c] = withClass(root.id, 'i-c');
+    expect(r.styleEngine.classesOf(c)).toEqual(expect.arrayContaining(['l-enter-from', 'l-enter-active']));
+    await wait(150);
+    expect(r.styleEngine.classesOf(c)).not.toContain('l-enter-active');
+    list.value = ['a', 'c'];
+    await wait(1);
+    expect(withClass(root.id, 'l-leave-active')).toEqual(withClass(root.id, 'i-b'));
+    await wait(150);
+    expect(withClass(root.id, 'i-b')).toEqual([]);
+  });
+});
+

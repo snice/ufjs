@@ -136,3 +136,11 @@ op 编码。
   或传入的元素；`disabled` 时放回占位锚点之前。传送出去的节点不在任何祖先的子树里，所以随组件
   作用域销毁时移除（`onScopeDispose`），而不是靠祖先移除。
 
+## 列表转场：TransitionGroup 的挂点（specs/176）
+
+`createFor` 用 `listOf(block)`（同样以 `nodes` 数组为键）暴露一个 `transition` 挂点，由
+`VaporTransitionGroup` 在 slot 渲染完后挂上：非首轮更新前 `beforeUpdate`（记录现存条目位置），
+重排后 `afterUpdate`（只给保留下来的条目做 FLIP），新条目 `enter`；删除的条目先 dispose，
+`leave` 结束再移除节点。离场中的节点在根位置列表里仍列进 `nodes`，整体移除时一并清掉。
+位置读取走 `TransitionBackend.rectOf`（web `getBoundingClientRect`，Flutter `boundingRectOf`）。
+

@@ -5,6 +5,7 @@
 import { effect, stop as stopRunner, type ReactiveEffectRunner } from '@vue/reactivity';
 import type { Element } from '../ui/element';
 import { addTransitionClass, nextFrame, removeTransitionClass, whenTransitionEnds } from '../vue/transition-timing';
+import { boundingRectOf } from '../ui/geometry';
 import type { HostNode } from '../vue/host-ops';
 import {
   childElementIds,
@@ -304,6 +305,9 @@ export const flutterBackend: VaporBackend = {
     nextFrame,
     whenEnds: (host, ms, cb) => whenTransitionEnds(host as unknown as Element, ms, cb),
     isElement: (host) => !isAnchorHost(host) && typeof (host as { id?: unknown }).id === 'number',
+    // the same synchronous read vant's rect measurements use (flushes the
+    // pending ops, lays out, measures)
+    rectOf: (host) => boundingRectOf((host as { id: number }).id),
   },
 
   // <style> v-bind() on a Vapor component (specs/166): the vars ride the

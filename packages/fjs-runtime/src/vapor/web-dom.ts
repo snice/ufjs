@@ -439,6 +439,7 @@ export const domBackend: VaporBackend = {
     },
     whenEnds: whenDomTransitionEnds,
     isElement: (host) => (host as Node).nodeType === 1,
+    rectOf: (host) => (host as Element).getBoundingClientRect(),
   },
 
   patchStyle(host, prev, next) {

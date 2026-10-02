@@ -303,6 +303,9 @@ export interface TransitionBackend {
   whenEnds(host: HostNode, explicitMs: number | undefined, cb: () => void): void;
   /** Only elements animate (anchors, text runs do not). */
   isElement(host: HostNode): boolean;
+  /** The element's box in window coordinates, read synchronously (a
+   * <TransitionGroup> move pass, specs/176). */
+  rectOf(host: HostNode): { left: number; top: number };
 }
 
 let backend: VaporBackend | null = null;
@@ -955,6 +958,29 @@ export interface SwitchState {
  * a slot or a component boundary. */
 const switches = new WeakMap<readonly HostNode[], SwitchState>();
 
+/** What <TransitionGroup> hangs on a v-for list (specs/176): enter for new
+ * items, leave before a removed item's hosts go, and the move pass around
+ * each update (positions before, FLIP after — kept items only). */
+export interface ListTransition {
+  enter(nodes: readonly HostNode[], done?: () => void): void;
+  leave(nodes: readonly HostNode[], done: () => void): void;
+  beforeUpdate?(hosts: readonly HostNode[]): void;
+  afterUpdate?(hosts: readonly HostNode[]): void;
+}
+
+export interface ListState {
+  transition: ListTransition | null;
+}
+
+/** List block → its state, keyed by the live `nodes` array like switches. */
+const lists = new WeakMap<readonly HostNode[], ListState>();
+
+/** The v-for list behind a block a slot returned, if it is one. */
+export function listOf(block: unknown): ListState | undefined {
+  const nodes = (block as Block | null)?.nodes;
+  return nodes ? lists.get(nodes) : undefined;
+}
+
 /** The switch behind a block a slot / component returned, if it is one. */
 export function switchOf(block: unknown): SwitchState | undefined {
   const nodes = (block as Block | null)?.nodes;
@@ -1340,10 +1366,37 @@ export function createFor(
     __zoneExit('item');
     return rec;
   };
+  /** A <TransitionGroup> around the list (specs/176), hung on after it
+   * rendered; and the hosts of removed items still playing their leave. */
+  const listState: ListState = { transition: null };
+  lists.set(listBlock.nodes, listState);
+  const leaving = new Set<HostNode>();
+  let listGone = false;
   const dropItem = (it: ForItem): void => {
-    removeBlock(it.block);
+    const t = listState.transition;
+    if (!t || listGone) {
+      removeBlock(it.block);
+      needRx().stopScope(it.scope);
+      return;
+    }
+    // unmounted now (Vue's order); the hosts stay for the leave animation
+    disposeBlock(it.block);
     needRx().stopScope(it.scope);
+    const nodes = [...it.block.nodes];
+    for (const node of nodes) leaving.add(node);
+    t.leave(nodes, () => {
+      for (const node of nodes) {
+        leaving.delete(node);
+        be().remove(node);
+      }
+      syncNodes();
+    });
   };
+  listBlock.cleanups.push(() => {
+    listGone = true;
+    for (const node of leaving) be().remove(node);
+    leaving.clear();
+  });
   const syncScopes = (): void => {
     listBlock.scopes = items.map((it) => it.scope);
   };
@@ -1356,10 +1409,32 @@ export function createFor(
     if (!rootLevel) return;
     const nodes: HostNode[] = [];
     for (const it of items) nodes.push(...it.block.nodes);
+    // leaving hosts are still in the tree: an enclosing removal takes them
+    for (const node of leaving) nodes.push(node);
     nodes.push(anchor);
     listBlock.nodes.splice(0, listBlock.nodes.length, ...nodes);
   };
+  let firstRun = true;
+  const itemHosts = (list: readonly ForItem[]): HostNode[] => {
+    const out: HostNode[] = [];
+    for (const it of list) out.push(...it.block.nodes);
+    return out;
+  };
   const run = (): void => {
+    const t = firstRun ? null : listState.transition;
+    firstRun = false;
+    if (!t) {
+      reconcile();
+      return;
+    }
+    const before = new Set(items);
+    t.beforeUpdate?.(itemHosts(items));
+    reconcile();
+    // kept items that moved slide (FLIP); new ones play their enter
+    t.afterUpdate?.(itemHosts(items.filter((it) => before.has(it))));
+    for (const it of items) if (!before.has(it)) t.enter(it.block.nodes);
+  };
+  const reconcile = (): void => {
           // a root-level list is in the tree once its anchor is
           if (rootLevel) parent = be().parentNode?.(anchor) ?? null;
           const src = source();

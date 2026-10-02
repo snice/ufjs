@@ -10,13 +10,14 @@
 //
 // Starting one half on an element cancels the other half still running on
 // it (a v-show toggled back mid-fade, a fast v-if flip), as Vue does.
-import { be, type HostNode, type SwitchTransition } from './host';
+import { be, setStyleHost, type HostNode, type ListTransition, type SwitchTransition } from './host';
 
 type Props = Record<string, unknown>;
 type HookFn = (el: unknown, done?: () => void) => void;
 
 interface HostState {
   endId: number;
+  moveId?: number;
   cancelEnter?: () => void;
   cancelLeave?: () => void;
 }
@@ -232,3 +233,62 @@ export function setShowTransition(host: HostNode, hooks: SwitchTransition): void
 export function showTransitionOf(host: HostNode): SwitchTransition | undefined {
   return showTransitions.get(host as object);
 }
+
+/** <TransitionGroup>'s list hooks (specs/176): enter / leave per item as
+ * <Transition> runs them, plus the move pass — FLIP: positions before the
+ * update, then each kept item that moved is put back where it was with an
+ * inline transform (transitions off), and a frame later the move class
+ * goes on and the transform comes off, so the CSS transition slides it. */
+export function createListHooks(props: Props): ListTransition & { appear(nodes: readonly HostNode[]): void } {
+  const base = createTransitionHooks(props);
+  const before = new Map<HostNode, { left: number; top: number }>();
+  const moveClass = (): string => {
+    const own = props.moveClass;
+    return typeof own === 'string' && own !== '' ? own : `${(props.name as string) || 'v'}-move`;
+  };
+  return {
+    enter: base.enter,
+    leave: base.leave,
+    appear: base.appear,
+    beforeUpdate(hosts) {
+      before.clear();
+      const t = be().transition;
+      if (!t || !usesCss(props)) return;
+      for (const host of hosts) if (t.isElement(host)) before.set(host, t.rectOf(host));
+    },
+    afterUpdate(hosts) {
+      const t = be().transition;
+      if (!t || before.size === 0) return;
+      const moved: HostNode[] = [];
+      for (const host of hosts) {
+        const was = before.get(host);
+        if (!was) continue;
+        const now = t.rectOf(host);
+        const dx = was.left - now.left;
+        const dy = was.top - now.top;
+        if (dx === 0 && dy === 0) continue;
+        setStyleHost(host, { transform: `translate(${dx}px, ${dy}px)`, transitionDuration: '0s' });
+        moved.push(host);
+      }
+      before.clear();
+      if (moved.length === 0) return;
+      const cls = moveClass();
+      t.nextFrame(() => {
+        for (const host of moved) {
+          const st = stateOf(host);
+          const id = (st.moveId = (st.moveId ?? 0) + 1);
+          t.addClass(host, cls);
+          setStyleHost(host, { transform: '', transitionDuration: '' });
+          // the end is read off the computed style, which shows the move
+          // class only once it has been applied: measure a frame later
+          t.nextFrame(() => {
+            t.whenEnds(host, undefined, () => {
+              if (st.moveId === id) t.removeClass(host, cls);
+            });
+          });
+        }
+      });
+    },
+  };
+}
+

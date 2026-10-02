@@ -21,6 +21,7 @@ import {
   setHostReactivity,
   setVaporErrorReporter,
   setVaporJobHook,
+  listOf,
   switchOf,
   takeInsertionState,
   withScope as hostWithScope,
@@ -32,7 +33,7 @@ import {
   template,
 } from './host';
 import { patchHostProps, warnVaporOnce } from './helpers';
-import { createTransitionHooks, setShowTransition } from './transition';
+import { createListHooks, createTransitionHooks, setShowTransition } from './transition';
 import { discardCssVarsBucket, popAndApplyCssVars, pushCssVarsBucket } from './css-vars';
 import {
   createVaporInstance,
@@ -809,18 +810,8 @@ export function withVaporDirectives(node: unknown, dirs: unknown[][]): void {
   }
 }
 
-// ---- built-in components, degraded (specs/170) ------------------------------------------
+// ---- built-in components (specs/170, 174–176) -------------------------------------------
 
-function degraded(name: string, what: string, props: string[]): VaporComponent {
-  return defineVaporComponent({
-    name,
-    props,
-    setup() {
-      warnVaporOnce(`builtin-${name}`, `<${name}> ${what} in vapor components yet (specs/170) — its content renders without it`);
-      return createSlot('default');
-    },
-  });
-}
 
 /** Vapor <Transition> (specs/174): renders its slot, then hangs the class
  * timeline on what came back — the v-if / `:key` / `<component :is>`
@@ -852,7 +843,46 @@ export const VaporTransition = /* @__PURE__ */ defineVaporComponent({
     return block;
   },
 });
-export const VaporTransitionGroup = /* @__PURE__ */ degraded('TransitionGroup', 'does not animate', ['name', 'tag', 'moveClass', 'appear']);
+/** Vapor <TransitionGroup> (specs/176): the v-for list it wraps gets the
+ * item enter / leave and the move pass (vapor/transition.ts
+ * createListHooks); `tag` renders a container element around the items. */
+export const VaporTransitionGroup = /* @__PURE__ */ defineVaporComponent({
+  name: 'TransitionGroup',
+  props: [
+    'tag', 'name', 'appear', 'css', 'type', 'duration', 'moveClass',
+    'enterFromClass', 'enterActiveClass', 'enterToClass', 'appearFromClass', 'appearActiveClass', 'appearToClass',
+    'leaveFromClass', 'leaveActiveClass', 'leaveToClass',
+    'onBeforeEnter', 'onEnter', 'onAfterEnter', 'onEnterCancelled',
+    'onBeforeLeave', 'onLeave', 'onAfterLeave', 'onLeaveCancelled',
+    'onBeforeAppear', 'onAppear', 'onAfterAppear', 'onAppearCancelled',
+  ],
+  setup(props: Record<string, unknown>) {
+    const content = createSlot('default');
+    const list = listOf(content);
+    const hooks = createListHooks(props);
+    if (list) {
+      list.transition = hooks;
+    } else {
+      warnVaporOnce('transition-group-child', '<TransitionGroup> animates the items of a v-for — its content is not one, so it renders without animation');
+    }
+    const appear = props.appear;
+    if (list && appear !== undefined && appear !== false && appear !== 'false') {
+      onMounted(() => hooks.appear(content.nodes));
+    }
+    const tag = props.tag;
+    if (typeof tag !== 'string' || tag === '') return content;
+    // a container element: the items (and the list's anchor) live in it, so
+    // the list finds its parent there; attrs fall through onto it
+    const b = be();
+    const host = b.createElement ? b.createElement(tag) : template(`<${tag}></${tag}>`)().host;
+    insertBlock(content, host, null);
+    // the content's cleanups (leaving items) belong to this component
+    onScopeDispose(() => {
+      for (const cleanup of content.cleanups ?? []) cleanup();
+    });
+    return { nodes: [host] } as Block;
+  },
+});
 type NameMatcher = string | RegExp | (string | RegExp)[] | null | undefined;
 
 function nameMatches(pattern: NameMatcher, name: string): boolean {

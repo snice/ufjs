@@ -291,7 +291,7 @@ shim 逐个补上，语义按 fjs 的现实重述：
 | `vShow` | 只碰内联 `display` 一项（隐藏写 `none`、显示恢复原值），元素其余规则不动——以前整张替换计算样式，vant 步进器第一次改值就把输入框和加号的样式丢光（specs/069） |
 | `withKeys` | 直通。fjs 事件不带键码，守卫没有东西可测——处理器在每个事件上照跑，而不是永不触发 |
 | `withModifiers` | 照 runtime-dom 的 modifierGuards 如实实现：`.stop` 调 `stopPropagation()`（App 端 tap 会冒泡，specs/129）、`.prevent` 调 `preventDefault()`、`.self` 比 `target` / `currentTarget`；系统键 / 鼠标键字段 App 端不存在，按「没按」读。不能像 `withKeys` 那样直通——那样 `.stop` 失效、父级 click 误触发。包装函数缓存在处理器上（同 runtime-dom），重渲染时 prop 不变。NutUI 预编译的 Tag 关闭图标要它（specs/139） |
-| `<TransitionGroup>` | 纯透传（vant 弹层不用） |
+| `<TransitionGroup>` | 纯透传（vant 弹层不用；vapor 组件里是完整实现，见下文 specs/176） |
 | `createApp` | 指名抛错。挂第二个 Vue 根需要容器，App 端没有 DOM；要挂的库由它的适配补丁改从 `fjs/vue` 取 `createApp` + `createDetachedRoot()`（游离根，相当于 body 上的 `<div>`），内容经 Teleport / hoist 落到 app 级 overlay 宿主。vant 的 `showToast()` / `showDialog()` / `showNotify()` / `showImagePreview()` 就是这样打通的（specs/137，demo/vite/vant.ts） |
 | `measureTextBlock` | 经 `__FJS_SHARED` 暴露给库的侧影：库的测高逻辑用宿主排版（vant TextEllipsis 的二分截断靠它，specs/128） |
 
@@ -420,7 +420,6 @@ SFC、TSX / 渲染函数写的库编不了 Vapor，走互操作。
 
 - 原生元素上的 `v-model`：不支持，用 `:value` + `@input`（vant 的 v-model 是组件 props/事件，
   不受影响）。
-- Vapor 组件里的 `<TransitionGroup>`：还没接（`<Transition>` / `<KeepAlive>` / `<Teleport>` 见下表，specs/174、175）。
 - 动态 slot 名：只做静态求值（`<component :is>` 已能切换，specs/174）。
 - `defineVaporCustomElement`、SSR hydration：不支持。
 - Vue 版本：**编译器**主体是 stable 3.5（`@vue/compiler-sfc@3.5.43`，parse + script-setup 的
@@ -549,7 +548,7 @@ compiler-vapor 能生成的每个运行时 helper，四个 vapor 入口都有导
 | `<Transition>`（v-if / v-show / `:key` / `<component :is>`；`mode`、`appear`、`duration`、`css: false`、自定义类名、JS 钩子与 done） | ✅ 类名进样式引擎，结束时机取计算样式的时长（与 VDOM 版同一套） | ✅ `classList` + transitionend / animationend，按计算时长兜底 |
 | `<KeepAlive>`（`include` / `exclude` / `max`，`onActivated` / `onDeactivated` 含子组件） | ✅ 停用的节点挪进不挂树的容器（Flutter 的 remove 会销毁元素） | ✅ |
 | `<Teleport>`（`to` / `disabled` / `defer`，可变；内容里的切换照常落在目标里） | ✅ `body` / `html` → 应用浮层宿主（与 VDOM 同一落点）；其他选择器无目标，告警后原地渲染 | ✅ `document.querySelector` 或元素 |
-| `<TransitionGroup>` | ⚠️ 渲染内容，不动画，告警一次 | ⚠️ 同左 |
+| `<TransitionGroup>`（v-for 条目的 enter / leave、FLIP move、`tag` 容器、`move-class`） | ✅ 位置经 `ui/geometry` 同步读取 | ✅ `getBoundingClientRect` |
 
 同一元素上的多个监听（自己的 `@tap` + 父组件透传的 `@tap` + `v-on="obj"`）两端都按注册顺序叠加
 ——Flutter 后端每个事件键只留一个 handler，叠加在 vapor 的 host 层做。VDOM 路径不受影响（原生元素
