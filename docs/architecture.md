@@ -189,6 +189,35 @@ Dart 侧把 op 帧应用到镜像树之后，**不是整棵树重建**。每个�
 reconcile 的是包装层，包装层没 key 就退化成按位置匹配，一次重排就会让整棵
 子树重建。见 `render/flex.dart` 的 `_flexChild`。
 
+### 只改绘制的更新（specs/194）
+
+粒度再往下一层：**「节点变了」不等于「节点的 widget 链需要重建」**。主题切换时每个节点都变了，但变的几乎全是颜色——
+布局不变，widget 链的形状不变，重建它们（嵌套 build 约占一次 107 ms 切换的 80–100 ms）只为了表达「换个颜色重画」。
+
+`SET_STYLE` 解码时（`MirrorTree.applyFrame`）比较节点新旧样式 entry（`render/paint_only.dart` 的 `classifyPaintOnly`）：
+差集只含 `backgroundColor` / `color` / `borderColor`，其余键值全等，才算「只改绘制」。这样的更新**既不标节点也不标父节点**
+（父节点的 build 读的是孩子的 `display` / `position` / `flexGrow`，换色不涉及），记入 `_paintOnly`；帧末 `flushDirty` 里、
+在放任何信号之前，`applyPaintOnly` 沿节点自己的包装链（遇到多孩子容器即停，不会把别的节点的装饰当成自己的）找到
+`RenderDecoratedBox` 换 `BoxDecoration.color`、找到 `RenderFjsParagraph` 换 span，只 `markNeedsPaint`。
+
+文字的换色是**惰性**的（`RenderFjsParagraph.recolorPaintOnly`）：新颜色在共享段落缓存里是新键，立刻取 painter 等于把
+几千个段落当场重排；Flutter 自己的 `TextPainter` 也把这件事推迟到 paint，所以只有被画出来的段落付钱。
+Flutter 的 `RenderComparison.paint` 保证度量不变，不需要再校验尺寸；也**不走** `RenderParagraph.text` 的 setter
+（它会 `markNeedsSemanticsUpdate`，换色不改任何标签：语义客户端在场时，2000 个段落重新收集语义曾占一次切换的 22 ms / 33 ms）。
+
+回退（走原来的整链重建，并按原因计入 `FjsPaintOnlyStats.fallbacks`）——**拿不准一律回退，不近似**：键集合变化、非绘制键变化、
+`transition` / `animation*`、可见边框、背景图 / 渐变、`:hover`、`:active` 变体不是纯换色、`view` 带裸文本、`htmlBlock`、
+富文本、非 `view` / `text` 的标签、按下期间（`MirrorNode.pressed`）、`pressWithOwner`、节点未挂载。同一帧里别的 op 已经要求
+整链重建（`_dirty` 里有它）也不走快路径。
+
+元素持有的旧 widget 与 RenderObject 的新颜色暂时不一致是安全的：之后任何一次重建都从 `node.style`（已是新值）造新 widget，
+`updateRenderObject` 把 RO 设成同一个值；`_FjsNodeView` 里面没有任何缓存。
+
+开关：`FjsPaintOnly` 默认开；`--dart-define=FJS_PAINT_ONLY=off` 或 dev 构建里 `invokeHost('fjs.dev.paintOnly', 'on' | 'off')`
+（hello-js 的 `__themeBench.setPaintOnly`）。关键文件：`render/paint_only.dart`、`mirror_tree.dart`（`classify` 接入点与
+`flushDirty`）、`render/paragraph.dart`（`recolorPaintOnly`）。对拍：`test/paint_only_test.dart`；基准：
+`test/theme_switch_bench_test.dart`。
+
 ## 线程模型（v1）
 
 摘要，完整说明见 [threading-model.md](threading-model.md)：

@@ -36,11 +36,11 @@ class GridFrameWriter {
     raw(j);
   }
 
-  void setStyle(int id, int sid) {
+  void setStyle(int id, int sid, [int activeSid = 0]) {
     u8(UiOpCode.setStyle);
     u32(id);
     u32(sid);
-    u32(0);
+    u32(activeSid);
   }
 
   void setProps(int id, String json) {

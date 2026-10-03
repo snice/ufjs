@@ -16,6 +16,7 @@ import 'dev_client.dart';
 import 'ffi.dart';
 import 'font_loader.dart';
 import 'flat/flat_gate.dart' show registerFlatDevModule;
+import 'render/paint_only.dart' show registerPaintOnlyDevModule;
 import 'geometry.dart';
 import 'http.dart';
 import 'idle_gate.dart';
@@ -87,6 +88,7 @@ class FjsEngine extends ChangeNotifier {
       flushPending: _flushUiNotifyNow,
     );
     registerFlatDevModule(host: host, tree: tree);
+    registerPaintOnlyDevModule(host: host);
     _http.register(host);
     _setupAsyncInvokeModule();
     _idle.attach();
