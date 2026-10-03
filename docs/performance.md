@@ -868,6 +868,17 @@ Vapor 挂载 75.6–103.7 ms（中位 ~87，VDOM 91.7–113.6）、帧流量 21K
 只读 index 掩住了它，格子一读 `r` 首行即空、整体错位一行；已按 Vue 语义改 1..N 并加
 parity 用例（ba98359）。
 
+**绑定 effect 懒创建？（specs/197，2026-10-03，结论：不成立，改走「更轻的 effect」）**：
+想法是挂载时只写初值、首次变更时再建 effect。离线（`examples/bench` `pnpm run proto`，2000 格，
+读 `vals[k]`）：host 7.0 / 写一次不订阅 10.1 / effect 17.5 / 照 `renderEffect` 复刻 22.2。
+**依赖在首跑前未知**，不订阅就会漏更新（`eval` 档）；而订阅本身有下限——整表只用 1 个
+effect 也要 14.6（2000 条依赖链接）。所以真正可省的是 effect 的包装：`ReactiveEffect` +
+共享调度器（无 per-cell job / opts / pending 闭包）挂载 22.2 → **16.9**，改 1 / 200 / 2000 格
+0.0 / 1.4 / 13.3（与原来持平）。每行一个 effect 挂载 14.8，改 1 格 0.1，但改 200 格
+1.4 → 5.0（每行都被碰到就整行重写），不取。`track` 无 `activeSub` 不可用，静态依赖（`vals[i]`
+直接挂 dep）没有公开 API 能做。后续是否在 `repeatTemplateLive` 里实装轻量 effect，看
+FlatLiveVapor 的真实挂载（28.7）能否降到 ~23，见 specs/197 §8。
+
 **官方 runtime-vapor 的历史数字（specs/148 阶段 0，已被上者取代）**：`examples/bench/vapor/` 用 Vue 3.6.0-rc.9，把同一个
 `Flat4050.vue` 分别以 VDOM（fjs 渲染器）和 Vapor（官方 runtime-vapor 跑在一层落到同一套 nodeOps 的 DOM 外壳上）
 挂载，同一份 runtime-core、同一个样式引擎。离线挂载 VDOM **65.5 ms**、Vapor **81.5 ms**，卸载 8.2 / 9.5 ms。
