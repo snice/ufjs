@@ -218,6 +218,18 @@ Flutter 的 `RenderComparison.paint` 保证度量不变，不需要再校验尺�
 `flushDirty`）、`render/paragraph.dart`（`recolorPaintOnly`）。对拍：`test/paint_only_test.dart`；基准：
 `test/theme_switch_bench_test.dart`。
 
+### 只改文字内容的更新（specs/196）
+
+194 的同一思路用到文字：`SET_TEXT` 解码时（`classifyTextOnly`）判定是不是「纯字符串替换」——节点是 `text`、无子节点、无 `richSpans`，
+新旧文本都非空（可见性不变），无 transition，父节点是非 htmlBlock 的 `view`（不是 `display: contents`），祖先链上没有 `button`。
+满足则不标节点也不标父节点，`flushDirty` 里 `applyTextOnly` 用 `fjsPlainTextSpec` 得到新 span，走 `RenderFjsParagraph` **正常的** `text` setter
+（`markNeedsLayout` 与 `markNeedsSemanticsUpdate` 照常触发——与换色不同，换字改变度量与语义标签，所以不能绕开它们），Flutter 自己沿 RenderObject 链传播重排。
+回退条件按原因计入 `FjsPaintOnlyStats.textFallbacks`（空 ↔ 非空、非纯文本、span / htmlBlock / `display: contents` 父、button 子树、transition、按下中、
+未挂载……）。开关：`--dart-define=FJS_TEXT_ONLY=off` 或 dev 构建里 `invokeHost('fjs.dev.textOnly', 'on' | 'off')`。
+
+**已知差异**：element 持有的仍是旧 widget，widget 树里的文字是旧的（渲染 / 语义 / 几何 / 之后的重建都不受影响）；按 widget 找文字的 Flutter 测试
+（`find.text`）会看到旧值，需要时关掉开关。关键文件：`render/paint_only.dart`（两条快路径共用钩子、下探与统计）、`mirror_tree.dart`。
+
 ## 线程模型（v1）
 
 摘要，完整说明见 [threading-model.md](threading-model.md)：

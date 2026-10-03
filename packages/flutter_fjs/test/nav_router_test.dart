@@ -12,6 +12,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_fjs/src/render/paint_only.dart' show fjsTextOnlyEnabled;
 import 'package:flutter_fjs/flutter_fjs.dart';
 import 'package:flutter_fjs/src/widgets/toast_host.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -127,6 +128,14 @@ Navigator _fjsNavigator(WidgetTester tester) =>
     tester.widget<Navigator>(find.byType(Navigator).last);
 
 void main() {
+  // These tests pin how the ORDINARY path marks and rebuilds on a text edit
+  // (which nodes are dirty, what is found in the widget tree). specs/196's
+  // text-only fast path edits the mounted paragraph instead and leaves the
+  // element's widget as it was, so it is switched off here; its own behaviour is
+  // covered by text_only_test.dart.
+  setUp(() => fjsTextOnlyEnabled = false);
+  tearDown(() => fjsTextOnlyEnabled = true);
+
   final lib = _libPath();
   if (lib == null || !Platform.isMacOS) {
     // no dev dylib (or not macOS): nothing to load the VM from

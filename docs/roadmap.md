@@ -913,6 +913,13 @@ spec 088 删掉 quickjs-ng 时留下了对比与退路缺口，补上
 - ✅ **真机复核**（iPhone 12，profile）：主题切换最长 UI 帧 161 → 4.1 ms。
 - 后续（各自立 spec）：`opacity`、可见边框的换色、有 transition 的节点；把同样的「只改绘制」判定用到 `Image` / `canvas` 等适配器。
 
+## 只改文字内容的样式更新（已完成 2026-10，specs/196）
+
+- ✅ `SET_TEXT` 到纯文本节点：就地给已挂载的 `RenderFjsParagraph` 换 span，不重建 widget 链、不标父节点；空 ↔ 非空、span / htmlBlock / button 子树、
+  transition、按下中等一律回退并计数。真机改 2000 格文字 UI 最长帧 48.9 → 18.6 ms（38%），改 200 格 31.2 → 24.3 ms（78%，剩下的是 PAINT）。
+  已知差异：widget 树里的文字是旧的，`find.text` 类 Flutter 测试需要关开关（`FJS_TEXT_ONLY=off`）。
+- 后续（各自立 spec）：文字节点的其它「形状不变」更新（`class` 变化但样式只改尺寸 / 间距等布局键）；`opacity` 快路径；把被改行的重绘成本也降下来（自绘表面的保留层）。
+
 ## 近期计划
 
 - **App 侧真机对拍挂账**：078/079 的示例页（过渡演示新增面板、百分比间距与

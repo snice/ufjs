@@ -39,10 +39,22 @@ import 'style.dart';
 
 /// Master switch. `--dart-define=FJS_PAINT_ONLY=off` starts with it off; tests
 /// and `fjs.dev.paintOnly` flip it.
+/// specs/196 switch: `--dart-define=FJS_TEXT_ONLY=off`, or `fjs.dev.textOnly`.
+bool fjsTextOnlyEnabled = const String.fromEnvironment('FJS_TEXT_ONLY') != 'off';
+
 bool fjsPaintOnlyEnabled = const String.fromEnvironment('FJS_PAINT_ONLY') != 'off';
 
 class FjsPaintOnlyStats {
   static int applied = 0;
+
+  /// specs/196: text-content updates applied in place / refused, by reason.
+  static int textApplied = 0;
+  static final Map<String, int> textFallbacks = {};
+
+  static bool textFallback(String reason) {
+    textFallbacks[reason] = (textFallbacks[reason] ?? 0) + 1;
+    return false;
+  }
 
   /// Why updates stayed on the ordinary path: reason → count.
   static final Map<String, int> fallbacks = {};
@@ -50,6 +62,8 @@ class FjsPaintOnlyStats {
   static void reset() {
     applied = 0;
     fallbacks.clear();
+    textApplied = 0;
+    textFallbacks.clear();
   }
 
   static bool fallback(String reason) {
@@ -163,26 +177,11 @@ int classifyPaintOnly(
   return base.flags;
 }
 
-/// Applies a classified update to [node]'s mounted render objects. False means
-/// nothing was (fully) applied and the caller must rebuild the node.
-bool applyPaintOnly(MirrorNode node, int flags) {
-  final needsBg = (flags & paintBg) != 0;
-  final needsText = node.tag == 'text' && (flags & paintColor) != 0;
-  // nothing this node paints changed (a box's own `color` colours only its
-  // text, which are nodes of their own; a border colour with no border)
-  if (!needsBg && !needsText) {
-    FjsPaintOnlyStats.applied++;
-    return true;
-  }
-  final e = node.element;
-  if (e is! Element || !e.mounted) return FjsPaintOnlyStats.fallback('unmounted');
-  if (node.pressed) return FjsPaintOnlyStats.fallback('pressed');
-  final root = e.findRenderObject();
-  if (root == null || !root.attached) return FjsPaintOnlyStats.fallback('unattached');
-
-  // walk the node's OWN chain: stop at anything that can hold several children
-  // (a flex's children are other nodes) so a decoration below it is never taken
-  // for this node's
+/// A node's own decoration box and paragraph, found by walking down from its
+/// outermost render object. The walk stops at anything that can hold several
+/// children (a flex's children are other nodes), so a decoration below it is
+/// never taken for this node's.
+({RenderDecoratedBox? box, RenderFjsParagraph? paragraph}) _ownChain(RenderObject root) {
   RenderDecoratedBox? box;
   RenderFjsParagraph? paragraph;
   RenderObject? r = root;
@@ -202,6 +201,29 @@ bool applyPaintOnly(MirrorNode node, int flags) {
     if (n != 1) break;
     r = only;
   }
+  return (box: box, paragraph: paragraph);
+}
+
+/// Applies a classified update to [node]'s mounted render objects. False means
+/// nothing was (fully) applied and the caller must rebuild the node.
+bool applyPaintOnly(MirrorNode node, int flags) {
+  final needsBg = (flags & paintBg) != 0;
+  final needsText = node.tag == 'text' && (flags & paintColor) != 0;
+  // nothing this node paints changed (a box's own `color` colours only its
+  // text, which are nodes of their own; a border colour with no border)
+  if (!needsBg && !needsText) {
+    FjsPaintOnlyStats.applied++;
+    return true;
+  }
+  final e = node.element;
+  if (e is! Element || !e.mounted) return FjsPaintOnlyStats.fallback('unmounted');
+  if (node.pressed) return FjsPaintOnlyStats.fallback('pressed');
+  final root = e.findRenderObject();
+  if (root == null || !root.attached) return FjsPaintOnlyStats.fallback('unattached');
+
+  final chain = _ownChain(root);
+  final box = chain.box;
+  final paragraph = chain.paragraph;
 
   final style = FjsStyle.of(node);
   if ((flags & paintBg) != 0) {
@@ -236,11 +258,87 @@ bool applyPaintOnly(MirrorNode node, int flags) {
   return true;
 }
 
+
+// ---- specs/196: "only the text changed" -------------------------------------
+//
+// A SET_TEXT on a plain `text` node changes what one RenderFjsParagraph shows
+// and nothing about the node's widget chain, yet used to rebuild the chain and
+// the parent's (77–88% of a 200-text update's LAYOUT stage on a device). The
+// same shape as the paint-only path above, with one difference: a new string
+// changes metrics and the semantics label, so the span goes through the
+// paragraph's ordinary `text` setter (markNeedsLayout + markNeedsSemanticsUpdate)
+// and Flutter propagates the relayout itself. Nothing is bypassed.
+//
+// Refused (and counted by reason in [FjsPaintOnlyStats.textFallbacks]) whenever
+// the update is more than a string swap: a text becoming empty or non-empty
+// (the parent's build filters hidden children), anything that is not a plain
+// childless `text`, a parent that is not a plain `view` (a span's paragraph, an
+// html block's inline paragraph and a `display: contents` box are built from
+// their children), a `button` anywhere above (it collects its subtree's text
+// into one label), a transition (its builder closure holds the old string), a
+// pressed node (paints the pressed style, which `fjsPlainTextSpec` would not
+// know).
+
+/// Whether a SET_TEXT on [node] ([oldText] → its current text) can be applied in
+/// place. Called from MirrorTree.applyFrame.
+bool classifyTextOnly(MirrorNode node, String? oldText, MirrorTree tree) {
+  bool no(String reason) => FjsPaintOnlyStats.textFallback(reason);
+  if (!fjsTextOnlyEnabled) return false;
+  if (node.tag != 'text' || node.children.isNotEmpty || node.prop('richSpans') != null) {
+    return no('not-plain-text');
+  }
+  // a node's first text (its mount): nothing to swap and not worth a counter
+  // entry — every text node passes through here once
+  if (oldText == null) return false;
+  final text = node.text ?? '';
+  if (oldText.isEmpty || text.isEmpty) return no('visibility');
+  if (node.hoverStyle != null || node.prop('pressWithOwner') == true) return no('state-style');
+  final map = node.styleMap;
+  if (map['display']?.toString() == 'contents') return no('display-contents');
+  for (final k in map.keys) {
+    if (k.startsWith('transition') || k.startsWith('animation')) return no('transition');
+  }
+  final pid = tree.parentIdOf(node.id);
+  final parent = pid == null ? null : tree.node(pid);
+  if (parent == null || parent.tag != 'view' || parent.prop('htmlBlock') == true) return no('parent');
+  if (parent.styleMap['display']?.toString() == 'contents') return no('parent-contents');
+  for (var a = pid; a != null && a != 0; a = tree.parentIdOf(a)) {
+    if (tree.node(a)?.tag == 'button') return no('button');
+  }
+  return true;
+}
+
+/// Applies a classified SET_TEXT. False: nothing changed, rebuild the node.
+bool applyTextOnly(MirrorNode node) {
+  final e = node.element;
+  if (e is! Element || !e.mounted) return FjsPaintOnlyStats.textFallback('unmounted');
+  if (node.pressed) return FjsPaintOnlyStats.textFallback('pressed');
+  final root = e.findRenderObject();
+  if (root == null || !root.attached) return FjsPaintOnlyStats.textFallback('unattached');
+  final paragraph = _ownChain(root).paragraph;
+  if (paragraph == null) return FjsPaintOnlyStats.textFallback('no-paragraph');
+  final style = FjsStyle.of(node);
+  if (style.transitions != null) return FjsPaintOnlyStats.textFallback('transition');
+  final env = FjsTextEnvData.peek(e);
+  if (env == null) return FjsPaintOnlyStats.textFallback('no-text-env');
+  final spec = fjsPlainTextSpec(env, node.text, style);
+  if (spec == null) return FjsPaintOnlyStats.textFallback('text-spec');
+  paragraph.text = spec.span;
+  FjsPaintOnlyStats.textApplied++;
+  return true;
+}
+
 /// `fjs.dev.paintOnly(mode)` → whether the fast path is on after the call
 /// (`'on'` / `'off'`; no argument just reads it). Dev builds only, for A/B-ing
 /// on a device without rebuilding (hello-js `__themeBench.setPaintOnly`).
 void registerPaintOnlyDevModule({required HostRegistry host}) {
   if (kReleaseMode) return;
+  host.register('fjs.dev.textOnly', (args) {
+    final want = args.isEmpty ? null : args[0]?.toString();
+    if (want == 'on') fjsTextOnlyEnabled = true;
+    if (want == 'off') fjsTextOnlyEnabled = false;
+    return fjsTextOnlyEnabled ? 'on' : 'off';
+  });
   host.register('fjs.dev.paintOnly', (args) {
     final want = args.isEmpty ? null : args[0]?.toString();
     if (want == 'on') fjsPaintOnlyEnabled = true;
