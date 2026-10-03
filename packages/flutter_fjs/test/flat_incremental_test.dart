@@ -6,6 +6,7 @@
 // are compared. A cache invalidation missed anywhere in flat_layout.dart shows
 // up here as a rect that stayed where it used to be.
 import 'dart:typed_data';
+import 'dart:ui' show Size;
 
 import 'package:flutter_fjs/src/flat/flat_gate.dart';
 import 'package:flutter_fjs/src/flat/flat_layout.dart';
@@ -170,13 +171,13 @@ List<Uint8List> _script(int seed, int steps) {
 void main() {
   tearDown(() => fjsFlatMode = FjsFlatMode.auto);
 
-  for (final seed in [7, 21, 99, 12345, 777]) {
+  for (final seed in [7, 21, 99, 12345, 777, 4242, 31337, 5, 88, 2024, 1001, 65535]) {
     testWidgets('incremental == ordinary over a random edit sequence (seed $seed)', (tester) async {
       addTearDown(tester.view.reset);
-      final frames = _script(seed, 60);
-      final ordinary = await renderSequence(tester, frames, FjsFlatMode.off);
+      final frames = _script(seed, 100);
+      final ordinary = await renderSequence(tester, frames, FjsFlatMode.off, viewport: const Size(2400, 3000));
       FlatStats.reset();
-      final flat = await renderSequence(tester, frames, FjsFlatMode.force);
+      final flat = await renderSequence(tester, frames, FjsFlatMode.force, viewport: const Size(2400, 3000));
       expect(flat.length, ordinary.length);
       for (var i = 0; i < ordinary.length; i++) {
         final a = ordinary[i], b = flat[i];
@@ -192,6 +193,7 @@ void main() {
             reason: 'step $i (${_labels[i]}) node $id: ordinary $x vs flat $y',
           );
         }
+        if (a.overflowed || b.overflowed) continue; // debug overflow stripes, no flat equivalent
         var diff = 0;
         for (var j = 0; j < a.pixels.length; j++) {
           if (a.pixels[j] != b.pixels[j]) diff++;

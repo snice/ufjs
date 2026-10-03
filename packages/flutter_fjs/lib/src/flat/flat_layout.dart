@@ -21,7 +21,22 @@
 // constraints it was laid out with, its size and offset). A layout call with
 // the constraints a clean node already has returns its cached size — the same
 // early-out RenderObject.layout has — so a one-text change re-lays only the
-// dirty path (marked up the parent chain) and whatever its new size disturbs.
+// dirty node and whatever its new size disturbs.
+//
+// Dirtiness is NOT marked up the parent chain (specs/195). A dirty node is
+// re-laid with the constraints its parent last gave it; if its size is
+// unchanged, nothing above it can have moved and the walk stops there — only
+// the ancestors' `bounds` (what paint culls with) are refreshed. A changed size
+// makes the parent dirty, and the same question is asked one level up. That is
+// Flutter's relayout boundary made explicit, and it is why changing one digit
+// of a 4050-cell grid re-lays one node, not the node, its cell, its row, its
+// grid and every sibling of each.
+//
+// One exception: a parent that ran FjsShrinkStretchFlex's two passes always
+// re-lays when a child is dirty. Its children are laid out twice with different
+// constraints (measuring, then stretched); a child whose size is unchanged under
+// the final constraints can still have been a different size under the
+// measuring ones, and the line width the parent derived from them with it.
 import 'dart:math' as math;
 
 import 'package:flutter/rendering.dart';
@@ -36,10 +51,36 @@ import 'flat_style.dart';
 class FlatStats {
   static int relaidNodes = 0;
   static int paintedNodes = 0;
+
+  /// Chunks re-recorded / re-attached untouched by the layered paint
+  /// (specs/195).
+  static int paintedChunks = 0;
+  static int reusedChunks = 0;
+
+  /// Not reset by [reset]: how many chunks the last pack made, and how many
+  /// packs have run (a repack on every edit would show here).
+  static int chunkCount = 0;
+  static int packs = 0;
   static void reset() {
     relaidNodes = 0;
     paintedNodes = 0;
+    paintedChunks = 0;
+    reusedChunks = 0;
   }
+}
+
+/// A retained slice of the surface's picture: one child subtree of the spine's
+/// last node (a row of the 4050 grid), recorded into a layer of its own. A
+/// change inside it re-records this chunk only; the others are re-attached
+/// as they were and the engine reuses its cached scene for them.
+class FlatChunk {
+  FlatChunk(this.node);
+
+  final FlatNode node;
+
+  /// Content differs from what the layer holds (or the layer does not exist).
+  bool dirty = true;
+  final LayerHandle<OffsetLayer> handle = LayerHandle<OffsetLayer>();
 }
 
 class FlatNode {
@@ -58,6 +99,20 @@ class FlatNode {
   // ---- layout cache ----------------------------------------------------------
   bool dirty = true;
   BoxConstraints? lastC;
+
+  /// Depth below the root (0 for the root); the dirty queue is bucketed by it.
+  int depth = 0;
+
+  /// Already in the dirty queue.
+  bool queued = false;
+
+  /// The chunk this node is recorded in; null on the spine (painted into the
+  /// surface's own layer) and for a surface without chunks.
+  FlatChunk? chunk;
+
+  /// Its flex ran FjsShrinkStretchFlex's measuring + stretching passes the last
+  /// time it was laid out: a dirty child then always propagates to it.
+  bool usedTwoPass = false;
 
   /// The constraints [_layoutFlex] last ran with (the content box), so a child
   /// can ask what its parent's effective alignment was.
@@ -127,7 +182,7 @@ class FlatEngine {
     for (final n in byId.values) {
       n.painter = null;
       n._keyMin = n._keyMax = -1;
-      if (n.isText) n.dirty = true;
+      if (n.isText) markDirty(n);
     }
   }
 
@@ -140,6 +195,11 @@ class FlatEngine {
     _painters.clear();
     _painterCount = 0;
     _specs.clear();
+    for (final c in chunks) {
+      c.handle.layer = null;
+    }
+    chunks = [];
+    spine = [];
     byId.clear();
     root = null;
   }
@@ -161,6 +221,7 @@ class FlatEngine {
       }
       final isText = m.tag == 'text';
       final n = FlatNode(m, parent, v.style!, isText)..entry = m.style;
+      n.depth = parent == null ? 0 : parent.depth + 1;
       byId[m.id] = n;
       if (isText) {
         n.text = m.text;
@@ -180,13 +241,58 @@ class FlatEngine {
       return n;
     }
 
+    _clearDirtyQueue();
     final r = build(rootNode, null);
     if (r == null) {
       dispose();
       return false;
     }
     root = r;
+    _buildChunks();
+    FlatStats.packs++;
+    FlatStats.chunkCount = chunks.length;
     return true;
+  }
+
+  // ---- chunks (specs/195) -----------------------------------------------------
+
+  /// Nodes painted into the surface's own layer, outermost first: the root and
+  /// every single-child ancestor above the chunks. Empty when there are none.
+  List<FlatNode> spine = [];
+
+  /// The retained slices; empty = the surface paints as one layer.
+  List<FlatChunk> chunks = [];
+
+  /// A subtree is only sliced when the spine ends in a node with at least this
+  /// many children; fewer children make layers cost more than they save.
+  static const int minChunkKids = 4;
+
+  void _buildChunks() {
+    for (final c in chunks) {
+      c.handle.layer = null;
+    }
+    chunks = [];
+    spine = [];
+    var n = root!;
+    final path = <FlatNode>[n];
+    while (!n.isText && n.kids.length == 1 && !n.kids[0].isText) {
+      n = n.kids[0];
+      path.add(n);
+    }
+    if (n.isText || n.kids.length < minChunkKids) return;
+    spine = path;
+    void assign(FlatNode x, FlatChunk c) {
+      x.chunk = c;
+      for (final k in x.kids) {
+        assign(k, c);
+      }
+    }
+
+    for (final k in n.kids) {
+      final c = FlatChunk(k);
+      chunks.add(c);
+      assign(k, c);
+    }
   }
 
   bool _refreshSpec(FlatNode n) {
@@ -205,7 +311,11 @@ class FlatEngine {
   /// A new text environment (scaler, ambient style…): every paragraph re-keys.
   /// Returns false if some text can no longer be flat-ed.
   bool setEnv(FjsTextEnvData env) {
-    if (identical(env, _env)) return true;
+    final current = _env;
+    if (current != null && current.sameAs(env)) {
+      _env = env; // a rebuilt-but-equal environment: nothing re-keys
+      return true;
+    }
     _env = env;
     _specs.clear();
     _dropPainters();
@@ -218,10 +328,33 @@ class FlatEngine {
     return true;
   }
 
+  // Dirty nodes bucketed by depth (specs/195): processed deepest first so a
+  // node's children are settled before it is re-laid, and a parent made dirty
+  // by a child's size change lands in a shallower bucket still to come.
+  final List<List<FlatNode>> _dirtyByDepth = [];
+  int _maxDirtyDepth = -1;
+
+  /// Marks [n] itself as needing a re-layout. Ancestors are NOT marked; see the
+  /// file header.
   void markDirty(FlatNode n) {
-    for (FlatNode? p = n; p != null; p = p.parent) {
-      p.dirty = true;
+    n.dirty = true;
+    if (n.queued) return;
+    n.queued = true;
+    while (_dirtyByDepth.length <= n.depth) {
+      _dirtyByDepth.add([]);
     }
+    _dirtyByDepth[n.depth].add(n);
+    if (n.depth > _maxDirtyDepth) _maxDirtyDepth = n.depth;
+  }
+
+  void _clearDirtyQueue() {
+    for (final b in _dirtyByDepth) {
+      for (final n in b) {
+        n.queued = false;
+      }
+      b.clear();
+    }
+    _maxDirtyDepth = -1;
   }
 
   /// Applies a changed mirror node in place. Returns false when the change is
@@ -273,9 +406,64 @@ class FlatEngine {
   Size layoutRoot(BoxConstraints c, {required bool rootShrinkToFit}) {
     final r = root!;
     _rootShrink = rootShrinkToFit;
-    final s = _layout(r, c);
+    _processDirty();
+    // the root's own constraints changed, or it was never laid out (a fresh
+    // pack leaves every node dirty with no constraints): lay out top-down —
+    // clean children whose constraints did not change answer from their cache
+    if (r.lastC != c || r.dirty) _layout(r, c);
     r.offset = Offset.zero;
-    return s;
+    return r.size;
+  }
+
+  /// Re-lays every dirty node whose constraints are known, deepest first. A node
+  /// whose size did not change stops the walk (only `bounds` is refreshed up the
+  /// chain); one whose size changed makes its parent dirty. A node with no
+  /// constraints yet belongs to a fresh pack and is reached top-down.
+  void _processDirty() {
+    if (_maxDirtyDepth < 0) return;
+    for (var d = _maxDirtyDepth; d >= 0; d--) {
+      if (d >= _dirtyByDepth.length) continue;
+      final bucket = _dirtyByDepth[d];
+      // markDirty on a shallower node appends to ITS bucket, never this one
+      for (var i = 0; i < bucket.length; i++) {
+        final n = bucket[i];
+        n.queued = false;
+        if (!n.dirty) continue; // recomputed by an ancestor's pass meanwhile
+        final c = n.lastC;
+        if (c == null) continue;
+        final old = n.size;
+        _layout(n, c);
+        final p = n.parent;
+        if (p == null) continue; // the root: layoutRoot returns its size
+        if (n.size != old || p.usedTwoPass) {
+          markDirty(p);
+        } else {
+          _refreshBoundsUp(p);
+        }
+      }
+      bucket.clear();
+    }
+    _maxDirtyDepth = -1;
+  }
+
+  /// Recomputes [from]'s and its ancestors' `bounds`, stopping once one is
+  /// unchanged.
+  void _refreshBoundsUp(FlatNode from) {
+    for (FlatNode? a = from; a != null; a = a.parent) {
+      final before = a.bounds;
+      _computeBounds(a);
+      if (a.bounds == before) return;
+    }
+  }
+
+  void _computeBounds(FlatNode n) {
+    final st = n.style;
+    var b = Offset.zero & n.size;
+    final ox = st.margin.left + st.padding.left, oy = st.margin.top + st.padding.top;
+    for (final k in n.kids) {
+      b = b.expandToInclude(k.bounds.shift(Offset(ox, oy) + k.offset));
+    }
+    n.bounds = b;
   }
 
   bool _rootShrink = false;
@@ -284,6 +472,7 @@ class FlatEngine {
     if (!n.dirty && n.lastC == c) return n.size;
     n.lastC = c;
     n.dirty = false;
+    n.chunk?.dirty = true;
     FlatStats.relaidNodes++;
     final st = n.style;
     final m = st.margin;
@@ -313,12 +502,7 @@ class FlatEngine {
         ? padded
         : c.constrain(Size(m.horizontal + padded.width, m.vertical + padded.height));
 
-    var b = Offset.zero & n.size;
-    final ox = m.left + p.left, oy = m.top + p.top;
-    for (final k in n.kids) {
-      b = b.expandToInclude(k.bounds.shift(Offset(ox, oy) + k.offset));
-    }
-    n.bounds = b;
+    _computeBounds(n);
     return n.size;
   }
 
@@ -409,8 +593,10 @@ class FlatEngine {
     if (effective != FlatAlign.stretch ||
         crossTight ||
         !(measureCross || (crossBounded && _shrinkToFit(n)))) {
+      n.usedTwoPass = false;
       return _flexPass(n, c, items, effective);
     }
+    n.usedTwoPass = true;
     // two passes (FjsShrinkStretchFlex.performLayout): measure with `center`,
     // then stretch with the cross axis tight at what the measuring pass found
     final measured = _flexPass(n, c, items, FlatAlign.center);
@@ -552,26 +738,79 @@ class FlatEngine {
     _paintNode(canvas, r, origin, visible);
   }
 
+  /// The layered paint (specs/195). The spine's own boxes go into the surface's
+  /// layer; each chunk is a retained layer of its own — re-recorded when dirty,
+  /// re-attached untouched when not. Chunks outside [window] (absolute, like
+  /// [paint]'s) are left out of the tree altogether (their layer is kept, and
+  /// is reused when they scroll back in clean). Inside a chunk nothing is culled:
+  /// a scroll then never makes a recording stale, and a chunk is small by
+  /// construction (one child of the spine's last node).
+  void paintLayered(PaintingContext context, Offset offset, Rect? window) {
+    final r = root;
+    if (r == null) return;
+    if (chunks.isEmpty) {
+      paint(context.canvas, offset, window);
+      return;
+    }
+    var at = offset;
+    for (var i = 0; i < spine.length; i++) {
+      final s = spine[i];
+      _paintBox(context.canvas, s, at);
+      FlatStats.paintedNodes++;
+      if (i + 1 < spine.length) at = _contentAt(s, at) + spine[i + 1].offset;
+    }
+    final contentAt = _contentAt(spine.last, at);
+    for (final c in chunks) {
+      final origin = contentAt + c.node.offset;
+      if (window != null && !c.node.bounds.shift(origin).overlaps(window)) continue;
+      var layer = c.handle.layer;
+      if (layer == null || c.dirty) {
+        layer ??= OffsetLayer();
+        c.handle.layer = layer;
+        layer.offset = origin;
+        context.pushLayer(
+          layer,
+          (ctx, _) => _paintNode(ctx.canvas, c.node, Offset.zero, null),
+          Offset.zero,
+        );
+        c.dirty = false;
+        FlatStats.paintedChunks++;
+      } else {
+        layer.offset = origin;
+        context.addLayer(layer);
+        FlatStats.reusedChunks++;
+      }
+    }
+  }
+
+  Offset _contentAt(FlatNode n, Offset at) {
+    final st = n.style;
+    return at + Offset(st.margin.left + st.padding.left, st.margin.top + st.padding.top);
+  }
+
+  /// A node's own background, no children.
+  void _paintBox(Canvas canvas, FlatNode n, Offset at) {
+    final st = n.style;
+    final bg = st.background;
+    if (bg == null) return;
+    final rect = (at + Offset(st.margin.left, st.margin.top)) & n.borderSize;
+    _paint.color = bg;
+    final rad = st.radius;
+    if (rad == null || rad == BorderRadius.zero) {
+      canvas.drawRect(rect, _paint);
+    } else {
+      canvas.drawRRect(rad.toRRect(rect), _paint);
+    }
+  }
+
   void _paintNode(Canvas canvas, FlatNode n, Offset at, Rect? visible) {
     if (visible != null && !n.bounds.shift(at).overlaps(visible)) return;
     FlatStats.paintedNodes++;
     final st = n.style;
     final m = st.margin, p = st.padding;
     final boxAt = at + Offset(m.left, m.top);
-    final bg = st.background;
-    if (bg != null || st.radius != null) {
-      // BoxDecoration (color + borderRadius, no border / shadow / gradient)
-      final rect = boxAt & n.borderSize;
-      if (bg != null) {
-        _paint.color = bg;
-        final rad = st.radius;
-        if (rad == null || rad == BorderRadius.zero) {
-          canvas.drawRect(rect, _paint);
-        } else {
-          canvas.drawRRect(rad.toRRect(rect), _paint);
-        }
-      }
-    }
+    // BoxDecoration (color + borderRadius, no border / shadow / gradient)
+    _paintBox(canvas, n, at);
     final contentAt = boxAt + Offset(p.left, p.top);
     if (n.isText) {
       final painter = n.painter?.painter;

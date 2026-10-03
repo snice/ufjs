@@ -24,6 +24,7 @@ import 'package:flutter/semantics.dart';
 import '../mirror_tree.dart';
 import '../registry/host.dart' show HostRegistry;
 import '../render/renderer.dart' show FjsNodeRenderer;
+import 'flat_layout.dart' show FlatStats;
 import 'flat_style.dart';
 
 /// `auto`: flat when the gate says so, the platform has no semantics client and
@@ -176,6 +177,16 @@ void registerFlatDevModule({required HostRegistry host, required MirrorTree tree
   if (kReleaseMode) return;
   host.register('fjs.dev.flat', (args) {
     final want = args.isEmpty ? null : args[0]?.toString();
+    if (want == 'stats') {
+      // the engine's counters since the last 'reset', for reading on a device
+      return '{"relaid":${FlatStats.relaidNodes},"paintedNodes":${FlatStats.paintedNodes},'
+          '"paintedChunks":${FlatStats.paintedChunks},"reusedChunks":${FlatStats.reusedChunks},'
+          '"chunks":${FlatStats.chunkCount},"packs":${FlatStats.packs}}';
+    }
+    if (want == 'reset') {
+      FlatStats.reset();
+      return fjsFlatMode.name;
+    }
     final next = switch (want) {
       'auto' => FjsFlatMode.auto,
       'off' => FjsFlatMode.off,

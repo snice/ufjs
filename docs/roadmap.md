@@ -899,7 +899,8 @@ spec 088 删掉 quickjs-ng 时留下了对比与退路缺口，补上
   画面与现有渲染器逐像素一致（生成式 + 手写对拍、随机变更序列的增量 == 全量）。
   详见 [architecture.md](architecture.md#自绘表面纯展示子树不建-widgetspecs192--193)、
   [performance.md](performance.md#自绘表面纯展示子树不建-widgetspecs192--193)。
-- ⏳ **真机 profile 复核**（模拟器 debug 的绝对值不可信）。
+- ✅ **增量更新路径（specs/195）**：真机复核（iPhone 12）发现 193 的改 1 格回退（UI 24.3 vs 4.6 ms）；relayout 边界式增量布局、
+  分块保留层绘制、文字环境按内容比较之后，改 1 格 UI 3.2 ms、挂载帧 UI 15.5 ms（现有渲染器 67 ms）。
 - 后续（各自立 spec）：扩样式子集（`border` / `opacity` / `overflow` / 百分比…，先加对拍再进白名单）；
   交叉轴显式尺寸 + stretch 父；手势 / `:active` / transition 的「岛屿」；自绘语义（把文字节点暴露给无障碍）。
 

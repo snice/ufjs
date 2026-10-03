@@ -15,10 +15,15 @@ import 'package:flutter_fjs/src/render/renderer.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class Rendered {
-  Rendered(this.rects, this.pixels, this.surfaces);
+  Rendered(this.rects, this.pixels, this.surfaces, {this.overflowed = false});
   final Map<int, Rect> rects;
   final Uint8List pixels;
   final int surfaces;
+
+  /// The ordinary path reported a RenderFlex overflow while producing this
+  /// snapshot: it paints a debug stripe there that has no flat equivalent, so
+  /// pixel comparison of such a step is meaningless (rects still compare).
+  final bool overflowed;
 }
 
 Rect? _rectOf(MirrorNode node) {
@@ -149,8 +154,9 @@ Future<List<Rendered>> renderSequence(
   List<Uint8List> frames,
   FjsFlatMode mode, {
   Widget Function(Widget child)? wrap,
+  Size viewport = const Size(400, 800),
 }) async {
-  tester.view.physicalSize = const Size(400, 800);
+  tester.view.physicalSize = viewport;
   tester.view.devicePixelRatio = 1;
   fjsFlatMode = mode;
   final tree = MirrorTree();
@@ -178,6 +184,7 @@ Future<List<Rendered>> renderSequence(
   Future<void> snap() async {
     final ex = tester.takeException();
     if (ex != null && !ex.toString().contains('overflowed')) throw ex;
+    final over = ex != null;
     final rects = <int, Rect>{};
     for (final n in tree.allNodes) {
       if (FjsNodeRenderer.isHidden(n)) continue;
@@ -199,7 +206,7 @@ Future<List<Rendered>> renderSequence(
       final img = await boundary.toImage();
       return (await img.toByteData(format: ui.ImageByteFormat.rawRgba))!.buffer.asUint8List();
     });
-    out.add(Rendered(rects, bytes!, 0));
+    out.add(Rendered(rects, bytes!, 0, overflowed: over));
   }
 
   await snap();
