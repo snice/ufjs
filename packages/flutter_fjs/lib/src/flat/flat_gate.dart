@@ -65,12 +65,21 @@ class FjsFlatStats {
 
   static void reset() {
     rejected.clear();
+    samples.clear();
     surfaces = 0;
   }
 
-  static void reject(String reason) {
+  /// A few example nodes per reason (tag, id, parent tag, style), so a census
+  /// can say WHICH nodes carry the `transform` that refuses most subtrees.
+  static final Map<String, List<String>> samples = {};
+
+  static void reject(String reason, [String? sample]) {
     final first = !rejected.containsKey(reason);
     rejected[reason] = (rejected[reason] ?? 0) + 1;
+    if (sample != null) {
+      final l = samples[reason] ??= [];
+      if (l.length < 6) l.add(sample);
+    }
     if (first) {
       assert(() {
         debugPrint('[flat] subtree stays ordinary: $reason');
@@ -128,7 +137,13 @@ abstract final class FlatGate {
     final verdict = flatVerdictOf(n);
     final style = verdict.style;
     if (style == null) {
-      FjsFlatStats.reject('style:${verdict.rejected}');
+      final parent = tree.parentIdOf(n.id);
+      final pn = parent == null ? null : tree.node(parent);
+      final sm = jsonEncode(n.styleMap);
+      FjsFlatStats.reject(
+        'style:${verdict.rejected}',
+        '${n.tag}#${n.id} parent=${pn?.tag}#$parent kids=${n.children.length} ${sm.length > 220 ? sm.substring(0, 220) : sm}',
+      );
       return -1;
     }
     if (n.tag == 'text') {
@@ -185,7 +200,8 @@ void registerFlatDevModule({required HostRegistry host, required MirrorTree tree
           '"paintedChunks":${FlatStats.paintedChunks},"reusedChunks":${FlatStats.reusedChunks},'
           '"chunks":${FlatStats.chunkCount},"packs":${FlatStats.packs},'
           '"surfaces":${FjsFlatStats.surfaces},"flatNodes":${FlatStats.liveNodes},'
-          '"nodes":${tree.nodeCount},"rejected":${jsonEncode(FjsFlatStats.rejected)}}';
+          '"nodes":${tree.nodeCount},"rejected":${jsonEncode(FjsFlatStats.rejected)},'
+          '"samples":${jsonEncode(FjsFlatStats.samples)}}';
     }
     if (want == 'reset') {
       FlatStats.reset();
