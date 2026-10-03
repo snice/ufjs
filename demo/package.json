@@ -43,7 +43,8 @@
       "vant"
     ],
     "autoimport": [
-      "mmkv@^2.4.2"
+      "mmkv@^2.4.2",
+      { "name": "playground", "path": "dart/playground" }
     ]
   }
 }

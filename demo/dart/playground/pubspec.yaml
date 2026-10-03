@@ -1,0 +1,7 @@
+name: playground
+description: Plain Dart classes for the demo's dart-playground page; fjs autoimport generates the object-ABI adapter and TS types from them (specs/201).
+publish_to: none
+version: 0.0.1
+
+environment:
+  sdk: ^3.0.0

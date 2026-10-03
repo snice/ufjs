@@ -6,6 +6,7 @@
 declare module '@ufjs/runtime' {
   interface FjsObjectModules {
     mmkv: MmkvModule;
+    playground: PlaygroundModule;
   }
 }
 
@@ -107,4 +108,28 @@ export interface MmkvModule {
   removeStorage(mmapID: string, rootDir?: string | null): boolean;
   checkExist(mmapID: string, rootDir?: string | null): boolean;
   groupPath(): string | null;
+}
+
+export interface Counter {
+  step: number;
+  readonly value: number;
+  add(n: number): number;
+  onTick(fn: (a0: number) => void): void;
+  fire(): number;
+  startTimer(times: number): void;
+  clone(): Counter;
+  merge(other: Counter): number;
+  release(): void;
+}
+
+export interface CounterCtor {
+  (initial?: number): Counter;
+}
+
+export interface PlaygroundModule {
+  Counter: CounterCtor;
+  failAfter(ms: number): Promise<number>;
+  liveCount(): number;
+  makeAdder(n: number): (a0: number) => number;
+  waitFor(ms: number): Promise<number>;
 }

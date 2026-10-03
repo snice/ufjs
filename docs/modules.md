@@ -452,9 +452,20 @@ await bucket.get('key');      // Dart Future 自动是 Promise
 - **web 替身**：模块包（或宿主 app）用
   `registerDartModuleStub(name, tsImpl)` 注册同名 TS 实现，业务代码不改
   一行跑两端（iconmind 的 web 组件同款模式）。autoimport 的生成物与手写
-  模块可并存，同名注册优先——demo 的 dart-objects 页
-  （`demo/src/pages/basic/dart-objects.vue`）就是纯 autoimport：mmkv 全靠
-  生成适配器，web 端按差异表响亮报错。
+  模块可并存，同名注册优先。demo 有两页对照：
+  `dart-objects`（`demo/src/pages/basic/dart-objects.vue`）是纯 autoimport，
+  mmkv 全靠生成适配器，浏览器没有实现，页面用 `hasDartObjectSupport()` 守卫、
+  web 上只显示说明；`dart-playground`
+  （`demo/src/pages/basic/dart-playground.vue`）驱动 `playground` 模块：
+  Dart 是 `demo/dart/playground` 里的**普通类**（本地包 autoimport，适配器与
+  类型都是生成的，见下一节「本地包」），web 替身在
+  `demo/src/playground-stub.ts`（类型取自生成的 `PlaygroundModule`），覆盖
+  Future→Promise、回调双向、句柄传参与 release，「一键跑全部」输出的文本两端
+  逐行一致，可直接 diff。手写 `FjsObjectModule` 时注意 `main.dart` 会被原样拷成
+  `lib/fjs_attach.dart`，只能内联在这一个文件里。
+- **适配器返回对象的归属**：`invoke`/`get` 返回的新对象（工厂方法、子对象
+  getter）自动归属于交出它的模块，之后在 JS 侧可继续调成员；`construct` 返回
+  `Future`（静态异步函数）同样是 Promise。
 
 ## autoimport：配置一个 pub 包，自动绑定（specs/160）
 
@@ -488,6 +499,45 @@ const kv = mmkv.MMKV('config');    // 构造器
 kv.encodeString('k', 'v');
 kv.decodeString('k');              // String? → string | null
 ```
+
+### 本地包（specs/201）
+
+自己的 Dart 能力不必手写适配器：把它写成项目里的一个**普通本地 Dart 包**
+（`pubspec.yaml` + `lib/<name>.dart` 为主库），条目写成对象形式，`path` 相对
+项目根：
+
+```json
+{ "fjs": { "autoimport": [
+  "mmkv@^2.4.2",
+  { "name": "playground", "path": "dart/playground" }
+] } }
+```
+
+宿主 pubspec 里是 `path:` 依赖（相对宿主目录，自动换算）；条目的 `name` 必须与
+该包 pubspec 的 `name` 一致、`lib/<name>.dart` 必须存在，否则**报错退出**而不是
+等 analyzer 在深处失败。本地包随时在改，所以缓存键除清单与 `pubspec.lock` 外还
+并入它的 `pubspec.yaml` 与 `lib/**/*.dart` 内容——改了源码下次 `fjs run` 自动
+重新 dump，不需要 `--force`。
+
+普通 Dart 写法即可：
+
+```dart
+class Counter {
+  Counter([int initial = 0]);
+  int step = 1;                              // 公开可写字段 → JS 可赋值
+  int get value => …;                        // 只有 getter → readonly
+  void onTick(void Function(int) fn) {…}     // 函数形参 → 传 JS 函数进来
+}
+Future<int> waitFor(int ms) => …;            // 顶层函数 → 模块级可调用，Promise
+int Function(int) makeAdder(int n) => …;     // 返回函数 → JS 得到可调用
+```
+
+生成的 d.ts 带函数签名：`onTick(fn: (a0: number) => void)`、
+`makeAdder(n: number): (a0: number) => number`。函数类型里有跨不了界的参数
+/ 返回、或有命名/可选参数时，整个函数类型**退回宽签名**
+`(...args: never[]) => unknown`（成员保留，构建输出列一行），因为回调的实参
+运行时本来就是 JS 值。web 端的 TS 替身直接 `import type` 生成的模块接口来实现
+——Dart 签名变了，替身在 typecheck 就红。
 
 ### 规则与边界
 

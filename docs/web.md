@@ -289,6 +289,12 @@ iOS 上会带系统触感反馈；web 没有触感，这是 picker 系列目前�
 
 ## 已知差异
 
+- **对象模块（`dartModule`）web 端要自带替身**（specs/159 §11）：Dart 对象
+  模块在 web 上没有引擎可跑，必须由模块包/宿主 app 用
+  `registerDartModuleStub` 注册 TS 实现，缺失时 `dartModule` warnOnce 后
+  throw。demo 里 `dart-playground` 有替身（两端「一键跑全部」文本逐行一致）；
+  `dart-objects`（真 mmkv，浏览器无实现）则用 `hasDartObjectSupport()` 守卫，
+  web 上只显示说明、不崩。
 - **点按钮时输入框的焦点**（specs/124）：浏览器里点任何非聚焦区域都会让
   输入框失焦；App 上只有点**没有事件处理的区域**才失焦，点带 `@tap` /
   `@touch*` 的节点或 button / switch 等控件保持焦点、键盘不收。这是有意的：

@@ -90,6 +90,11 @@ kv.decodeString('k');                  // String? → string | null
 | autoimport 集合内的类 | cls | 同名接口 | HANDLE 对象引用 |
 | 其它（BuildContext、枚举…） | unsupported | — | **跳过该成员**，构建输出列出 |
 
+> 追加（specs/201）：函数类型的 dump 带签名（`cb.params/ret`，d.ts 为
+> `(a0: P) => R`，适配器生成对应元数的闭包）、可写公开字段有 setter、
+> `fjs.autoimport` 条目可为 `{name, path}` 的本地包；同时修了两处生成器 bug
+> （`set` 分支引用 `args`、getter-only 成员误判可写）。
+
 ### 暴露面与命名
 
 - 主库 export 链上的**顶层类**与**顶层函数**；类成员取无名构造、静态

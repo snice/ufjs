@@ -29,9 +29,10 @@
 
 ## 两端对齐
 
-- [x] T020 demo 演示：手写 `src/fjs-objects.d.ts` 的声明合并示例（exerciser
-      或 mmkv 形状）挂进 dart-objects 页的类型链路（web 端纯类型收益，
-      行为不变）
+- [x] T020 demo 演示：声明合并让 `dartModule('mmkv')` 有类型。**现状**：
+      `src/fjs-objects.d.ts` 已是 `fjs autoimport` 生成物（不再手写，
+      exerciser 已移除）；手写声明合并的示例改由 specs/159 §11 的
+      `src/fjs-playground.d.ts` 承担
 
 ## 测试
 

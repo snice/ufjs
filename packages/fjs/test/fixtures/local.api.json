@@ -1,0 +1,227 @@
+{
+  "package": "playground",
+  "entry": "package:playground/playground.dart",
+  "types": [
+    "Counter"
+  ],
+  "classes": [
+    {
+      "name": "Counter",
+      "constructors": [
+        {
+          "params": [
+            {
+              "name": "initial",
+              "type": {
+                "k": "int"
+              },
+              "named": false,
+              "required": false,
+              "default": "0"
+            }
+          ]
+        }
+      ],
+      "statics": [],
+      "methods": [
+        {
+          "name": "add",
+          "params": [
+            {
+              "name": "n",
+              "type": {
+                "k": "int"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "onTick",
+          "params": [
+            {
+              "name": "fn",
+              "type": {
+                "k": "cb",
+                "params": [
+                  {
+                    "name": null,
+                    "type": {
+                      "k": "int"
+                    }
+                  }
+                ],
+                "ret": {
+                  "k": "void"
+                }
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "void"
+          }
+        },
+        {
+          "name": "fire",
+          "params": [],
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "startTimer",
+          "params": [
+            {
+              "name": "times",
+              "type": {
+                "k": "int"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "void"
+          }
+        },
+        {
+          "name": "clone",
+          "params": [],
+          "returns": {
+            "k": "cls",
+            "pkg": "playground",
+            "name": "Counter"
+          }
+        },
+        {
+          "name": "merge",
+          "params": [
+            {
+              "name": "other",
+              "type": {
+                "k": "cls",
+                "pkg": "playground",
+                "name": "Counter"
+              },
+              "named": false,
+              "required": true
+            }
+          ],
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "release",
+          "params": [],
+          "returns": {
+            "k": "void"
+          }
+        }
+      ],
+      "getters": [
+        {
+          "name": "step",
+          "returns": {
+            "k": "int"
+          }
+        },
+        {
+          "name": "value",
+          "returns": {
+            "k": "int"
+          }
+        }
+      ],
+      "setters": [
+        {
+          "name": "step",
+          "type": {
+            "k": "int"
+          }
+        }
+      ]
+    }
+  ],
+  "functions": [
+    {
+      "name": "failAfter",
+      "params": [
+        {
+          "name": "ms",
+          "type": {
+            "k": "int"
+          },
+          "named": false,
+          "required": true
+        }
+      ],
+      "returns": {
+        "k": "future",
+        "t": {
+          "k": "int"
+        }
+      }
+    },
+    {
+      "name": "liveCount",
+      "params": [],
+      "returns": {
+        "k": "int"
+      }
+    },
+    {
+      "name": "makeAdder",
+      "params": [
+        {
+          "name": "n",
+          "type": {
+            "k": "int"
+          },
+          "named": false,
+          "required": true
+        }
+      ],
+      "returns": {
+        "k": "cb",
+        "params": [
+          {
+            "name": null,
+            "type": {
+              "k": "int"
+            }
+          }
+        ],
+        "ret": {
+          "k": "int"
+        }
+      }
+    },
+    {
+      "name": "waitFor",
+      "params": [
+        {
+          "name": "ms",
+          "type": {
+            "k": "int"
+          },
+          "named": false,
+          "required": true
+        }
+      ],
+      "returns": {
+        "k": "future",
+        "t": {
+          "k": "int"
+        }
+      }
+    }
+  ],
+  "skipped": []
+}

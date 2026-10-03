@@ -1,10 +1,11 @@
 <route>
-{"title": "dart-objects", "group": "基础能力", "desc": "对象 ABI 驱动 autoimport 生成的 mmkv 适配器（同一份页面代码，Flutter 走真包、Web 走替身）"}
+{"title": "dart-objects", "group": "基础能力", "desc": "对象 ABI 驱动 autoimport 生成的真 mmkv 适配器（仅 Flutter；web 无浏览器实现，只显示说明）"}
 </route>
 
 <script setup lang="ts">
 import { ref } from 'vue';
-import { dartModule } from '@ufjs/runtime';
+import { dartModule, hasDartObjectSupport } from '@ufjs/runtime';
+import type { MMKV } from '../../fjs-objects';
 
 // The object ABI's capabilities, driven through the adapter `fjs
 // autoimport` GENERATED for the real mmkv pub package (specs/160): the
@@ -15,7 +16,14 @@ import { dartModule } from '@ufjs/runtime';
 // (constitution V, the spec-160 difference table). The plugin's own
 // `await MMKV.initialize()` runs in the host (demo/src/main.dart,
 // fjsAttachHost) BEFORE any page evaluates — pages construct and use.
-const kv = dartModule('mmkv').MMKV('demo');
+//
+// Because of that, the web build must not even try: the page stays
+// reachable from the list (hiding it would need a platform field on every
+// route), so it checks hasDartObjectSupport() and shows a note instead of
+// throwing on entry.
+const supported = hasDartObjectSupport();
+// every handler below is only reachable from the v-if branch, where kv exists
+const kv = (supported ? dartModule('mmkv').MMKV('demo') : null) as MMKV;
 
 
 const value = ref<string | null>(null);
@@ -69,23 +77,26 @@ function unknown(): void {
 
 <template>
   <view class="page">
-    <text class="title">mmkv [{{ kv.mmapID }}]: user = {{ value ?? '∅' }} (count {{ kv.count }})</text>
-    <view class="row">
-      <button class="btn" @tap="save('zt')">写 user=zt</button>
-      <button class="btn" @tap="read">读</button>
-      <button class="btn" @tap="remove">删除</button>
-    </view>
-    <view class="row">
-      <button class="btn" @tap="stats">统计</button>
-      <button class="btn" @tap="check">containsKey</button>
-      <button class="btn" @tap="bools">bool 读写</button>
-    </view>
-    <view class="row">
-      <button class="btn" @tap="clearAll">clearAll</button>
-      <button class="btn" @tap="unknown">未知成员</button>
-    </view>
-    <view class="log">
-      <text v-for="(line, i) in log" :key="i" class="line">{{ line }}</text>
+    <text v-if="!supported" class="title">仅 Flutter：真实 mmkv 没有浏览器实现，此页在 web 上只显示说明（见 playground 页的两端对拍）。</text>
+    <view v-else>
+      <text class="title">mmkv [{{ kv.mmapID }}]: user = {{ value ?? '∅' }} (count {{ kv.count }})</text>
+      <view class="row">
+        <button class="btn" @tap="save('zt')">写 user=zt</button>
+        <button class="btn" @tap="read">读</button>
+        <button class="btn" @tap="remove">删除</button>
+      </view>
+      <view class="row">
+        <button class="btn" @tap="stats">统计</button>
+        <button class="btn" @tap="check">containsKey</button>
+        <button class="btn" @tap="bools">bool 读写</button>
+      </view>
+      <view class="row">
+        <button class="btn" @tap="clearAll">clearAll</button>
+        <button class="btn" @tap="unknown">未知成员</button>
+      </view>
+      <view class="log">
+        <text v-for="(line, i) in log" :key="i" class="line">{{ line }}</text>
+      </view>
     </view>
   </view>
 </template>

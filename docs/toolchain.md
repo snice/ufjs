@@ -412,6 +412,7 @@ fjs types --check           # 只读；有过期文件时列出并退出码 1—
 
 `fjs.autoimport: ['mmkv']`（package.json）声明的包，由这条命令（或
 `fjs run` 的宿主同步顺带）dump 公开 API 并生成 Dart 适配器 + TS 类型，
+条目除字符串外可以是 `{ "name", "path" }`（项目内的本地 Dart 包，specs/201）。
 用法见 [modules.md](modules.md) 的 autoimport 一节：
 
 ```bash

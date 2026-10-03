@@ -23,7 +23,7 @@ import {
   type AppOrientation,
   type PlistValue,
 } from '../project/config.js';
-import { readAutoimport, syncAutoimport, writeAutoimportTypes, type AutoimportPackage } from '../project/autoimport.js';
+import { autoimportPubspecEntry, readAutoimport, syncAutoimport, writeAutoimportTypes, type AutoimportPackage } from '../project/autoimport.js';
 import { ENGINE_IDS, materializeJsEngine, resolveJsEngine, type JsEngine } from '../project/engine.js';
 import { ensureOhosSigning } from '../project/ohos-signing.js';
 import type { FlutterMode } from '../bundler/build.js';
@@ -955,7 +955,7 @@ export function writeHostPubspec(
   // dance made every `fjs run` pay two pub gets and drop/re-add the
   // packages in the lock (visible as "no longer being depended on").
   const autoDeps = autoimport
-    .map((p) => (p.version ? `  ${p.name}: ${p.version}\n` : `  ${p.name}:\n`))
+    .map((p) => autoimportPubspecEntry(process.cwd(), path.dirname(pubspec), p))
     .join('');
   // one entry per module directory: Flutter's asset globs are per directory,
   // and an empty one would fail `pub get`

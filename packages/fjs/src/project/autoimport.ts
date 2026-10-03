@@ -44,6 +44,11 @@ export interface FjsType {
   name?: string;
   /** for unsupported: the Dart type that could not cross */
   dart?: string;
+  /** for cb: the function's positional parameters and return type
+   * (specs/201). Absent = a bare callback, the pre-201 dump shape: the
+   * adapter passes the FjsCallback through and the d.ts stays wide. */
+  params?: { name?: string; type: FjsType }[];
+  ret?: FjsType;
 }
 
 export interface FjsParam {
@@ -103,11 +108,25 @@ export interface AutoimportPackage {
   name: string;
   /** Raw pubspec version constraint, or undefined for any. */
   version?: string;
+  /** A LOCAL package (specs/201): directory relative to the project root,
+   * written to the host pubspec as a `path:` dependency. Mutually exclusive
+   * with [version]. */
+  path?: string;
 }
 
 /** Parses `"name" | "name@constraint"` — the constraint text goes into the
  * pubspec verbatim, so every pub syntax works (`^2.4.0`, `2.4.2`, `>=1 <3`). */
-export function parseAutoimportEntry(entry: string): AutoimportPackage {
+export function parseAutoimportEntry(entry: string | { name?: unknown; path?: unknown }): AutoimportPackage {
+  if (typeof entry === 'object' && entry !== null) {
+    const { name, path: dir } = entry;
+    if (typeof name !== 'string' || !name || typeof dir !== 'string' || !dir) {
+      throw new Error(
+        `fjs.autoimport: malformed entry ${JSON.stringify(entry)} ` +
+          '(an object entry needs non-empty "name" and "path" strings)',
+      );
+    }
+    return { name, path: dir };
+  }
   const at = entry.indexOf('@');
   if (at < 0) return { name: entry };
   const name = entry.slice(0, at);
@@ -128,12 +147,16 @@ export function readAutoimport(root: string): AutoimportPackage[] {
     };
     const list = pkg.fjs?.autoimport;
     if (list === undefined) return [];
-    if (!Array.isArray(list) || list.some((e) => typeof e !== 'string')) {
+    if (
+      !Array.isArray(list) ||
+      list.some((e) => typeof e !== 'string' && (typeof e !== 'object' || e === null || Array.isArray(e)))
+    ) {
       throw new Error(
-        'fjs.autoimport must be an array of "name" or "name@version" strings',
+        'fjs.autoimport must be an array of "name", "name@version" strings ' +
+          'or { "name", "path" } objects',
       );
     }
-    return (list as string[]).map(parseAutoimportEntry);
+    return (list as (string | { name?: unknown; path?: unknown })[]).map(parseAutoimportEntry);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw e;
@@ -157,7 +180,57 @@ export function dumpCachePath(root: string, pkg: string): string {
 export function autoimportHash(root: string, packages: AutoimportPackage[]): string {
   const lock = path.join(root, 'pubspec.lock');
   const lockText = fs.existsSync(lock) ? fs.readFileSync(lock, 'utf8') : '';
-  return createHash('sha256').update(JSON.stringify(packages) + lockText).digest('hex').slice(0, 16);
+  const hash = createHash('sha256').update(JSON.stringify(packages) + lockText);
+  // a LOCAL package is edited in place without any lock change, so its own
+  // sources join the key (pub packages keep the lock-only rule above)
+  for (const pkg of packages) {
+    if (pkg.path) hash.update(localSourceDigest(path.resolve(root, pkg.path)));
+  }
+  return hash.digest('hex').slice(0, 16);
+}
+
+/** Content digest of a local package: pubspec.yaml plus every lib/**\/*.dart,
+ * in sorted path order so the key is stable across filesystems. */
+function localSourceDigest(dir: string): string {
+  const files: string[] = [];
+  const walk = (d: string): void => {
+    if (!fs.existsSync(d)) return;
+    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+      const full = path.join(d, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.dart')) files.push(full);
+    }
+  };
+  walk(path.join(dir, 'lib'));
+  files.sort();
+  const h = createHash('sha256');
+  const pubspec = path.join(dir, 'pubspec.yaml');
+  if (fs.existsSync(pubspec)) h.update(fs.readFileSync(pubspec));
+  for (const f of files) h.update(path.relative(dir, f)).update(fs.readFileSync(f));
+  return h.digest('hex');
+}
+
+/** Fails loudly on a local entry that cannot be analyzed (constitution V):
+ * the dump would otherwise die deep inside the analyzer with a message that
+ * never mentions fjs.autoimport. */
+export function validateLocalPackage(root: string, pkg: AutoimportPackage): void {
+  if (!pkg.path) return;
+  const dir = path.resolve(root, pkg.path);
+  const pubspec = path.join(dir, 'pubspec.yaml');
+  if (!fs.existsSync(pubspec)) {
+    throw new Error(`fjs.autoimport: "${pkg.name}" path "${pkg.path}" has no pubspec.yaml (${dir})`);
+  }
+  const declared = /^name:\s*(\S+)/m.exec(fs.readFileSync(pubspec, 'utf8'))?.[1];
+  if (declared !== pkg.name) {
+    throw new Error(
+      `fjs.autoimport: entry name "${pkg.name}" does not match the package's pubspec name "${declared}" (${pubspec})`,
+    );
+  }
+  if (!fs.existsSync(path.join(dir, 'lib', `${pkg.name}.dart`))) {
+    throw new Error(
+      `fjs.autoimport: "${pkg.name}" must have a main library lib/${pkg.name}.dart (${dir})`,
+    );
+  }
 }
 
 /** The generated entry file fjs_introspect analyzes: one prefixed import
@@ -216,14 +289,14 @@ function moduleInterfaceName(pkg: string): string {
  * cannot cross as arguments in v1 (skipped upstream), object refs arrive
  * as their live Dart instance. */
 function dartArgExpr(type: FjsType, index: number, pkg: string, prefix: string,
-                     optional = false, defaultValue?: string): string | null {
+                     optional = false, defaultValue?: string, rawArg?: string): string | null {
   // optional parameters may be absent from the JS call. A nullable one
   // answers null; a non-nullable one re-applies its declared default (the
   // raw source text from the dump, qualified via the package's type names)
   // — passing null to a non-nullable parameter would not even compile.
   const hasDefault = optional && defaultValue !== undefined;
   const nullable = type.n || (optional && !hasDefault);
-  const raw = `args[${index}]`;
+  const raw = rawArg ?? `args[${index}]`;
   const arg = optional
       ? `(args.length > ${index} ? ${raw} : ${hasDefault ? defaultValue : 'null'})`
       : raw;
@@ -235,7 +308,16 @@ function dartArgExpr(type: FjsType, index: number, pkg: string, prefix: string,
     case 'int': return nullable ? `(${arg} as num?)?.toInt()` : `(${arg} as num).toInt()`;
     case 'num': return nullable ? `(${arg} as num?)?.toDouble()` : `(${arg} as num).toDouble()`;
     case 'any': return arg;
-    case 'cb': return `${arg} as FjsCallback`;
+    case 'cb': {
+      if (!type.params) return `${arg} as FjsCallback`;
+      // a typed Dart function parameter cannot take an FjsCallback: wrap the
+      // JS function in a closure of the declared arity (specs/201). The
+      // closure's parameters take their types from the call site's context.
+      const names = type.params.map((_, i) => `a${i}`);
+      const call = `(${arg} as FjsCallback).call([${names.join(', ')}])`;
+      const closure = `(${names.join(', ')}) => ${dartCallbackResult(call, type.ret, prefix, pkg)}`;
+      return nullable ? `${arg} == null ? null : ${closure}` : closure;
+    }
     case 'cls':
       if (type.pkg === pkg && type.name) {
         return `${arg} as ${prefix}.${type.name}${nullable ? '?' : ''}`;
@@ -246,9 +328,40 @@ function dartArgExpr(type: FjsType, index: number, pkg: string, prefix: string,
   }
 }
 
-function dartReturnStmt(expr: string, returns: FjsType, indent = '        '): string {
+/** What a JS callback's answer becomes in Dart. JS numbers arrive as
+ * float64, so int goes through num; void and anything uncheckable passes
+ * through as-is. */
+function dartCallbackResult(call: string, ret: FjsType | undefined, prefix: string, pkg: string): string {
+  if (!ret) return call;
+  const q = ret.n ? '?' : '';
+  switch (ret.k) {
+    case 'int': return ret.n ? `(${call} as num?)?.toInt()` : `(${call} as num).toInt()`;
+    case 'num': return ret.n ? `(${call} as num?)?.toDouble()` : `(${call} as num).toDouble()`;
+    case 'bool': return `${call} as bool${q}`;
+    case 'string': return `${call} as String${q}`;
+    case 'cls': return ret.pkg === pkg && ret.name ? `${call} as ${prefix}.${ret.name}${q}` : call;
+    default: return call;
+  }
+}
+
+/** A Dart function handed to JS is invoked through the `callback` op with
+ * the engine's raw values — JS numbers arrive as double, so calling a typed
+ * `int Function(int)` directly throws. Wrap it in a dynamic-argument closure
+ * that converts each argument by the declared parameter type (specs/201). A
+ * parameter type the cast table cannot express passes through unchanged. */
+function dartReturnExpr(expr: string, returns: FjsType, pkg: string, prefix: string): string {
+  if (returns.k !== 'cb' || !returns.params) return expr;
+  const names = returns.params.map((_, i) => `a${i}`);
+  const conv = returns.params.map(
+    (p, i) => dartArgExpr(p.type, 0, pkg, prefix, false, undefined, `a${i}`) ?? `a${i}`,
+  );
+  const wrapper = `(${names.map((n) => `Object? ${n}`).join(', ')}) => fn(${conv.join(', ')})`;
+  return `((fn) => ${returns.n ? `fn == null ? null : ${wrapper}` : wrapper})(${expr})`;
+}
+
+function dartReturnStmt(expr: string, returns: FjsType, indent = '        ', pkg = '', prefix = ''): string {
   if (returns.k === 'void' && !returns.n) return `${expr};\n${indent}return null;`;
-  return `return ${expr};`;
+  return `return ${dartReturnExpr(expr, returns, pkg, prefix)};`;
 }
 
 /** Module-level binding names: classes by name, static methods and
@@ -359,7 +472,7 @@ export function dartAdapterSource(dumps: ApiDump[]): string | null {
         const params = bindableParams(c?.params ?? [], pkg, prefix);
         if (!params) continue; // unbindable constructor: class not constructable
         const expr = `${prefix}.${binding.cls.name}(${dartCallArgs(params, dump, prefix)})`;
-        constructCases.push(`      case '${name}':\n        ${dartReturnStmt(expr, { k: 'cls', pkg, name: binding.cls.name })}`);
+        constructCases.push(`      case '${name}':\n        ${dartReturnStmt(expr, { k: 'cls', pkg, name: binding.cls.name }, undefined, pkg, prefix)}`);
       } else if (binding.member) {
         const m = binding.member;
         const params = bindableParams(m.params, pkg, prefix);
@@ -367,7 +480,7 @@ export function dartAdapterSource(dumps: ApiDump[]): string | null {
         const owner = binding.cls; // set for static methods, absent for top-level functions
         const target = owner ? `${prefix}.${owner.name}.${m.name}` : `${prefix}.${m.name}`;
         const expr = `${target}(${dartCallArgs(params, dump, prefix)})`;
-        constructCases.push(`      case '${name}':\n        ${dartReturnStmt(expr, m.returns)}`);
+        constructCases.push(`      case '${name}':\n        ${dartReturnStmt(expr, m.returns, undefined, pkg, prefix)}`);
       }
     }
 
@@ -381,24 +494,24 @@ export function dartAdapterSource(dumps: ApiDump[]): string | null {
         const params = bindableParams(m.params, pkg, prefix);
         if (!params || !isBindableReturn(m.returns, pkg)) continue;
         const expr = `self.${m.name}(${dartCallArgs(params, dump, prefix)})`;
-        body.push(`          case '${m.name}':\n            ${dartReturnStmt(expr, m.returns, '            ')}`);
+        body.push(`          case '${m.name}':\n            ${dartReturnStmt(expr, m.returns, '            ', pkg, prefix)}`);
       }
       for (const g of cls.getters) {
         if (!isBindableReturn(g.returns, pkg)) continue;
-        body.push(`          case '${g.name}':\n            return self.${g.name};`);
+        body.push(`          case '${g.name}':\n            return ${dartReturnExpr(`self.${g.name}`, g.returns, pkg, prefix)};`);
       }
       if (body.length > 0) {
         invokeCases.push(`${guardOpen}\n${body.join('\n')}\n        }`);
       }
       const getBody = cls.getters
         .filter((g) => isBindableReturn(g.returns, pkg))
-        .map((g) => `          case '${g.name}':\n            return self.${g.name};`);
+        .map((g) => `          case '${g.name}':\n            return ${dartReturnExpr(`self.${g.name}`, g.returns, pkg, prefix)};`);
       if (getBody.length > 0) {
         getCases.push(`${guardOpen}\n${getBody.join('\n')}\n        }`);
       }
       const setBody = cls.setters
         .filter((s) => bindableParams([s], pkg, prefix) !== null)
-        .map((s) => `          case '${s.name}':\n            self.${s.name} = ${dartArgExpr(s.type, 0, pkg, prefix, false)};\n            return;`);
+        .map((s) => `          case '${s.name}':\n            self.${s.name} = ${dartArgExpr(s.type, 0, pkg, prefix, false, undefined, 'value')};\n            return;`);
       if (setBody.length > 0) {
         setCases.push(`${guardOpen}\n${setBody.join('\n')}\n        }`);
       }
@@ -467,7 +580,9 @@ function tsType(t: FjsType, pkg: string): string {
       case 'string': return 'string';
       case 'void': return 'void';
       case 'any': return 'unknown';
-      case 'cb': return '(...args: never[]) => unknown';
+      case 'cb':
+        if (!t.params) return '(...args: never[]) => unknown';
+        return `(${t.params.map((p, i) => `a${i}: ${tsType(p.type, pkg)}`).join(', ')}) => ${t.ret ? tsType(t.ret, pkg) : 'unknown'}`;
       case 'cls': return t.name ?? 'unknown';
       case 'list': return `Array<${t.e ? tsType(t.e, pkg) : 'unknown'}>`;
       case 'map': return `Record<string, ${t.v ? tsType(t.v, pkg) : 'unknown'}>`;
@@ -475,7 +590,8 @@ function tsType(t: FjsType, pkg: string): string {
       default: return 'never';
     }
   })();
-  return t.n ? `${base} | null` : base;
+  // a nullable function type needs parentheses or `| null` binds to its return
+  return t.n ? (t.k === 'cb' ? `(${base}) | null` : `${base} | null`) : base;
 }
 
 function tsParams(params: FjsParam[], pkg: string): string {
@@ -500,9 +616,14 @@ export function objectTypesSource(dumps: ApiDump[]): string | null {
     const ctorNames = new Set<string>(); // Ctor interfaces actually emitted
     for (const cls of dump.classes) {
       const members: string[] = [];
+      // a writable field has a getter AND a setter: one plain property, never
+      // `readonly` plus a second declaration (TS rejects mixed modifiers)
+      const writable = new Set(
+        cls.setters.filter((s) => dartArgExpr(s.type, 0, pkg, pkg) !== null).map((s) => s.name),
+      );
       for (const g of cls.getters) {
         if (!isBindableReturn(g.returns, pkg)) continue;
-        members.push(`  readonly ${g.name}: ${tsType(g.returns, pkg)};`);
+        members.push(`  ${writable.has(g.name) ? '' : 'readonly '}${g.name}: ${tsType(g.returns, pkg)};`);
       }
       for (const m of cls.methods) {
         const params = bindableParams(m.params, pkg, pkg);
@@ -511,6 +632,7 @@ export function objectTypesSource(dumps: ApiDump[]): string | null {
       }
       for (const s of cls.setters) {
         if (dartArgExpr(s.type, 0, pkg, pkg) === null) continue;
+        if (cls.getters.some((g) => g.name === s.name && isBindableReturn(g.returns, pkg))) continue;
         members.push(`  ${s.name}: ${tsType(s.type, pkg)};`);
       }
       if (members.length === 0 && cls.constructors.length === 0) continue;
@@ -607,12 +729,25 @@ dependencies:
 ${dep}`;
 }
 
+/** The host pubspec text for one entry: `name:` (any version),
+ * `name: ^2.4.0`, or for a local package a `path:` dependency relative to
+ * the pubspec's own directory (specs/201). */
+export function autoimportPubspecEntry(root: string, hostDir: string, pkg: AutoimportPackage): string {
+  if (pkg.path) {
+    const rel = path.relative(hostDir, path.resolve(root, pkg.path)).split(path.sep).join('/');
+    return `  ${pkg.name}:\n    path: ${rel}\n`;
+  }
+  return pkg.version ? `  ${pkg.name}: ${pkg.version}\n` : `  ${pkg.name}:\n`;
+}
+
 /** Idempotently adds `name: <constraint>` under the pubspec's [section];
  * an existing line for [name] is REWRITTEN when it differs (a bare `mmkv:`
  * from an earlier run upgrades to the configured constraint). */
 function ensurePubspecEntry(pubspec: string, section: 'dependencies' | 'dev_dependencies', name: string, entry: string): void {
   let text = fs.readFileSync(pubspec, 'utf8');
-  const line = new RegExp(`^  ${name}:.*$`, 'm');
+  // the entry's own line plus any deeper-indented continuation lines (a
+  // `path:` dependency is two lines)
+  const line = new RegExp(`^  ${name}:.*(?:\\n {4}.*)*`, 'm');
   const existing = line.exec(text);
   if (existing) {
     const wanted = entry.replace(/\n$/, '');
@@ -666,14 +801,9 @@ export function syncAutoimport(opts: SyncAutoimportOptions): SyncAutoimportResul
     // the host takes the autoimported packages and NOTHING else — the dump
     // tool lives in TOOL_DIR, outside this dependency graph
     for (const pkg of packages) {
-      const constraint = pkg.version ?? '';
-      // `name:` (any) when no version was configured, `name: ^2.4.0` otherwise
-      ensurePubspecEntry(
-        pubspec,
-        'dependencies',
-        pkg.name,
-        constraint ? `  ${pkg.name}: ${constraint}\n` : `  ${pkg.name}:\n`,
-      );
+      validateLocalPackage(root, pkg);
+      // `name:` (any), `name: ^2.4.0`, or a `path:` block for a local package
+      ensurePubspecEntry(pubspec, 'dependencies', pkg.name, autoimportPubspecEntry(root, hostDir, pkg));
     }
     const entry = path.join(hostDir, 'lib', 'fjs_introspect_entry.dart');
     fs.mkdirSync(path.dirname(entry), { recursive: true });

@@ -201,8 +201,22 @@ class _Dumper {
       getters.add({'name': g.name, 'returns': t});
     }
     final setters = <Map<String, Object?>>[];
+    // a field is writable from JS when it has a setter — a plain public field
+    // gets an implicit one that may be absent from cls.setters (specs/201).
+    // `isFinal` is no help: the new element model also lists a getter-only
+    // accessor as a synthetic non-final field, so ask for the setter itself.
+    final setterNames = <String>{};
+    for (final f in cls.fields.where((f) => f.isPublic && !f.isStatic)) {
+      final setter = f.setter;
+      if (setter == null || !setter.isPublic) continue;
+      final t = _type(f.type, '${name}.${f.name}=');
+      if (t == null) continue;
+      setterNames.add(f.name ?? '');
+      setters.add({'name': f.name ?? '', 'type': t});
+    }
     for (final st in cls.setters) {
       if (!st.isPublic || st.isStatic) continue;
+      if (setterNames.contains(st.name)) continue;
       final t = _type(st.formalParameters.first.type, '${name}.${st.name}=');
       if (t == null) continue;
       setters.add({'name': st.name ?? '', 'type': t});
@@ -312,7 +326,7 @@ class _Dumper {
       if (v == null) return null;
       return tag({'k': 'future', 't': v});
     }
-    if (t is FunctionType) return tag({'k': 'cb'});
+    if (t is FunctionType) return tag(_callable(t, where));
     if (t is InterfaceType) {
       final element = t.element;
       final pkg = _packageOf(element);
@@ -324,6 +338,41 @@ class _Dumper {
     }
     _skip(where, 'unsupported type ${_display(t)}');
     return null;
+  }
+
+  /// A function type with its signature: the adapter needs the arity to wrap
+  /// a JS function into a Dart closure, and the d.ts needs the types
+  /// (specs/201). Anything the closure cannot model — named/optional
+  /// parameters, a parameter or return type that cannot cross — widens to
+  /// the bare `cb` (the old behaviour) with one note, rather than dropping
+  /// the whole member: a callback's real arguments are JS values anyway.
+  Map<String, Object?> _callable(FunctionType t, String where) {
+    final mark = skipped.length; // inner types file skips while probing
+    final params = <Map<String, Object?>>[];
+    String? widen;
+    for (final p in t.formalParameters) {
+      if (p.isNamed || p.isOptional) {
+        widen = 'named/optional parameter "${p.displayName}"';
+        break;
+      }
+      final pt = _type(p.type, '$where(fn param)');
+      if (pt == null) {
+        widen = 'parameter type ${_display(p.type)}';
+        break;
+      }
+      params.add({'name': p.name, 'type': pt});
+    }
+    Map<String, Object?>? ret;
+    if (widen == null) {
+      ret = _type(t.returnType, '$where(fn return)');
+      if (ret == null) widen = 'return type ${_display(t.returnType)}';
+    }
+    if (widen != null) {
+      skipped.removeRange(mark, skipped.length);
+      _skip(where, 'callback signature widened — $widen');
+      return {'k': 'cb'};
+    }
+    return {'k': 'cb', 'params': params, 'ret': ret};
   }
 
   String? _packageOf(Element element) {
