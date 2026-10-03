@@ -172,6 +172,28 @@ globalThis.__attrs = attrs
     expect(el.style.color).toBe('');
   });
 
+  it(':style drops the keys its object no longer has, keeps keys other writers put there (specs/198)', async () => {
+    const Page = sfc(`
+<script setup>
+import { ref } from 'vue'
+const lifted = ref(true)
+globalThis.__lifted = lifted
+</script>
+<template><view :style="lifted ? { transform: 'scale(2)', opacity: 0.5, color: 'red' } : { color: 'red' }" v-show="true" /></template>`);
+    const root = mount(Page);
+    const el = root.querySelector('view') as HTMLElement;
+    expect(el.style.transform).toBe('scale(2)');
+    expect(el.style.opacity).toBe('0.5');
+    (g.__lifted as { value: boolean }).value = false;
+    await tick();
+    expect(el.style.transform).toBe('');
+    expect(el.style.opacity).toBe('');
+    expect(el.style.color).toBe('red');
+    (g.__lifted as { value: boolean }).value = true;
+    await tick();
+    expect(el.style.transform).toBe('scale(2)');
+  });
+
   it('event modifiers: .stop / .self / key filters', () => {
     const Page = sfc(`
 <script setup>

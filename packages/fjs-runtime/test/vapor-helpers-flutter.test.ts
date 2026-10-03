@@ -118,6 +118,29 @@ onMounted(() => globalThis.__log.push('tag=' + el.value.tag))
     expect(r.styleEngine.inlineRecord(s.el.value.id)?.display).toBeUndefined();
   });
 
+  it(':style drops the keys its object no longer has, keeps v-show\'s display (specs/198)', async () => {
+    const Page = sfc(`
+<script setup>
+import { ref } from 'vue'
+const el = ref(null)
+const lifted = ref(true)
+const shown = ref(false)
+globalThis.__s2 = { el, lifted, shown }
+</script>
+<template><view ref="el" :style="lifted ? { transform: 'scale(2)', opacity: 0.5 } : {}" v-show="shown" /></template>`);
+    mount(Page);
+    await settle();
+    const s = g.__s2 as { el: { value: { id: number } }; lifted: { value: boolean } };
+    const rec = () => r.styleEngine.inlineRecord(s.el.value.id) as Record<string, unknown> | undefined;
+    expect(rec()?.transform).toBe('scale(2)');
+    expect(rec()?.display).toBe('none');
+    s.lifted.value = false;
+    await settle();
+    expect(rec()?.transform).toBeUndefined();
+    expect(rec()?.opacity).toBeUndefined();
+    expect(rec()?.display).toBe('none');
+  });
+
   it('v-model on the input element: textChanged in, value prop out (.trim)', async () => {
     const Page = sfc(`
 <script setup>

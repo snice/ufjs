@@ -718,9 +718,19 @@ export function setClassName(node: TplNode, value: string): void {
  * merges instead of replacing. */
 const styleRecords = new WeakMap<object, Record<string, unknown>>();
 
+/** The keys this element's own `:style` binding wrote last time (specs/198).
+ * A binding that returns `{}` after `{ transform }` must take the transform
+ * off, as VDOM's patchStyle(prev, next) does; the merge above only ever adds.
+ * Removing exactly what the binding itself wrote — not replacing the record —
+ * keeps the keys other writers put there (fallthrough style, v-show). */
+const boundStyleKeys = new WeakMap<object, string[]>();
+
 export function setStyle(node: TplNode, value: Record<string, unknown>): void {
   const current = styleRecords.get(node.host as object) ?? null;
   const merged: Record<string, unknown> = { ...current };
+  const wrote = boundStyleKeys.get(node.host as object);
+  if (wrote) for (const k of wrote) if (!(k in value)) delete merged[k];
+  boundStyleKeys.set(node.host as object, Object.keys(value));
   for (const k in value) {
     const v = value[k];
     if (v == null || v === '') delete merged[k];
@@ -1751,7 +1761,14 @@ export function repeatTemplate(
  * TplNode / child / txt / blockOf — the effect's first run IS the initial
  * write. ONCE items never drop on their own, so one scope covers teardown:
  * the enclosing subtree removal takes the hosts, stopping the scope stops
- * every effect. */
+ * every effect.
+ *
+ * Why the per-cell effect stays (specs/197): a lazy one — write the initial
+ * text untracked, subscribe on first change — misses every update before
+ * that first change, because the dependencies are unknown until the
+ * expression has run tracked; and tracking itself has a floor (one effect
+ * for the whole list still costs ~4.5 ms of dep links per 2000 cells). What
+ * measured as removable is the wrapper around the effect, not the effect. */
 export function repeatTemplateLive(
   tpl: CompiledTemplate,
   source: () => unknown,
