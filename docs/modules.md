@@ -539,6 +539,36 @@ int Function(int) makeAdder(int n) => …;     // 返回函数 → JS 得到可�
 运行时本来就是 JS 值。web 端的 TS 替身直接 `import type` 生成的模块接口来实现
 ——Dart 签名变了，替身在 typecheck 就红。
 
+### Widget 包：用本地 facade 包一层（specs/202）
+
+带 UI 的 pub 包（弹窗、选择器……）入口往往要 `BuildContext`，还带 `Color` /
+`TextStyle` 这类 Widget 选项，autoimport 绑不了（构造器会被整个跳过）。办法是
+本地包里写一个**无 context 的门面类**，公开签名只用
+`String/int/bool/Future/函数`，再按上一节当本地包 autoimport。demo 的
+`dart/progress` 包 `sn_progress_dialog` 就是这个形状：
+
+```dart
+class Progress {
+  Progress([String msg = 'Loading', int max = 100]);
+  Future<void> show([bool determinate = false]);   // 弹窗关闭时 resolve
+  void update(int value, [String? msg]);
+  void onStatus(void Function(String) fn);         // opened | closed | completed
+}
+```
+
+context 由**宿主**接线：门面里放一个顶层 provider（顶层变量不被 autoimport 绑定），
+宿主在 `fjsAttachHost` 里赋值，取当前挂载的 `FjsApp`：
+
+```dart
+progress.progressContext = () => FjsApp.currentContext;
+```
+
+`FjsApp.currentContext` 是 `flutter_fjs` 的公开静态入口（内部 Navigator 的
+context，未挂载为 null，只暴露 context 不暴露 State）。没接线时门面构造抛带说明的
+`StateError`，不会悄悄不弹。弹窗要有 Material 祖先（宿主的 `MaterialApp`）。
+这类原生弹窗 web 上没有对应实现，页面用 `hasDartObjectSupport()` 守卫（见
+`demo/src/pages/basic/dart-progress.vue`）。
+
 ### 规则与边界
 
 - **公开 API 面**：主库 export 链上的顶层类与函数；类成员取无名构造、

@@ -7,6 +7,7 @@ declare module '@ufjs/runtime' {
   interface FjsObjectModules {
     mmkv: MmkvModule;
     playground: PlaygroundModule;
+    progress: ProgressModule;
   }
 }
 
@@ -132,4 +133,20 @@ export interface PlaygroundModule {
   liveCount(): number;
   makeAdder(n: number): (a0: number) => number;
   waitFor(ms: number): Promise<number>;
+}
+
+export interface Progress {
+  readonly isOpen: boolean;
+  show(determinate?: boolean): Promise<void>;
+  update(value: number, msg?: string | null): void;
+  close(): void;
+  onStatus(fn: (a0: string) => void): void;
+}
+
+export interface ProgressCtor {
+  (msg?: string, max?: number): Progress;
+}
+
+export interface ProgressModule {
+  Progress: ProgressCtor;
 }

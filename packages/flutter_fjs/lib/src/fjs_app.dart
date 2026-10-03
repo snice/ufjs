@@ -41,12 +41,23 @@ class FjsApp extends StatefulWidget {
 
   final List<NavigatorObserver> observers;
 
+  /// A [BuildContext] under the mounted [FjsApp]'s Navigator (and so under
+  /// its MaterialApp), or null while none is mounted. It is the seam a host
+  /// uses to hand native dialogs a context — e.g. a Dart object module that
+  /// wraps a widget package whose entry point needs one (`showDialog`,
+  /// `Navigator.of`). Only the context is exposed, not the State; with
+  /// several FjsApps mounted the most recently created one wins.
+  static BuildContext? get currentContext => _FjsAppState._current?._navigator.currentContext;
+
   @override
   State<FjsApp> createState() => _FjsAppState();
 }
 
 class _FjsAppState extends State<FjsApp> {
   static const _keyPrefix = 'fjs-nav-';
+
+  /// The mounted instance [FjsApp.currentContext] reads through.
+  static _FjsAppState? _current;
 
   final GlobalKey<NavigatorState> _navigator = GlobalKey<NavigatorState>();
 
@@ -64,6 +75,7 @@ class _FjsAppState extends State<FjsApp> {
   @override
   void initState() {
     super.initState();
+    _current = this;
     widget.engine.addListener(_onEngine);
     _stack = List<NavEntry>.of(widget.engine.navStack);
     // Draw under the status bar and the navigation bar (gesture handle).
@@ -88,6 +100,7 @@ class _FjsAppState extends State<FjsApp> {
 
   @override
   void dispose() {
+    if (identical(_current, this)) _current = null;
     widget.engine.removeListener(_onEngine);
     super.dispose();
   }

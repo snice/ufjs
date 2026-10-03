@@ -44,7 +44,8 @@
     ],
     "autoimport": [
       "mmkv@^2.4.2",
-      { "name": "playground", "path": "dart/playground" }
+      { "name": "playground", "path": "dart/playground" },
+      { "name": "progress", "path": "dart/progress" }
     ]
   }
 }

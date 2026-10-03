@@ -1,0 +1,12 @@
+name: progress
+description: A context-free facade over sn_progress_dialog for the demo's dart-progress page; fjs autoimport generates the object-ABI adapter and TS types from it (specs/202).
+publish_to: none
+version: 0.0.1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  sn_progress_dialog: ^2.0.0

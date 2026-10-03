@@ -13,9 +13,13 @@ import 'dart:io' show Directory;
 
 import 'package:flutter_fjs/flutter_fjs.dart';
 import 'package:mmkv/mmkv.dart';
+import 'package:progress/progress.dart' as progress;
 
 Future<void> fjsAttachHost(FjsEngine engine) async {
   final rootDir = '${Directory.systemTemp.path}/demo-mmkv';
   await Directory(rootDir).create(recursive: true);
   await MMKV.initialize(rootDir: rootDir);
+  // the dart-progress page's dialog needs a BuildContext: hand it one
+  // under the mounted FjsApp (specs/202)
+  progress.progressContext = () => FjsApp.currentContext;
 }

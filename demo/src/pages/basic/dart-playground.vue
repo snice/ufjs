@@ -1,5 +1,5 @@
 <route>
-{"title": "dart-playground", "group": "基础能力", "desc": "对象 ABI 六能力：构造/方法/属性、Future→Promise、回调双向、句柄传参、release（Dart 手写模块，web 走 TS 替身，两端日志逐行一致）"}
+{"title": "dart-playground", "group": "基础能力", "desc": "对象 ABI 六能力：构造/方法/属性、Future→Promise、回调双向、句柄传参、release（Dart 普通类经 autoimport 生成，web 走 TS 替身，两端日志逐行一致）"}
 </route>
 
 <script setup lang="ts">
