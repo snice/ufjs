@@ -147,10 +147,26 @@ Flutter 对每个 element 做 update、对每个 RenderObject 调 setter。**这
 | 5 | 离线对照 | ✅ 4.6–5.1%（目标 ≤ 50%） |
 | 6 | 主线不退化 | ✅ `flutter test` 736 通过；`pnpm run typecheck`、`pnpm test` exit 0；`mount_bench` 72.7 / 74.4 ms（main 同机 75.1） |
 | 7 | 模拟器对照 | ✅ `scroll-view` 265 → 92 ms（35%，且剩余几乎全是与快路径无关的语义阶段）；`list-view` 10.4 → 8.8 ms。⚠️ 「≤ 50%」对 `list-view` 不成立（本来就小），已在 performance.md 如实记录 |
-| 8 | 真机复核 | ⏳ 待用户通知；要复测：`scroll-view` 与 `list-view` 下切主题的最长帧、无语义客户端时的 UI 工作量 |
+| 8 | 真机复核 | ✅ iPhone 12（iOS 26.7，profile，`fjs run ios -- --profile` 连 dev server），见下节 |
 
 ### 已知限制与后续
 
 - 只覆盖 `backgroundColor` / `color`（`borderColor` 仅在没有可见边框时无影响）；`opacity`、可见边框换色、有 transition 的节点仍走原路径。
 - 自绘表面（specs/193）里的节点没有 widget 链，不经此路径。
 - 模拟器上 `scroll-view` 的 SEMANTICS 阶段 ≈ 90 ms 是独立问题（4000 行全进语义树），值得单独看。
+
+### 真机复核（2026-10-03，iPhone 12，profile，hello-js 主题压测屏）
+
+`__themeBench.setRows(1000)`（= 界面上的「4000 节点」，3332 个元素），`scroll-view` 容器，`__themeBench.setPaintOnly('off'|'on')`，
+`tool/frame-timeline.mjs`，每种 4 次切换（先 2 次预热）：
+
+| | 快路径关闭 | 快路径开启 |
+|---|---|---|
+| 最长 UI 帧（前 5） | 161.6 / 161.0 / 161.0 / 159.2 / 4.1 ms | **4.1 / 4.1 / 4.1 / 4.0 / 2.1 ms** |
+| LAYOUT 最长（含嵌套 build） | 157.3 ms | 1.5 ms |
+| BUILD 事件数 | 4168 | 132 |
+| PAINT 最长 | 1.4 ms | 1.5 ms |
+| 光栅线程最长 | 2.8 ms | 2.9 ms |
+
+一次主题切换的最长 UI 帧 **161 → 4.1 ms（≈ 39×）**，从掉近 10 帧变成不掉帧；光栅线程持平。真机没有语义客户端，所以没有模拟器上
+那条与快路径无关的 ≈ 90 ms SEMANTICS 阶段。`list-view` 未在真机上单独量（模拟器上两边都只有 ≈ 9 ms）。
