@@ -309,6 +309,11 @@ class ObjectBridge {
         final className = args.length > 1 ? args[1]?.toString() ?? '' : '';
         final rest = args.length > 2 ? args.sublist(2) : const <Object?>[];
         final instance = module.construct(className, rest);
+        // A module-level async function (static Future factory, e.g.
+        // MMKV.initialize) rides the construct op; without this it would be
+        // registered as a handle to a Future and JS would see a dead object
+        // where its d.ts promises a Promise.
+        if (instance is Future) return _pendingFor(instance);
         if (instance == null || instance is bool || instance is num ||
             instance is String) {
           return instance; // constructors must build objects; scalars pass through
@@ -324,19 +329,12 @@ class ObjectBridge {
         final member = args.length > 1 ? args[1]?.toString() ?? '' : '';
         final rest = args.length > 2 ? args.sublist(2) : const <Object?>[];
         final result = module.invoke(entry.instance, member, rest);
-        if (result is Future) {
-          final callId = _nextCallId++;
-          result.then(
-            (v) => _settle(callId, true, v),
-            onError: (Object e) => _settle(callId, false, e.toString()),
-          );
-          return FjsPendingValue(callId);
-        }
-        return result;
+        if (result is Future) return _pendingFor(result);
+        return _adopt(result, module);
       case 'get':
         final entry = _entryOf(args[0]);
         final member = args.length > 1 ? args[1]?.toString() ?? '' : '';
-        return entry.module!.get(entry.instance, member);
+        return _adopt(entry.module!.get(entry.instance, member), entry.module!);
       case 'set':
         final entry = _entryOf(args[0]);
         final member = args.length > 1 ? args[1]?.toString() ?? '' : '';
@@ -362,6 +360,41 @@ class ObjectBridge {
       default:
         throw StateError('unknown fjs.object op "$op"');
     }
+  }
+
+  /// An object a member hands out (a factory method, a getter returning a
+  /// sub-object) belongs to the module that handed it out: without this it
+  /// would reach JS as a "foreign" handle with no owner and every member
+  /// access on it would fail. Already-registered objects keep their owner.
+  Object? _adopt(Object? value, FjsObjectModule module) {
+    if (value == null ||
+        value is bool ||
+        value is num ||
+        value is String ||
+        value is List ||
+        value is Map ||
+        value is Function ||
+        value is Future ||
+        value is FjsMethod ||
+        value is FjsPendingValue ||
+        value is FjsCallback ||
+        _byInstance[value] != null) {
+      return value;
+    }
+    final handle = _nextHandle++;
+    final entry = _Entry(handle, value, module);
+    _instances[handle] = entry;
+    _byInstance[value] = entry;
+    return value;
+  }
+
+  FjsPendingValue _pendingFor(Future<Object?> future) {
+    final callId = _nextCallId++;
+    future.then(
+      (v) => _settle(callId, true, v),
+      onError: (Object e) => _settle(callId, false, e.toString()),
+    );
+    return FjsPendingValue(callId);
   }
 
   _Entry _entryOf(Object? arg) {

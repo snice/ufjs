@@ -44,12 +44,12 @@
 
 ## 两端对齐
 
-- [x] T040 演示模块 exerciser：Dart 实现（六能力：Counter 构造/add 方法/
-      step 属性/waitFor Future/onTick 回调/release）注册进 engine
-- [x] T041 演示模块 web 替身 TS 实现，demo 页用 `registerDartModuleStub`
-      注册；demo 演示页挂载（同一份页面代码）
-- [ ] T042 两端对拍（待真机/浏览器走查：`fjs dev` 连 fjs-go 与 `fjs dev --web` 各跑 `/basic/dart-objects`；构建与单测已过，人工对拍留给下次会话）：`fjs dev`（fjs-go）与 `fjs dev --web` 各跑演示页，
-      六能力表现一致
+- [x] T040 ~~演示模块 exerciser~~ → 已被 §10 取代：engine 不内置对象模块，
+      测试与 demo 改用 mmkv 形状（见 §10；playground 演示见 T101–T104）
+- [x] T041 ~~exerciser 的 web 替身~~ → 已被 §10 取代（mmkv 无 web 替身，
+      响亮 throw）
+- [x] T042 两端对拍 → 由 §11 的 T107 承接（playground 页「一键跑全部」两端
+      文本 diff）；mmkv 页不参与对拍（无 web 实现）
 
 ## 测试
 
@@ -76,3 +76,78 @@
 - [x] T072 fjs-test 全绿（含既有用例全数保留）
 - [x] T073 `cd packages/flutter_fjs && flutter test`
 - [x] T074 spec.md 第 6 节逐条核对
+
+
+---
+
+## §11 追加：demo 六能力覆盖补齐（对应 plan §6–§10）
+
+### 契约层
+
+- [x] T099 修 bridge：construct 返回 Future 也走 PENDING（plan §11）：
+      `packages/flutter_fjs/lib/src/registry/object_bridge.dart` 抽 `_pendingFor`；
+      `test/object_bridge_test.dart` 加用例（先红后绿，已验证）
+- [x] T099b 修 bridge：invoke/get 返回的对象归属交出它的模块（plan §11 第二处）：
+      `object_bridge.dart` 加 `_adopt`；`object_bridge_test.dart` 加用例（先红后绿）
+- [x] T100（native/ffi.dart/dart-bridge.ts/native-global.d.ts 零 diff，已核对；object_bridge.dart 是 T099 的有意例外）确认契约零变更：`git diff --stat` 在 `packages/fjs-runtime/src/native-global.d.ts`、
+      `packages/flutter_fjs/native/`、`packages/flutter_fjs/lib/src/ffi.dart`、
+      `packages/fjs-runtime/src/dart-bridge.ts` 上为空（收尾时核对）
+
+### 实现
+
+- [x] T101 `demo/src/fjs-playground.d.ts`（新）：`PlaygroundModule` /
+      `Counter` 接口 + `declare module '@ufjs/runtime'` 的 `FjsObjectModules`
+      合并；不动生成物 `demo/src/fjs-objects.d.ts`
+- [x] T102 `demo/src/main.dart`：内联 `_PlaygroundModule`（Counter 构造/
+      add/step 字段/onTick+fire+startTimer/clone/merge/release/liveCount、
+      waitFor/failAfter、makeAdder），`fjsAttachHost` 里
+      `engine.objects.registerModule('playground', …)`；头注释写明单文件
+      限制与 release 是模块自己的方法
+- [x] T103 `demo/src/pages/basic/dart-playground.vue`（新）：每能力一个按钮
+      + 失败路径按钮 + 「一键跑全部」（汇总文本整块显示、不带时间戳、Timer
+      版不入汇总）
+- [x] T104 `demo/src/pages/basic/dart-objects.vue`：`hasDartObjectSupport()`
+      守卫后才构造 mmkv；web 分支显示说明；`<route>` desc 改成与事实一致
+
+### 两端对齐
+
+- [x] T105 `demo/src/playground-stub.ts`（新）+ `demo/src/main.ts`：
+      `createPlaygroundStub()` 与 Dart 模块逐成员对应（Promise+setTimeout、
+      回调直调、liveCount 自计数、整数口径一致）；`createFjsApp` 之前
+      `registerDartModuleStub('playground', …)`
+- [x] T106 `pnpm --filter demo run typecheck` 与 web 构建通过后，用
+      `fjs dev --web` 点「一键跑全部」存 `web.txt`；打开 dart-objects 页确认
+      仅说明、控制台无未捕获异常
+- [x] T107 Flutter 端（`fjs dev` + fjs-go 或 `fjs run`）同页点「一键跑全部」
+      存 `flutter.txt`，`diff web.txt flutter.txt` 为空；顺手确认 mmkv 页既有
+      按钮不回归 → 勾掉 T042
+
+### 测试
+
+- [x] T110（实际：因 T099/T099b 在 object_bridge_test.dart 新增 2 条用例，先红后绿，flutter test 773 全过；页面本身无自动化测试）
+      原文：`packages/flutter_fjs/test/object_bridge_test.dart` 不改；若 T102
+      的模块逻辑可复用到测试，不复用（demo 代码不进包）。本组无新增自动化
+      测试——页面对拍文本就是验收物。在 spec §11.6 里已写明
+
+### 文档
+
+- [x] T120 `docs/modules.md`：dart-objects 段落补 playground 页指引；修正
+      「同名注册优先」那句与现状（mmkv 无替身）的表述
+- [x] T121 `docs/web.md`「已知差异」：加一行 mmkv 页 web 显示说明、playground
+      有替身
+- [x] T122 spec 文档清残留：`specs/159-dart-object-abi/spec.md` §3 示例改指
+      playground（`Counter`/`waitFor`/`onTick` 已与之一致，核对 `release`
+      注）；`specs/160-object-codegen/tasks.md` T020 改写成现状
+
+### 验收
+
+- [x] T130 `pnpm run typecheck`
+- [x] T131 `pnpm test`
+- [x] T132 `pnpm --filter demo run build:release`
+- [x] T133 `grep -rn exerciser specs/159* specs/160* docs demo/src` 只剩
+      「已被取代」的说明性提及
+- [x] T134 spec.md §11.6 逐条核对（含 T100 的零变更护栏）
+
+> T134 备注：§11.6 第 5 条（Flutter 端 mmkv 页不回归）本次**未重新在设备上点一遍**——
+> 页面逻辑只多了 `hasDartObjectSupport()` 守卫，Flutter 上恒为 true；已在 iOS 模拟器
+> 验证 playground 页与列表页，mmkv 页留给用户顺手点一下。

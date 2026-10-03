@@ -290,6 +290,28 @@ void main() {
     expect(await _waitForLine(logs, 'awaited:'), contains('waited 30ms'));
   });
 
+  test('a Future from a module-level (construct) call is a promise too',
+      () async {
+    _run(
+        engine,
+        logs,
+        "const q = __fjs.fns.objectCall('construct', 'probe', 'delayedValue', 20);"
+        "console.log('type:', q instanceof Promise);"
+        "q.then(v => console.log('awaited:', v));");
+    expect(logs.first, 'type: true');
+    expect(await _waitForLine(logs, 'awaited:'), contains('static ok'));
+  });
+
+  test('an object returned by a method keeps its owning module (probe)', () {
+    final out = _run(
+        engine,
+        logs,
+        "const p = __fjs.fns.objectCall('construct', 'probe', 'Probe');"
+        "const c = __fjs.fns.objectCall('invoke', p, 'child');"
+        "console.log('child:', c.ping());");
+    expect(out, 'child: pong');
+  });
+
   test('a JS function reaches Dart as FjsCallback and fires back (probe)',
       () async {
     _run(
@@ -302,6 +324,8 @@ void main() {
   });
 }
 
+class _ProbeChild {}
+
 /// Bridge-machinery probe: Future / callback members that real mmkv's API
 /// does not expose. Registered under its own name in the tests that need
 /// it; kept as small as the coverage requires.
@@ -309,11 +333,25 @@ class _ProbeModule extends FjsObjectModule {
   FjsCallback? tickListener;
 
   @override
-  Object? construct(String className, List<Object?> args) => this;
+  Object? construct(String className, List<Object?> args) {
+    // module-level async function (a static Future factory, like
+    // MMKV.initialize in the generated adapter): rides the construct op
+    if (className == 'delayedValue') {
+      return Future<String>.delayed(
+          Duration(milliseconds: (args[0] as num).toInt()), () => 'static ok');
+    }
+    return this;
+  }
 
   @override
   Object? invoke(Object instance, String member, List<Object?> args) {
+    if (instance is _ProbeChild) {
+      if (member == 'ping') return 'pong';
+      throw StateError('child has no member "$member"');
+    }
     switch (member) {
+      case 'child':
+        return _ProbeChild(); // an object an invoke hands out, not construct
       case 'waitFor':
         return Future<void>.delayed(
             Duration(milliseconds: (args[0] as num?)?.toInt() ?? 20),
