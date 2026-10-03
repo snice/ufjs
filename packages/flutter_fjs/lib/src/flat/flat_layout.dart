@@ -60,6 +60,10 @@ class FlatStats {
   /// Not reset by [reset]: how many chunks the last pack made, and how many
   /// packs have run (a repack on every edit would show here).
   static int chunkCount = 0;
+
+  /// Nodes currently painted by live surfaces (packed minus disposed) — what
+  /// share of a page the flat path covers.
+  static int liveNodes = 0;
   static int packs = 0;
   static void reset() {
     relaidNodes = 0;
@@ -200,6 +204,7 @@ class FlatEngine {
     }
     chunks = [];
     spine = [];
+    FlatStats.liveNodes -= byId.length;
     byId.clear();
     root = null;
   }
@@ -250,6 +255,7 @@ class FlatEngine {
     root = r;
     _buildChunks();
     FlatStats.packs++;
+    FlatStats.liveNodes += byId.length;
     FlatStats.chunkCount = chunks.length;
     return true;
   }

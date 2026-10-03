@@ -18,6 +18,8 @@
 // subtree walk is memoised on the MirrorNode (flatPure / flatSize), cleared up
 // the parent chain by MirrorTree.flushDirty — so asking at every level of a
 // deep page does not go quadratic.
+import 'dart:convert' show jsonEncode;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/semantics.dart';
 
@@ -181,10 +183,13 @@ void registerFlatDevModule({required HostRegistry host, required MirrorTree tree
       // the engine's counters since the last 'reset', for reading on a device
       return '{"relaid":${FlatStats.relaidNodes},"paintedNodes":${FlatStats.paintedNodes},'
           '"paintedChunks":${FlatStats.paintedChunks},"reusedChunks":${FlatStats.reusedChunks},'
-          '"chunks":${FlatStats.chunkCount},"packs":${FlatStats.packs}}';
+          '"chunks":${FlatStats.chunkCount},"packs":${FlatStats.packs},'
+          '"surfaces":${FjsFlatStats.surfaces},"flatNodes":${FlatStats.liveNodes},'
+          '"nodes":${tree.nodeCount},"rejected":${jsonEncode(FjsFlatStats.rejected)}}';
     }
     if (want == 'reset') {
       FlatStats.reset();
+      FjsFlatStats.reset();
       return fjsFlatMode.name;
     }
     final next = switch (want) {
