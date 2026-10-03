@@ -11,6 +11,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_fjs/src/render/paint_only.dart' show fjsTextOnlyEnabled;
 import 'package:flutter_fjs/src/mirror_tree.dart';
 import 'package:flutter_fjs/src/render/renderer.dart';
 import 'package:flutter_fjs/src/ui_ops.dart';
@@ -104,6 +105,14 @@ Future<List<int>> apply(
 }
 
 void main() {
+  // These tests pin how the ORDINARY path marks and rebuilds on a text edit
+  // (which nodes are dirty, what is found in the widget tree). specs/196's
+  // text-only fast path edits the mounted paragraph instead and leaves the
+  // element's widget as it was, so it is switched off here; its own behaviour is
+  // covered by text_only_test.dart.
+  setUp(() => fjsTextOnlyEnabled = false);
+  tearDown(() => fjsTextOnlyEnabled = true);
+
   testWidgets('a text change inside the button subtree refreshes the label', (
     tester,
   ) async {

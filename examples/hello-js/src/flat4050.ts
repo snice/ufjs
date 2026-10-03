@@ -525,6 +525,8 @@ export function mountFlat4050(host: Element): () => void {
     // specs/193：开关 Dart 侧的自绘表面（'auto' | 'off' | 'force'），免重编对照开 / 关。
     // 模拟器的语义树一直是开着的，'auto' 在那里会回退，所以测自绘要用 'force'。
     setFlat: (m: 'auto' | 'off' | 'force') => invokeHost('fjs.dev.flat', m),
+    // specs/196：Dart 侧「只改文字内容」快路径的开关（'on' | 'off'），免重编 A/B。
+    setTextOnly: (m: 'on' | 'off') => invokeHost('fjs.dev.textOnly', m),
     // 自绘引擎计数器（'stats' 读、'reset' 清零）：真机上看重排节点数 / 块数 / 是否反复重新 pack
     flatStats: (m: 'stats' | 'reset' = 'stats') => invokeHost('fjs.dev.flat', m),
     setMode: (m: 'node' | 'clone') => {

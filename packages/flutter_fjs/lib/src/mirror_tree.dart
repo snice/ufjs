@@ -10,7 +10,7 @@ import 'package:flutter/widgets.dart' show GlobalKey;
 
 import 'canvas/canvas_module.dart';
 import 'canvas/display_list.dart';
-import 'render/paint_only.dart' show applyPaintOnly, classifyPaintOnly;
+import 'render/paint_only.dart' show applyPaintOnly, applyTextOnly, classifyPaintOnly, classifyTextOnly;
 import 'ui_ops.dart';
 
 /// One interned computed style: the decoded map, decoded once no matter how
@@ -203,6 +203,7 @@ class MirrorTree {
   /// geometry module's forced reflow needs to know which views to chase.
   List<int> flushDirty() {
     if (_paintOnly.isNotEmpty) _flushPaintOnly();
+    if (_textOnly.isNotEmpty) _flushTextOnly();
     if (_dirty.isEmpty) return const [];
     final ids = List<int>.of(_dirty);
     _dirty.clear();
@@ -239,6 +240,20 @@ class MirrorTree {
       if (node == null) return;
       if (!applyPaintOnly(node, flags)) _touch(id);
     });
+  }
+
+  /// specs/196: ids whose last SET_TEXT is a pure string swap.
+  final Set<int> _textOnly = {};
+
+  void _flushTextOnly() {
+    final pending = List<int>.of(_textOnly);
+    _textOnly.clear();
+    for (final id in pending) {
+      if (_dirty.contains(id)) continue; // a full rebuild reads the final text
+      final node = _nodes[id];
+      if (node == null) continue;
+      if (!applyTextOnly(node)) _touch(id);
+    }
   }
 
   void _flatNotify(List<int> ids) {
@@ -454,9 +469,18 @@ class MirrorTree {
           check(textLen);
           final text = utf8.decode(frame.sublist(p, p + textLen));
           p += textLen;
-          if (_nodes[id] != null) {
-            _nodes[id]!.text = text;
-            _touch(id);
+          final textNode = _nodes[id];
+          if (textNode != null) {
+            final oldText = textNode.text;
+            textNode.text = text;
+            // specs/196: a string swap in a plain text node is applied to its
+            // mounted paragraph at flushDirty; neither it nor its parent is
+            // marked for a rebuild
+            if (classifyTextOnly(textNode, oldText, this)) {
+              _textOnly.add(id);
+            } else {
+              _touch(id);
+            }
           }
           break;
 
