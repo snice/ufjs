@@ -15,8 +15,8 @@
 // The polyfill must come first: on the app Anime.js looks for `setImmediate`
 // while its module evaluates (see src/adapters/anime/native-polyfills.ts).
 import '@/adapters/anime/native-polyfills';
-import { onBeforeUnmount, reactive, ref } from 'vue';
-import { onPageSettled } from 'fjs/router';
+import { onBeforeUnmount, reactive, ref, onMounted } from 'vue';
+// import { onPageSettled } from 'fjs/router';
 import {
   animate,
   spring,
@@ -184,7 +184,8 @@ function ballStyle(ball: { p: number }) {
 
 // Heavy-ish per-frame work shouldn't fight the route transition (spec 027):
 // the first frame paints the resting state, animations start once it settles.
-onPageSettled(() => {
+// onPageSettled(() => {
+onMounted(() => {
   playGrid();
   buildTimeline();
   tl?.play();
