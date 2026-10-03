@@ -699,6 +699,17 @@ export function createComponent(
       // a kept vapor subtree (KeepAlive, the web shell's page cache)
       // deactivates the VDOM components inside it too: vant's Popup closes
       // a teleported layer there (specs/181)
+      // not in the page yet (the vapor tree is still being built): the VDOM
+      // component's mounted hooks wait for the vapor mounted flush, as the
+      // ones of a component under a VDOM parent wait for the whole tree
+      // (specs/199). A live parent (a later v-if) has nothing to wait for.
+      afterMount: (parent as { isConnected?: boolean } | null)?.isConnected
+        ? undefined
+        : (cb: () => void) => {
+            const waiter = createVaporInstance(null, null);
+            waiter.m = [cb];
+            pendingMounted.push(waiter);
+          },
       onKeepAlive: owner
         ? (run: (kind: 'a' | 'da') => void) => {
             // ahead of the owner's own, like the descendants' hooks Vue's

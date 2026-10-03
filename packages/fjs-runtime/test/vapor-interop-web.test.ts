@@ -3,7 +3,7 @@
 // through runtime-dom's real renderer — a VDOM child written in a vapor slot
 // of a VDOM parent injects from that parent, and from the vapor side above.
 import { describe, expect, it } from 'vitest';
-import { Fragment, defineComponent, h, inject, provide } from 'vue';
+import { Fragment, defineComponent, h, inject, onMounted, provide, ref } from 'vue';
 import { compileSfc } from './helpers/sfc';
 
 const wait = (ms = 20): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -108,3 +108,33 @@ import Wrap from './Wrap'
   });
 });
 
+
+describe('mounted hooks of a VDOM component in a vapor tree (specs/199)', () => {
+  it("onMounted sees the component's root connected, as under a VDOM parent", async () => {
+    const vue = (await import('../src/vapor/web')) as unknown as Record<string, unknown> & {
+      createVaporApp: (c: unknown) => { mount: (el: unknown) => void };
+    };
+    const seen: string[] = [];
+    const Child = defineComponent({
+      setup() {
+        const el = ref<HTMLElement | null>(null);
+        onMounted(() => seen.push(`mounted ${el.value?.isConnected}`));
+        return () => h('span', { ref: el }, 'x');
+      },
+    });
+    const Page = compileSfc(`<script setup>
+import Child from './Child'
+</script>
+<template><view><view><Child /></view></view></template>`, {
+      vapor: true,
+      web: true,
+      runtime: vue,
+      imports: { './Child': Child },
+    }).component;
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    vue.createVaporApp(Page).mount(root);
+    await wait();
+    expect(seen).toEqual(['mounted true']);
+  });
+});

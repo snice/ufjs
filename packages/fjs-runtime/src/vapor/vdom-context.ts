@@ -46,6 +46,98 @@ export interface VdomMountContext {
   provides?: Record<string | symbol, unknown> | null;
   appContext?: VaporAppContext | null;
   onKeepAlive?: (run: (kind: 'a' | 'da') => void) => void;
+  /** Present when the vapor tree this component is built into is not in the
+   * page yet: `cb` runs once its hosts are in (the vapor mounted flush).
+   * Absent when it is already live — nothing to wait for (specs/199). */
+  afterMount?: (cb: () => void) => void;
+}
+
+// ---- mounted hooks after the hosts are in (specs/199) --------------------------------------
+//
+// A VDOM component mounted inside a vapor tree renders into a detached
+// container, and render() flushes the component's post callbacks (onMounted,
+// template refs, post watchers, vnode hooks) before the vapor tree it belongs
+// to has reached the page. vant's TextEllipsis measures in onMounted and
+// gives up when `root.isConnected` is false, then waits for an onActivated a
+// plain mount never fires: the text stayed uncut. Under a VDOM parent those
+// callbacks run after the whole tree is attached.
+//
+// runtime-core queues every one of them through
+// `queueEffectWithSuspense(fn, instance.suspense)`: with a `pendingBranch` on
+// the suspense they pile up in `suspense.effects` instead of the global post
+// queue, and `instance.suspense` is inherited down the subtree. A mount
+// passes this Suspense-shaped holder as `parentSuspense` of its first patch
+// and releases it when the vapor mounted flush comes. Why not replay
+// `activated` afterwards: it would run a user's onActivated on a plain mount,
+// which VDOM never does. Why not a real <Suspense>: its content waits in a
+// hidden container, and the interop needs the roots right away.
+
+/** runtime-core's `patch`, for a renderer that does not hand out `internals`
+ * (3.5 only returns render / hydrate / createApp). KeepAlive's setup reads
+ * `instance.ctx.renderer` — `{ p: patch, m: move, um: unmount, o }` — so a
+ * KeepAlive with one probe child mounted into a scratch container exposes it
+ * through the probe's parent. Once per renderer; the scratch mount is
+ * unmounted again. */
+export function probePatch(
+  render: (vnode: unknown, container: never) => void,
+  scratch: unknown,
+  vue: { h: (...a: never[]) => unknown; KeepAlive: unknown; defineComponent: (o: never) => unknown; getCurrentInstance: () => unknown },
+): (...args: unknown[]) => void {
+  let patch: ((...args: unknown[]) => void) | null = null;
+  const Probe = vue.defineComponent({
+    setup() {
+      const parent = (vue.getCurrentInstance() as { parent?: { ctx?: { renderer?: { p?: (...a: unknown[]) => void } } } } | null)?.parent;
+      patch = parent?.ctx?.renderer?.p ?? null;
+      return () => null;
+    },
+  } as never);
+  render(vue.h(vue.KeepAlive as never, null as never, { default: () => vue.h(Probe as never) } as never), scratch as never);
+  render(null, scratch as never);
+  if (!patch) throw new Error('[fjs vapor] cannot reach the renderer patch (runtime-core KeepAlive ctx.renderer)');
+  return patch;
+}
+
+export interface MountHold {
+  /** the `parentSuspense` of the first patch */
+  readonly suspense: object;
+  /** Hosts are in: queue what was held, then `flush` makes the scheduler run
+   * it now. Later callbacks of the same subtree go to the global queue (the
+   * holder stays as `instance.suspense`, with no pending branch). */
+  release(flush: () => void): void;
+  /** The subtree went away first: what was held must not run. */
+  discard(): void;
+}
+
+export function createMountHold(queue: (cbs: (() => void)[]) => void): MountHold {
+  const holder = {
+    pendingBranch: {} as object | null,
+    effects: [] as (() => void)[],
+    isInFallback: false,
+    isUnmounted: false,
+    deps: 0,
+    // an async setup would wait for a <Suspense> here; with none it renders a
+    // comment placeholder, as it did before the hold existed
+    registerDep(): void {},
+  };
+  let done = false;
+  return {
+    suspense: holder,
+    release(flush) {
+      if (done) return;
+      done = true;
+      holder.pendingBranch = null;
+      const held = holder.effects;
+      holder.effects = [];
+      if (held.length === 0) return;
+      queue(held);
+      flush();
+    },
+    discard() {
+      done = true;
+      holder.pendingBranch = null;
+      holder.effects = [];
+    },
+  };
 }
 
 /** Runs the activated ('a') / deactivated ('da') hooks of every component

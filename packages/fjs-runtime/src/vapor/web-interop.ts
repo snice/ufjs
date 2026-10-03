@@ -5,10 +5,21 @@
 // is built on — a pure-vapor app cannot mount VDOM components, which is the
 // documented trade for a bundle without any vdom machinery.
 import { EffectScope, effect, shallowReactive, stop as stopRunner } from '@vue/reactivity';
-import { getCurrentInstance, h, render } from 'vue';
+import { KeepAlive, createRenderer, defineComponent, getCurrentInstance, h, nodeOps, patchProp, queuePostFlushCb } from 'vue';
 import { blockOf, disposeBlock, mountVaporComponentForAdopt, nodesChanged, type Block, type VaporAppContext, type VaporBackend, type VaporComponent } from './runtime';
-import { markVdomOwner, runVdomKeepAliveHooks, vdomAppContext, vdomPublicInstance, type VdomMountContext } from './vdom-context';
+import { createMountHold, markVdomOwner, probePatch, runVdomKeepAliveHooks, vdomAppContext, vdomPublicInstance, type VdomMountContext } from './vdom-context';
 import { domBackend } from './web-dom';
+
+// runtime-dom's own renderer, built here instead of taken as `render` so the
+// first patch can be handed a mount hold (specs/199): the options are exactly
+// the ones runtime-dom's lazily-created renderer uses (`nodeOps` +
+// `patchProp`), and `patchOf()` reaches the patch `render` itself calls.
+const { render } = createRenderer<Node, Element>({ ...nodeOps, patchProp } as never) as unknown as {
+  render: (vnode: unknown, container: unknown) => void;
+};
+let patchFn: ((...args: unknown[]) => void) | null = null;
+const patchOf = (): ((...args: unknown[]) => void) =>
+  (patchFn ??= probePatch(render as never, document.createElement('div'), { h, KeepAlive, defineComponent, getCurrentInstance } as never));
 
 // the VDOM interop effect re-runs outside any vapor component scope — it is
 // disposed through its block's cleanup, not a vapor scope
@@ -122,6 +133,18 @@ const mountVdomComponent: VaporBackend['mountVdomComponent'] = (comp, props, slo
     let lastVnode: unknown = null;
     (ctx as VdomMountContext | undefined)?.onKeepAlive?.((kind) => runVdomKeepAliveHooks(lastVnode, kind));
     let alive = true;
+    // mounted hooks wait for the vapor tree to reach the page (specs/199)
+    let hold = ctx?.afterMount ? createMountHold(queuePostFlushCb as never) : null;
+    const held = hold;
+    if (held) {
+      const release = (): void => {
+        if (!alive) return held.discard();
+        held.release(() => render(lastVnode, container));
+      };
+      ctx!.afterMount!(release);
+      // no vapor flush ever coming must not leave the hooks held for good
+      void Promise.resolve().then(release);
+    }
     const roots: unknown[] = [];
     const runner = effect(
       () => {
@@ -132,7 +155,15 @@ const mountVdomComponent: VaporBackend['mountVdomComponent'] = (comp, props, slo
         (vnode as unknown as { appContext: unknown }).appContext = appContext;
         // runtime-core puts a component vnode's scopeId on its root element
         if (ctx?.scopeId) (vnode as unknown as { scopeId: string }).scopeId = ctx.scopeId;
-        render(vnode, container);
+        if (hold) {
+          // render() without its trailing flush: the first patch's post
+          // callbacks land in the hold, not the global queue
+          patchOf()(null, vnode, container, null, null, hold.suspense);
+          (container as unknown as { _vnode: unknown })._vnode = vnode;
+          hold = null;
+        } else {
+          render(vnode, container);
+        }
         lastVnode = vnode;
         // the first render lands in the container; later patches happen in
         // place, wherever the roots are

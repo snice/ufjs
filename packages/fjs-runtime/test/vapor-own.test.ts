@@ -460,6 +460,65 @@ defineProps(['label'])
     expect(textsUnder(root.id)).toEqual(['own', 'vdom two']);
   });
 
+  it('a VDOM component\'s onMounted sees its root connected, as under a VDOM parent (specs/199)', async () => {
+    // vant's TextEllipsis measures in onMounted and bails out when
+    // root.isConnected is false — it then waits for an onActivated that a
+    // plain mount never fires, and the text stays uncut
+    const seen: string[] = [];
+    const vdomChild = vue.defineComponent({
+      setup() {
+        const el = vue.ref<{ isConnected: boolean } | null>(null);
+        vue.onMounted(() => seen.push(`mounted ${el.value?.isConnected}`));
+        return () => vue.h('view', { ref: el }, [vue.h('text', null, 'x')]);
+      },
+    });
+    const parent = compileSfc(
+      `<script setup>
+import VdomChild from 'vdom-child'
+</script>
+<template><view class="parent"><view class="deep"><VdomChild /></view></view></template>`,
+      { vapor: true, runtime: vue as unknown as Record<string, unknown>, imports: { 'vdom-child': vdomChild } },
+    ).component;
+    vue.createVaporApp(vue.defineVaporComponent({ setup: () => vue.createComponent(parent as never, {}) })).mount(r.flutterRoot());
+    await settle();
+    expect(seen).toEqual(['mounted true']);
+  });
+
+  it('hold edges: a live parent is not held; updates after the release still fire onUpdated (specs/199)', async () => {
+    const seen: string[] = [];
+    const vdomChild = vue.defineComponent({
+      props: ['n'],
+      setup(p: { n: number }) {
+        const el = vue.ref<{ isConnected: boolean } | null>(null);
+        vue.onMounted(() => seen.push(`mounted ${el.value?.isConnected}`));
+        vue.onUpdated(() => seen.push(`updated ${p.n}`));
+        return () => vue.h('view', { ref: el }, [vue.h('text', null, String(p.n))]);
+      },
+    });
+    const parent = compileSfc(
+      `<script setup>
+import { ref } from 'vue'
+import VdomChild from 'vdom-child'
+const show = ref(false)
+const n = ref(1)
+globalThis.__edge = { show, n }
+</script>
+<template><view><VdomChild v-if="show" :n="n" /></view></template>`,
+      { vapor: true, runtime: vue as unknown as Record<string, unknown>, imports: { 'vdom-child': vdomChild } },
+    ).component;
+    vue.createVaporApp(vue.defineVaporComponent({ setup: () => vue.createComponent(parent as never, {}) })).mount(r.flutterRoot());
+    await settle();
+    const edge = (globalThis as { __edge?: { show: { value: boolean }; n: { value: number } } }).__edge!;
+    expect(seen).toEqual([]);
+    // the page is live now: a v-if mount has nothing to wait for
+    edge.show.value = true;
+    await settle();
+    expect(seen).toEqual(['mounted true']);
+    edge.n.value = 2;
+    await settle();
+    expect(seen).toEqual(['mounted true', 'updated 2']);
+  });
+
   it('mounts a Vapor component inside a VDOM page through the compile-time wrapper', async () => {
     const vaporChildSrc = `
 <script setup>

@@ -36,6 +36,11 @@ delegateEvents`。
 `createIf / createFor / repeatTemplate / repeatTemplateLive / createForSlots`、
 `renderEffect`、块记账 `blockOf / insertBlock / removeBlock / disposeBlock / blockRoot`。
 
+VDOM 组件的 mounted 时机（specs/199）：Vapor 树里的 VDOM 组件经 `mountVdomComponent` 渲染进游离容器，
+首次挂载的 post 回调（`onMounted`、模板 ref、post watcher）由 Suspense 形状的 hold 攒住，等 Vapor 的
+mounted flush（节点已接进页面）再放行，与 VDOM 父组件下「整棵树挂好之后才 mounted」一致；后端经
+`ctx.afterMount` 注册放行点（父节点已在页面里时不提供，即不 hold）。放行后更新产生的回调走正常队列。
+
 批量执行（specs/162）：`repeatTemplate`（静态文本，texts 随 CLONE_MANY op）与
 `repeatTemplateLive`（读 prop/ref 的格子，每格 effect），都走 `VaporBackend.cloneList`。
 

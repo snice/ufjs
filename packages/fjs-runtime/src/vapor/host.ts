@@ -253,6 +253,10 @@ export interface VaporBackend {
       scopeId?: string | null;
       /** registers the VDOM subtree's activated / deactivated runner */
       onKeepAlive?: (run: (kind: 'a' | 'da') => void) => void;
+      /** Set while the vapor tree is not in the page yet: `cb` runs once its
+       * hosts are in. The VDOM component's mounted hooks wait for it
+       * (specs/199). Absent under a live parent. */
+      afterMount?: (cb: () => void) => void;
     },
   ): Block;
   /** v-bind() in CSS (specs/166): write the useVaporCssVars variable map

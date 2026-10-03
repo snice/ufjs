@@ -6,11 +6,16 @@
 // vapor app ships without the engine — exactly like web's web-interop.ts.
 import { EffectScope, effect, stop as stopRunner } from '@vue/reactivity';
 import { childElementIds, elementById, nodeOps, patchProp, registerAdoptHook, type HostNode } from '../vue/host-ops';
+import { queuePostFlushCb } from '@vue/runtime-core';
 import { render } from '../vue/renderer';
-import { getCurrentInstance, h } from '../vue/vue-shim';
+import { KeepAlive, defineComponent, getCurrentInstance, h } from '../vue/vue-shim';
 import { flutterBackend } from './backend-flutter';
 import { blockOf, type Block, type Slots, type VaporBackend } from './runtime';
-import { markVdomOwner, runVdomKeepAliveHooks, vdomAppContext, vdomPublicInstance, type VdomMountContext } from './vdom-context';
+import { createMountHold, markVdomOwner, probePatch, runVdomKeepAliveHooks, vdomAppContext, vdomPublicInstance, type VdomMountContext } from './vdom-context';
+
+let patchFn: ((...args: unknown[]) => void) | null = null;
+const patchOf = (): ((...args: unknown[]) => void) =>
+  (patchFn ??= probePatch(render as never, nodeOps.createElement('view'), { h, KeepAlive, defineComponent, getCurrentInstance } as never));
 
 const mountVdomComponent: NonNullable<VaporBackend['mountVdomComponent']> = (comp, props, slots: Slots, parent, anchor, ctx) => {
     // vant et al: render through our own renderer into a detached container,
@@ -53,6 +58,19 @@ const mountVdomComponent: NonNullable<VaporBackend['mountVdomComponent']> = (com
     const appContext = vdomAppContext(ctx as VdomMountContext | undefined);
     let lastVnode: unknown = null;
     (ctx as VdomMountContext | undefined)?.onKeepAlive?.((kind) => runVdomKeepAliveHooks(lastVnode, kind));
+    // mounted hooks wait for the vapor tree to reach the page (specs/199)
+    let hold = ctx?.afterMount ? createMountHold(queuePostFlushCb as never) : null;
+    const held = hold;
+    if (held) {
+      const release = (): void => {
+        if (!alive) return held.discard();
+        held.release(() => render(lastVnode as never, container as never));
+      };
+      ctx!.afterMount!(release);
+      // no vapor flush ever coming (a mount path that never calls it) must
+      // not leave the hooks held for good
+      void Promise.resolve().then(release);
+    }
     const runner = effect(
       () => {
         const snapshot: Record<string, unknown> = {};
@@ -62,7 +80,15 @@ const mountVdomComponent: NonNullable<VaporBackend['mountVdomComponent']> = (com
         (vnode as { appContext: unknown }).appContext = appContext;
         // runtime-core puts a component vnode's scopeId on its root element
         if (ctx?.scopeId) (vnode as unknown as { scopeId: string }).scopeId = ctx.scopeId;
-        render(vnode, container as never);
+        if (hold) {
+          // render() without its trailing flush: the post callbacks of the
+          // first patch land in the hold, not the global queue
+          patchOf()(null, vnode, container, null, null, hold.suspense);
+          (container as unknown as { _vnode: unknown })._vnode = vnode;
+          hold = null;
+        } else {
+          render(vnode, container as never);
+        }
         lastVnode = vnode;
         reposition();
       },
@@ -84,6 +110,7 @@ const mountVdomComponent: NonNullable<VaporBackend['mountVdomComponent']> = (com
       scopes: [],
       cleanups: [
         () => {
+          alive = false;
           stopRunner(runner);
           // skipped when the vapor tree already dropped the subtree (an
           // enclosing block removal took it) — render(null) would then
