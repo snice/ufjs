@@ -2,6 +2,7 @@
 // gate tests). Styles are interned like the real op stream does: one
 // DEFINE_STYLE per distinct style map.
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_fjs/src/mirror_tree.dart';
 
@@ -48,6 +49,9 @@ class FixtureTree {
 
   int text(int parent, String t, [Map<String, Object?> style = const {}]) =>
       node(parent, 'text', style: style, text: t);
+
+  /// The ops so far as one frame (for tests that replay a sequence).
+  Uint8List get frames => _w.frame;
 
   MirrorTree build() => MirrorTree()
     ..applyFrame(_w.frame)

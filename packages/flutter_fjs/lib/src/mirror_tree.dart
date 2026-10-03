@@ -182,6 +182,9 @@ class MirrorTree {
   /// Monotonic change counter; widgets watch it to decide rebuilds.
   int get version => _version;
 
+  /// The parent of [id] (null for roots / unknown) — diagnostics only.
+  int? parentIdOf(int id) => _parentOf[id];
+
   /// How many nodes JS has built. The dev perf overlay shows it: on this
   /// pipeline the node count is what most of the per-frame cost scales with.
   int get nodeCount => _nodes.length;

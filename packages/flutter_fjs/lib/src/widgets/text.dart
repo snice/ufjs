@@ -328,6 +328,15 @@ class FjsTextEnvData {
   static final Expando<FjsTextEnvData> _wrappers = Expando('fjsTextEnvData');
 
   bool get selectable => _env.selectable;
+
+  /// Same environment by content. [FjsTextEnvScope] builds a new `_FjsTextEnv`
+  /// every time it rebuilds — whenever the page above it does — so identity is
+  /// not "unchanged": a flat surface that re-keyed every paragraph on a new
+  /// instance did exactly that on every edit on a device (specs/195: all 2000
+  /// texts re-laid and all 50 chunks re-recorded for one digit). This is
+  /// `updateShouldNotify` read the other way.
+  bool sameAs(FjsTextEnvData other) =>
+      identical(_env, other._env) || !_env.updateShouldNotify(other._env);
 }
 
 /// What `_FjsText.build` hands [FjsPlainText] for a plain `text` node: the

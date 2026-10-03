@@ -266,6 +266,22 @@ mirror 树 ──(门控)──► 自绘根 ──► FlatEngine（SoA 节点 +
 `test/flat_incremental_test.dart`（随机变更序列，增量 == 全量）、`test/flat_geometry_test.dart`、
 `test/flat_cull_test.dart` 守住；一个样式键进白名单当且仅当有对拍用例。
 
+**增量更新**（specs/195）：
+
+- **布局**：一次变更只标节点自己（`markDirty` 不再标祖先）；`layoutRoot` 自底向上处理脏节点，用节点上次的约束重排自己，
+  **尺寸没变就停**（只沿父链刷新 `bounds`），尺寸变了才让父节点重排——Flutter 的 relayout boundary 的显式版本。
+  例外：父节点上次走了两趟 flex（`usedTwoPass`）一律上推（孩子在 measuring 与 final 两趟里尺寸可能不同）。
+  改一个宽度不变的数字，4050 网格只重排 1 个节点。
+- **绘制**：沿「恰好一个可见孩子」的链下探到第一个有 ≥ 4 个孩子的节点，该链（脊柱）的背景画进表面自己的层，
+  它的每个孩子子树是一块（`FlatChunk`），每块一个自己持有的 `OffsetLayer`（`LayerHandle`）：脏块 `pushLayer` 重录，
+  干净块 `addLayer` 原样接回（引擎保留渲染复用），块的位置变化只改 `layer.offset`。视口裁剪是块粒度的（窗口外的块不加入层树），
+  块内不裁剪，所以滚动不会让任何块的录制过期。孩子少于 4 个时退化为单层。
+- **文字环境按内容比较**（`FjsTextEnvData.sameAs`）：`FjsTextEnvScope` 每次重建都造新的环境对象（真机上任何无关更新都会触发），
+  按实例比较会让每次编辑都整页失效。这类「依赖实例同一性」的判断必须在真实页面的重建节奏下验证（离线 JIT 与模拟器都看不出来）。
+- 排障：`frame-timeline.mjs` 里有 `flat.prepare` / `flat.layout` / `flat.paint` / `flat.pack` 的 Timeline 标记；dev 构建里
+  `invokeHost('fjs.dev.flat', 'stats' | 'reset')`（hello-js 的 `__flat4050.flatStats()`）读引擎计数器
+  （`relaid` / `paintedNodes` / `paintedChunks` / `reusedChunks` / `packs`）。
+
 三个开关（只在 Dart 侧，页面源码不变）：
 
 - `FjsFlatMode.auto`（默认）：门控满足、**没有语义客户端**、子树 ≥ `fjsFlatMinNodes`（16）才自绘。

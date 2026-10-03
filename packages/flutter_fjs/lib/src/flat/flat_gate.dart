@@ -18,12 +18,15 @@
 // subtree walk is memoised on the MirrorNode (flatPure / flatSize), cleared up
 // the parent chain by MirrorTree.flushDirty — so asking at every level of a
 // deep page does not go quadratic.
+import 'dart:convert' show jsonEncode;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/semantics.dart';
 
 import '../mirror_tree.dart';
 import '../registry/host.dart' show HostRegistry;
 import '../render/renderer.dart' show FjsNodeRenderer;
+import 'flat_layout.dart' show FlatStats;
 import 'flat_style.dart';
 
 /// `auto`: flat when the gate says so, the platform has no semantics client and
@@ -62,12 +65,21 @@ class FjsFlatStats {
 
   static void reset() {
     rejected.clear();
+    samples.clear();
     surfaces = 0;
   }
 
-  static void reject(String reason) {
+  /// A few example nodes per reason (tag, id, parent tag, style), so a census
+  /// can say WHICH nodes carry the `transform` that refuses most subtrees.
+  static final Map<String, List<String>> samples = {};
+
+  static void reject(String reason, [String? sample]) {
     final first = !rejected.containsKey(reason);
     rejected[reason] = (rejected[reason] ?? 0) + 1;
+    if (sample != null) {
+      final l = samples[reason] ??= [];
+      if (l.length < 6) l.add(sample);
+    }
     if (first) {
       assert(() {
         debugPrint('[flat] subtree stays ordinary: $reason');
@@ -125,7 +137,13 @@ abstract final class FlatGate {
     final verdict = flatVerdictOf(n);
     final style = verdict.style;
     if (style == null) {
-      FjsFlatStats.reject('style:${verdict.rejected}');
+      final parent = tree.parentIdOf(n.id);
+      final pn = parent == null ? null : tree.node(parent);
+      final sm = jsonEncode(n.styleMap);
+      FjsFlatStats.reject(
+        'style:${verdict.rejected}',
+        '${n.tag}#${n.id} parent=${pn?.tag}#$parent kids=${n.children.length} ${sm.length > 220 ? sm.substring(0, 220) : sm}',
+      );
       return -1;
     }
     if (n.tag == 'text') {
@@ -176,6 +194,20 @@ void registerFlatDevModule({required HostRegistry host, required MirrorTree tree
   if (kReleaseMode) return;
   host.register('fjs.dev.flat', (args) {
     final want = args.isEmpty ? null : args[0]?.toString();
+    if (want == 'stats') {
+      // the engine's counters since the last 'reset', for reading on a device
+      return '{"relaid":${FlatStats.relaidNodes},"paintedNodes":${FlatStats.paintedNodes},'
+          '"paintedChunks":${FlatStats.paintedChunks},"reusedChunks":${FlatStats.reusedChunks},'
+          '"chunks":${FlatStats.chunkCount},"packs":${FlatStats.packs},'
+          '"surfaces":${FjsFlatStats.surfaces},"flatNodes":${FlatStats.liveNodes},'
+          '"nodes":${tree.nodeCount},"rejected":${jsonEncode(FjsFlatStats.rejected)},'
+          '"samples":${jsonEncode(FjsFlatStats.samples)}}';
+    }
+    if (want == 'reset') {
+      FlatStats.reset();
+      FjsFlatStats.reset();
+      return fjsFlatMode.name;
+    }
     final next = switch (want) {
       'auto' => FjsFlatMode.auto,
       'off' => FjsFlatMode.off,

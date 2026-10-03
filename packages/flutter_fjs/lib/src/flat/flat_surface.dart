@@ -175,7 +175,7 @@ class RenderFlatSurface extends RenderBox {
     fjsFlatCullerRegister(this, culling: window != null);
     Timeline.timeSync(
       'flat.paint',
-      () => engine.paint(context.canvas, offset, window?.shift(offset)),
+      () => engine.paintLayered(context, offset, window?.shift(offset)),
     );
   }
 
