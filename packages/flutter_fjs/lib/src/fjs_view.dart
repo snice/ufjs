@@ -1,7 +1,11 @@
 // Host entry point: mounts one JS root subtree as Flutter widgets.
+import 'dart:async' show scheduleMicrotask;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart' show SemanticsBinding;
 
 import 'engine.dart';
+import 'flat/flat_gate.dart' show FjsFlatMode, fjsFlatMode;
 import 'mirror_tree.dart';
 import 'render/renderer.dart';
 import 'widgets/blank_tap_blur.dart';
@@ -74,6 +78,17 @@ class _FjsViewState extends State<FjsView> with WidgetsBindingObserver {
     // still reports; the engine dedupes, so several views under one
     // engine cost nothing.
     WidgetsBinding.instance.addObserver(this);
+    // specs/193: flat display surfaces carry no semantics, so they exist only
+    // while no semantics client does; a change re-asks every node
+    SemanticsBinding.instance.addSemanticsEnabledListener(_semanticsChanged);
+  }
+
+  void _semanticsChanged() {
+    if (fjsFlatMode != FjsFlatMode.auto) return;
+    // not from inside the notification: the rebuilds are ordinary setStates
+    scheduleMicrotask(() {
+      if (mounted) widget.engine.tree.pingAll();
+    });
   }
 
   @override
@@ -99,6 +114,7 @@ class _FjsViewState extends State<FjsView> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    SemanticsBinding.instance.removeSemanticsEnabledListener(_semanticsChanged);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

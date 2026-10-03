@@ -24,6 +24,10 @@
 import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 
+import '../flat/flat_gate.dart';
+import '../flat/flat_surface.dart';
+import '../widgets/text.dart' show FjsTextEnvData;
+
 import '../mirror_tree.dart';
 import '../node/node_adapter.dart';
 import '../node/node_adapters.dart';
@@ -476,6 +480,11 @@ class _FjsNodeViewState extends State<_FjsNodeView> {
     if (node == null) return const SizedBox.shrink();
     // the geometry module measures the node through this (geometry.dart)
     node.element = context;
+    // specs/193: a pure display subtree is laid out and painted by one surface
+    if (FlatGate.accept(node, view.tree, isRoot: view.isRoot) &&
+        FjsTextEnvData.maybeOf(context) != null) {
+      return FjsFlatSurface(tree: view.tree, root: node);
+    }
     return view._buildNode(context, node, isRoot: view.isRoot);
   }
 }

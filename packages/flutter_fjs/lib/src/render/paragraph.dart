@@ -315,6 +315,63 @@ class _Shared {
 
 final _paragraphCache = _ParagraphCache();
 
+/// specs/193: a handle on one shared, laid-out painter, for the flat display
+/// surface — which has no RenderParagraph per text node but must land on the
+/// SAME painter (same key, so the same size and glyphs) the ordinary renderer
+/// would. [release] when the node goes away or lays out at another width.
+class FjsSharedPainter {
+  FjsSharedPainter._(this._shared);
+
+  final _Shared _shared;
+  bool _released = false;
+
+  /// Laid out for the key it was acquired with; never mutate it.
+  TextPainter get painter => _shared.painter;
+
+  void release() {
+    if (_released) return;
+    _released = true;
+    _paragraphCache.release(_shared);
+  }
+}
+
+/// The painter [FjsPlainText] would share for these arguments — the key is
+/// built exactly as [RenderFjsParagraph._keyAt] builds it ([minWidth] and
+/// [maxWidth] are the incoming constraints; the unwrapped-text rule of
+/// `_maxWidthFor` is applied here).
+FjsSharedPainter fjsAcquirePlainPainter({
+  required InlineSpan text,
+  required TextAlign textAlign,
+  required TextDirection textDirection,
+  required bool softWrap,
+  required TextOverflow overflow,
+  required TextScaler textScaler,
+  required int? maxLines,
+  required Locale? locale,
+  required StrutStyle? strutStyle,
+  required TextWidthBasis textWidthBasis,
+  required TextHeightBehavior? textHeightBehavior,
+  required double minWidth,
+  required double maxWidth,
+}) {
+  final ellipsis = overflow == TextOverflow.ellipsis;
+  final key = _Key(
+    text,
+    textAlign,
+    textDirection,
+    maxLines,
+    ellipsis,
+    textScaler,
+    locale,
+    strutStyle,
+    textWidthBasis,
+    textHeightBehavior,
+    minWidth,
+    softWrap || ellipsis ? maxWidth : double.infinity,
+  );
+  return FjsSharedPainter._(_paragraphCache.acquire(key));
+}
+
 class _ParagraphCache {
   /// Unreferenced painters kept for a remount. Bounded: each holds a native
   /// paragraph.

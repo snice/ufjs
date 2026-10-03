@@ -75,6 +75,20 @@ class MirrorNode {
   /// interpreted here. Empty for every node that never touched webgl.
   final List<Uint8List> webglChunks = <Uint8List>[];
 
+  /// specs/193 flat display surface. Verdict cache for "this subtree can be
+  /// painted by one self-laid-out surface": 0 unknown, 1 pure, 2 impure.
+  /// Cleared up the parent chain by [MirrorTree.flushDirty] when anything under
+  /// the node changes (invariant: a 0 node has only 0 ancestors, so the walk
+  /// stops at the first 0).
+  int flatPure = 0;
+
+  /// Visible node count of the subtree, valid while [flatPure] != 0.
+  int flatSize = 0;
+
+  /// The surface that paints this node, when it is inside a flat subtree;
+  /// geometry.dart asks it for the node's rect. Opaque here like [view].
+  Object? flatHost;
+
   /// Cache slot for the widget layer's per-node view. It lives here so it
   /// dies with the node; nothing in this file interprets it. Flutter skips
   /// rebuilding a child only when handed back the IDENTICAL widget instance
@@ -181,10 +195,71 @@ class MirrorTree {
     if (_dirty.isEmpty) return const [];
     final ids = List<int>.of(_dirty);
     _dirty.clear();
+    _flatNotify(ids);
     for (final id in ids) {
       _signals[id]?.ping();
     }
     return ids;
+  }
+
+  /// specs/193: ids of nodes that are the root of a flat display surface. A
+  /// surface has no widget (hence no signal) per descendant, so the dirty ids
+  /// under it are forwarded to the root's signal and parked in [_flatDirty]
+  /// for the surface to apply incrementally.
+  final Set<int> flatRoots = {};
+  final Map<int, Set<int>> _flatDirty = {};
+
+  /// The dirty ids parked for flat root [rootId] since the last call.
+  Set<int> takeFlatDirty(int rootId) =>
+      _flatDirty.remove(rootId) ?? const <int>{};
+
+  void _flatNotify(List<int> ids) {
+    for (final id in ids) {
+      // clear verdicts up the chain; stop at the first already-0 node
+      for (var cur = id; ;) {
+        final n = _nodes[cur];
+        if (n != null) {
+          if (n.flatPure == 0 && cur != id) break;
+          n.flatPure = 0;
+        }
+        final up = _parentOf[cur];
+        if (up == null || up == 0) break;
+        cur = up;
+      }
+    }
+    if (flatRoots.isEmpty) return;
+    final roots = <int>{};
+    for (final id in ids) {
+      var cur = id;
+      // the root's own id is parked too: its children list changing (an
+      // insert / remove directly under it) is a structural change the surface
+      // must see, and it arrives as the root being dirty
+      while (true) {
+        if (flatRoots.contains(cur)) {
+          (_flatDirty[cur] ??= <int>{}).add(id);
+          roots.add(cur);
+        }
+        final up = _parentOf[cur];
+        if (up == null || up == 0) break;
+        cur = up;
+      }
+    }
+    for (final r in roots) {
+      _signals[r]?.ping();
+    }
+  }
+
+  /// Pings [id]'s widget signal now (a flat surface asking to be rebuilt as
+  /// the ordinary path, see flat_surface.dart).
+  void pingNode(int id) => _signals[id]?.ping();
+
+  /// Rebuilds every rendered node (specs/193: the semantics client came or
+  /// went, which changes which subtrees may be flat). Rare, so the sweep is
+  /// fine; nodes that are not rendered have no signal.
+  void pingAll() {
+    for (final s in List<_NodeSignal>.of(_signals.values)) {
+      s.ping();
+    }
   }
 
   /// Marks a node as needing a rebuild. Its PARENT is marked too, because a

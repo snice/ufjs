@@ -80,11 +80,53 @@ Set<RenderFjsCullingFlex> get fjsCullingFlexesAcrossBoundary => _acrossBoundary;
 /// outer scroller sees from its own subtree, which is exactly the case that
 /// was broken.
 void fjsScrollerMoved() {
+  if (_flatCullers.isNotEmpty) {
+    _flatCullers.removeWhere((box) => !box.attached);
+    for (final box in _flatCullers) {
+      box.markNeedsPaint();
+    }
+  }
   if (_acrossBoundary.isEmpty) return;
   _acrossBoundary.removeWhere((flex) => !flex.attached);
   for (final flex in _acrossBoundary) {
     flex.markNeedsPaint();
   }
+}
+
+/// Flat display surfaces (specs/193) that culled against a viewport. A surface
+/// is its own repaint boundary, so a scroll only re-offsets its layer; like the
+/// culling flex above it has to be told the window moved.
+final Set<RenderBox> _flatCullers = <RenderBox>{};
+
+/// Registers / unregisters a flat surface for [fjsScrollerMoved].
+void fjsFlatCullerRegister(RenderBox box, {required bool culling}) {
+  if (culling) {
+    _flatCullers.add(box);
+  } else {
+    _flatCullers.remove(box);
+  }
+}
+
+/// [box]'s visible window in its own coordinates: the intersection of every
+/// enclosing scroller's viewport (each inflated by [_cullSlack]), or null when
+/// it is not inside one. Capped like the culling flex's walk.
+Rect? fjsVisibleWindowOf(RenderBox box) {
+  if (fjsDisablePaintCulling) return null;
+  Rect? out;
+  RenderObject? probe = box;
+  var n = 0;
+  while (probe != null && n < 4) {
+    final RenderObject? found = RenderAbstractViewport.maybeOf(probe);
+    if (found == null) break;
+    if (found is RenderBox && found.hasSize) {
+      final window = (Offset.zero & found.size).inflate(_cullSlack);
+      final local = MatrixUtils.inverseTransformRect(box.getTransformTo(found), window);
+      out = out == null ? local : out.intersect(local);
+      n++;
+    }
+    probe = found.parent;
+  }
+  return out;
 }
 
 /// Children skipped / painted since the counter was last reset. A widget test

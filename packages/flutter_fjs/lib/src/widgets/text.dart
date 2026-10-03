@@ -302,6 +302,101 @@ class _FjsTextEnv extends InheritedWidget {
 /// The page-root half of [_FjsText]: depends on the ambient text
 /// environment once for every paragraph under it, and re-publishes it as
 /// [_FjsTextEnv] — the one dependency each paragraph registers.
+/// The text environment [FjsTextEnvScope] publishes, readable by the flat
+/// display surface (specs/193), which paints paragraphs without a Text widget
+/// per node and so has to resolve what `_FjsText.build` resolves.
+class FjsTextEnvData {
+  const FjsTextEnvData._(this._env);
+  final _FjsTextEnv _env;
+
+  /// Null when no [FjsTextEnvScope] is above [context]. Registers a
+  /// dependency, like the Text widgets do.
+  static FjsTextEnvData? maybeOf(BuildContext context) {
+    final env = context.dependOnInheritedWidgetOfExactType<_FjsTextEnv>();
+    // one wrapper per env widget, so "same env" is `identical` for callers
+    return env == null ? null : (_wrappers[env] ??= FjsTextEnvData._(env));
+  }
+
+  static final Expando<FjsTextEnvData> _wrappers = Expando('fjsTextEnvData');
+
+  bool get selectable => _env.selectable;
+}
+
+/// What `_FjsText.build` hands [FjsPlainText] for a plain `text` node: the
+/// resolved arguments of the shared painter's key, minus the widths. Kept in
+/// step with `_FjsText.build` by hand (the flat parity tests fail on drift:
+/// they compare sizes and pixels against the ordinary path).
+class FjsPlainTextSpec {
+  const FjsPlainTextSpec({
+    required this.span,
+    required this.textAlign,
+    required this.textDirection,
+    required this.softWrap,
+    required this.overflow,
+    required this.textScaler,
+    required this.maxLines,
+    required this.locale,
+    required this.strutStyle,
+    required this.textWidthBasis,
+    required this.textHeightBehavior,
+  });
+
+  final InlineSpan span;
+  final TextAlign textAlign;
+  final TextDirection textDirection;
+  final bool softWrap;
+  final TextOverflow overflow;
+  final TextScaler textScaler;
+  final int? maxLines;
+  final Locale? locale;
+  final StrutStyle strutStyle;
+  final TextWidthBasis textWidthBasis;
+  final TextHeightBehavior? textHeightBehavior;
+}
+
+/// The [FjsPlainTextSpec] of a childless `text` node, or null when the
+/// ordinary path would not take [FjsPlainText] for it (selection above it,
+/// `overflow: fade`).
+FjsPlainTextSpec? fjsPlainTextSpec(
+  FjsTextEnvData envData,
+  String? data,
+  FjsStyle style,
+) {
+  final env = envData._env;
+  if (env.selectable) return null;
+  final textAlign = style.textAlign;
+  final maxLines = style.whiteSpaceNowrap ? 1 : style.maxLines;
+  final overflow =
+      style.overflow ??
+      (maxLines != null && style.textOverflowEllipsis
+          ? TextOverflow.ellipsis
+          : null);
+  final textStyle = fjsTextStyle(style);
+  final ambient = env.ambient;
+  var effective = textStyle.inherit ? ambient.style.merge(textStyle) : textStyle;
+  if (env.boldText) {
+    effective = effective.merge(const TextStyle(fontWeight: FontWeight.bold));
+  }
+  final resolvedOverflow = overflow ?? effective.overflow ?? ambient.overflow;
+  if (resolvedOverflow == TextOverflow.fade) return null;
+  return FjsPlainTextSpec(
+    span: TextSpan(
+      style: effective,
+      text: _transformed(style, _lineEdgesTrimmed(style, data ?? '')),
+    ),
+    textAlign: textAlign ?? ambient.textAlign ?? TextAlign.start,
+    textDirection: env.direction,
+    softWrap: ambient.softWrap,
+    overflow: resolvedOverflow,
+    textScaler: env.textScaler,
+    maxLines: maxLines ?? ambient.maxLines,
+    locale: env.locale,
+    strutStyle: StrutStyle.fromTextStyle(textStyle, forceStrutHeight: true),
+    textWidthBasis: ambient.textWidthBasis,
+    textHeightBehavior: ambient.textHeightBehavior ?? env.heightBehavior,
+  );
+}
+
 class FjsTextEnvScope extends StatelessWidget {
   const FjsTextEnvScope({super.key, required this.child});
 

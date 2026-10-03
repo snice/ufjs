@@ -1005,6 +1005,48 @@ specs/146 / 147 / 149 连续三轮之后，样式引擎在 JS 里每元素仍约
   （`demo/bench/verify-pages.ts`、`mount-verify.ts`，当时还有已删的 `mount-prewarm-verify.ts`）、hello-fjs 66 页
   （`examples/hello-fjs/bench/verify-pages.ts`）共 3 万余次比较，0 不一致。
 
+## 自绘表面：纯展示子树不建 widget（specs/192 / 193）
+
+**方法**：离线用 `flutter test --dart-define=FJS_BENCH=true`（`test/phase_bench_test.dart` 拆阶段、
+`test/flat_bench_test.dart` 对照；JIT + assert，**读比例不读绝对值**）；模拟器用 hello-js 4050 屏、
+`__flat4050.setFlat('off'|'force')` 在同一进程里 A/B，读 `[flat-4050]` 日志与
+`tool/frame-timeline.mjs`。**模拟器是 debug，且语义树一直开着（所以必须 `force`），绝对值不可信；真机 profile 待复核。**
+
+**mount 帧占比**（4050 树，离线两次一致）：build ≈ 75%（嵌在 layout 里）、layout ≈ 19%、paint ≈ 5%；
+光栅线程最长仅 ≈ 5 ms。所以只换排版（方案 A）上限 19%，必须连 build 一起去掉（方案 B：不建 widget）。
+
+**对照**（4050 网格，离线）：
+
+| | mount | 改 1 格 | unmount |
+|---|---:|---:|---:|
+| 现有渲染器 | 58.2–58.6 ms | 8.0–9.5 ms | 2.8–3.0 ms |
+| 192 C++ 探针（无增量） | 1.94–2.02 ms | 1.92–1.98 ms | 0.04 ms |
+| Dart 自绘 | 2.46–2.67 ms（4.0–4.4%） | 0.95–1.00 ms（11–12%，重排 4 节点） | 0.12–0.16 ms |
+
+首版 Dart 自绘 mount 3.85 ms（C++ 的 189–199%，未过 1.5 倍判据）；2000 个文字节点各自构造 span / strut 与共享缓存的键
+是最大一项，按（样式、文本）共享 spec 与 painter 后降到 2.5 ms。**教训：4050 树只有 40 种段落，按节点算是浪费，
+任何「每节点一份」的小对象都先想能不能按样式 / 内容共享。**
+
+**模拟器**（iPhone 17 Pro，debug，5 轮，`off` vs `force`）：
+
+| | off | force |
+|---|---:|---:|
+| show 上屏 min / med / max | 218 / 246 / 277 ms（首轮冷启动 467） | 43 / 50 / 61 ms |
+| 改 1 格上屏 min / med | 106 / 116 ms | 25 / 30 ms |
+| 最长 UI 帧（frame-timeline，show/hide ×3） | 196 / 190 / 88 / 79 ms | 8.1 / 7.6 / 7.4 / 7.3 ms |
+| LAYOUT 最长 / BUILD 最长 | 95.6 / 76.5 ms | 4.2 / 0.8 ms |
+| 光栅线程最长 | 4.7 ms | 5.5 ms（持平） |
+
+hide 两边持平（≈ 55 ms，vsync 受限）。画面：4050 网格开 / 关逐像素一致；组件总览除进度条动画外一致。
+
+**门控自己的成本**：一棵纯展示子树被门控判为「纯」但没有自绘（节点数不到阈值，或 `fjsFlatMinNodes` 被调到很大）时，
+子树纯度只算一次并缓存，ordinary mount 多 ≈ 2.8%（4050 节点：57.8 → 59.4 ms，离线）。语义开启时 `accept` 在
+子树遍历之前就返回，零开销；根节点本身有事件 prop 等 O(1) 局部拒绝的页面同样几乎无成本。
+
+**局限**：只对纯展示子树成立（门控见 [architecture.md](architecture.md#自绘表面纯展示子树不建-widgetspecs192--193)）；
+带事件 / 交互 / 子集外样式的子树不受益。**真机 profile 待复核**（要复测：show 上屏、改 1 格上屏、最长 UI 帧，
+以及 `auto` 模式在无语义客户端时是否真的走自绘）。
+
 ## 已知热点（优化路线）
 
 按 2026-09-03 那轮真机/模拟器实测重排过（**2026-09-30 增补**见第一条）：
