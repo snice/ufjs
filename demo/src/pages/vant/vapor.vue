@@ -12,6 +12,11 @@ const taps = ref(0);
 const cellTaps = ref(0);
 const count = ref(1);
 const on = ref(true);
+// specs/203 batch 2 probes
+const tabIndex = ref(0);
+const checked = ref(false);
+const rate = ref(3);
+const popup = ref(false);
 </script>
 
 <template>
@@ -45,6 +50,34 @@ const on = ref(true);
       <text class="block-title">Stepper（{{ count }}）</text>
       <van-stepper v-model="count" />
       <view v-if="count > 3" class="hint"><text class="hint-text">大于 3 时出现（Vapor 的 v-if）</text></view>
+    </view>
+
+    <!-- specs/203：以下为第二批追加的互操作探针。Tabs 带滑块定位与多面板
+         切换；Popup 带遮罩与 Teleport —— 都是 Vapor 树里挂载/卸载较复杂的
+         子树，出问题多半出在互操作层的 unmount/teleport 处理。 -->
+    <view class="block">
+      <text class="block-title">Tabs（第 {{ tabIndex + 1 }} 个）</text>
+      <van-tabs v-model:active="tabIndex">
+        <van-tab title="标签一">内容一</van-tab>
+        <van-tab title="标签二">内容二</van-tab>
+        <van-tab title="标签三">内容三</van-tab>
+      </van-tabs>
+    </view>
+
+    <view class="block">
+      <text class="block-title">Checkbox / Rate（{{ checked ? '勾选' : '未勾' }} · {{ rate }} 星）</text>
+      <view class="row">
+        <van-checkbox v-model="checked">勾选框</van-checkbox>
+        <van-rate v-model="rate" />
+      </view>
+    </view>
+
+    <view class="block">
+      <text class="block-title">Popup（{{ popup ? '开' : '关' }}）</text>
+      <van-button type="warning" @click="popup = true">打开浮层</van-button>
+      <van-popup v-model:show="popup" :style="{ padding: '40px 60px' }">
+        <text>Vapor 树里的 Popup 内容</text>
+      </van-popup>
     </view>
   </scroll-view>
 </template>
