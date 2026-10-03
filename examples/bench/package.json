@@ -11,7 +11,8 @@
     "native:hostile-ts": "fjs build native/entry-hostile-ts.ts --out dist/native-hostile-ts --ts-style && ../../packages/flutter_fjs/native/build-native/fjsrun --frames --pump 40000 dist/native-hostile-ts/app/bundle.js | grep '\\[native\\]'",
     "native:verify": "fjs build native/entry-verify.ts --out dist/native-verify --ts-style && ../../packages/flutter_fjs/native/build-native/fjsrun --frames --pump 40000 dist/native-verify/app/bundle.js | grep -i 'native'",
     "native:on": "fjs build native/entry-native.ts --out dist/native-on && ../../packages/flutter_fjs/native/build-native/fjsrun --frames --pump 40000 dist/native-on/app/bundle.js | grep '\\[native\\]'",
-    "proto": "fjs build vapor/proto.ts --out dist/proto && ../../packages/flutter_fjs/native/build-native/fjsrun --frames --pump 40000 dist/proto/app/bundle.js | grep '\\[proto\\]'"
+    "proto": "fjs build vapor/proto.ts --out dist/proto && ../../packages/flutter_fjs/native/build-native/fjsrun --frames --pump 40000 dist/proto/app/bundle.js | grep '\\[proto\\]'",
+    "gesture": "fjs build gesture/main.ts --out dist/gesture && ../../packages/flutter_fjs/native/build-native/fjsrun --frames --pump 40000 dist/gesture/app/bundle.js | grep '\\[gesture\\]'"
   },
   "dependencies": {
     "typescript": "^7.0.2"

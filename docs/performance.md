@@ -879,6 +879,12 @@ effect 也要 14.6（2000 条依赖链接）。所以真正可省的是 effect �
 直接挂 dep）没有公开 API 能做。后续是否在 `repeatTemplateLive` 里实装轻量 effect，看
 FlatLiveVapor 的真实挂载（28.7）能否降到 ~23，见 specs/197 §8。
 
+**手势驱动的 `:style` 更新（2026-10，`examples/bench` `pnpm run gesture`）**：dnd 页的形状——
+9 个格子，每步只改被拖块的 `transform`，每步含微任务排空与 op 帧编码，离线 fjsrun：VDOM
+**212–218 µs/步**、Vapor **144 µs/步**（-33%）。VDOM 多出的是重跑 render 与 diff 9 个 vnode，
+格子越多差距越大；`setStyle` 的合并加 `patchStyle` 两边一样。specs/198 给 `setStyle` 加的
+「摘本绑定上次写过的键」只多 2–4 µs/步。Dart 侧布局与绘制两条路径相同，真机单帧占比更小。
+
 **官方 runtime-vapor 的历史数字（specs/148 阶段 0，已被上者取代）**：`examples/bench/vapor/` 用 Vue 3.6.0-rc.9，把同一个
 `Flat4050.vue` 分别以 VDOM（fjs 渲染器）和 Vapor（官方 runtime-vapor 跑在一层落到同一套 nodeOps 的 DOM 外壳上）
 挂载，同一份 runtime-core、同一个样式引擎。离线挂载 VDOM **65.5 ms**、Vapor **81.5 ms**，卸载 8.2 / 9.5 ms。
