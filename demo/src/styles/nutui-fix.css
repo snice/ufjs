@@ -1,0 +1,51 @@
+/*
+ * NutUI 组件在 fjs 渲染管线上的显式约束（specs/204）。
+ *
+ * NutUI 的收缩/内联语义大量依赖 `display: inline-flex` 与
+ * `display: var(--x, inline-flex)`——fjs 的样式引擎只支持 display: flex/none
+ * （内联级在 Flutter 里没有对应物），这些规则被整块丢弃后组件根回落成块级
+ * + 拉伸：Switch 塌成整行宽、InputNumber 竖排。图标尺寸走
+ * `font-size` + SVG `width: 1em`，App 端 em 不参与 svg 尺寸计算，图标
+ * 渲染成原始 viewBox 大小。这里按 NutUI 默认主题把关键值写死，两端同源。
+ *
+ * 升级 NutUI 改了默认尺寸时这里要跟着对一遍（对照组件的 index.css）。
+ */
+
+/* switch：.nut-switch-base 的 min-width 36 / height 21 在根上补上宽度
+ * （根的 inline-flex 被丢后不再收缩）。按钮 13px 的规则是库自己的。 */
+.nut-switch {
+  width: 36px;
+  height: 21px;
+  flex-direction: row;
+}
+
+/* checkbox / radio：图标的尺寸走组件自己的 icon-size prop（页面里显式传
+ * 18px）——icons-vue 只把 width/height props 转成内联 style，而 Checkbox
+ * 默认 iconSize 是空串 → 内联尺寸整条丢，两端都只剩 CSS width:1em；
+ * App 端 em 宽度不参与 svg 布局，svg 按 bounded width 铺满（巨大圆）。
+ * 这里只补行内布局。 */
+.nut-checkbox,
+.nut-radio {
+  flex-direction: row;
+  align-items: center;
+}
+
+/* input number：根 inline-flex 被丢后竖排，显式横排。宽度/高度都不写死：
+ * 内容（图标 + flex input）要多少给多少，写窄了按横向溢出告警。 */
+.nut-input-number {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+/* rate：星距（库用 margin，根 inline-flex 丢后仍横排，无需尺寸——保留这里
+ * 是为了升级时对照）。 */
+.nut-rate {
+  flex-direction: row;
+}
+
+/* steps：内部定宽圆点行在窄容器里横向溢出 2px，触发 Flutter 溢出告警横幅；
+ * 两端裁掉（web 上 clip 无副作用）。 */
+.nut-steps {
+  overflow: hidden;
+}

@@ -37,6 +37,7 @@ const MOUNT_COMPONENT = /\/vant\/es\/utils\/mount-component\.mjs$/;
 const LOCK_CLICK = /\/vant\/es\/toast\/lock-click\.mjs$/;
 const NOTIFY = /\/vant\/es\/notify\/Notify\.mjs$/;
 const IMAGE_PREVIEW = /\/vant\/es\/image-preview\/ImagePreview\.mjs$/;
+const LIST = /\/vant\/es\/list\/List\.mjs$/;
 
 // The find/replace strings below keep vant's dist indentation byte for
 // byte — write them as flush-left template literals and never re-indent
@@ -362,6 +363,35 @@ let lockCount = 0;`,
         }, [icon]);
       }`,
     feature: 'showImagePreview close 图标让出状态栏（safe-area top）',
+  },
+  {
+    // List's whole loading loop hangs off its scroll parent. On the app the
+    // parent probe is unreliable — sometimes none (useScrollParent answers
+    // undefined, see the VANT_USE patch above), sometimes a zero-height
+    // ancestor — and either way useRect's height is 0, so check() bails at
+    // `!scrollParentRect.height` BEFORE ever emitting "load": the list stays
+    // empty forever, silently (constitution V). A zero-height scroller can
+    // never make the reach-edge test meaningful, so treat it as always at
+    // the edge: run the branch the geometry path would (loading + emit),
+    // guarded like check()'s own head so repeated checks don't pile up.
+    // Pages load their items in one go instead of progressively (there is
+    // no scroll listener to pace it; an fjs scroll-view's scroll event never
+    // reaches the list).
+    file: LIST,
+    find: `        const scrollParentRect = useRect(scroller);
+        if (!scrollParentRect.height || isHidden(root)) {
+          return;
+        }`,
+    replace: `        const scrollParentRect = useRect(scroller);
+        if (!scrollParentRect.height || isHidden(root)) {
+          if (!loading.value && !props.finished && !props.disabled && !props.error) {
+            loading.value = true;
+            emit("update:loading", true);
+            emit("load");
+          }
+          return;
+        }`,
+    feature: 'List 首次加载（无滚动父级时视为到达边缘）',
   },
 ];
 

@@ -4,6 +4,9 @@ import { createPlaygroundStub } from './playground-stub';
 import { routes } from 'fjs/pages';
 import Shell from './Shell.vue';
 import { plugins } from 'fjs/plugins';
+// NutUI's inline-shrink CSS has no fjs equivalent (display: inline-flex is
+// dropped on BOTH ends) — explicit sizes/flex directions, see the file.
+import './styles/nutui-fix.css';
 
 // the web twin of the Dart `playground` module (specs/159 §11); a no-op on
 // engines with the object ABI, which serve the real module instead
@@ -14,7 +17,7 @@ createFjsApp({
   routes,
   transition: 'fjs-slide',
   shell: Shell,
-  enableVapor: true,
+  enableVapor: false,
   setup(app) {
     // Vue swallows what a lifecycle hook throws unless something listens;
     // console.error because the app log drops console.log (vant's
