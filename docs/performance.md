@@ -1047,6 +1047,70 @@ hide 两边持平（≈ 55 ms，vsync 受限）。画面：4050 网格开 / 关�
 带事件 / 交互 / 子集外样式的子树不受益。**真机 profile 待复核**（要复测：show 上屏、改 1 格上屏、最长 UI 帧，
 以及 `auto` 模式在无语义客户端时是否真的走自绘）。
 
+## 只改绘制的更新：主题切换（2026-10，specs/194）
+
+**问题**：hello-js 主题压测屏 4000 节点切一次主题，JS + 桥合计约 1 ms，**最慢帧 283 ms**（模拟器 debug，`scroll-view`）。
+上文「拆掉 Vue」的结论是 Flutter 那一半的钱要另算；这一节算它。
+
+**方法**：离线 `flutter test --dart-define=FJS_BENCH=true test/theme_switch_bench_test.dart`（JIT + assert，读比例）：
+主题压测屏同构的 1000 行（3287 个节点 / 23615 个 element / 13053 个 RenderObject，`scroll-view` 容器，每个 item 带 `:active`），
+一次切换 = 对每个颜色变了的节点一条 `SET_STYLE`；min of 12，两次独立运行。
+
+**占比（快路径关闭）**：
+
+| 阶段 | 耗时 |
+|---|---:|
+| 一次切换合计 | 106–115 ms |
+| `flushDirty` | 2.6–2.9 ms |
+| `buildScope`（外面可见的 build） | 0.45–0.50 ms |
+| `flushLayout`（**内含嵌套的 build**） | 102–111 ms |
+| paint（离屏裁剪生效，只画可见行） | 0.5–0.8 ms |
+| 同一棵树「全部标脏、不重建」的纯 layout | 18.8 ms |
+| 节点视图被重建的次数 | **3144 / 3287** |
+| 重建之后需要 layout / paint 的 RenderObject | **2** / 12728（共 13053） |
+
+读法：成本几乎全是重建 widget 链（带 `flex-grow` 的行走 LayoutBuilder 路径，孩子在 layout 回调里才 build，所以 `buildScope`
+看起来是 0）。重建之后真正需要重排的 RenderObject 只有 2 个——更新在语义上就是**重画**。
+
+**快路径**（[architecture.md](architecture.md#只改绘制的更新specs194)）：只改颜色的更新就地改已挂载的 RenderObject，
+不标节点也不标父节点；文字换色惰性（paint 时才换共享 painter），且**不触发语义更新**。
+
+离线（含 `flushSemantics` 阶段；flutter_test 里语义客户端一直在），两次独立运行：
+
+| | 关闭 | 开启 | 开 / 关 |
+|---|---:|---:|---:|
+| 一次切换 min / med | 139–149 / 148–165 ms | 6.4–7.6 / 7.8–10.2 ms | **4.6–5.1%**（med 5.3–6.2%） |
+| 节点视图重建 | 3144 | **0** | |
+| 其中 flush / build / layout / paint / semantics（min） | 3.0 / 0.5 / 112–119 / 0.5 / 19–21 ms | 3.1–3.4 / 0 / 0.01 / 1.4–1.5 / 1.6–1.9 ms | |
+
+模拟器（iPhone 17 Pro，debug，hello-js 主题压测屏 4000 节点，`__themeBench.setPaintOnly('off'|'on')`，每种 4 次切换，
+`tool/frame-timeline.mjs`）：
+
+| 容器 | 最长 UI 帧（前 4） 关闭 | 最长 UI 帧 开启 | LAYOUT 最长 关 → 开 | BUILD 事件数 关 → 开 |
+|---|---|---|---:|---:|
+| `scroll-view` | 265 / 261 / 250 / 250 ms | 92 / 91 / 90 / 88 ms | 167 → 1.8 ms | 4168 → 132 |
+| `list-view` | 10.4 / 9.9 / 9.0 / 8.3 ms | 8.8 / 8.2 / 7.4 / 7.4 ms | 6.0 → 3.2 ms | 196 → 132 |
+
+- **`scroll-view` 开启后剩下的 ≈ 90 ms 最长帧几乎全是 SEMANTICS 阶段**（开 89 ms / 关 99 ms，与快路径无关）。模拟器的语义树常开，
+  `scroll-view` 会把 4000 行全部放进语义树；`list-view` 只有可见行，SEMANTICS 只有 2.4 ms。真机没有无障碍客户端时不存在这一项；
+  扣掉它，开启后一次切换的 UI 工作（BUILD + LAYOUT + PAINT）约 6 ms。
+- `list-view` 本来就只构建可见行，快路径的收益小（10 → 9 ms），符合预期。
+- **真机（iPhone 12，profile，`scroll-view`，3332 个元素）：一次主题切换的最长 UI 帧 161 → 4.1 ms**（LAYOUT 157 → 1.5 ms，BUILD 事件 4168 → 132，光栅线程持平 ≈ 3 ms）。真机没有语义客户端，所以没有模拟器上那条 ≈ 90 ms 的语义阶段。
+- 画面：两种容器、亮 / 暗两种主题，开 / 关各切一次后裁出列表区域逐字节比较 PNG：**全部一致**。
+
+**教训**：
+
+- 第一版文字换色是**急切**的（立刻取新的共享 painter），一次切换 51.7 ms，其中 51 ms 是 2000 个段落当场重新排版；改成惰性后 7.8 ms。
+  共享段落缓存按「文本 + 样式」做键，颜色在键里，所以**换色等于换键**——凡是要对一整页文字换色的路径，都不能急切。
+- 第二版量出来 33 ms，其中语义阶段 22 ms：`RenderParagraph.text` 的 setter 会 `markNeedsSemanticsUpdate`，而换色不改任何标签。
+  **离线基准一开始漏了 `flushSemantics`**（手驱动 build / layout / paint 三个阶段），所以第一轮数字（7.8 ms）对「语义客户端在场」的环境偏乐观；
+  补上这一阶段、并让快路径不碰 RenderParagraph 自己的 span 之后，语义阶段 22 → 1.7 ms。
+- 快路径的 `RenderObject` 下探要在遇到多孩子容器（`ContainerRenderObjectMixin`）时停下：一个 flex 只有一个孩子时，
+  那个孩子的装饰会被误当成自己的。
+
+**局限**：只覆盖 `backgroundColor` / `color`；有可见边框、transition、背景图、按下中的节点仍走原路径；自绘表面（specs/193）里的节点
+没有 widget 链，不经此路径。
+
 ## 已知热点（优化路线）
 
 按 2026-09-03 那轮真机/模拟器实测重排过（**2026-09-30 增补**见第一条）：

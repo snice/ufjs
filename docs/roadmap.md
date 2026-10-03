@@ -903,6 +903,15 @@ spec 088 删掉 quickjs-ng 时留下了对比与退路缺口，补上
 - 后续（各自立 spec）：扩样式子集（`border` / `opacity` / `overflow` / 百分比…，先加对拍再进白名单）；
   交叉轴显式尺寸 + stretch 父；手势 / `:active` / transition 的「岛屿」；自绘语义（把文字节点暴露给无障碍）。
 
+## 只改绘制的样式更新（已完成 2026-10，specs/194）
+
+- ✅ **快路径**：`SET_STYLE` 只改了 `backgroundColor` / `color` / `borderColor` 时，就地改已挂载的 RenderObject，不重建 widget 链，
+  也不标父节点；文字换色惰性（paint 时才换共享 painter）。主题压测屏同构负载离线一次切换 139–149 → 6.4–7.6 ms（4.6–5.1%，含语义阶段），
+  节点视图重建 3144 → 0；模拟器 `scroll-view` 4000 节点最长 UI 帧 265 → 92 ms（剩余几乎全是模拟器常开的语义阶段）。回退条件与计数见 [architecture.md](architecture.md#只改绘制的更新specs194)，数据见
+  [performance.md](performance.md#只改绘制的更新主题切换2026-10specs194)。
+- ✅ **真机复核**（iPhone 12，profile）：主题切换最长 UI 帧 161 → 4.1 ms。
+- 后续（各自立 spec）：`opacity`、可见边框的换色、有 transition 的节点；把同样的「只改绘制」判定用到 `Image` / `canvas` 等适配器。
+
 ## 近期计划
 
 - **App 侧真机对拍挂账**：078/079 的示例页（过渡演示新增面板、百分比间距与

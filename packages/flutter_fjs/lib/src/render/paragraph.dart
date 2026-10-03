@@ -92,8 +92,74 @@ class RenderFjsParagraph extends RenderParagraph {
   @override
   set text(InlineSpan value) {
     final changed = text.compareTo(value) != RenderComparison.identical;
+    _recolored = null; // the real setter below takes over from a paint-only swap
     super.text = value;
     if (changed) markNeedsLayout();
+  }
+
+  /// The span [recolorPaintOnly] swapped in. It is NOT pushed into
+  /// RenderParagraph's own painter: that setter calls markNeedsSemanticsUpdate,
+  /// and a colour changes no label — on a page with a semantics client (the iOS
+  /// simulator, every flutter_test run) re-gathering 2000 paragraphs' semantics
+  /// was 22 ms of a 33 ms theme switch. The inherited painter keeps the old
+  /// colour, which only its (unused here) own paint and the semantics label
+  /// would show; the shared painter is what paints.
+  InlineSpan? _recolored;
+
+  @override
+  InlineSpan get text => _recolored ?? super.text;
+
+  /// A span swapped in by [recolorPaintOnly] whose shared painter has not been
+  /// acquired yet; [paint] (or the next layout) does it.
+  bool _pendingRecolor = false;
+
+  /// specs/194: swaps in [span] when it differs from the current one in paint
+  /// alone (a colour) — without the relayout the setter above forces, which
+  /// would walk the whole ancestor chain for a change that moves nothing.
+  ///
+  /// LAZY on purpose: acquiring the shared painter for the new colour means a
+  /// new cache key, i.e. shaping and laying out the text again. A theme switch
+  /// recolours every paragraph on the page, and eagerly re-laying out 2000 of
+  /// them was the whole cost of the first version of this path (51 ms of a
+  /// 52 ms flush). Flutter's own TextPainter defers that to paint for exactly
+  /// this reason, so only the paragraphs that are painted pay.
+  ///
+  /// [RenderComparison.paint] is Flutter's own statement that the metrics are
+  /// unchanged, so no size check is needed. Returns false and changes nothing
+  /// when the paragraph has not laid out yet or the difference is not paint-only
+  /// — the caller then rebuilds the node the ordinary way.
+  bool recolorPaintOnly(InlineSpan span) {
+    if (_shared == null) return false;
+    if (text.compareTo(span) == RenderComparison.layout) return false;
+    _recolored = span;
+    _pendingRecolor = true;
+    markNeedsPaint();
+    return true;
+  }
+
+  void _applyPendingRecolor() {
+    _pendingRecolor = false;
+    final old = _shared;
+    if (old == null) return;
+    final k = old.key;
+    final next = _paragraphCache.acquire(
+      _Key(
+        text,
+        k.textAlign,
+        k.textDirection,
+        k.maxLines,
+        k.ellipsis,
+        k.textScaler,
+        k.locale,
+        k.strutStyle,
+        k.textWidthBasis,
+        k.textHeightBehavior,
+        k.minWidth,
+        k.maxWidth,
+      ),
+    );
+    _shared = next;
+    _paragraphCache.release(old);
   }
 
   // the same for an alignment change: paint-only there, part of the key here
@@ -172,6 +238,7 @@ class RenderFjsParagraph extends RenderParagraph {
 
   @override
   void performLayout() {
+    _pendingRecolor = false; // the key below is built from the current text
     final c = constraints;
     final key = _keyAt(c.minWidth, _maxWidthFor(c.maxWidth));
     final old = _shared;
@@ -196,6 +263,7 @@ class RenderFjsParagraph extends RenderParagraph {
 
   @override
   void paint(PaintingContext context, Offset offset) {
+    if (_pendingRecolor) _applyPendingRecolor();
     final shared = _shared;
     if (shared == null) return;
     final canvas = context.canvas;

@@ -10,6 +10,7 @@ import 'package:flutter/widgets.dart' show GlobalKey;
 
 import 'canvas/canvas_module.dart';
 import 'canvas/display_list.dart';
+import 'render/paint_only.dart' show applyPaintOnly, classifyPaintOnly;
 import 'ui_ops.dart';
 
 /// One interned computed style: the decoded map, decoded once no matter how
@@ -81,6 +82,12 @@ class MirrorNode {
   /// the node changes (invariant: a 0 node has only 0 ancestors, so the walk
   /// stops at the first 0).
   int flatPure = 0;
+
+  /// True while a finger is down on this node's `:active` wrapper
+  /// (render/renderer.dart `_PressedNodeState`). specs/194's paint-only update
+  /// leaves such a node to the ordinary rebuild: what it paints is the pressed
+  /// variant of the style.
+  bool pressed = false;
 
   /// Visible node count of the subtree, valid while [flatPure] != 0.
   int flatSize = 0;
@@ -192,6 +199,7 @@ class MirrorTree {
   /// Returns the ids it signalled (empty when nothing was dirty) — the
   /// geometry module's forced reflow needs to know which views to chase.
   List<int> flushDirty() {
+    if (_paintOnly.isNotEmpty) _flushPaintOnly();
     if (_dirty.isEmpty) return const [];
     final ids = List<int>.of(_dirty);
     _dirty.clear();
@@ -212,6 +220,23 @@ class MirrorTree {
   /// The dirty ids parked for flat root [rootId] since the last call.
   Set<int> takeFlatDirty(int rootId) =>
       _flatDirty.remove(rootId) ?? const <int>{};
+
+  /// specs/194: node id → which paint properties changed (render/paint_only.dart
+  /// `paintBg` / `paintColor`), for SET_STYLEs that only changed colours.
+  final Map<int, int> _paintOnly = {};
+
+  void _flushPaintOnly() {
+    final pending = Map<int, int>.of(_paintOnly);
+    _paintOnly.clear();
+    pending.forEach((id, flags) {
+      // another op in the same window already asked for the full rebuild, which
+      // reads the final style anyway
+      if (_dirty.contains(id)) return;
+      final node = _nodes[id];
+      if (node == null) return;
+      if (!applyPaintOnly(node, flags)) _touch(id);
+    });
+  }
 
   void _flatNotify(List<int> ids) {
     for (final id in ids) {
@@ -479,6 +504,7 @@ class MirrorTree {
           p += 12;
           final node = _nodes[id];
           if (node != null) {
+            final oldStyle = node.style, oldActive = node.activeStyle;
             // an id this decoder never saw defined means the frame stream
             // did not start at an epoch boundary (a mid-session frame log
             // replayed into a fresh tree). Keep the style the node already
@@ -505,7 +531,21 @@ class MirrorTree {
               final active = _styles[activeId];
               if (active != null) node.activeStyle = active;
             }
-            _touch(id);
+            // specs/194: an update that only changes colours is applied to the
+            // mounted render objects at flushDirty, and neither the node nor
+            // its parent is marked for a rebuild
+            final paint = classifyPaintOnly(
+              node,
+              oldStyle,
+              node.style,
+              oldActive,
+              node.activeStyle,
+            );
+            if (paint >= 0) {
+              _paintOnly[id] = (_paintOnly[id] ?? 0) | paint;
+            } else {
+              _touch(id);
+            }
           }
           break;
 

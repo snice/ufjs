@@ -317,6 +317,14 @@ class FjsTextEnvData {
     return env == null ? null : (_wrappers[env] ??= FjsTextEnvData._(env));
   }
 
+  /// [maybeOf] without registering a dependency — for code that runs outside a
+  /// build (specs/194's paint-only update reads the environment from a mounted
+  /// element during `flushDirty`, where `dependOn…` would assert).
+  static FjsTextEnvData? peek(BuildContext context) {
+    final env = context.getInheritedWidgetOfExactType<_FjsTextEnv>();
+    return env == null ? null : (_wrappers[env] ??= FjsTextEnvData._(env));
+  }
+
   static final Expando<FjsTextEnvData> _wrappers = Expando('fjsTextEnvData');
 
   bool get selectable => _env.selectable;

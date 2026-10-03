@@ -25,6 +25,7 @@ import {
   hasNativeHost,
   host as nativeHost,
   insert,
+  invokeHost,
   NativeStyleEngine,
   nowMs,
   registerPreFlush,
@@ -698,6 +699,9 @@ export function mountThemeBench(host: Element): () => void {
   // 那一格同义；趟数取偶数，主题才回到原样。
   (globalThis as Record<string, unknown>).__themeBench = {
     toggle: () => toggle(),
+    // specs/194：Dart 侧「只改绘制」快路径的开关（'on' | 'off'），免重编 A/B。
+    // 一次 toggle 里每个节点只换颜色，开着时这些更新就地改已挂载的 RenderObject。
+    setPaintOnly: (m: 'on' | 'off') => invokeHost('fjs.dev.paintOnly', m),
     setRows: (n: number) => {
       rows = n;
       buildRows();

@@ -7,18 +7,13 @@
 // up here as a rect that stayed where it used to be.
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_fjs/src/flat/flat_gate.dart';
 import 'package:flutter_fjs/src/flat/flat_layout.dart';
-import 'package:flutter_fjs/src/mirror_tree.dart';
-import 'package:flutter_fjs/src/render/renderer.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/grid_tree.dart';
-import 'support/parity.dart' show Rendered;
+import 'support/parity.dart' show renderSequence;
 
-import 'dart:ui' as ui;
-import 'package:flutter/rendering.dart';
 
 // style pools (all inside the flat subset)
 const _boxStyles = <Map<String, Object?>>[
@@ -172,69 +167,6 @@ List<Uint8List> _script(int seed, int steps) {
   return frames;
 }
 
-Future<List<Rendered>> _run(WidgetTester tester, List<Uint8List> frames, FjsFlatMode mode) async {
-  tester.view.physicalSize = const Size(400, 800);
-  tester.view.devicePixelRatio = 1;
-  fjsFlatMode = mode;
-  final tree = MirrorTree();
-  final key = GlobalKey();
-  tree
-    ..applyFrame(frames.first)
-    ..flushDirty();
-  await tester.pumpWidget(
-    MaterialApp(
-      home: Material(
-        color: Colors.white,
-        child: RepaintBoundary(
-          key: key,
-          child: Align(
-            alignment: Alignment.topLeft,
-            child: FjsNodeRenderer(tree: tree, ids: tree.rootChildren, grow: false, dispatch: (_, __, {String? text}) {}),
-          ),
-        ),
-      ),
-    ),
-  );
-  final out = <Rendered>[];
-  Future<void> snap() async {
-    final ex = tester.takeException();
-    if (ex != null && !ex.toString().contains('overflowed')) throw ex;
-    final rects = <int, Rect>{};
-    for (final n in tree.allNodes) {
-      if (FjsNodeRenderer.isHidden(n)) continue;
-      final host = n.flatHost;
-      Rect? r;
-      if (host != null) {
-        r = (host as dynamic).globalRectOf(n) as Rect?;
-      } else {
-        final e = n.element;
-        if (e is Element && e.mounted) {
-          final ro = e.findRenderObject();
-          if (ro is RenderBox && ro.attached && ro.hasSize) r = ro.localToGlobal(Offset.zero) & ro.size;
-        }
-      }
-      if (r != null) rects[n.id] = r;
-    }
-    final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-    final bytes = await tester.runAsync(() async {
-      final img = await boundary.toImage();
-      return (await img.toByteData(format: ui.ImageByteFormat.rawRgba))!.buffer.asUint8List();
-    });
-    out.add(Rendered(rects, bytes!, 0));
-  }
-
-  await snap();
-  for (final f in frames.skip(1)) {
-    tree
-      ..applyFrame(f)
-      ..flushDirty();
-    await tester.pump();
-    await snap();
-  }
-  await tester.pumpWidget(const SizedBox());
-  return out;
-}
-
 void main() {
   tearDown(() => fjsFlatMode = FjsFlatMode.auto);
 
@@ -242,9 +174,9 @@ void main() {
     testWidgets('incremental == ordinary over a random edit sequence (seed $seed)', (tester) async {
       addTearDown(tester.view.reset);
       final frames = _script(seed, 60);
-      final ordinary = await _run(tester, frames, FjsFlatMode.off);
+      final ordinary = await renderSequence(tester, frames, FjsFlatMode.off);
       FlatStats.reset();
-      final flat = await _run(tester, frames, FjsFlatMode.force);
+      final flat = await renderSequence(tester, frames, FjsFlatMode.force);
       expect(flat.length, ordinary.length);
       for (var i = 0; i < ordinary.length; i++) {
         final a = ordinary[i], b = flat[i];

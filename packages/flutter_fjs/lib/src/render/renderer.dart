@@ -290,6 +290,7 @@ class _FjsNodeView extends StatefulWidget {
       // region, press stays a per-node Listener inside
       built = _HoverNode(
         builder: (hovered) => _PressedNode(
+          node: node,
           builder: (pressed) => buildWithState(pressed, hovered),
         ),
       );
@@ -297,6 +298,7 @@ class _FjsNodeView extends StatefulWidget {
       built = _HoverNode(builder: (hovered) => buildWithState(false, hovered));
     } else if (tracksPress) {
       built = _PressedNode(
+        node: node,
         builder: (pressed) => buildWithState(pressed, false),
       );
     } else {
@@ -502,9 +504,14 @@ class _FjsNodeViewState extends State<_FjsNodeView> {
 /// pointer-up, and off early only when the pointer travels far enough that
 /// the gesture is really a scroll rather than a press.
 class _PressedNode extends StatefulWidget {
-  const _PressedNode({required this.builder});
+  const _PressedNode({required this.builder, this.node});
 
   final Widget Function(bool pressed) builder;
+
+  /// Mirrors [_pressed] onto the node (`MirrorNode.pressed`), which specs/194's
+  /// paint-only update reads: a pressed node paints its pressed variant and is
+  /// left to the ordinary rebuild.
+  final MirrorNode? node;
 
   @override
   State<_PressedNode> createState() => _PressedNodeState();
@@ -516,7 +523,14 @@ class _PressedNodeState extends State<_PressedNode> {
 
   void _setPressed(bool value) {
     if (_pressed == value || !mounted) return;
+    widget.node?.pressed = value;
     setState(() => _pressed = value);
+  }
+
+  @override
+  void dispose() {
+    widget.node?.pressed = false;
+    super.dispose();
   }
 
   void _onDown(PointerDownEvent event) {

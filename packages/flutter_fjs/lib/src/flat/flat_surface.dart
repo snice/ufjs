@@ -7,6 +7,8 @@
 // descendants' dirty ids to it), the view rebuilds, the gate is asked again, and
 // either this widget updates (the dirty ids are applied incrementally at
 // layout) or the node falls back to the ordinary path.
+import 'dart:developer' show Timeline;
+
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
@@ -84,11 +86,17 @@ class RenderFlatSurface extends RenderBox {
 
   @override
   void performLayout() {
-    if (!_prepare()) {
+    // Timeline spans (profile / debug only cost; no-ops in release) so
+    // tool/frame-timeline.mjs can show where a surface's frame goes on a device
+    final ok = Timeline.timeSync('flat.prepare', _prepare);
+    if (!ok) {
       size = constraints.smallest;
       return;
     }
-    final s = engine.layoutRoot(constraints, rootShrinkToFit: _shrinkToFit());
+    final s = Timeline.timeSync(
+      'flat.layout',
+      () => engine.layoutRoot(constraints, rootShrinkToFit: _shrinkToFit()),
+    );
     size = constraints.constrain(s);
   }
 
@@ -112,7 +120,8 @@ class RenderFlatSurface extends RenderBox {
     }
     if (_needsPack) {
       _release();
-      if (!engine.pack(_tree, _root, _env)) {
+      final packed = Timeline.timeSync('flat.pack', () => engine.pack(_tree, _root, _env));
+      if (!packed) {
         _fallback(engine.rejectedReason ?? 'pack');
         return false;
       }
@@ -164,7 +173,10 @@ class RenderFlatSurface extends RenderBox {
     // the ordinary path gives.
     final window = fjsVisibleWindowOf(this);
     fjsFlatCullerRegister(this, culling: window != null);
-    engine.paint(context.canvas, offset, window?.shift(offset));
+    Timeline.timeSync(
+      'flat.paint',
+      () => engine.paint(context.canvas, offset, window?.shift(offset)),
+    );
   }
 
   @override

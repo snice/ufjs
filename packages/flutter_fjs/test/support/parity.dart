@@ -138,3 +138,79 @@ Future<void> expectParity(
 }
 
 int flatContainers = 0, gatedContainers = 0;
+
+/// Mounts the tree the first frame builds, then applies each following frame
+/// (applyFrame + flushDirty + pump), taking a [Rendered] snapshot (node rects +
+/// pixels) after the mount and after every frame. The surface / widgets stay
+/// mounted across frames, so incremental paths (flat layout, paint-only
+/// updates) are the ones exercised.
+Future<List<Rendered>> renderSequence(
+  WidgetTester tester,
+  List<Uint8List> frames,
+  FjsFlatMode mode, {
+  Widget Function(Widget child)? wrap,
+}) async {
+  tester.view.physicalSize = const Size(400, 800);
+  tester.view.devicePixelRatio = 1;
+  fjsFlatMode = mode;
+  final tree = MirrorTree();
+  final key = GlobalKey();
+  tree
+    ..applyFrame(frames.first)
+    ..flushDirty();
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Material(
+        color: Colors.white,
+        child: RepaintBoundary(
+          key: key,
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: wrap == null
+                ? FjsNodeRenderer(tree: tree, ids: tree.rootChildren, grow: false, dispatch: (_, __, {String? text}) {})
+                : wrap(FjsNodeRenderer(tree: tree, ids: tree.rootChildren, grow: false, dispatch: (_, __, {String? text}) {})),
+          ),
+        ),
+      ),
+    ),
+  );
+  final out = <Rendered>[];
+  Future<void> snap() async {
+    final ex = tester.takeException();
+    if (ex != null && !ex.toString().contains('overflowed')) throw ex;
+    final rects = <int, Rect>{};
+    for (final n in tree.allNodes) {
+      if (FjsNodeRenderer.isHidden(n)) continue;
+      final host = n.flatHost;
+      Rect? r;
+      if (host != null) {
+        r = (host as dynamic).globalRectOf(n) as Rect?;
+      } else {
+        final e = n.element;
+        if (e is Element && e.mounted) {
+          final ro = e.findRenderObject();
+          if (ro is RenderBox && ro.attached && ro.hasSize) r = ro.localToGlobal(Offset.zero) & ro.size;
+        }
+      }
+      if (r != null) rects[n.id] = r;
+    }
+    final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    final bytes = await tester.runAsync(() async {
+      final img = await boundary.toImage();
+      return (await img.toByteData(format: ui.ImageByteFormat.rawRgba))!.buffer.asUint8List();
+    });
+    out.add(Rendered(rects, bytes!, 0));
+  }
+
+  await snap();
+  for (final f in frames.skip(1)) {
+    tree
+      ..applyFrame(f)
+      ..flushDirty();
+    await tester.pump();
+    await snap();
+  }
+  await tester.pumpWidget(const SizedBox());
+  return out;
+}
+
