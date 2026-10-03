@@ -26,7 +26,28 @@ describe('shared chunk narrowing (specs/169)', () => {
     expect([...(names.get('fjs/router') as Set<string>)]).toEqual(['useRouter']);
     expect(names.get('fjs')).toBe('*');
     expect(names.get('pinia')).toBe('*');
-    expect(names.has('fjs/vue')).toBe(false);
+    // nobody imports fjs/vue, but a DOM shim reads these off __FJS_SHARED (specs/200)
+    expect([...(names.get('fjs/vue') as Set<string>)].sort()).toEqual(['measureTextBlock', 'onGlobalPointerDown', 'styleEngine']);
+  });
+
+  it('keeps the dynamically-read names with a static import alongside, and the whole namespace when asked for (specs/200)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fjs-narrow-'));
+    fs.writeFileSync(path.join(dir, 'a.ts'), "import { registerStyles } from 'fjs/vue';\nexport const x = registerStyles;");
+    fs.writeFileSync(path.join(dir, 'b.ts'), "import * as v from 'fjs/vue';\nexport const y = v;");
+    const shared = [...SHARED_BARE_BUILTIN];
+    const run = (file: string, shared2: string[]) =>
+      collectSharedImports(
+        [{ name: 'e', contents: `export * from ${JSON.stringify(path.join(dir, file))};` }],
+        dir,
+        shared2,
+        [sharedExternalPlugin(undefined, shared2)],
+      );
+    const named = await run('a.ts', shared);
+    expect([...(named.get('fjs/vue') as Set<string>)].sort()).toEqual(['measureTextBlock', 'onGlobalPointerDown', 'registerStyles', 'styleEngine']);
+    expect((await run('b.ts', shared)).get('fjs/vue')).toBe('*');
+    // a specifier the app does not share is not conjured into the map
+    fs.writeFileSync(path.join(dir, 'c.ts'), "import { ref } from 'vue';\nexport const z = ref;");
+    expect((await run('c.ts', shared.filter((id) => id !== 'fjs/vue'))).has('fjs/vue')).toBe(false);
   });
 
   it('generates named imports when names are known, namespaces otherwise', () => {

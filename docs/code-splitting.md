@@ -117,6 +117,10 @@ runtime-core 里页面从不用的部分（VDOM 渲染引擎之于 enableVapor �
   该说明符回退整命名空间。
 - 函数导出作为普通属性共享（页面每次调用不走 getter），其余值保留 getter（ESM 活绑定语义）。
 - 页面运行期以字符串动态取共享模块的名字（`vue[name]`）在 release 下取不到——只认静态 import。
+  例外（specs/200）：runtime 约定给 DOM 垫片动态读取的名字始终保留（`SHARED_DYNAMIC_NAMES`，目前是
+  `fjs/vue` 的 `styleEngine` / `onGlobalPointerDown` / `measureTextBlock`，demo 的 vant `dom-env.ts`
+  经 `__FJS_SHARED['fjs/vue']` 读它们）。漏掉时 release / profile 烘焙构建下 TextEllipsis 量不出行高、
+  NumberKeyboard 点外部关不掉，而 dev 的整命名空间下一切正常——只在烘焙构建里出现，排查时别被 debug 误导。
 
 实测（2026-10-01）：hello-fjs shared.js 436.3 → 375.9 KB，demo 809.4 → 652.9 KB，
 enableVapor 的 vapor-app 336.4 → 207.3 KB。

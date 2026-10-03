@@ -737,6 +737,18 @@ export function sharedEntrySource(
   )}\n};\n${extra.join('\n')}\n(globalThis).__FJS_SHARED = S;\n`;
 }
 
+/** Names read off `__FJS_SHARED[spec]` at runtime instead of imported — no
+ * import statement for the collector to find (specs/200). demo's vant DOM
+ * shim (dom-env.ts, specs/073 / 128) takes the style engine, the document
+ * pointer stream and the text measurer this way, because a static import
+ * of 'fjs/vue' would make the web build resolve Flutter's export list.
+ * Left to the collector alone, a release `fjs/vue` exported none of them:
+ * TextEllipsis could not measure and NumberKeyboard never saw a click-away.
+ * Only what the runtime itself offers such shims — not an open door. */
+export const SHARED_DYNAMIC_NAMES: Record<string, readonly string[]> = {
+  'fjs/vue': ['styleEngine', 'onGlobalPointerDown', 'measureTextBlock'],
+};
+
 /** Which names each shared bare specifier must export (specs/169): the
  * union of what the app entry and every page chunk import from it. An ESM
  * pre-build of exactly the inputs the real chunks are built from, with the
@@ -806,6 +818,7 @@ export async function collectSharedImports(
     for (const m of code.matchAll(/\bexport\s*\*\s*from\s*"([^"]+)"/g)) add(m[1], '*');
     for (const m of code.matchAll(/\bimport\s*\(\s*"([^"]+)"\s*\)/g)) add(m[1], '*');
   }
+  for (const spec of Object.keys(SHARED_DYNAMIC_NAMES)) for (const name of SHARED_DYNAMIC_NAMES[spec]) add(spec, name);
   return names;
 }
 
