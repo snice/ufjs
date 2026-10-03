@@ -8,6 +8,7 @@ createFjsApp({
   routes,
   transition: 'fjs-slide',
   shell: Shell,
+  enableVapor: true,
   setup(app) {
     // Vue swallows what a lifecycle hook throws unless something listens;
     // console.error because the app log drops console.log (vant's
