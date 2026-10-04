@@ -158,7 +158,9 @@ describe('support table: entries the JS side cannot observe', () => {
   it('value-level sets stay minimal and kebab/canonical', () => {
     expect(UNSUPPORTED_DISPLAY_VALUES.has('flex')).toBe(false);
     for (const unit of UNSUPPORTED_UNITS) expect(unit).toMatch(/^v[wh]?(min|max)?$/);
-    expect(VERTICAL_ALIGN_VALUES.has('middle')).toBe(false);
+    // middle is read by the App's inline-box run (specs/207)
+    expect(VERTICAL_ALIGN_VALUES.has('middle')).toBe(true);
+    expect(VERTICAL_ALIGN_VALUES.has('top')).toBe(false);
     expect(VERTICAL_ALIGN_VALUES.has('sub')).toBe(true);
     // fit-content is supported (specs/138); only its siblings are dropped
     expect(UNSUPPORTED_SIZE_KEYWORDS.has('fit-content')).toBe(false);

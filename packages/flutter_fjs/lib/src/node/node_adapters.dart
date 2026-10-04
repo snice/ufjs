@@ -752,6 +752,7 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
     final run = <Widget>[];
     final runNodes = <MirrorNode>[];
     var runBoxes = 0;
+    var runMiddle = 0;
     var changed = false;
     final align = switch (context.style.textAlign) {
       TextAlign.center => WrapAlignment.center,
@@ -763,7 +764,12 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
         flow.add(
           Wrap(
             alignment: align,
-            crossAxisAlignment: WrapCrossAlignment.end,
+            // `vertical-align: middle` on every box (vant's loading: a 16px
+            // spinner next to a line-height:50px text box) centers the
+            // line; bottoms stay the default for the rest (van-card tags)
+            crossAxisAlignment: runMiddle == runBoxes
+                ? WrapCrossAlignment.center
+                : WrapCrossAlignment.end,
             children: List.of(run),
           ),
         );
@@ -776,6 +782,7 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
       run.clear();
       runNodes.clear();
       runBoxes = 0;
+      runMiddle = 0;
     }
 
     for (var i = 0; i < kids.length; i++) {
@@ -807,7 +814,10 @@ class _ViewNodeAdapter extends FjsNodeAdapter {
         // price's inner div) would otherwise take the whole line
         run.add(box ? FjsShrinkCross(child: kids[i]) : kids[i]);
         runNodes.add(kid);
-        if (box) runBoxes++;
+        if (box) {
+          runBoxes++;
+          if (style.verticalAlign == 'middle') runMiddle++;
+        }
         continue;
       }
       flush();

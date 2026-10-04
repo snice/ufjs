@@ -55,8 +55,10 @@ export const SIZE_PROPERTIES = new Set(['width', 'height', 'min-width', 'max-wid
 export const UNSUPPORTED_UNITS = new Set(['vw', 'vh', 'vmin', 'vmax']);
 
 /** `vertical-align` accepts only these — anything else is skipped
- * (css-compat「文字」表；`inherit` 走通用的 inherit 关键字）. */
-export const VERTICAL_ALIGN_VALUES = new Set(['sub', 'super', 'inherit']);
+ * (css-compat「文字」表；`inherit` 走通用的 inherit 关键字）. `middle`
+ * is read by the App's inline-box run (a row of inline-blocks centered on
+ * the cross axis, specs/207) — vant's loading spinner + text. */
+export const VERTICAL_ALIGN_VALUES = new Set(['sub', 'super', 'middle', 'inherit']);
 
 /** Properties `transition`/`transition-property` may name for the App to
  * actually tween them (css-compat「视觉效果」表的 transition 行). Named

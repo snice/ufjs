@@ -521,7 +521,7 @@ function lintDeclaration(prop: string, value: string, at: At, report: Reporter):
     return;
   }
   if (key === 'vertical-align' && !VERTICAL_ALIGN_VALUES.has(value.toLowerCase())) {
-    report(at, 'drop', `${prop}: ${value}`, 'vertical-align only supports sub / super (nested text fragments) — the declaration is skipped');
+    report(at, 'drop', `${prop}: ${value}`, 'vertical-align only supports sub / super (nested text fragments) and middle (inline-block runs) — the declaration is skipped');
     return;
   }
   if ((key === 'transition' || key === 'transition-property') && !value.toLowerCase().includes('var(')) {

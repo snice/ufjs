@@ -150,7 +150,7 @@ CSS 文本里用 kebab-case（`font-size: 16px`），内联对象用 camelCase
 | `text-shadow` | ✅ | |
 | `max-lines` | ⚠️ | fjs 扩展，配 `overflow: ellipsis` |
 | `word-break` / `text-overflow` | ❌ | 用 `max-lines` + `overflow: ellipsis` |
-| `vertical-align` | ⚠️ | 只认 `sub` / `super`，且只在**嵌套在 text 里的 text 片段**上生效。Flutter 上把片段平移（上移父字号的 1/3、下移 1/5，和 Chrome 一致），行盒不跟着撑高 |
+| `vertical-align` | ⚠️ | 认 `sub` / `super`（只在**嵌套在 text 里的 text 片段**上生效；Flutter 上把片段平移，上移父字号的 1/3、下移 1/5，和 Chrome 一致，行盒不跟着撑高）和 `middle`（只在**块里一串行内盒**上生效：这串盒**全部**声明 `middle` 时按交叉轴居中，否则保持底边对齐；vant 的 loading：16px spinner + `line-height:50px` 文字盒，specs/207） |
 
 未声明颜色的 `text` 取基础样式表 `body` 的 `14px / #333333`。
 
