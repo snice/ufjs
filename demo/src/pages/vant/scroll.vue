@@ -41,6 +41,16 @@ function onRefresh(): void {
 const refreshed = ref(false);
 
 const dropdown = ref('a');
+// DropdownMenu 渲染标题时要读 item 的 options prop（renderTitle），于是 menu
+// 的渲染 effect 会追踪它：options 若在模板里内联，slot 每次执行都是新数组，
+// patch 赋新值 → menu 重渲染 → 再生成新数组，自激励成递归更新（web 端
+// FjsPageEntry 的 mounted/activated 钩子里 nextTick(restore) 让这一串留在
+// 同一个 flush 的递归计数窗内，100 次上限就炸，报错挂在钩子上——specs/205
+// §7）。提升成稳定引用后 patch 判定未变，循环断掉。
+const dropdownOptions = [
+  { text: '选项 A', value: 'a' },
+  { text: '选项 B', value: 'b' },
+];
 const images = [
   'https://img.yzcdn.cn/vant/apple-1.jpg',
   'https://img.yzcdn.cn/vant/apple-2.jpg',
@@ -55,7 +65,7 @@ const images = [
     <view class="block">
       <text class="block-title">DropdownMenu（{{ dropdown }}）</text>
       <van-dropdown-menu>
-        <van-dropdown-item v-model="dropdown" :options="[{ text: '选项 A', value: 'a' }, { text: '选项 B', value: 'b' }]" />
+        <van-dropdown-item v-model="dropdown" :options="dropdownOptions" />
       </van-dropdown-menu>
     </view>
 

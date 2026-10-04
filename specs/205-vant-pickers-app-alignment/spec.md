@@ -136,3 +136,20 @@
    （蓝块/文字簇的 x 区间对照期望列区间）；`fjs run` 自带的 dev server
    会随 run 退出而死，独立 `fjs dev --pages` + run 复用是稳定的调试
    结构。
+10. **vant: scroll 页 web 端报 Maximum recursive updates exceeded in
+    component \<van-dropdown-menu\>**（复验中发现的潜伏问题，203 引入该页
+    起就在）：机制三层。① DropdownMenu 渲染标题要调 `item.renderTitle()`，
+    读的是 item 的 options prop → menu 的渲染 effect 追踪了它
+    （`renderTriggered` 实测触发键 `set/options`）；② 页面模板把 options
+    内联（`:options="[{…},{…}]"`），slot 每次执行（含 menu 每次重渲染时）
+    都生成新数组，patch 时 `updateProps` 赋新值 → 触发 menu → slot 再执行
+    → 自激励循环（vant #12872 同型）；③ 这个循环平时几次就停，炸阈值要
+    靠 web 端 `FjsPageEntry` 的 mounted/activated 钩子里的
+    `nextTick(restore)`（specs/003 滚动恢复）——它让后续 job 留在同一个
+    flush 的递归计数窗（`flushJobs(seen)` 尾递归共享 seen）里跑满 100 次
+    再把 scheduler 的中止异常抛回钩子的 promise，于是报错 info 挂在
+    "mounted/activated hook" 上，看似钩子的锅。修法在用法侧：options 提升
+    为 `<script setup>` 里的稳定引用，patch 判定未变、触发归零
+    （renderTriggered 实测 0 条），挂载/激活两条路径零报错、下拉可开可选。
+    引擎与 runtime 无需改动；vant 内部把标题渲染改为不追踪 options 前，
+    任何「menu 渲染期会重执行的 options 字面量」都是同型地雷。
