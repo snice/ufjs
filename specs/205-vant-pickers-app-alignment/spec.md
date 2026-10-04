@@ -108,7 +108,20 @@
    height:100% 的按钮居中，二者错位。修法 `vant-fix.css`：
    `.van-picker__title { top: 50%; transform: translate(-50%, -50%) }`
    ——显式垂直居中，两端同义（web 中心线三值实测一致）。
-8. 实操备忘：模拟器 UI 自动化用 `idb ui describe-all` 的 AXLabel 拿
+8. **vant PullRefresh App 端拉不出来**（用户复验第五轮，vant: scroll 页）：
+   双重原因。①手势竞技场把垂直拖动判给页面 scroll-view，track 的
+   touchmove 收到 touchcancel——给根无条件 touch-action: none 又会杀死
+   区域内的页面滚动（List 靠页面滚动），条件式让出是 Flutter
+   RefreshIndicator 的能力。②vant 的滚动父级探测在 App 端不可靠。
+   修法：页面按端分派（`navigator.userAgent === 'fjs'`，dom-env 的
+   标识）——App 端用 fjs `refresh` 标签（Flutter RefreshIndicator）包
+   **嵌套 scroll-view**（refresh 需要可见的滚动子级；滚动条目在内层滚），
+   web 端保留 van-pull-refresh 原路径。连带发现：List 的 check 只由
+   loading/finished 变化与滚动事件触发，刷新清空后两者都可能无变化，
+   App 端无滚动事件兜底 → 手动 `listRef.check()` 重查（web 上靠滚动
+   事件自然恢复，无需此步）。日志链路 onRefresh → check → load ×2
+   → 20 条恢复，RefreshIndicator 转圈实测可见。
+9. 实操备忘：模拟器 UI 自动化用 `idb ui describe-all` 的 AXLabel 拿
    元素中心坐标再 `idb ui tap x y --udid`（zsh 里变量展开要 `${=V}`
    强制分词）；AX 树拿不到子像素几何时，直接对模拟器截图做像素测量
    （蓝块/文字簇的 x 区间对照期望列区间）；`fjs run` 自带的 dev server
