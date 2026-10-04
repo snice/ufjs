@@ -27,7 +27,7 @@ fjs 用 HTML 风格的语义标签构建 UI，由 Dart 侧映射为 Flutter Widg
 | `input` | TextField | `value` / `placeholder` / `secure` / `multiline` / `readonly`(只读，可聚焦但不可编辑) / `disabled`(禁用，不可聚焦) / `rows`(多行行数) / `keyboard`(text/number/decimal/tel/email) / DOM 别名 `type`(password/tel/email/url/number/search)、`inputmode`(numeric/decimal/tel/email/url)、`enterkeyhint`(同 `confirm-type`)——优先级 `keyboard` > `inputmode` > `type`，`secure` 或 `type=password` 即遮挡（vant Field 走的就是这组，specs/125） / `maxlength`(-1 不限) / `name`，`onTextChanged` / `onSubmit` / `onFocus` / `onBlur`；多行那组 props 见 `textarea` |
 | `textarea` | **不是 Dart 标签**：两端共用 `components/textarea.ts`，渲染成 `<input multiline>` | `value` / `placeholder` / `placeholder-style` / `disabled` / `maxlength`(**默认 140**) / `auto-height` / `focus` / `auto-focus` / `confirm-type` / `name`；`@input` / `@focus` / `@blur` / `@confirm` / `@linechange`。详见下表 |
 | `rich-text` | **不是 Dart 标签**：两端共用 `components/rich-text.ts`，把 HTML 解析后渲染成 `view` / `text` / `image` / `divider` | `nodes`（HTML 字符串或小程序节点数组）/ `space`(ensp/emsp/nbsp)；内部节点不派事件，组件自身的 `@tap` / `@longpress` 照常。详见下表 |
-| `scroll-view` | SingleChildScrollView | `scroll-x` / `scroll-y` 选轴（也可用样式键 `direction: horizontal`）、`scroll-top` / `scroll-left`、`scroll-into-view`、`scroll-with-animation`、`upper-threshold` / `lower-threshold`（默认 50）；`@scroll`（六字段 JSON 串）/ `@scrolltoupper` / `@scrolltolower`。详见下表 |
+| `scroll-view` | SingleChildScrollView | `scroll-x` / `scroll-y` 选轴（也可用样式键 `direction: horizontal`）、`scroll-top` / `scroll-left`、`scroll-into-view`、`scroll-with-animation`、`upper-threshold` / `lower-threshold`（默认 50）、`bounces`（微信同名属性，默认开；`"false"` 关掉 iOS 边缘 rubber-band，两端直接刹住——refresh 自定义头部模式的内层滚动体要关，否则弹性的视觉过滚会叠在拉动的位移上）；`@scroll`（六字段 JSON 串）/ `@scrolltoupper` / `@scrolltolower`。详见下表 |
 | `sticky-header` / `sticky-section` | PinnedHeaderSliver + SliverMainAxisGroup（挂在 sliver 化的 CustomScrollView 上）| 吸顶布局，对齐微信 skyline 同名组件。必须作为 scroll-view 的**直接子节点**（此时该 scroll-view 自动走 sliver 布局；`type="custom"` 属性可写可不写，会被接受并忽略）。`@stickontopchange` 载荷 `{"isStickOnTop":bool}` JSON 串。详见下表 |
 | `list-view` | ListView.builder | 大列表；`items` + 行插槽，两端都只挂载视口附近的行 |
 | `switch` | Switch | `value`，`onValueChanged("1"/"0")` |
@@ -45,7 +45,7 @@ fjs 用 HTML 风格的语义标签构建 UI，由 Dart 侧映射为 Flutter Widg
 | `picker-view` | 一行 `ListWheelScrollView`（每列一个）| `value` 是各列选中下标的数组（越界取末项）、`item-height`（默认 44）、`indicator-style`；滚动停下派 `@change`，载荷是下标数组的 JSON 串。只认 `picker-view-column` 子节点，其余会告警并丢弃 |
 | `picker-view-column` | 一列的选项容器 | 子节点即选项 |
 | `picker` | **不是 Dart 标签**：两端共用 `components/picker.ts`，渲染成 `modal` + `picker-view` + 两个 `button` | 插槽内容是页面上那一行，点它弹出；确定派 `@change`、取消/蒙层关闭派 `@cancel`；`disabled` 不弹。四种 `mode` 见下表 |
-| `refresh` | RefreshIndicator | `onRefresh`（600ms 后自动收起）|
+| `refresh` | 单子级：RefreshIndicator（600ms 后自动收起）；**两个子级：自定义头部模式**（specs/206）——第一个子级是头部内容（JS 渲染，原生随拉动平移/裁剪/收口），第二个是滚动体 | 头部模式：`head-height`（默认 50）、`refreshing`（true 钉住等待，置回 false 收口）；`@refresh` 触发刷新；`@statuschange` 载荷是 `{"status":"pulling"\|"loosing"\|"loading"\|"normal"}` JSON 串，只在状态变化时派。手势是通知驱动的：内层滚动体到顶后拖动才成立（过摩阻随滚动物理），内容矮于视口时拉不动 |
 | `swiper` | PageView | `current`、`circular`、`autoplay` + `interval`、`duration`、`vertical`、`indicator-dots`；`@change`（真实索引串）。详见下表 |
 | `swiper-item` | 撑满一页的容器 | 只在 `swiper` 内有意义 |
 | `picker-view` | ListWheelScrollView 行 | 内嵌滚轮；`value` 是每列选中下标数组；`item-height` 默认 44；`indicator-style` 覆盖选中框；`onValueChanged` 载荷是下标数组 JSON 串 |

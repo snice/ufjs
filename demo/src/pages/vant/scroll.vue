@@ -26,14 +26,21 @@ function onLoad(): void {
 }
 
 function onRefresh(): void {
+  // 数据就绪后才收刷新态（vant 的标准时序）：「加载中...」的 800ms 里旧
+  // 列表原样可见；数据填好、refreshing 置 false 后进「刷新成功」，此刻
+  // 列表已填好——成功文案不会再跟 List 自己的「加载中...」行同屏（List
+  // 的加载行在 check 到 onLoad 完成之间一直在，两端同一份 vant 代码，
+  // specs/206 §7.10）。App 端 List 的 check 只由 loading/finished 变化
+  // 与滚动事件触发：清空后两者都可能没有变化——手动叫它重查一次兜底。
   setTimeout(() => {
     next = 0;
-    items.value = [];
+    const fresh: number[] = [];
+    for (let i = 0; i < 10; i++) fresh.push(next++);
+    items.value = fresh;
     finished.value = false;
+    loading.value = false;
     refreshing.value = false;
     refreshed.value = true;
-    // List 的 check 只由 loading/finished 变化与滚动事件触发：清空后两者
-    // 都可能没有变化、App 端也没有滚动事件兜底——手动叫它重查一次。
     nextTick(() => listRef.value?.check());
     setTimeout(() => (refreshed.value = false), 1500);
   }, 800);

@@ -5,7 +5,12 @@ import { hostAttrs } from '../style';
 export const FjsRefresh = defineComponent({
   name: 'FjsRefresh',
   inheritAttrs: false,
-  emits: ['refresh'],
+  // statuschange is the APP side's pull-status event (specs/206, the
+  // custom-header mode) — this web twin has no status machine to report,
+  // it is declared so a `@statuschange` binding is a consumed component
+  // event here rather than a fallthrough attribute, and so WEB_EMITS
+  // (which routes the payload shape on BOTH ends) can list it.
+  emits: ['refresh', 'statuschange'],
   setup(_props, { attrs, slots, emit }) {
     const host = ref<HTMLElement | null>(null);
     const pull = ref(0);

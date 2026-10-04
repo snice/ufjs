@@ -556,4 +556,12 @@ abstract final class FjsEvent {
   // event (registerSystemHandler): the document-level touch stream DOM code
   // listens to for click-away.
   static const globalPointerDown = 43;
+  // refresh's custom-header mode (specs/206) crossed a pull-status line:
+  // payload is the JSON {"status":"pulling"|"loosing"|"loading"|"normal"}
+  // widgets/refresh.dart writes. Only status CHANGES are reported — the
+  // drag distance itself never crosses (the header rides a native
+  // transform, so JS re-renders a few times per gesture, not per frame).
+  // Completion is not an event: JS sets the `refreshing` prop false and the
+  // native side collapses.
+  static const statusChange = 44;
 }

@@ -104,6 +104,19 @@ class _FjsScrollViewState extends State<FjsScrollView> {
 
   bool get _horizontal => _axis == Axis.horizontal;
 
+  /// `bounces="false"` turns the iOS rubber band off (the WeChat attribute,
+  /// same name and default-on semantics): the scroller clamps at both ends
+  /// instead of visually overshooting. fjs refresh's custom-header mode
+  /// needs this on its inner scroll-view — the rubber band's own visual
+  /// overscroll would ADD to the pull translate and double the content
+  /// offset (specs/206 §7.8). Absent / explicit true keeps the platform
+  /// default.
+  ScrollPhysics? get _physics {
+    final raw = widget.node.props['bounces'];
+    if (raw == null || fjsBool(raw)) return null;
+    return const ClampingScrollPhysics();
+  }
+
   double? _numProp(String key) {
     final raw = widget.node.props[key];
     if (raw is num) return raw.toDouble();
@@ -455,6 +468,7 @@ class _FjsScrollViewState extends State<FjsScrollView> {
               'fjs-scroll-${widget.tree.generation}-${widget.node.id}',
             ),
             scrollDirection: _axis,
+            physics: _physics,
             slivers: widget.slivers!,
           )
         : SingleChildScrollView(
@@ -466,6 +480,7 @@ class _FjsScrollViewState extends State<FjsScrollView> {
               'fjs-scroll-${widget.tree.generation}-${widget.node.id}',
             ),
             scrollDirection: _axis,
+            physics: _physics,
             child: widget.child,
           );
     return NotificationListener<ScrollNotification>(
