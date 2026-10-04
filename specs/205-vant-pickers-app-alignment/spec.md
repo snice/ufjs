@@ -153,3 +153,15 @@
     （renderTriggered 实测 0 条），挂载/激活两条路径零报错、下拉可开可选。
     引擎与 runtime 无需改动；vant 内部把标题渲染改为不追踪 options 前，
     任何「menu 渲染期会重执行的 options 字面量」都是同型地雷。
+11. **PullRefresh 包装组件回归：web 端刷新后头部永远停在「加载中...」**
+    （用户复验发现，§7.8 重构引入）：§7.8 把 van-pull-refresh 收进
+    `pull-refresh.vue` 时把 v-model 关在了组件内部（`refreshing` 只进不
+    出），而 van-pull-refresh 的契约是**调用方把 v-model 置回 false 才结
+    束刷新态**（success 文案也由这一跳触发）——重构前页面直绑
+    `v-model="refreshing"`、onRefresh 里有这一跳，重构后变成空操作。
+    修法：包装组件 `defineModel<boolean>('refreshing')` 把 model 交还调用
+    方，页面 `v-model:refreshing` 接回（onRefresh 里那行置 false 复活）；
+    App 端 refresh 标签自管指示器，不吃这个 model。契约修正为
+    v-model:refreshing + @refresh + 默认插槽（§7.8 的「@refresh + 默认
+    插槽」作废）。合成 Touch 事件实测全周期：拉下 → 20 → 0 → 10 →
+    自动续载，头部 transform 归位、无残留文案。

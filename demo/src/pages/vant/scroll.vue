@@ -78,8 +78,9 @@ const images = [
       <text class="block-title">PullRefresh + List（{{ items.length }} 条）{{ refreshed ? '已刷新' : '' }}</text>
       <!-- 两端同源的 PullRefresh 包装：App 端 fjs refresh 标签（Flutter
            RefreshIndicator）+ 嵌套 scroll-view，web 端 van-pull-refresh
-           ——端差异与取舍见组件头注释（specs/205 §7）。 -->
-      <pull-refresh @refresh="onRefresh">
+           ——端差异与取舍见组件头注释（specs/205 §7）；v-model:refreshing
+           必须绑，否则 web 端刷新态收不了口。 -->
+      <pull-refresh v-model:refreshing="refreshing" @refresh="onRefresh">
         <van-list ref="listRef" v-model:loading="loading" :finished="finished" finished-text="没有更多了" @load="onLoad">
           <van-cell v-for="i in items" :key="i" :title="`条目 ${i}`" />
         </van-list>

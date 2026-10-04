@@ -10,19 +10,21 @@
 // scroll-view（高度 scrollHeight，页面按布局给）。web 端原样
 // van-pull-refresh（@vant/touch-emulator 让桌面浏览器鼠标也能拉）。
 //
-// 对外契约与 van-pull-refresh 一致：@refresh + 默认插槽。调用方在
-// @refresh 里清数据后要手动 listRef.check()（List 的 check 只由
+// 对外契约与 van-pull-refresh 一致：v-model:refreshing + @refresh + 默认
+// 插槽。v-model:refreshing 必须绑：van-pull-refresh 的刷新态要调用方把
+// v-model 置回 false 才结束（「刷新成功」文案也是这一跳触发的），不绑的话
+// 头部永远停在「加载中...」（收进包装组件时漏掉了这一跳，specs/205 §7）。
+// 调用方在 @refresh 里清数据后要手动 listRef.check()（List 的 check 只由
 // loading/finished 变化与滚动事件触发，清空后两者都可能无变化；App 端
 // 无滚动事件兜底）。差异：App 端是 Material 转圈、无 success 文案阶段
-// ——RefreshIndicator 的自定义参数（color 等）当前不经 refresh 标签
-// 透出，要换拉动 UI 得扩 refresh 标签的 props（needs-a-spec）。
-import { ref } from 'vue';
-
+// ——refresh 标签（RefreshIndicator）自管指示器，不吃这个 model；
+// RefreshIndicator 的自定义参数（color 等）当前不经 refresh 标签透出，
+// 要换拉动 UI 得扩 refresh 标签的 props（needs-a-spec）。
 const props = withDefaults(defineProps<{ scrollHeight?: number }>(), {
   scrollHeight: 420,
 });
 const emit = defineEmits<{ refresh: [] }>();
-const refreshing = ref(false);
+const refreshing = defineModel<boolean>('refreshing', { default: false });
 // dom-env 给 App 端的 userAgent 是 'fjs'（浏览器是真实 UA）。
 const isApp = navigator.userAgent === 'fjs';
 </script>
