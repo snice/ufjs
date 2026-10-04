@@ -1,0 +1,36 @@
+/*
+ * Vant 组件在 fjs 渲染管线上的显式约束（specs/205）。
+ *
+ * 与 nutui-fix.css 同一角色：库的 web 语义在 fjs 两端没有对应物或层级
+ * 规则不同时，在这里用两端同源的 CSS 钉死。数值对照 vant 默认主题
+ * （各组件 index.css），升级 vant 时要跟着对一遍。
+ *
+ * 注意：这里只写「CSS 能表达」的约束。需要改库行为（事件、挂载路径）
+ * 的还在 vite/vant.ts 的锚点补丁里； Slider/Rate 的 touch-action 走的
+ * 是源码补丁（specs/126/127，已在线上验证），新约束优先用本文件。
+ */
+
+/* Picker 列拖动（DatePicker/TimePicker/Cascader/Picker 都用它）：
+ * 列靠非 passive touchmove 里 preventDefault() 赢下手势，App 端监听晚
+ * 手势竞技场一帧、指针已判给外层 scroll-view——列拖不动、页面跟着滚。
+ * touch-action 是两端都认的抢手势声明（与 Slider/Rate 的源码补丁同款，
+ * 这里是纯 CSS 版）。 */
+.van-picker-column {
+  touch-action: none;
+}
+
+/* Calendar 月水印：__month-mark 是 absolute（引擎画在 Stack 层，永远压过
+ * in-flow 内容），日子格子是 relative（in-flow 层）——web 按 DOM 顺序日子
+ * 在上，App 端水印盖住日子。day 的 z-index 够不着 Stack 层，正确做法是给
+ * 水印负 z-index：引擎把 z<0 的定位盒垫到 in-flow 内容之下（vant steps 的
+ * 白点就是这么遮连接线的）；web 端 -1 落到 popup 白底之上、内容之下，
+ * 视觉不变。 */
+.van-calendar .van-calendar__month-mark {
+  z-index: -1;
+}
+
+/* Calendar 头部：vant 的 header 自身无背景（web 上透出 popup 白底），
+ * App 端该区域透出弹层遮罩的灰色。钉死成不透明白，两端一致。 */
+.van-calendar__header {
+  background: var(--van-calendar-background, #ffffff);
+}
