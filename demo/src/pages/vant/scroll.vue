@@ -7,6 +7,7 @@
 // 探针；ImagePreview 是命令式全屏浮层（specs/137 通道）。
 import { nextTick, ref } from 'vue';
 import { showImagePreview } from 'vant';
+import PullRefresh from '../../components/pull-refresh.vue';
 
 const refreshing = ref(false);
 const loading = ref(false);
@@ -39,10 +40,6 @@ function onRefresh(): void {
 }
 const refreshed = ref(false);
 
-// dom-env 给 App 端的 userAgent 是 'fjs'（浏览器是真实 UA）——vant
-// PullRefresh 的 App 端替代（fjs refresh 标签）只在 App 分支渲染。
-const isApp = navigator.userAgent === 'fjs';
-
 const dropdown = ref('a');
 const images = [
   'https://img.yzcdn.cn/vant/apple-1.jpg',
@@ -69,24 +66,14 @@ const images = [
 
     <view class="block">
       <text class="block-title">PullRefresh + List（{{ items.length }} 条）{{ refreshed ? '已刷新' : '' }}</text>
-      <!-- App 端：van-pull-refresh 依赖浏览器滚动语义（非 passive touchmove
-           抢手势 + window scrollTop 门控）——App 手势竞技场把垂直拖动判给
-           页面 scroll-view，track 的 touchmove 被 cancel，永远拉不出来
-           （specs/205 §7）。改用 fjs refresh 标签（Flutter
-           RefreshIndicator）+ 嵌套 scroll-view：RefreshIndicator 只在
-           内层滚到顶时放行下拉，向下滚动列表照常。 -->
-      <refresh v-if="isApp" @refresh="onRefresh">
-        <scroll-view scroll-y class="nested">
-          <van-list ref="listRef" v-model:loading="loading" :finished="finished" finished-text="没有更多了" @load="onLoad">
-            <van-cell v-for="i in items" :key="i" :title="`条目 ${i}`" />
-          </van-list>
-        </scroll-view>
-      </refresh>
-      <van-pull-refresh v-else v-model="refreshing" success-text="刷新成功" @refresh="onRefresh">
+      <!-- 两端同源的 PullRefresh 包装：App 端 fjs refresh 标签（Flutter
+           RefreshIndicator）+ 嵌套 scroll-view，web 端 van-pull-refresh
+           ——端差异与取舍见组件头注释（specs/205 §7）。 -->
+      <pull-refresh @refresh="onRefresh">
         <van-list ref="listRef" v-model:loading="loading" :finished="finished" finished-text="没有更多了" @load="onLoad">
           <van-cell v-for="i in items" :key="i" :title="`条目 ${i}`" />
         </van-list>
-      </van-pull-refresh>
+      </pull-refresh>
     </view>
   </scroll-view>
 </template>
@@ -114,9 +101,6 @@ const images = [
   border-radius: 8px;
   padding: 12px;
   margin-bottom: 12px;
-}
-.nested {
-  height: 420px;
 }
 .block-title {
   font-size: 14px;

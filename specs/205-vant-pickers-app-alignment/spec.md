@@ -113,14 +113,23 @@
    touchmove 收到 touchcancel——给根无条件 touch-action: none 又会杀死
    区域内的页面滚动（List 靠页面滚动），条件式让出是 Flutter
    RefreshIndicator 的能力。②vant 的滚动父级探测在 App 端不可靠。
-   修法：页面按端分派（`navigator.userAgent === 'fjs'`，dom-env 的
-   标识）——App 端用 fjs `refresh` 标签（Flutter RefreshIndicator）包
-   **嵌套 scroll-view**（refresh 需要可见的滚动子级；滚动条目在内层滚），
-   web 端保留 van-pull-refresh 原路径。连带发现：List 的 check 只由
+   修法：两端同源包装组件 `demo/src/components/pull-refresh.vue`
+   （对外契约 = @refresh + 默认插槽；内部 `navigator.userAgent ===
+   'fjs'` 分派，dom-env 的标识）——App 端用 fjs `refresh` 标签（Flutter
+   RefreshIndicator）包 **嵌套 scroll-view**（refresh 需要可见的滚动
+   子级；滚动条目在内层滚，高度走 scrollHeight prop），web 端保留
+   van-pull-refresh 原路径。页面一份写法，端差异封在组件里
+   （VanWatermark 的本地封装模式）。连带发现：List 的 check 只由
    loading/finished 变化与滚动事件触发，刷新清空后两者都可能无变化，
    App 端无滚动事件兜底 → 手动 `listRef.check()` 重查（web 上靠滚动
    事件自然恢复，无需此步）。日志链路 onRefresh → check → load ×2
-   → 20 条恢复，RefreshIndicator 转圈实测可见。
+   → 20 条恢复，RefreshIndicator 转圈实测可见（包装组件重构后复验同）。
+   web 端刷新周期实测 20 → 0 → 10 → 20（"刷新后 0 条"是浏览器缓存的
+   旧构建，check() 修复已在现构建；强刷即恢复）。**自定义拉动 UI 的
+   边界**：App 端 refresh 标签 = Flutter RefreshIndicator（Material
+   转圈），color/位移等参数当前不经标签透出——要换拉动样式需扩
+   refresh 标签的 props（needs-a-spec）；纯 JS 自绘被手势竞技场否定
+   （上文①）。
 9. 实操备忘：模拟器 UI 自动化用 `idb ui describe-all` 的 AXLabel 拿
    元素中心坐标再 `idb ui tap x y --udid`（zsh 里变量展开要 `${=V}`
    强制分词）；AX 树拿不到子像素几何时，直接对模拟器截图做像素测量
