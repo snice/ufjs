@@ -34,3 +34,13 @@
 .van-calendar__header {
   background: var(--van-calendar-background, #ffffff);
 }
+
+/* Picker toolbar 标题：vant 的 title 是 `absolute; left: 50%` 而不写
+ * top/bottom——web 语义是垂直取静态位置（flex align-items: center 的那
+ * 一行），引擎对已声明水平 inset 的 absolute 盒把 top 钉 0（静态交叉轴
+ * 居中只对完全无 inset 的盒生效，vant Noticebar 那种），标题贴顶、
+ * 按钮（height:100% 居中）错位。显式垂直居中，两端同义。 */
+.van-picker__title {
+  top: 50%;
+  transform: translate(-50%, -50%);
+}

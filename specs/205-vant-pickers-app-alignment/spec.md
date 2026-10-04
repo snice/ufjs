@@ -100,7 +100,15 @@
    Flutter SafeArea；web 端 app hook 不跑，env() 类照常工作）。同族的
    `.van-safe-area-bottom` 使用方（ActionSheet、Popup 内 toolbar 等）遇到
    同样问题时套同一补丁；引擎级解法（env() 解析）挂 needs-a-spec。
-7. 实操备忘：模拟器 UI 自动化用 `idb ui describe-all` 的 AXLabel 拿
+7. **Picker toolbar 三元素不齐线**（用户复验第四轮）：title 是
+   `absolute; left: 50%` 不写 top——web 语义「垂直取静态位置」（flex
+   align-items: center 那行），引擎对已声明水平 inset 的 absolute 盒把
+   top 钉 0（静态交叉轴居中只对完全无 inset 的盒生效——vant Noticebar
+   的 absolute marquee 无任何 inset 所以居中正常），标题贴顶、
+   height:100% 的按钮居中，二者错位。修法 `vant-fix.css`：
+   `.van-picker__title { top: 50%; transform: translate(-50%, -50%) }`
+   ——显式垂直居中，两端同义（web 中心线三值实测一致）。
+8. 实操备忘：模拟器 UI 自动化用 `idb ui describe-all` 的 AXLabel 拿
    元素中心坐标再 `idb ui tap x y --udid`（zsh 里变量展开要 `${=V}`
    强制分词）；AX 树拿不到子像素几何时，直接对模拟器截图做像素测量
    （蓝块/文字簇的 x 区间对照期望列区间）；`fjs run` 自带的 dev server
