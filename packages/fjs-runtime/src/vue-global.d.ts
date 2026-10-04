@@ -292,6 +292,14 @@ interface FjsStickySectionProps extends FjsContainerProps {
   pushPinnedHeader?: FjsBooleanish;
 }
 
+/** 嵌套滚动（specs/208）：必须是 type="nested" scroll-view 的直接子节点。 */
+interface FjsNestedScrollHeaderProps extends FjsContainerProps {}
+
+interface FjsNestedScrollBodyProps extends FjsContainerProps {
+  /** 收起终点距视口顶部的距离（px，默认 0，wx 3.6.2+）。 */
+  offsetTop?: FjsNumberish;
+}
+
 interface FjsSwiperProps extends FjsContainerProps {
   /** 受控页码；改它就翻过去，动画时长取 `duration`。 */
   current?: FjsNumberish;
@@ -508,6 +516,10 @@ export interface FjsGlobalComponents {
   StickyHeader: FjsComponent<FjsStickyHeaderProps>;
   'sticky-section': FjsComponent<FjsStickySectionProps>;
   StickySection: FjsComponent<FjsStickySectionProps>;
+  'nested-scroll-header': FjsComponent<FjsNestedScrollHeaderProps>;
+  NestedScrollHeader: FjsComponent<FjsNestedScrollHeaderProps>;
+  'nested-scroll-body': FjsComponent<FjsNestedScrollBodyProps>;
+  NestedScrollBody: FjsComponent<FjsNestedScrollBodyProps>;
   'safe-area': FjsComponent<FjsSafeAreaProps>;
   SafeArea: FjsComponent<FjsSafeAreaProps>;
   divider: FjsComponent<FjsBaseProps & FjsTouchEvents>;
@@ -579,6 +591,10 @@ declare module 'vue' {
     StickyHeader: FjsGlobalComponents['StickyHeader'];
     'sticky-section': FjsGlobalComponents['sticky-section'];
     StickySection: FjsGlobalComponents['StickySection'];
+    'nested-scroll-header': FjsGlobalComponents['nested-scroll-header'];
+    NestedScrollHeader: FjsGlobalComponents['NestedScrollHeader'];
+    'nested-scroll-body': FjsGlobalComponents['nested-scroll-body'];
+    NestedScrollBody: FjsGlobalComponents['NestedScrollBody'];
     'safe-area': FjsGlobalComponents['safe-area'];
     SafeArea: FjsGlobalComponents['SafeArea'];
     divider: FjsGlobalComponents['divider'];

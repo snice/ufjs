@@ -203,6 +203,24 @@ sticky-header {
   z-index: 1;
 }
 
+/* specs/208: the nested-scroll pair. The host scroll-view is the one
+   scroller: the header rides out with its scroll, and the scroller directly
+   in the body is absorbed — overflow visible and natural height put its rows
+   into the same scroll, which is the semantics the Flutter side ships in its
+   CustomScrollView route (the absorbed scroller keeps no scroll position of
+   its own: scroll-top / inner @scroll are inert there too). wx renders
+   exactly the first child element of each tag. */
+nested-scroll-header,
+nested-scroll-body { display: block; min-width: 0; }
+nested-scroll-header > :not(:first-child),
+nested-scroll-body > :not(:first-child) { display: none; }
+nested-scroll-body > scroll-view,
+nested-scroll-body > list-view {
+  overflow: visible !important;
+  height: auto !important;
+  max-height: none !important;
+}
+
 divider {
   display: block;
   height: 16px;

@@ -1133,6 +1133,7 @@ export async function mpBuild(opts: MpOptions): Promise<void> {
     // dead weight in the output
     skipComponents.add('fjs-sticky-header');
     skipComponents.add('fjs-sticky-section');
+    skipComponents.add('fjs-nested-scroll-header');
   }
   copyRuntimeComponents(rtd, mpDir, { skip: skipComponents });
   fs.writeFileSync(path.join(mpDir, 'fjs', 'fjs.wxs'), FJS_WXS);

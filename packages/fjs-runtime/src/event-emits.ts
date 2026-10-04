@@ -63,6 +63,10 @@ export const WEB_EMITS: Readonly<Record<string, readonly string[]>> = {
   refresh: ['refresh', 'statuschange'],
   'sticky-section': ['tap', 'longPress'],
   'sticky-header': ['tap', 'longPress', 'stickontopchange'],
+  // specs/208: the nested-scroll pair carries no events of its own — the
+  // scroll events belong to the host scroll-view.
+  'nested-scroll-header': ['tap', 'longPress'],
+  'nested-scroll-body': ['tap', 'longPress'],
   // No entry = emits nothing on web (divider, progress, picker-view-column,
   // rich-text, and `stack`, which has no web component): every handler on
   // them is a fallthrough there, so it gets the event object here too.

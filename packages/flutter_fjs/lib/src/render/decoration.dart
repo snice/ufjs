@@ -160,6 +160,12 @@ Widget decorateNode(
   /// shared (specs/084); a `:active` background that comes and goes would
   /// otherwise remount the subtree (vant collapse arrow).
   bool keepsBox = false,
+
+  /// specs/208: a scroll-view absorbed into a nested-scroll-body ignores its
+  /// own height style — the natural content height is what joins the outer
+  /// scroll (web's `height: auto !important`); a kept height would clamp the
+  /// absorbed column and overflow it.
+  bool ignoreHeight = false,
 }) {
   Widget w = content;
   final padLengths = style.paddingLengths;
@@ -518,7 +524,7 @@ Widget decorateNode(
   }
 
   final widthLength = style.widthLength;
-  final heightLength = style.heightLength;
+  final heightLength = ignoreHeight ? null : style.heightLength;
   if (widthLength?.isRelative == true || heightLength?.isRelative == true) {
     // `50%` / `calc(100% - 32px)`: the reference is what the parent offers on
     // that axis, which is what CSS resolves a percentage against. An

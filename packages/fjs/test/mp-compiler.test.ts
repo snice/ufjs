@@ -10,7 +10,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import { genWxml, rewriteExpr, freeScopeIdentifiers, referencedBindings } from '../src/mp/wxml.js';
 import { genScriptCode } from '../src/mp/script.js';
-import { genWxss, replaceScopeAttr } from '../src/mp/css.js';
+import { expandFlexGrowBasis, genWxss, replaceScopeAttr } from '../src/mp/css.js';
 import { Emitter, rewriteImports } from '../src/mp/build.js';
 import { appJson, componentJson, copyRuntimeComponents, projectConfigJson } from '../src/mp/project.js';
 
@@ -955,5 +955,196 @@ describe('spec 052: sticky-header / sticky-section', () => {
     // webview pages scroll natively, so the root still becomes a view and
     // the downcast header pins against the page scroller
     expect(web.wxml).toMatch(/^<view/);
+  });
+});
+
+describe('specs/208: nested-scroll-header / nested-scroll-body', () => {
+  const nested = (renderer: 'webview' | 'skyline', template: string) =>
+    genWxml(template, {
+      bindings: { n: 'setup-ref' } as never,
+      vueImports: new Map(),
+      filename: 'test.vue',
+      renderer,
+    });
+
+  it('skyline: the pair passes through and the host keeps type=nested, no wrapper, no enable-flex', () => {
+    const { wxml } = nested(
+      'skyline',
+      '<scroll-view type="nested" style="height: 100vh"><nested-scroll-header><view class="hero" /></nested-scroll-header><nested-scroll-body><scroll-view scroll-y style="height: 200px"><view class="row" /></scroll-view></nested-scroll-body></scroll-view>',
+    );
+    expect(wxml).toMatch(/<scroll-view[^>]*type="nested"/);
+    expect(wxml).toContain('<nested-scroll-header');
+    expect(wxml).toContain('<nested-scroll-body');
+    // the direct-children rule on the HOST: no list typing, no flex
+    // injection, no wrapper (the inner scroller keeps its own treatment)
+    const host = wxml.split('\n')[0];
+    expect(host).toContain('type="nested"');
+    expect(host).not.toContain('type="list"');
+    expect(host).not.toContain('enable-flex');
+    expect(wxml).not.toContain('class="fjs-scroll-inner" style=""');
+    expect(wxml).toContain('type="list"');
+    // offset-top rides along for the native component
+    const withOffset = nested(
+      'skyline',
+      '<scroll-view type="nested" style="height: 100vh"><nested-scroll-body :offset-top="n"><view /></nested-scroll-body></scroll-view>',
+    );
+    expect(withOffset.wxml).toContain('offset-top="{{ n }}"');
+  });
+
+  it('skyline: a page root type=nested scroll-view is not downgraded to a view', () => {
+    const sky = genWxml(
+      '<scroll-view type="nested" style="height: 100vh"><nested-scroll-body><view /></nested-scroll-body></scroll-view>',
+      {
+        bindings: {} as never,
+        vueImports: new Map(),
+        filename: 'test.vue',
+        pageInScroll: true,
+        renderer: 'skyline',
+      },
+    );
+    expect(sky.wxml).toMatch(/^<scroll-view/);
+  });
+
+  it('skyline: a nested tag outside a type=nested scroll-view is warned', () => {
+    nested('skyline', '<view><nested-scroll-header><view /></nested-scroll-header></view>');
+    expect(warn.join('\n')).toContain('only works as a direct child of <scroll-view type="nested">');
+    warn.length = 0; // the stray warning above must not leak into this run
+    const ok = nested(
+      'skyline',
+      '<scroll-view type="nested" style="height: 100px"><nested-scroll-header><view /></nested-scroll-header></scroll-view>',
+    );
+    expect(ok.wxml).toContain('<nested-scroll-header');
+    expect(warn.join('\n')).not.toContain('only works as a direct child');
+  });
+
+  it('webview: the pair degrades to views keeping the first element child only', () => {
+    const { wxml } = nested(
+      'webview',
+      '<scroll-view type="nested" style="height: 100vh"><nested-scroll-header><view class="a" /><view class="b" /></nested-scroll-header><nested-scroll-body offset-top="88"><view class="c" /><view class="d" /></nested-scroll-body></scroll-view>',
+    );
+    expect(wxml).not.toContain('<nested-scroll-');
+    expect(wxml).toContain('<fjs-nested-scroll-header offset-top="88">');
+    expect(wxml).toContain('class="fjs-box a');
+    expect(wxml).toContain('class="fjs-box c');
+    expect(wxml).not.toContain('class="fjs-box b');
+    expect(wxml).not.toContain('class="fjs-box d');
+    // the host scrolls as an ordinary list scroller
+    expect(wxml).toMatch(/<scroll-view[^>]*type="list"/);
+    expect(warn.join('\n')).toContain('renders only its first child element');
+  });
+
+  it('webview: the scroller directly inside a body joins the outer scroll', () => {
+    const { wxml } = nested(
+      'webview',
+      '<scroll-view type="nested" style="height: 100vh"><nested-scroll-body><scroll-view scroll-y scroll-with-animation style="height: 200px" @scroll="onS"><view class="row" /></scroll-view></nested-scroll-body></scroll-view>',
+    );
+    // rows land on the outer scroller: the inner one becomes a view
+    expect(wxml).toContain('<view class="fjs-box row');
+    expect(wxml).not.toContain('<scroll-view scroll-y');
+    expect(warn.join('\n')).toContain('degrades to a plain view');
+    expect(warn.join('\n')).toContain('dropped: scroll-y, scroll-with-animation, scroll');
+  });
+});
+
+describe('specs/208: nested-body inner scroller height exemption', () => {
+  it('a scroll-view directly inside a nested-scroll-body needs no height', () => {
+    const r = genWxml(
+      '<scroll-view type="nested" style="height: 100vh"><nested-scroll-body><scroll-view scroll-y><view class="row" /></scroll-view></nested-scroll-body></scroll-view>',
+      {
+        bindings: {} as never,
+        vueImports: new Map(),
+        filename: 'test.vue',
+        renderer: 'skyline',
+      },
+    );
+    expect(r.wxml).toContain('<nested-scroll-body');
+    expect(warn.join('\n')).not.toContain('no explicit height');
+  });
+});
+
+describe('specs/208: both mp renderers build the nested page', () => {
+  const nestedPage = (renderer: 'webview' | 'skyline') =>
+    genWxml(
+      '<scroll-view type="nested" style="height: 420px" @scroll="onS"><nested-scroll-header><view class="hero" /></nested-scroll-header><nested-scroll-body :offset-top="88"><scroll-view type="list" scroll-y class="list"><view class="row" /></scroll-view></nested-scroll-body></scroll-view>',
+      {
+        bindings: { onS: 'setup-const' } as never,
+        vueImports: new Map(),
+        filename: 'nested-scroll.vue',
+        renderer,
+      },
+    );
+
+  it('skyline: the pair passes through, the inner scroller needs no height', () => {
+    const r = nestedPage('skyline');
+    expect(r.wxml).toContain('type="nested"');
+    expect(r.wxml).toContain('<nested-scroll-header');
+    expect(warn.join('\n')).not.toContain('no explicit height');
+  });
+
+  it('webview: body and inner scroller degrade; header becomes the pin component', () => {
+    const r = nestedPage('webview');
+    // 原生标签零残留；header 变运行时组件并接收从 body 搬来的 offset-top
+    expect(r.wxml).not.toContain('<nested-scroll-');
+    expect(r.wxml).toContain('<fjs-nested-scroll-header');
+    expect(r.wxml).toContain('offset-top="{{ 88 }}"');
+    expect(r.wxml).toContain('<view class="fjs-box list');
+    expect(r.wxml).not.toContain('<scroll-view type="list" scroll-y');
+    expect(r.usingComponents.get('fjs-nested-scroll-header')).toBe('fjs-nested-scroll-header');
+    // 用户在 webview 构建里撞过的错误必须不再出现
+    expect(warn.join('\n')).not.toContain('no explicit height');
+    expect(warn.join('\n')).toContain('degrades to a plain view');
+  });
+
+  it('webview: a bound offset-top moves to the header too', () => {
+    const r = genWxml(
+      '<scroll-view type="nested" style="height: 420px"><nested-scroll-header><view class="hero" /></nested-scroll-header><nested-scroll-body :offset-top="n"><view class="c" /></nested-scroll-body></scroll-view>',
+      {
+        bindings: { n: 'setup-ref' } as never,
+        vueImports: new Map(),
+        filename: 'test.vue',
+        renderer: 'webview',
+      },
+    );
+    expect(r.wxml).toMatch(/<fjs-nested-scroll-header[^>]*offset-top="{{ n }}"/);
+    expect(r.wxml).not.toContain('<nested-scroll-body offset-top');
+  });
+
+  it('webview: offset-top with no header to carry it still warns and drops', () => {
+    const r = genWxml(
+      '<scroll-view type="nested" style="height: 420px"><nested-scroll-body offset-top="88"><view class="c" /></nested-scroll-body></scroll-view>',
+      {
+        bindings: {} as never,
+        vueImports: new Map(),
+        filename: 'test.vue',
+        renderer: 'webview',
+      },
+    );
+    expect(warn.join('\n')).toContain('has no header right before it');
+    expect(r.wxml).not.toContain('offset-top');
+  });
+});
+
+describe('expandFlexGrowBasis (specs/208 follow-up)', () => {
+  it('splices the basis before a trailing comment run, not after it', () => {
+    const out = expandFlexGrowBasis(
+      '.fill{flex-grow: 1;\n  /* a */\n  /* b; */}',
+    );
+    expect(out).toBe('.fill{flex-grow: 1; flex-basis: 0%;\n  /* a */\n  /* b; */}');
+    // 浏览器容忍的 `*/;` 在 WXSS 是非法空语句 — 不得再出现
+    expect(out).not.toMatch(/\*\/\s*;/);
+  });
+
+  it('covers the bare and no-trailing-semicolon shapes', () => {
+    expect(expandFlexGrowBasis('.a{flex-grow:1}')).toBe('.a{flex-grow:1; flex-basis: 0%;}');
+    expect(expandFlexGrowBasis('.a{flex-grow: 1}')).toBe('.a{flex-grow: 1; flex-basis: 0%;}');
+    expect(expandFlexGrowBasis('.a{flex-grow: 1; /* keep */}')).toBe(
+      '.a{flex-grow: 1; flex-basis: 0%; /* keep */}',
+    );
+  });
+
+  it('leaves explicit flex / flex-basis alone', () => {
+    expect(expandFlexGrowBasis('.a{flex-grow: 1; flex-basis: auto}')).toBe('.a{flex-grow: 1; flex-basis: auto}');
+    expect(expandFlexGrowBasis('.a{flex: 1}')).toBe('.a{flex: 1}');
+    expect(expandFlexGrowBasis('.a{flex-grow: 0}')).toBe('.a{flex-grow: 0}');
   });
 });

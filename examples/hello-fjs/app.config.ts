@@ -8,7 +8,9 @@ export default defineConfig({
     wxmp: {
         appid: 'wx55831603b568aa90',
         // appid: 'wx1dc25387d81812b0',
-        renderer: 'webview',
+        // specs/208：nested-scroll 是 skyline 组件，看原生嵌套滚动要 skyline；
+        // webview 构建会把它降级为 view 树（改回 'webview' 即可）
+        renderer: 'skyline',
         "setting": {
             "es6": true,
             "postcss": false,

@@ -29,6 +29,7 @@ fjs 用 HTML 风格的语义标签构建 UI，由 Dart 侧映射为 Flutter Widg
 | `rich-text` | **不是 Dart 标签**：两端共用 `components/rich-text.ts`，把 HTML 解析后渲染成 `view` / `text` / `image` / `divider` | `nodes`（HTML 字符串或小程序节点数组）/ `space`(ensp/emsp/nbsp)；内部节点不派事件，组件自身的 `@tap` / `@longpress` 照常。详见下表 |
 | `scroll-view` | SingleChildScrollView | `scroll-x` / `scroll-y` 选轴（也可用样式键 `direction: horizontal`）、`scroll-top` / `scroll-left`、`scroll-into-view`、`scroll-with-animation`、`upper-threshold` / `lower-threshold`（默认 50）、`bounces`（微信同名属性，默认开；`"false"` 关掉 iOS 边缘 rubber-band，两端直接刹住——refresh 自定义头部模式的内层滚动体要关，否则弹性的视觉过滚会叠在拉动的位移上）；`@scroll`（六字段 JSON 串）/ `@scrolltoupper` / `@scrolltolower`。详见下表 |
 | `sticky-header` / `sticky-section` | PinnedHeaderSliver + SliverMainAxisGroup（挂在 sliver 化的 CustomScrollView 上）| 吸顶布局，对齐微信 skyline 同名组件。必须作为 scroll-view 的**直接子节点**（此时该 scroll-view 自动走 sliver 布局；`type="custom"` 属性可写可不写，会被接受并忽略）。`@stickontopchange` 载荷 `{"isStickOnTop":bool}` JSON 串。详见下表 |
+| `nested-scroll-header` / `nested-scroll-body` | CustomScrollView 的嵌套路由（specs/208）| 嵌套滚动，对齐微信 skyline 同名组件（基础库 3.2.0+）。必须作为 `type="nested"` scroll-view 的**直接子节点**（此时该 scroll-view 自动走 sliver 布局），只渲染**第一个子节点**。详见下表 |
 | `list-view` | ListView.builder | 大列表；`items` + 行插槽，两端都只挂载视口附近的行 |
 | `switch` | Switch | `value`，`onValueChanged("1"/"0")` |
 | `checkbox` | Checkbox | `value`，`onValueChanged`；`name` 是它在组/表单里的标识 |
@@ -442,6 +443,45 @@ web 侧也不用浏览器的 `DOMParser`，所以残缺 HTML 的容错两端一�
   堆在前者身上，不是微信的互推（一组一 header 是主用法）；
 - scroll-view 自身的 padding/背景在 sticky 模式下应用于滚动区**外层**
   （sliver 不可跨），与普通模式的 Flutter 实现一致。
+
+### nested-scroll-header / nested-scroll-body
+
+嵌套滚动（specs/208），对齐微信 skyline 的同名组件（基础库 3.2.0+）：
+
+```vue
+<scroll-view type="nested" scroll-y style="height: 420px">
+  <nested-scroll-header>       <!-- 头部：随上滑先收起，只渲染第一个子节点 -->
+    <view class="hero">…</view>
+  </nested-scroll-header>
+  <nested-scroll-body>         <!-- 滚动体：头部收起后列表接着滚，只渲染第一个子节点 -->
+    <scroll-view scroll-y style="height: 400px">…</scroll-view>
+  </nested-scroll-body>
+</scroll-view>
+```
+
+| prop（nested-scroll-body） | 说明 |
+|---|---|
+| `offset-top` | 收起终点距视口顶部的距离（px，默认 0，wx 3.6.2+）。到点后里层内容才开始滚；大于 0 时最后一个 header 的尾部钉在视口顶 |
+
+无自有事件；外层 scroll-view 的 `@scroll` / `@scrolltoupper` / `@scrolltolower` 对整段滚动生效。
+
+三端行为：skyline 是原生组件（webview 渲染器见 docs/miniprogram.md 的降级表）；
+web/App 是**单一滚动**——header 随外层滚动收起，body 里**直接子级的纵向滚动
+容器被吸收**（web 用 CSS `overflow: visible`，App 端退化为普通盒），它的行并
+入外层滚动，一次手势一气呵成。这是三端里 skyline 之外的共同取舍：换来连续
+惯性和正确的外层滚动事件。标签放在 `type="nested"` 的 scroll-view 之外时
+web/Flutter 告警后按普通容器渲染，mp 编译期告警。
+
+已知差异（登记在 specs/208）：
+
+- 被吸收的滚动容器不再有独立滚动位置：它的 `scroll-top` / `scroll-into-view`
+  / 自身 `@scroll` 无效（App 端有告警提示；skyline 不受影响）。页面声明的
+  高度样式不参与布局（web `height: auto !important`；App 端同语义）；
+- webview 的钉尾线在挂载后测量一次（0/200ms），header 高度随后变化（异步
+  图片撑高）不再跟随——给 header 内容一个稳定高度或在图片上写死尺寸；
+- `offset-top > 0` 时钉住的尾部是**绘制压住**经过的行（App/web），wx 是裁剪：
+  透明尾巴下列表行会透出；
+- skyline 之外没有 `refresher-*` 族（用 `refresh` 标签替代，specs/206）。
 
 ### swiper
 

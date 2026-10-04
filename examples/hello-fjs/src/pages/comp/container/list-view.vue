@@ -61,6 +61,9 @@ const rows = ref(
 }
 
 .list {
+  /* height: 0 让 mp 编译器的 scroll-view 高度检查放行（flex-grow 撑开，
+     web / Flutter 行为不变） */
+  height: 0px;
   flex-grow: 1;
 }
 

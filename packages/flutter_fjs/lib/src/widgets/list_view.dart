@@ -9,6 +9,7 @@ import '../render/image_visibility.dart' show scheduleFjsImageVisibilityRefresh;
 import '../render/scroll_metrics.dart';
 import '../render/style.dart';
 import 'dispatch.dart';
+import 'nested_scroll.dart' show FjsNestedBodyScope;
 
 class FjsListView extends StatefulWidget {
   const FjsListView({
@@ -83,6 +84,25 @@ class _FjsListViewState extends State<FjsListView> {
 
   @override
   Widget build(BuildContext context) {
+    // specs/208: absorbed into a nested-scroll-body — a vertical list here
+    // joins the outer scroll as one column of all its rows. A viewport of
+    // its own would freeze the cull window at its first screenful
+    // (render/cull.dart), and windowing dies with it: a nested body hosts
+    // demo-scale lists, a big list belongs outside one. The scope reset
+    // keeps DEEPER scrollers independent.
+    if (widget.style.scrollDirection == Axis.vertical &&
+        FjsNestedBodyScope.absorbedOf(context)) {
+      return FjsNestedBodyScope(
+        absorbed: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final item in widget.items) widget.buildItem(context, item),
+          ],
+        ),
+      );
+    }
     final indexByKey = <String, int>{
       for (var index = 0; index < widget.items.length; index++)
         'fjs-list-item-${widget.items[index].id}': index,

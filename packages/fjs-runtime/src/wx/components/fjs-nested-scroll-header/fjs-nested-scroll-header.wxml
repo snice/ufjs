@@ -1,0 +1,5 @@
+<!-- the pin node itself: top rides inline (offset-top − own height,
+     measured); base .fjs-nested-scroll-header carries position/z-index -->
+<view class="fjs-nested-scroll-header" style="top: {{ pinTop }}px">
+  <slot />
+</view>

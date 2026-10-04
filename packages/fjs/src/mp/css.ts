@@ -246,7 +246,14 @@ export function expandFlexGrowBasis(css: string): string {
   return css.replace(/([^{}]*)\{([^{}]*)\}/g, (rule, selector: string, body: string) => {
     if (!/(^|[^-\w])flex-grow\s*:\s*[1-9]/.test(body) && !/(^|[^-\w])flex-grow\s*:\s*0?\.\d*[1-9]/.test(body)) return rule;
     if (/(^|[^-\w])flex(-basis)?\s*:/.test(body)) return rule;
-    return `${selector}{${body.replace(/;?\s*$/, '; flex-basis: 0%;')}}`;
+    // The basis is spliced before a TRAILING COMMENT RUN, not at the rule's
+    // very end: WXSS rejects `*/;` (a declaration separator after a comment
+    // reads as an empty statement) where a browser shrugs — found by the
+    // DevTools compiling hello-fjs's list-view page, whose .fill ends in two.
+    const tail = body.match(/(?:\s*\/\*[\s\S]*?\*\/)+\s*$/);
+    const comments = tail ? tail[0] : '';
+    const head = (tail ? body.slice(0, tail.index) : body).replace(/;?\s*$/, '');
+    return `${selector}{${head ? `${head}; ` : ''}flex-basis: 0%;${comments}}`;
   });
 }
 

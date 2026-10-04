@@ -27,5 +27,7 @@
   "page-container",
   "refresh",
   "sticky-header",
-  "sticky-section"
+  "sticky-section",
+  "nested-scroll-header",
+  "nested-scroll-body"
 ]

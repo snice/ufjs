@@ -52,6 +52,7 @@ import { FjsModal, FjsRefresh } from './overlay';
 import { FjsPageContainer } from './page-container';
 import { FjsPickerView, FjsPickerViewColumn } from './picker-view';
 import { FjsStickyHeader, FjsStickySection } from './sticky';
+import { FjsNestedScrollBody, FjsNestedScrollHeader } from './nested-scroll';
 import { createFjsCanvas } from '../../components/canvas';
 import { FjsPicker } from '../../components/picker';
 import { FjsRichText } from '../../components/rich-text';
@@ -118,6 +119,10 @@ export const fjsComponents: Record<string, unknown> = {
   // and the stickontopchange measurement.
   'sticky-section': FjsStickySection,
   'sticky-header': FjsStickyHeader,
+  // specs/208: the nested-scroll pair. One host scroller does everything;
+  // the header is a plain block, the body carries the offset-top clamp.
+  'nested-scroll-header': FjsNestedScrollHeader,
+  'nested-scroll-body': FjsNestedScrollBody,
 };
 
 export { normalizeStyleValues };

@@ -68,6 +68,7 @@
         "example/canvas/gltf-viewer",
         "example/canvas/three-gltf",
         "example/interaction/async-host",
+        "example/interaction/flat-4050",
         "example/interaction/theme",
         "example/game/jump",
         "example/game/shooter",

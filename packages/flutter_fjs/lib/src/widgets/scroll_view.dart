@@ -24,6 +24,7 @@ import '../render/scroll_metrics.dart';
 import '../render/style.dart';
 import 'control_scope.dart' show fjsWarnOnce;
 import 'dispatch.dart';
+import 'nested_scroll.dart' show FjsNestedBodyScope;
 import 'scroll_behavior.dart';
 import 'sticky.dart' show fjsStickyHeaderTag;
 
@@ -458,6 +459,35 @@ class _FjsScrollViewState extends State<FjsScrollView> {
 
   @override
   Widget build(BuildContext context) {
+    // specs/208: absorbed into a nested-scroll-body — the nested scroller
+    // above does all the scrolling, so a vertical one here gives up its
+    // Scrollable entirely: kept, it would be a repaint boundary whose cull
+    // window never moves (render/cull.dart), freezing everything below its
+    // first screenful. The absorbed scroller's scroll-top / @scroll are
+    // inert (docs/ui-api.md); the scope reset keeps DEEPER scrollers
+    // independent.
+    if (widget.child != null &&
+        !_horizontal &&
+        FjsNestedBodyScope.absorbedOf(context)) {
+      const inert = ['scrollTop', 'scrollLeft', 'scrollIntoView', 'onScroll'];
+      final asked = [
+        for (final key in inert)
+          if (widget.node.props[key] != null && widget.node.props[key] != false)
+            key,
+      ];
+      if (asked.isNotEmpty) {
+        fjsWarnOnce(
+          'nested-absorbed:${widget.node.id}',
+          '<scroll-view> node ${widget.node.id} sits directly inside a '
+              '<nested-scroll-body>: the outer scroll does the scrolling, so '
+              '${asked.join(' / ')} have no effect here.',
+        );
+      }
+      return FjsNestedBodyScope(
+        absorbed: false,
+        child: widget.child!,
+      );
+    }
     final scroller = widget.slivers != null
         ? CustomScrollView(
             controller: _controller,

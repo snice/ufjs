@@ -29,6 +29,12 @@ export const RUNTIME_COMPONENTS: Record<string, string> = {
   // components, so the build skips these under skyline
   'fjs-sticky-header': 'fjs/fjs-sticky-header/fjs-sticky-header',
   'fjs-sticky-section': 'fjs/fjs-sticky-section/fjs-sticky-section',
+  // the webview-renderer nested header (specs/208): skyline uses the native
+  // component, so the build skips this under skyline. The tail pin is a
+  // negative-top sticky whose line is measured — no runtime component, no
+  // pin (that is the webview build's one registered offset-top difference
+  // turned into behaviour).
+  'fjs-nested-scroll-header': 'fjs/fjs-nested-scroll-header/fjs-nested-scroll-header',
 };
 
 export interface MpPage {

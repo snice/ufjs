@@ -17,6 +17,7 @@ import '../widgets/label.dart';
 import 'overlay_host_adapter.dart';
 import '../widgets/list_view.dart';
 import '../widgets/modal.dart';
+import '../widgets/nested_scroll.dart';
 import '../widgets/page_container.dart';
 import '../widgets/picker_view.dart';
 import '../widgets/progress.dart';
@@ -63,6 +64,8 @@ const builtInNodeAdapters = <FjsNodeAdapter>[
   _PageContainerNodeAdapter(),
   _StickyHeaderNodeAdapter(),
   _StickySectionNodeAdapter(),
+  _NestedScrollHeaderNodeAdapter(),
+  _NestedScrollBodyNodeAdapter(),
   OverlayHostNodeAdapter(),
   AppOverlayHostNodeAdapter(),
 ];
@@ -224,8 +227,44 @@ class _ScrollViewNodeAdapter extends FjsNodeAdapter {
   String get tag => 'scroll-view';
 
   @override
+  Widget decorate(FjsNodeAdapterContext context, Widget content) {
+    // specs/208: absorbed into a nested-scroll-body — the height style the
+    // page gave this scroller (wx requires one) is dropped, like web's
+    // `height: auto !important`; its natural content height joins the outer
+    // scroll.
+    if (FjsNestedBodyScope.absorbedOf(context.flutterContext)) {
+      return decorateNode(
+        context.style,
+        content,
+        keepsBox: context.keepsBox,
+        ignoreHeight: true,
+      );
+    }
+    return super.decorate(context, content);
+  }
+
+  @override
   Widget build(FjsNodeAdapterContext context) {
     final nodes = context.childNodes;
+    // specs/208: a scroll-view hosting the nested-scroll pair takes the
+    // nested route — checked before the sticky split, because a nested
+    // scroll-view is a different contract than a sticky one and the pair is
+    // only valid as its direct children. type="nested" itself carries no
+    // meaning here, like type="custom".
+    if (nodes.any((node) => fjsIsNestedTag(node.tag))) {
+      return FjsScrollView(
+        node: context.node,
+        tree: context.tree,
+        style: context.style,
+        dispatch: context.dispatch,
+        slivers: fjsNestedSplit(
+          context: context,
+          scrollStyle: context.style,
+          nodes: nodes,
+          kids: context.buildChildren(),
+        ).slivers,
+      );
+    }
     // A scroll-view hosting sticky tags — or plain views carrying
     // `position: sticky` (specs/053), the style-level spelling of the same
     // intent — takes the sliver route; type="custom" is the mini-program
@@ -691,6 +730,29 @@ void _warnOutsideSticky(FjsNodeAdapterContext context) {
         'DIRECT child of a scroll-view that hosts sticky tags (type="custom" on '
         'the mini program). It renders as a plain container here.',
   );
+}
+
+/// specs/208: nested-scroll-header / nested-scroll-body outside a nested
+/// scroll-view degrade to their first-child box (fjsNestedFallbackBox warns
+/// per node, constitution V).
+class _NestedScrollHeaderNodeAdapter extends FjsNodeAdapter {
+  const _NestedScrollHeaderNodeAdapter();
+
+  @override
+  String get tag => 'nested-scroll-header';
+
+  @override
+  Widget build(FjsNodeAdapterContext context) => fjsNestedFallbackBox(context);
+}
+
+class _NestedScrollBodyNodeAdapter extends FjsNodeAdapter {
+  const _NestedScrollBodyNodeAdapter();
+
+  @override
+  String get tag => 'nested-scroll-body';
+
+  @override
+  Widget build(FjsNodeAdapterContext context) => fjsNestedFallbackBox(context);
 }
 
 class _ViewNodeAdapter extends FjsNodeAdapter {
