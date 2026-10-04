@@ -77,7 +77,9 @@ export const FjsNestedScrollBody = defineComponent({
     };
 
     onMounted(() => {
-      const scroller = host.value?.closest('scroll-view') as HTMLElement | null;
+      const el = host.value;
+      if (!el) return;
+      const scroller = el.closest('scroll-view') as HTMLElement | null;
       if (!scroller) {
         warnControlOnce(
           'nested-scroll-body:scroller',
@@ -94,7 +96,7 @@ export const FjsNestedScrollBody = defineComponent({
       }
       // wx semantics put the tail on the LAST header, which is the one that
       // sits right before the body in the ordinary layout.
-      const prev = host.value.previousElementSibling;
+      const prev = el.previousElementSibling;
       if (offsetTop() <= 0) return;
       if (!prev || prev.tagName.toLowerCase() !== 'nested-scroll-header') {
         warnControlOnce(

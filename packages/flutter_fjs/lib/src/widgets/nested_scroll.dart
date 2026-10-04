@@ -158,6 +158,14 @@ FjsNestedSplit fjsNestedSplit({
   return FjsNestedSplit(slivers);
 }
 
+/// A JS comment anchor mirrors to an empty `view` (host-ops createComment);
+/// wx's "render the first child" must not pick one up as the content
+/// (specs/208: the body's real scroller sits AFTER the template comment).
+bool fjsIsAnchorNode(MirrorNode node) =>
+    node.tag == 'view' &&
+    node.children.isEmpty &&
+    node.props['fjsAnchor'] == true;
+
 /// The tag's own box, first child element only (wx renders exactly that),
 /// through the same build the view adapter runs so its padding/background
 /// keep working. The explicit global key keeps scroll-into-view able to land
@@ -167,10 +175,9 @@ Widget _nestedChildBox(FjsNodeAdapterContext context, MirrorNode node) {
   MirrorNode? first;
   for (final id in node.children) {
     final child = context.tree.node(id);
-    if (child != null) {
-      first = child;
-      break;
-    }
+    if (child == null || fjsIsAnchorNode(child)) continue;
+    first = child;
+    break;
   }
   final kids = <Widget>[];
   final kidNodes = <MirrorNode?>[];

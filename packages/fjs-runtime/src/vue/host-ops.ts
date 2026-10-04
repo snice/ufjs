@@ -776,7 +776,14 @@ const ANCHOR_STYLE = { display: 'none' };
 // element layer can serialize each one once for the whole app
 // (setConstProps): a page carries one anchor per falsy v-if and one
 // htmlBlock marker per div.
-const ANCHOR_PROPS = Object.freeze({ style: Object.freeze(ANCHOR_STYLE) });
+// fjsAnchor marks the node for the DART side: a comment anchor mirrors to an
+// empty view there, and nested-scroll's first-child rule must skip it
+// (specs/208) — the same cross-boundary tag-marker pattern as htmlBlock.
+// One extra key on the frozen const-props template: serialized once per app.
+const ANCHOR_PROPS = Object.freeze({
+  style: Object.freeze(ANCHOR_STYLE),
+  fjsAnchor: true,
+});
 const HTML_BLOCK_PROPS = Object.freeze({ htmlBlock: true });
 const MULTILINE_PROPS = Object.freeze({ multiline: true });
 

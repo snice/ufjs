@@ -161,6 +161,21 @@ webview 两种渲染方式）上都有可用的嵌套滚动。
 
 ## 8. 遗留（待查）
 
+- **用户实测抓到 App 端列表空白（真回归，已修）**：22:00 起 App 端嵌套页
+  的列表区整体空白。定位链：type/height/panel2 结构逐一排除 → bundle 里
+  页面代码完整（此前 grep 中文是 esbuild **大写**十六进制转义的假阴性，
+  检测要用 `\u6761` 这种形式）→ Dart 注入日志抓到 mirror 事实：
+  `nested-scroll-body first=view firstKids=0`——**body 的第一个子节点是
+  JS 模板注释的镜像幽灵**。App 渲染器把 Vue comment vnode 镜像为
+  display:none 的空 view（host-ops createComment 的 v-if/fragment 锚点，
+  有意为之）；`nested-scroll-*` 的「只渲染第一个子节点」语义正好选中它。
+  20:49 版 body 里没有注释所以是好的。修复：ANCHOR_PROPS 加 `fjsAnchor:
+  true` 标记（冻结 const-props 模板，全局只序列化一次，零运行时成本；
+  照 htmlBlock 跨端标记先例），Dart `_nestedChildBox` 选首子时跳过
+  `fjsIsAnchorNode`；页面注释同时移出 body/header 内部。widget 测试补
+  anchor 用例。顺带：absorbed 退化盒不再吃 `cull: true`（它已不是
+  scroller，cull 窗口无滚动可跟）。**通用教训：模板注释在 App mirror 里
+  是真实节点，任何「第一个子节点」类语义都要跳过 `fjsAnchor`。**
 - **skyline 的 offset-top 未正确生效**（用户在开发者工具复核，基础库
   3.17.3，现象细节待补充）：产物侧 `nested-scroll-body offset-top="{{ 88 }}"`
   已透传、值与单位符合文档（px，3.6.2+）。待复现定位的方向：原生组件对

@@ -298,6 +298,10 @@ class _ScrollViewNodeAdapter extends FjsNodeAdapter {
       }
       return true;
     }());
+    // specs/208: a scroll-view ABSORBED into a nested-scroll-body is not a
+    // scroller anymore — its cull window has no scroll to track and the
+    // whole content would be culled away (blank panel, layout intact).
+    final absorbed = FjsNestedBodyScope.absorbedOf(context.flutterContext);
     return FjsScrollView(
       node: context.node,
       tree: context.tree,
@@ -314,7 +318,7 @@ class _ScrollViewNodeAdapter extends FjsNodeAdapter {
         context.style,
         context.buildChildren(),
         context.childNodes,
-        cull: true,
+        cull: !absorbed,
       ),
     );
   }

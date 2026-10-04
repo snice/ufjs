@@ -148,6 +148,9 @@ N nestedPage({
           'nested-scroll-body',
           props: {'id': 'body', if (offsetTop != null) 'offsetTop': offsetTop},
           children: [
+            // a JS comment anchor mirrors to an empty view — the real
+            // first child sits after it (specs/208)
+            N('view', props: {'fjsAnchor': true, 'style': {'display': 'none'}}),
             N(
               'scroll-view',
               props: {
@@ -189,7 +192,14 @@ void main() {
     expect(find.byType(CustomScrollView), findsOneWidget);
     // the body's scroller is absorbed: no second Scrollable exists
     expect(find.byType(SingleChildScrollView), findsNothing);
-    // the header rendered its first child; the second was never built
+    // the header rendered its first child; the comment anchor and the
+    // second child were never mistaken for content
+    expect(
+      built.tree
+          .existingGlobalKey(built.ids['scroll-view:inner']!)
+          ?.currentContext,
+      isNotNull,
+    );
     expect(
       built.tree
           .existingGlobalKey(built.ids['view:hero-inner']!)

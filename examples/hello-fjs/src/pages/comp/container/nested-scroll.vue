@@ -40,9 +40,9 @@ function onScroll(e: string) {
             <text class="hero-t">头部 · 300px</text>
           </view>
         </nested-scroll-header>
+        <!-- 内层不写高度：skyline 的 nested 布局会撑开它；web / App 端
+             这个滚动容器被吸收进外层，高度样式本就不参与 -->
         <nested-scroll-body :offset-top="88">
-          <!-- 内层不写高度：skyline 的 nested 布局会撑开它；web / App 端
-               这个滚动容器被吸收进外层，高度样式本就不参与 -->
           <scroll-view type="list" scroll-y class="list">
             <view v-for="n in rows" :key="n" class="row">
               <text>条目 {{ n }}</text>
@@ -64,9 +64,9 @@ function onScroll(e: string) {
             <text class="hero-t">头部 · 160px</text>
           </view>
         </nested-scroll-header>
+        <!-- skyline 的 body 由里层滚动容器承载内容；普通 view 超出 body
+             高度会被裁掉。web / App 端同样被吸收进外层滚动 -->
         <nested-scroll-body>
-          <!-- skyline 的 body 由里层滚动容器承载内容；普通 view 超出 body
-               高度会被裁掉。web / App 端同样被吸收进外层滚动 -->
           <scroll-view type="list" scroll-y class="plain-list">
             <view v-for="n in 12" :key="n" class="row">
               <text>普通块 {{ n }}</text>
@@ -103,7 +103,7 @@ function onScroll(e: string) {
 }
 .list {
   /* 不写高度：skyline 的 nested 布局把内层撑满 body；web / App 端这个
-     滚动容器被吸收进外层，写高度也不参与布局 */
+     滚动容器被吸收进外层，高度样式不参与布局 */
   padding: 8px;
   gap: 8px;
 }
