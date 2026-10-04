@@ -56,7 +56,11 @@ export const WEB_EMITS: Readonly<Record<string, readonly string[]>> = {
     'afterLeave',
     'clickoverlay',
   ],
-  refresh: ['refresh'],
+  // statuschange never fires on web (it is the app side's pull-status
+  // event, specs/206) but is declared on the web component too, so the
+  // Flutter side hands `@statuschange` the raw JSON payload and web treats
+  // the binding as a component event instead of a fallthrough attribute.
+  refresh: ['refresh', 'statuschange'],
   'sticky-section': ['tap', 'longPress'],
   'sticky-header': ['tap', 'longPress', 'stickontopchange'],
   // No entry = emits nothing on web (divider, progress, picker-view-column,

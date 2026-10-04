@@ -284,6 +284,28 @@ IntersectionObserver）——这是项目对单个库的 opt-in，runtime 仍然
 [vue3.md 的第三方组件库一节](vue3.md#第三方组件库兼容vant)），对拍页面是 demo
 的 `vant: *` 五页——basic / form / feedback / more / nav（specs/068–073）。
 
+第二个库 NutUI 的适配是 [`vite/nutui.ts`](../demo/vite/nutui.ts)
+（specs/203），五条补丁，全是命令式 Toast / Dialog 一条线：`createApp` /
+`render` 换成 `fjs/vue` 的（shim 的 createApp 故意抛错）、挂载容器从
+`document.createElement` 换成 detached root、`document.getElementById` /
+`body.removeChild` 补成能把 detached root 释放掉的注册表、Dialog 的
+`teleport="#id"` 改指 body（runtime 的 querySelector 只认 body/html，
+specs/129）。它比 vant 多暴露了两条**工程侧**的坑，别的项目接库时同样会踩：
+
+- **插件文件按文件名排序求值**：`fjs/plugins` 桶按字母序 import，`nutui.ts`
+  排在 `vant.ts` 前面，而 dom-env 是 vant.ts 顺手装的——NutUI 的 raf 模块
+  顶层有一句 `const _window = window`，于是在 shim 之前求值直接 ReferenceError。
+  解法是把环境 shim 独立成 `src/plugins/00-dom-env.ts`（空插件体，import 即
+  安装），靠 `00-` 前缀保证它先于一切库插件。
+- **Vapor 页面里组件名是严格匹配**：demo 页面默认按 Vapor 编译（specs/177），
+  vapor 的组件解析只试 `camelize(tag)` 和 `capitalize(camelize(tag))`，必须
+  与注册名一字不差——NutUI 注册的是 `NutSearchbar` / `NutCountdown`（不是
+  `NutSearchBar` / `NutCountDown`），模板就得写 `<nut-searchbar>` /
+  `<nut-countdown>`；`<nut-inputnumber>` 也要写成 `<nut-input-number>`。
+  VDOM 下这只是 warning（页面其余部分照常渲染），Vapor 下是 throw
+  （整页空白）——所以 VDOM 时代的"页面能开就是通的"不再成立，两端对拍要
+  看 DOM 有没有内容，而不是只看有没有报错。
+
 ### 共享 chunk：`fjs.shared`
 
 `fjs build --pages` 会把 vue / fjs 运行时放进 `shared.js`，页面 chunk 通过

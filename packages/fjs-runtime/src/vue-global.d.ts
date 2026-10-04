@@ -261,6 +261,10 @@ interface FjsScrollViewProps extends FjsContainerProps {
   /** 距顶/底多远算触边，默认 50。 */
   upperThreshold?: FjsNumberish;
   lowerThreshold?: FjsNumberish;
+  /** 边缘弹性（微信同名属性，默认开）。`bounces="false"` 关掉 iOS 的
+   * rubber-band：滚动体在两端直接刹住（clamping）。refresh 自定义头部
+   * 模式的内层滚动体要关——弹性自己的视觉过滚会叠在拉动的位移上。 */
+  bounces?: FjsBooleanish;
   /** 小程序 skyline 的 sticky 宿主写法（specs/052）。app / web 端接受并忽略
    * ——出现 sticky 子节点即自动走吸顶布局。 */
   type?: string;
@@ -419,6 +423,16 @@ interface FjsPageContainerProps extends FjsBaseProps, FjsTouchEvents {
 
 interface FjsRefreshProps extends FjsBaseProps, FjsTouchEvents {
   onRefresh?: () => void;
+  /** 自定义头部模式（specs/206）：模板里写两个子级（第一个是头部内容，
+   * 第二个是滚动体）即启用；此时拉动状态经 @statuschange 报告（{"status":
+   * "pulling"|"loosing"|"loading"|"normal"} JSON 串），刷新完成由页面把
+   * `refreshing` 置回 false 收口。单子级仍是 RefreshIndicator（600ms 自动
+   * 收口，不吃这个 prop）。 */
+  'head-height'?: number | string;
+  headHeight?: number | string;
+  refreshing?: FjsBooleanish;
+  onStatuschange?: (payload: string) => void;
+  onStatusChange?: (payload: string) => void;
 }
 
 interface FjsCanvasProps extends FjsBaseProps, FjsTapEvents, FjsTouchEvents {

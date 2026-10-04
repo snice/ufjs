@@ -37,6 +37,10 @@ const MOUNT_COMPONENT = /\/vant\/es\/utils\/mount-component\.mjs$/;
 const LOCK_CLICK = /\/vant\/es\/toast\/lock-click\.mjs$/;
 const NOTIFY = /\/vant\/es\/notify\/Notify\.mjs$/;
 const IMAGE_PREVIEW = /\/vant\/es\/image-preview\/ImagePreview\.mjs$/;
+const LIST = /\/vant\/es\/list\/List\.mjs$/;
+const CALENDAR = /\/vant\/es\/calendar\/Calendar\.mjs$/;
+const CALENDAR_MONTH = /\/vant\/es\/calendar\/CalendarMonth\.mjs$/;
+const CALENDAR_DAY = /\/vant\/es\/calendar\/CalendarDay\.mjs$/;
 
 // The find/replace strings below keep vant's dist indentation byte for
 // byte — write them as flush-left template literals and never re-indent
@@ -362,6 +366,100 @@ let lockCount = 0;`,
         }, [icon]);
       }`,
     feature: 'showImagePreview close 图标让出状态栏（safe-area top）',
+  },
+  {
+    // List's whole loading loop hangs off its scroll parent. On the app the
+    // parent probe is unreliable — sometimes none (useScrollParent answers
+    // undefined, see the VANT_USE patch above), sometimes a zero-height
+    // ancestor — and either way useRect's height is 0, so check() bails at
+    // `!scrollParentRect.height` BEFORE ever emitting "load": the list stays
+    // empty forever, silently (constitution V). A zero-height scroller can
+    // never make the reach-edge test meaningful, so treat it as always at
+    // the edge: run the branch the geometry path would (loading + emit),
+    // guarded like check()'s own head so repeated checks don't pile up.
+    // Pages load their items in one go instead of progressively (there is
+    // no scroll listener to pace it; an fjs scroll-view's scroll event never
+    // reaches the list).
+    file: LIST,
+    find: `        const scrollParentRect = useRect(scroller);
+        if (!scrollParentRect.height || isHidden(root)) {
+          return;
+        }`,
+    replace: `        const scrollParentRect = useRect(scroller);
+        if (!scrollParentRect.height || isHidden(root)) {
+          if (!loading.value && !props.finished && !props.disabled && !props.error) {
+            loading.value = true;
+            emit("update:loading", true);
+            emit("load");
+          }
+          return;
+        }`,
+    feature: 'List 首次加载（无滚动父级时视为到达边缘）',
+  },
+  {
+    // Calendar's month list scrolls via CSS `overflow: auto` on a plain
+    // div (.van-calendar__body). On the app overflow only CLIPS (constitution
+    // I: scrolling is the scroll-view tag's job), so the month list was
+    // frozen — the popup showed one screen and nothing could scroll to the
+    // next month. Swap the div for an fjs scroll-view: native scrolling on
+    // the app, and on the web fjs's scroll-view renders the same
+    // overflow-auto div. vant's onScroll reads scrollTop off the element
+    // (getScrollTop), which the fjs scroll-view answers, and the scroll
+    // event name matches — the month-highlight bookkeeping keeps working.
+    file: CALENDAR,
+    find: `_createVNode("div", {
+        "ref": bodyRef,
+        "class": bem("body"),
+        "onScroll": canSwitch.value ? void 0 : onScroll`,
+    replace: `_createVNode("scroll-view", {
+        "scrollY": true,
+        "ref": bodyRef,
+        "class": bem("body"),
+        "onScroll": canSwitch.value ? void 0 : onScroll`,
+    feature: 'Calendar 月份列表滚动（body → scroll-view）',
+  },
+  {
+    // First-week offset: vant shifts the month's first day with a percent
+    // margin (CalendarDay: marginLeft = 100*offset/7 %). The engine resolves
+    // a percent margin against the wrong base (~370 instead of the 402 parent
+    // — css-compat's "percent margin needs a spec"), so every row-1 day sat
+    // one column left of its weekday header. Replace the margin with real
+    // placeholder cells: percent WIDTH resolves correctly (the rest of the
+    // grid proves it), so offset leading cells line up on both ends.
+    file: CALENDAR_DAY,
+    find: `      if (index === 0) {
+        style2.marginLeft = \`\${100 * offset / 7}%\`;
+      }
+      if (color) {`,
+    replace: `      if (color) {`,
+    feature: 'Calendar 首周偏移（去掉百分比 margin）',
+  },
+  {
+    file: CALENDAR_MONTH,
+    find: `    }, [renderMark(), (shouldRender.value ? days : placeholders).value.map(renderDay)]);`,
+    replace: `    }, [renderMark(), ...(shouldRender.value ? Array(offset.value).fill(0).map(() => _createVNode("div", {
+      "class": bem("day"),
+      "style": {
+        width: "14.285%"
+      }
+    })) : []), (shouldRender.value ? days : placeholders).value.map(renderDay)]);`,
+    feature: 'Calendar 首周偏移（占位格子替代 margin）',
+  },
+  {
+    // The confirm button sits in the bottom popup's footer, whose safe-area
+    // inset comes from vant's `.van-safe-area-bottom` — an env() length the
+    // app CSS engine does not parse, so the declaration drops and the button
+    // lands in the home-indicator band. Wrap the footer content in the fjs
+    // safe-area widget: Flutter SafeArea on the app, and on the web the app
+    // hook never runs (the env() class keeps working there untouched).
+    // Same shape as the NOTIFY / IMAGE_PREVIEW safe-area-top patches
+    // (specs/142), bottom edge instead.
+    file: CALENDAR,
+    find: `    }, [renderFooterButton()]);`,
+    replace: `    }, [_createVNode("safe-area", {
+      "edges": "bottom"
+    }, [renderFooterButton()])]);`,
+    feature: 'Calendar 确认按钮让出底部安全区（safe-area bottom）',
   },
 ];
 

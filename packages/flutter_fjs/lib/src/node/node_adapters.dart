@@ -21,6 +21,7 @@ import '../widgets/page_container.dart';
 import '../widgets/picker_view.dart';
 import '../widgets/progress.dart';
 import '../widgets/radio.dart';
+import '../widgets/refresh.dart';
 import '../widgets/scroll_behavior.dart';
 import '../widgets/scroll_view.dart';
 import '../widgets/slider.dart';
@@ -496,6 +497,20 @@ class _RefreshNodeAdapter extends FjsNodeAdapter {
   @override
   Widget build(FjsNodeAdapterContext context) {
     final children = context.buildChildren();
+    // Two element children = custom-header mode (specs/206): the first is
+    // JS-rendered header content the native side translates above the
+    // scrollable, the second is the scrollable itself. Same
+    // children-shape-decides-the-route rule the sticky split uses. A single
+    // child stays on RefreshIndicator (the spinner self-manages and closes
+    // after its 600ms hold; the custom mode is prop-driven instead).
+    if (children.length >= 2) {
+      return FjsRefresh(
+        node: context.node,
+        dispatch: context.dispatch,
+        header: children[0],
+        child: children[1],
+      );
+    }
     return RefreshIndicator(
       onRefresh: () async {
         context.dispatch(context.node.id, FjsEvent.refresh);

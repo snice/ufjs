@@ -42,6 +42,17 @@ import {
   RadioGroup,
   Rate,
   Search,
+  // specs/203 batch 2
+  Calendar,
+  Cascader,
+  DatePicker,
+  DropdownItem,
+  DropdownMenu,
+  List,
+  PullRefresh,
+  TimePicker,
+  TreeSelect,
+  Uploader,
   Sidebar,
   SidebarItem,
   Skeleton,
@@ -111,6 +122,17 @@ import 'vant/es/tag/style/index.mjs';
 import 'vant/es/text-ellipsis/style/index.mjs';
 import 'vant/es/toast/style/index.mjs';
 import 'vant/es/watermark/style/index.mjs';
+// specs/203 batch 2
+import 'vant/es/calendar/style/index.mjs';
+import 'vant/es/cascader/style/index.mjs';
+import 'vant/es/date-picker/style/index.mjs';
+import 'vant/es/dropdown-item/style/index.mjs';
+import 'vant/es/dropdown-menu/style/index.mjs';
+import 'vant/es/list/style/index.mjs';
+import 'vant/es/pull-refresh/style/index.mjs';
+import 'vant/es/time-picker/style/index.mjs';
+import 'vant/es/tree-select/style/index.mjs';
+import 'vant/es/uploader/style/index.mjs';
 import VanWatermark from './vant/VanWatermark.vue';
 
 export default (app: App) => {
@@ -160,6 +182,17 @@ export default (app: App) => {
   app.use(Tabs);
   app.use(Tag);
   app.use(TextEllipsis);
+  // specs/203 batch 2 (alphabetical among themselves for easy diffing)
+  app.use(Calendar);
+  app.use(Cascader);
+  app.use(DatePicker);
+  app.use(DropdownItem);
+  app.use(DropdownMenu);
+  app.use(List);
+  app.use(PullRefresh);
+  app.use(TimePicker);
+  app.use(TreeSelect);
+  app.use(Uploader);
   // Watermark is NOT vant's: its Blob-URL + background-image pipeline cannot
   // run on the app side (specs/135) — the local replica keeps the props and
   // the #content slot, both ends render the same DOM tiling.

@@ -100,6 +100,14 @@ export const EventType: Record<string, number> = {
   // canonical spelling); vant's NoticeBar restarts its marquee on it.
   onTransitionend: 42,
   onTransitionEnd: 42,
+  // refresh's custom-header mode (specs/206): a pull-status line crossed,
+  // payload is the JSON string {"status":"pulling"|"loosing"|"loading"|
+  // "normal"} widgets/refresh.dart writes. Only CHANGES are reported and
+  // completion is not an event — JS sets the `refreshing` prop false.
+  // Same all-lower-first rule as linechange: `@statuschange` becomes
+  // `onStatuschange`.
+  onStatuschange: 44,
+  onStatusChange: 44,
 };
 
 /** Handler props with more than one spelling: the native side is told the
@@ -113,6 +121,7 @@ const CANONICAL_EVENT_PROP: Record<string, string> = {
   onTouchEnd: 'onTouchend',
   onTouchCancel: 'onTouchcancel',
   onTransitionEnd: 'onTransitionend',
+  onStatusChange: 'onStatuschange',
   onBeforeenter: 'onBeforeEnter',
   onAfterenter: 'onAfterEnter',
   onBeforeleave: 'onBeforeLeave',
