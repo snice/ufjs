@@ -24,7 +24,7 @@ const rows = ref(
 
 <template>
   <view class="page">
-    <Panel class="fill" title="200 条数据" desc="切页先完成，列表组件自动按需加载">
+    <Panel :fill="true" title="200 条数据" desc="切页先完成，列表组件自动按需加载">
       <list-view class="list" :items="rows">
         <template #default="{ item: row }">
           <view :key="row.id" class="row" @tap="() => toast(row.title)">
@@ -42,21 +42,15 @@ const rows = ref(
 </template>
 
 <style scoped>
-/* 全屏填充：vh/vw 在 Flutter 侧不支持（css-compat），剩余高度只能靠 flex 链
-   逐层传递——页面根 → Panel 根（class 穿透到 .section）→ 卡片（:deep 穿透
-   Panel 的 scoped 样式）→ 列表。中间任何一层断掉，列表都会塌成内容高。 */
+/* 全屏填充链逐层传递：页面根 → Panel（fill 属性，组件内部样式撑满）→
+   列表 flex-grow。三端各有一环不同：web / Flutter 靠页面根 height:100%，
+   mp/skyline 百分比高度是 no-op（css-compat），靠 flex-grow 从 shell 的
+   .body（height:0px + grow）接链；Panel 的撑满必须走 fill 属性——页面
+   class 穿不到组件根、:deep 进不了组件模板，在 mp 上都是静默 no-op
+   （specs/209）。 */
 .page {
   width: 100%;
   height: 100%;
-}
-
-.fill {
-  flex-grow: 1;
-  /* Panel 自带 margin-bottom: 0，撑满后卡片会贴住屏幕底边 */
-  /* margin-bottom: 12px; */
-}
-
-:deep(.card) {
   flex-grow: 1;
 }
 
