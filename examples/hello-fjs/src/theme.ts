@@ -34,6 +34,9 @@ export interface Palette {
   muted: string;
   /** 再次一级的说明文字 */
   faint: string;
+  /** 悬浮 tabBar 胶囊的面：半透明，让滚到下面的内容透出来（specs/210）。
+   * Flutter 端没有模糊 tag，毛玻璃就到不了这一步，靠这个透明度近似。 */
+  capsule: string;
 }
 
 export const light: Palette = {
@@ -49,6 +52,7 @@ export const light: Palette = {
   text: '#333333',
   muted: '#999999',
   faint: '#B0B0B0',
+  capsule: 'rgba(255, 255, 255, 0.78)',
 };
 
 export const dark: Palette = {
@@ -64,6 +68,7 @@ export const dark: Palette = {
   text: '#D8D8DC',
   muted: '#8E8E93',
   faint: '#636366',
+  capsule: 'rgba(28, 28, 30, 0.78)',
 };
 
 export type ThemeMode = 'light' | 'dark';

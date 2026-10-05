@@ -24,6 +24,11 @@ import 'widgets/toast_host.dart';
 /// finds it as it was left. A parked root stays in the widget tree
 /// offstage — laid out, never painted, never hit-tested — which is what
 /// keeps its scroll offsets and focus alive.
+///
+/// The base view is also the TabGroup (specs/210): a `__tabBar` root — the
+/// global tab bar's own Vue app — floats at the bottom of a Stack over the
+/// page area, so the bar is fixed chrome that takes no page height and a
+/// pushed route covers whole.
 class FjsView extends StatefulWidget {
   const FjsView({
     super.key,
@@ -49,6 +54,12 @@ class FjsView extends StatefulWidget {
   /// Navigator by FjsApp, never as page content.
   static bool rootIsAppOverlay(MirrorNode node) =>
       node.props['__appOverlay'] == true;
+
+  /// The global tab bar's host root (specs/210): created once by the tab
+  /// bar's own Vue app, docked by the BASE view below the page area — the
+  /// TabGroup (tab pages above, bar below). A root without `__navKey` would
+  /// otherwise fall back to navKey 0 and paint as page content.
+  static bool rootIsTabBar(MirrorNode node) => node.props['__tabBar'] == true;
 
   static bool rootParked(MirrorNode node) {
     final value = node.props['__navHidden'];
@@ -128,6 +139,7 @@ class _FjsViewState extends State<FjsView> with WidgetsBindingObserver {
         final tree = engine.tree;
         final ids = <int>[];
         final parked = <int>[];
+        final bars = <int>[];
         for (final id in tree.rootChildren) {
           final node = tree.node(id);
           if (node == null || FjsView.rootNavKey(node) != widget.navKey)
@@ -136,12 +148,21 @@ class _FjsViewState extends State<FjsView> with WidgetsBindingObserver {
           // Navigator, never inside a page — the base page would double-
           // paint it (its navKey is the fallback 0)
           if (FjsView.rootIsAppOverlay(node)) continue;
+          // the tab bar root (specs/210) floats at the bottom instead: the
+          // TabGroup — the page area keeps its full height and the bar is a
+          // Positioned layer over it. A pushed route covers the whole
+          // group, so the bar needs no visibility plumbing beyond the JS
+          // side collapsing it on non-tab pages.
+          if (FjsView.rootIsTabBar(node)) {
+            if (widget.navKey == 0) bars.add(id);
+            continue;
+          }
           (FjsView.rootParked(node) ? parked : ids).add(id);
         }
         _rootKeys.removeWhere(
-          (id, _) => !ids.contains(id) && !parked.contains(id),
+          (id, _) => !ids.contains(id) && !parked.contains(id) && !bars.contains(id),
         );
-        if (tree.version == 0 || ids.isEmpty) {
+        if (tree.version == 0 || (ids.isEmpty && bars.isEmpty)) {
           return widget.placeholder ?? const SizedBox.expand();
         }
 
@@ -158,6 +179,8 @@ class _FjsViewState extends State<FjsView> with WidgetsBindingObserver {
         final shown = [for (final id in ids) layer(id)];
         Widget content = shown.length == 1
             ? shown.single
+            : shown.isEmpty
+            ? const SizedBox.expand()
             : Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -171,6 +194,28 @@ class _FjsViewState extends State<FjsView> with WidgetsBindingObserver {
             children: [
               content,
               for (final id in parked) Offstage(child: layer(id)),
+            ],
+          );
+        }
+        // the TabGroup (specs/210): the bar FLOATS at the bottom of the
+        // group — fixed over the page content, taking no layout height —
+        // but as a plain Positioned layer of this same view, keyed like a
+        // page root. Not the app-level overlay host: that rebuilt the bar
+        // on every op batch and flickered on tab switches; here the bar
+        // lives in the same rebuild pass as the page, so a tab swap reflows
+        // around it without repainting it.
+        if (bars.isNotEmpty) {
+          content = Stack(
+            fit: StackFit.passthrough,
+            children: [
+              Positioned.fill(child: content),
+              for (final id in bars)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: layer(id),
+                ),
             ],
           );
         }

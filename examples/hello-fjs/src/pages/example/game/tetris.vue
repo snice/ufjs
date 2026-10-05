@@ -1,5 +1,5 @@
 <route>
-{"title": "俄罗斯方块", "scroll": false, "group": "交互游戏", "desc": "canvas 逐帧重画，十字键控制"}
+{"title": "俄罗斯方块", "scroll": false, "tabBar": false, "group": "交互游戏", "desc": "canvas 逐帧重画，十字键控制；全屏页不显示 tabBar（specs/210）"}
 </route>
 
 <script setup lang="ts">

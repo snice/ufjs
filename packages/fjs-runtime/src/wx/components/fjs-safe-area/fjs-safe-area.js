@@ -46,12 +46,14 @@ Component({
     // which edges take the insets, as on the other ends (web base-css,
     // Flutter SafeArea(top:, bottom:, …)); omitted = all four
     edges: { type: String, value: '' },
+    // 0-1: take only this fraction of each inset (same as web / Flutter)
+    scale: { type: Number, value: 1 },
   },
   data: {
     pad: '',
   },
   observers: {
-    edges() {
+    'edges, scale'() {
       this.apply(this.__nested === true);
     },
   },
@@ -104,6 +106,13 @@ Component({
         }
         if (want('left') && safe) left = Math.max(0, Math.round(safe.left));
         if (want('right') && safe) right = Math.max(0, Math.round(info.screenWidth - safe.right));
+      }
+      const k = Math.min(1, Math.max(0, Number(this.data.scale)));
+      if (k !== 1) {
+        top = Math.round(top * k);
+        right = Math.round(right * k);
+        bottom = Math.round(bottom * k);
+        left = Math.round(left * k);
       }
       const pad = top || right || bottom || left ? `padding: ${top}px ${right}px ${bottom}px ${left}px` : '';
       if (pad !== this.data.pad) this.setData({ pad });

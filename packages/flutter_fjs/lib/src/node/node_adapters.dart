@@ -515,18 +515,56 @@ class _SafeAreaNodeAdapter extends FjsNodeAdapter {
               .split(RegExp(r'[\s,]+'))
               .where((e) => e.isNotEmpty)
               .toSet();
-    bool edge(String name) => named == null || named.contains(name);
-    return SafeArea(
-      top: edge('top'),
-      bottom: edge('bottom'),
-      left: edge('left'),
-      right: edge('right'),
-      child: buildBox(
-        context.style,
-        context.buildChildren(),
-        context.childNodes,
-        growChildren: context.isRoot,
-      ),
+    // A side whose padding the style declares is the author's call — it
+    // replaces the inset there (web gets the same from the inline style
+    // beating the stylesheet rule), so that side takes no inset here.
+    bool edge(String name) =>
+        (named == null || named.contains(name)) &&
+        !context.style.declaresPadding(name);
+    final scale = (double.tryParse('${context.node.prop('scale') ?? ''}') ?? 1)
+        .clamp(0.0, 1.0);
+    final box = buildBox(
+      context.style,
+      context.buildChildren(),
+      context.childNodes,
+      growChildren: context.isRoot,
+    );
+    if (scale == 1) {
+      return SafeArea(
+        top: edge('top'),
+        bottom: edge('bottom'),
+        left: edge('left'),
+        right: edge('right'),
+        child: box,
+      );
+    }
+    // scale < 1: take only a fraction of each inset (a floating bar that
+    // sits lower than the full home-indicator strip). Still consumes the
+    // MediaQuery padding like SafeArea so a nested one pads nothing twice.
+    return Builder(
+      builder: (ctx) {
+        final p = MediaQuery.paddingOf(ctx);
+        final top = edge('top');
+        final bottom = edge('bottom');
+        final left = edge('left');
+        final right = edge('right');
+        return MediaQuery.removePadding(
+          context: ctx,
+          removeTop: top,
+          removeBottom: bottom,
+          removeLeft: left,
+          removeRight: right,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              left ? p.left * scale : 0,
+              top ? p.top * scale : 0,
+              right ? p.right * scale : 0,
+              bottom ? p.bottom * scale : 0,
+            ),
+            child: box,
+          ),
+        );
+      },
     );
   }
 }

@@ -184,6 +184,27 @@ function ensureAppOverlayHost(): HostNode {
   return root;
 }
 
+// ---- tab bar host (specs/210) ----------------------------------------------
+//
+// The global tab bar is IN-FLOW chrome, not a float: the base FjsView docks
+// this root below the page area (the TabGroup: tab pages above, bar below),
+// a pushed route covers the whole thing, and a page modal paints above the
+// bar the way it paints above any page content. Nothing here touches the
+// overlay machinery — no hoisting, no back guard, no modal census.
+
+/** A fresh tab bar host root; one per mounting app (specs/210). Rendered by
+ * the base view because a root without `__navKey` falls back to navKey 0,
+ * and skipped as page content there — FjsView routes `__tabBar` roots to
+ * the dock slot instead. */
+export function createTabBarHost(): HostNode {
+  const root = createRoot('fjs-tab-bar-host');
+  childrenOf.set(root.id, []);
+  parentOf.set(root.id, null);
+  setProps(root, { __tabBar: true });
+  devtoolsStructuralVersion.value++;
+  return root;
+}
+
 // ---- detached roots (specs/137) --------------------------------------------
 //
 // A second Vue app needs a container of its own: the browser answer is

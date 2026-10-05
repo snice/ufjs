@@ -29,6 +29,7 @@ import {
 import { installFjsWeb } from '../web/index';
 import { createVaporWebApp } from './web-vapor';
 import { applyPlugins, type FjsPlugin } from './plugin';
+import { FjsTabBarSurface, tabBarItems } from './tabbar';
 import type {
   NavKind,
   Navigation,
@@ -155,6 +156,7 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
   // to drop one cached page. It matches on component name, so each path gets
   // its own entry component whose name IS the path — see [entryTypeFor].
   const alive = ref<string[]>([]);
+  const stackDepth = ref(1);
   const FjsPageEntry = defineComponent({
     name: 'FjsPageEntry',
     inheritAttrs: false,
@@ -196,7 +198,16 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
       onBeforeUnmount(save);
 
       return () =>
-        h('fjs-page-entry', { ref: host }, [
+        h('fjs-page-entry', {
+          ref: host,
+          // specs/210: a pushed (non-tab) page covers the global tab bar the
+          // way a pushed Navigator route covers the TabGroup on Flutter; the
+          // stylesheet lifts these entries above the bar
+          'data-covers-bar':
+            options.tabBar && typeof (props.route as { meta?: { tab?: unknown } }).meta?.tab !== 'number'
+              ? ''
+              : undefined,
+        }, [
           shell
             ? h(shell, { route: props.route }, { default: () => slots.default?.() })
             : slots.default?.(),
@@ -231,7 +242,7 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
 
   const root = {
     name: 'FjsRoot',
-    render: () =>
+    render: () => [
       h(RouterView, null, {
         default: ({
           Component: page,
@@ -290,6 +301,13 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
           );
         },
       }),
+      // specs/210: the tab bar host — a childless slot UNDER the page host
+      // (#app is a flex column; base-css pins this one to content size).
+      // The bar's own Vue app mounts into it from installTabBar; the main
+      // app never renders children here, so that foreign content survives
+      // every page swap — the TabGroup shape, same as the Dart side.
+      options.tabBar ? h('fjs-tabbar-host') : null,
+    ],
   };
 
   const vueRouter = (router as unknown as { vueRouter: VueRouter }).vueRouter;
@@ -378,6 +396,8 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
     const parkedIdx = tabs.indexOf(to.fullPath);
     if (parkedIdx >= 0) tabs.splice(parkedIdx, 1);
     syncAlive();
+    // reactive mirror of the history depth, for the tab bar's covered check
+    stackDepth.value = stack.length;
 
     let navKind: NavKind;
     if (!from.matched.length) navKind = 'initial';
@@ -407,6 +427,39 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
   applyPlugins(vueApp, options.plugins);
   options.setup?.(vueApp);
 
+  /** specs/210: the global tab bar. A SECOND Vue app mounted into the
+   * childless `fjs-tabbar-host` element FjsRoot renders below the page
+   * host — the TabGroup shape (pages area above, bar below), same as the
+   * Dart side's docked root. Not a body-level fixed layer (an earlier
+   * draft): in-flow, so page transitions never rebuild it and a push hides
+   * it by the surface's own display toggle. Runs from mount() so the host
+   * element exists. */
+  const installTabBar = (): void => {
+    const component = options.tabBar?.component;
+    if (!component) return;
+    const host = document.querySelector('fjs-tabbar-host');
+    if (!host) return;
+    const barApp = createVueApp(FjsTabBarSurface, {
+      router,
+      component: component as Component,
+      tabs: tabBarItems(options.routes),
+      // same as Flutter: the bar stays mounted under a pushed page, which
+      // paints above it (data-covers-bar) — the bar is never hidden for a
+      // push, so there is nothing to restore on pop
+      coveredOnPush: () => stackDepth.value > 1,
+    });
+    // the bar is app chrome: the same tag set + plugins a page app gets, so
+    // the component's <view> / module components resolve as they would in a
+    // page (it is not inside any page's app)
+    installFjsWeb(barApp);
+    // useRoute()/RouterView parity inside the bar; useRouter() already has
+    // the module-level fallback
+    barApp.use(vueRouter);
+    applyPlugins(barApp, options.plugins);
+    options.setup?.(barApp);
+    barApp.mount(host as never);
+  };
+
   return {
     router,
     vueApp,
@@ -418,6 +471,7 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
         document.body.appendChild(host);
       }
       vueApp.mount(el as never);
+      installTabBar();
     },
   };
 }

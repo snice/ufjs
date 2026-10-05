@@ -33,7 +33,8 @@ createFjsApp({
 
 `shell` 拿到一个 `route` prop、页面放在它的默认插槽里。Flutter 上它是每个原生
 路由页的外壳；web 上也是每个历史条目一份（`<KeepAlive>` 按栈缓存），外壳里的
-`<scroll-view>` 不会串到下一页。导航栏 / tabBar 只写一遍：
+`<scroll-view>` 不会串到下一页。导航栏 / tabBar 只写一遍（要 tabbar
+**跨页常驻、全局唯一**，用下面的「全局 tab bar」）：
 
 ```vue
 <!-- Shell.vue -->
@@ -130,6 +131,58 @@ createFjsApp({ routes, preload: false, /* … */ });
 - 被保活的页面**没有停**：定时器、动画、`setInterval` 都还在跑（和小程序 onHide
   的语义一样）。要在离开时停掉，自己在页面里根据 `route` 判断。
 - Web 上 `keepAlive: false` 会连 tab 保活一起关掉。
+
+## 全局 tab bar（specs/210）
+
+shell 里的 tabBar 随页面实例化，push 二级页后整个消失，也做不出角标这类跨页
+状态。`createFjsApp` 的 `tabBar` 选项把 tabBar 变成**全局唯一**的一份，悬浮
+在 TabGroup 的底部（fixed 层，**不占页面高度**，内容从 bar 底下滚过）——
+只在 tab 页显示（微信原生 tabBar 的语义），外观可以是 App Store 那种悬浮
+胶囊：
+
+```ts
+createFjsApp({
+  routes,
+  shell: Shell,                     // 导航栏照旧留在 shell 里
+  tabBar: { component: TabBar },    // 不传则一切照旧（shell 自渲染的 tabBar）
+});
+```
+
+| | TabGroup 长什么样 | 为什么切换不闪烁 |
+|---|---|---|
+| Flutter | 基页 FjsView 里的 Stack：页面区铺满 + bar 根 `Positioned(bottom)` 悬浮 | bar 是本视图里的普通层（带 GlobalKey），不进 overlay 宿主，页面切换的重绘不重建它 |
+| Web | `#app` 内：`fjs-page-host`（flex:1 铺满）+ `fjs-tabbar-host`（absolute 悬浮） | 页面转场发生在 fjs-page-host 内部，bar 在外面 |
+| 小程序 | 微信原生 tabBar 照旧（`meta.tab` 生成），tabBar 选项忽略 | — |
+
+push 的语义是**整页盖住**：Flutter 上二级页是 Navigator 里的新路由，把
+TabGroup 连 bar 一起盖住——**bar 不做任何隐藏/恢复动作**，push 期间保持
+挂载、pop 揭开的瞬间就在原位（navPop 按两段式协议要等退场动画播完才通知
+JS，specs/003，若按"当前路由不是 tab 页"去隐藏，bar 会在整个返回动画里
+消失）；web 同构：bar 同样一直挂着，二级页的页面入口（`fjs-page-entry`）带 `data-covers-bar`，样式表把它抬到 bar 之上（含进出场动画期间），pop 时二级页滑走即露出 bar。
+页面级模态弹层画在页面内容之上，天然盖住 bar——两端行为一致。
+
+组件契约：props 是 `{ tabs, active }`——`tabs` 是路由表里 `meta.tab` 为数字的
+页面（`{ path, title, tab }`，按 tab 排序）；`active` 是当前 tab 页的
+`meta.tab`（bar 只在该值非空——即当前就在 tab 页——时显示）。切 tab 的写法
+不变，仍是 `router.replace(path)`——离开的 tab 照常被 park 保活（见上一节），
+tabbar 不参与页面栈。
+
+- **可见性**：常驻 TabGroup，push 的二级页整页盖住它（不隐藏、无恢复动作，两端一致）。tab 页想整页全屏
+  （游戏、播放器）再配 `<route>` meta `"tabBar": false`。
+- **bar 压在内容上**（不占页面高度）：tab 页的滚动内容末尾要自己留出底部
+  空档（hello-fjs 的 Shell 用一条固定高度的空 view +
+  `<safe-area edges="bottom">`），最后一行才不会被胶囊盖住。
+- **外观完全归应用的组件**：框架只提供挂载与状态。hello-fjs 的演示是 App Store
+  悬浮胶囊——半透明底色，web 端加 `backdrop-filter` 毛玻璃；Flutter 端没有
+  模糊 tag，靠透明度近似（要用真毛玻璃就得像 iconmind 那样写一个带
+  `BackdropFilter` 的模块，另立 spec）。
+- bar 不在任何页面树里：它自己是一个 Vue app——web 挂在 `#app` 里
+  `fjs-page-host` 之后的 `fjs-tabbar-host` 上，Flutter 挂在专用根
+  `fjs-tab-bar-host` 上、由基页 FjsView 停靠。所以它够不着任何页面根上的
+  CSS 变量，hello-fjs 的 TabBar 在自己根节点挂了同一份主题变量（读同一个
+  useTheme 单例）。
+- `enableVapor` 模式暂不支持（vapor 包不含 VDOM 渲染器，surface 进不去），
+  传了会 warn 并忽略。
 
 ## 转场动画
 

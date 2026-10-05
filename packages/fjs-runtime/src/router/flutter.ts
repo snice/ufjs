@@ -429,6 +429,16 @@ class FlutterRouter implements Router {
     return this.stack[this.stack.length - 1];
   }
 
+  /** How many pushed routes sit above the base page (the base itself is not
+   * counted — key 0 never enters the stack). The tab bar surface reads it
+   * to keep the bar up while a pushed route covers the TabGroup: navPop —
+   * and with it currentRoute — only arrives AFTER the pop's exit animation
+   * (specs/003), so "current route is not a tab page" holds for the whole
+   * animation and hiding on it would strip the bar mid-reveal. */
+  get pushedDepth(): number {
+    return this.stack.length;
+  }
+
   /** Dart finished loading the page chunk for `key`. */
   private onNavMount(key: number): void {
     const pending = this.pending.get(key);
@@ -620,7 +630,7 @@ function staticPaths(routes: readonly { path: string }[]): string[] {
 
 export function createRouter(
   options: FlutterRouterOptions,
-): Router & { start(): void } {
+): Router & { start(): void; readonly pushedDepth: number } {
   const router = new FlutterRouter(options);
   active = router;
   return router;

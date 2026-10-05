@@ -65,7 +65,25 @@ export const FjsText = defineComponent({
     };
   },
 });
-export const FjsSafeArea = container('safe-area');
+/** `safe-area`: a container whose `scale` attribute (0-1) becomes the CSS
+ * variable the base stylesheet multiplies each inset by. */
+export const FjsSafeArea = defineComponent({
+  name: 'Fjssafe-area',
+  inheritAttrs: false,
+  emits: ['tap', 'longPress'],
+  setup(_props, { attrs, slots, emit }) {
+    const press = pressBindings(emit);
+    return () => {
+      const { scale, ...rest } = attrs as Record<string, unknown>;
+      const host = hostAttrs(rest);
+      const n = Number(scale);
+      if (scale !== undefined && Number.isFinite(n)) {
+        host.style = [host.style, { '--fjs-safe-scale': String(Math.min(1, Math.max(0, n))) }];
+      }
+      return h('safe-area', mergeBindings(host, press), slots.default?.());
+    };
+  },
+});
 /** A swiper page. No behaviour — but it renders as its own element so the
  * base stylesheet can size a page's content (`swiper-item > *`); mapping it
  * to a plain view would put an unstyled box between the track cell and the

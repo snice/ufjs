@@ -10,6 +10,10 @@ export interface RouteMeta {
   title?: string;
   /** Root-level page reachable from a tab bar (no back button). */
   tab?: number;
+  /** `false` hides the global tab bar on this page (a full-screen player or
+   * game). Only read when the app passed `tabBar` to createFjsApp; the bar
+   * is persistent otherwise — pushed pages keep it (specs/210). */
+  tabBar?: boolean;
   /** How this page comes and goes. `false` means no transition at all —
    * on Flutter the native route is pushed without one, on web the page
    * swaps with no animation. A string is a web CSS transition name and is
@@ -114,11 +118,29 @@ export interface Router {
   preload(to: RouteLocationRaw): Promise<void>;
 }
 
+/** The global tab bar (specs/210): `createFjsApp({ tabBar })` mounts the
+ * component ONCE, outside the page trees, where pushes cannot cover it —
+ * the App Store shape. Without the option nothing changes: the shell keeps
+ * rendering whatever tab bar it wants, per page. */
+export interface TabBarOptions {
+  /** The tab bar component. Receives `tabs` (the route table's tab pages,
+   * `{ path, title, tab }` sorted by tab) and `active` (the tab branch the
+   * user is in — sticky across pushes, `null` before any tab page) as
+   * props; switching stays `router.replace(path)`, which parks the leaving
+   * tab exactly as before. */
+  component: Component;
+}
+
 export interface RouterOptions {
   routes: RouteRecord[];
   /** Wraps every page: gets a `route` prop and the page in its default
    * slot. Usually the app shell (navigation bar + tab bar). */
   shell?: Component;
+  /** The global tab bar (specs/210). Consumed by createFjsApp, which mounts
+   * it above the page trees; the routers themselves ignore it. Ignored on
+   * the mini program build, which keeps the native tabBar generated from
+   * `meta.tab`. */
+  tabBar?: TabBarOptions;
   /** Where to start. Default '/'. */
   initial?: string;
   /** Load every page's code in idle time once the first page has settled

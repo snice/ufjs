@@ -769,6 +769,13 @@ class FjsStyle {
     return _padding = _edge('padding');
   }
 
+  /// Whether the style declares padding for [side] (`top` / `right` /
+  /// `bottom` / `left`) — through the shorthand or the longhand. `<safe-area>`
+  /// reads it: an author-declared side replaces the system inset there.
+  bool declaresPadding(String side) =>
+      _v('padding') != null ||
+      _v('padding${side[0].toUpperCase()}${side.substring(1)}') != null;
+
   EdgeInsets? get margin {
     if (_marginReady) return _margin;
     _marginReady = true;

@@ -101,7 +101,73 @@ MirrorTree _edgesTree() {
   return tree;
 }
 
+/// A bottom safe-area (`props`) holding a 10px box, under a root view.
+MirrorTree _bottomAreaTree(String areaProps) {
+  final w = _W();
+  w.create(1, 'view');
+  w.props(1, '{"__navKey":0}');
+  w.insert(0, 1);
+  w.create(2, 'safe-area');
+  w.props(2, areaProps);
+  w.insert(1, 2);
+  w.create(3, 'view');
+  w.props(3, '{"style":{"height":10}}');
+  w.insert(2, 3);
+  final tree = MirrorTree();
+  tree.applyFrame(Uint8List.fromList(w.b));
+  return tree;
+}
+
+Future<double> _bottomGap(WidgetTester tester, String areaProps) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      home: MediaQuery(
+        data: const MediaQueryData(
+          size: Size(390, 844),
+          padding: EdgeInsets.only(bottom: 34),
+        ),
+        child: Material(
+          child: FjsNodeRenderer(
+            tree: _bottomAreaTree(areaProps),
+            ids: [1],
+            dispatch: (_, __, {String? text}) {},
+          ),
+        ),
+      ),
+    ),
+  );
+  // the bottom padding the safe-area (or the box under it) put on the 10px box
+  return tester
+      .widgetList<Padding>(find.byType(Padding))
+      .map((p) => p.padding.resolve(TextDirection.ltr).bottom)
+      .fold<double>(0, (a, b) => a > b ? a : b);
+}
+
 void main() {
+  testWidgets('safe-area scale takes a fraction of the inset', (tester) async {
+    expect(await _bottomGap(tester, '{"edges":"bottom"}'), 34);
+    expect(await _bottomGap(tester, '{"edges":"bottom","scale":0.5}'), 17);
+  });
+
+  testWidgets('a declared padding replaces the inset on that side', (
+    tester,
+  ) async {
+    expect(
+      await _bottomGap(
+        tester,
+        '{"edges":"bottom","style":{"paddingBottom":6}}',
+      ),
+      6,
+    );
+    expect(
+      await _bottomGap(
+        tester,
+        '{"edges":"bottom","scale":0.5,"style":{"paddingBottom":6}}',
+      ),
+      6,
+    );
+  });
+
   testWidgets('safe-area edges picks the insets it takes', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

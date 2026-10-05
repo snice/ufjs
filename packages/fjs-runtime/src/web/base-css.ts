@@ -27,6 +27,27 @@ body {
    shrinking to its content — otherwise a bottom tabBar rides up under a
    short page. */
 #app > * { flex: 1 1 0%; min-height: 0; }
+/* The global tab bar's host (specs/210) floats over the page host, pinned
+   to the bottom of #app — it takes NO layout height (the page keeps its
+   full height and scrolls under the bar), and it lives outside
+   fjs-page-host so page transitions never repaint it. Hiding the bar (a
+   push, meta.tabBar:false) removes it entirely. */
+#app { position: relative; }
+/* z-index: a tab swap runs a page transition, and the entering entry is
+   positioned with z-index 1 for its duration — an auto-z bar would sit
+   UNDER it and vanish for the animation (the flicker on tab switches).
+   Above page layers (and their sticky headers), below modals (1000). */
+#app > fjs-tabbar-host {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+}
+/* A pushed (non-tab) page covers the bar, as a pushed route covers the
+   TabGroup on Flutter. position goes in a LOW-specificity rule placed before
+   the transition block (the transition's absolute must still win); z-index
+   in a deliberately over-specific one, since the transition rules below set
+   z-index 0/1 on entering/leaving entries (pop variants included) and the
+   cover has to stay above the bar's 2 through both. */
+fjs-page-entry[data-covers-bar] { position: relative; }
+fjs-page-entry[data-covers-bar][data-covers-bar][data-covers-bar] { z-index: 3; }
 /* Each history entry mounts its own shell inside the host (Flutter does
    the same per Navigator route). Stretch that instance so a bottom tabBar
    stays pinned and the shell <scroll-view> is the one that scrolls. */
@@ -174,17 +195,20 @@ scroll-view[direction="horizontal"], list-view[direction="horizontal"] {
   overflow-y: hidden;
 }
 
+/* scale (0-1) arrives as --fjs-safe-scale from the FjsSafeArea component;
+   an inline padding-* in the author's style beats these rules, which is the
+   "explicit padding replaces the inset" contract (Flutter: declaresPadding) */
 safe-area {
-  padding-top: env(safe-area-inset-top, 0px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-  padding-left: env(safe-area-inset-left, 0px);
-  padding-right: env(safe-area-inset-right, 0px);
+  padding-top: calc(env(safe-area-inset-top, 0px) * var(--fjs-safe-scale, 1));
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) * var(--fjs-safe-scale, 1));
+  padding-left: calc(env(safe-area-inset-left, 0px) * var(--fjs-safe-scale, 1));
+  padding-right: calc(env(safe-area-inset-right, 0px) * var(--fjs-safe-scale, 1));
 }
 /* edges="top bottom": only the named edges take their inset (Flutter's
    SafeArea(top:, bottom:, …) — widgets are built from the same attribute) */
 safe-area[edges] { padding: 0; }
-safe-area[edges~="top"] { padding-top: env(safe-area-inset-top, 0px); }
-safe-area[edges~="bottom"] { padding-bottom: env(safe-area-inset-bottom, 0px); }
+safe-area[edges~="top"] { padding-top: calc(env(safe-area-inset-top, 0px) * var(--fjs-safe-scale, 1)); }
+safe-area[edges~="bottom"] { padding-bottom: calc(env(safe-area-inset-bottom, 0px) * var(--fjs-safe-scale, 1)); }
 safe-area[edges~="left"] { padding-left: env(safe-area-inset-left, 0px); }
 safe-area[edges~="right"] { padding-right: env(safe-area-inset-right, 0px); }
 

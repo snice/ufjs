@@ -84,6 +84,11 @@ interface PageInstance {
 }
 
 export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
+  if (options.tabBar) {
+    // constitution V: ignoring an option quietly looks like a bug. The
+    // surface component is a VDOM one; a vapor bar needs its own surface.
+    console.warn('[fjs] tabBar is not supported with enableVapor yet — ignored (specs/210)');
+  }
   const router: HistoryRouter = createHistoryRouter(options as unknown as HistoryRouterOptions);
   const appContext: VaporAppContext = {
     components: { ...options.components },

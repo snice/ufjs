@@ -68,6 +68,10 @@ interface FjsSafeAreaProps extends FjsContainerProps {
    * `"top bottom"`… Omitted means all four (SafeArea's default). A navbar
    * takes `top`, a bottom bar `bottom`. */
   edges?: string;
+  /** 0–1 (default 1): take only this fraction of each inset — a floating
+   * bar that sits lower than the full home-indicator strip. A padding the
+   * style declares on a side replaces the inset there. */
+  scale?: number;
 }
 
 interface FjsDefaultSlots {

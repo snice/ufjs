@@ -8,12 +8,16 @@ import { createFjsApp } from 'fjs/app';
 import { routes } from 'fjs/pages';
 import { plugins } from 'fjs/plugins';
 import Shell from './Shell.vue';
+import TabBar from './components/TabBar.vue';
 
 createFjsApp({
   plugins,
   routes,
   transition: 'fjs-slide',
   shell: Shell,
+  // 全局 tabBar（specs/210）：整个应用一份，只在 tab 页（tab group）显示；
+  // mp 端忽略（微信原生 tabBar 照旧）
+  tabBar: { component: TabBar },
   setup(app) {
     app.config.errorHandler = (err: unknown, _i: unknown, info: string) => {
       console.log('[vue-error]', info, String(err));

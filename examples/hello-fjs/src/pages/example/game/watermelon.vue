@@ -1,5 +1,5 @@
 <route>
-{"title": "合成大西瓜", "scroll": false, "group": "交互游戏", "desc": "canvas 2d + 手写圆形刚体，两个一样的水果碰到就合成更大的"}
+{"title": "合成大西瓜", "scroll": false, "tabBar": false, "group": "交互游戏", "desc": "canvas 2d + 手写圆形刚体，两个一样的水果碰到就合成更大的；全屏页不显示 tabBar（specs/210）"}
 </route>
 
 <script setup lang="ts">
