@@ -40,6 +40,19 @@ body {
 #app > fjs-tabbar-host {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
 }
+/* Global components (specs/211): a transparent full-area layer over the
+   pages. It must not eat events — pointer-events:none on the host, and the
+   components' own elements turn it back on, so only they react. z-index 4
+   clears the pushed page's 3 (the layer covers pushes, like on Flutter) and
+   stays under page modals (z-index 1000+) so a dialog mask covers it. */
+#app > fjs-global-host {
+  position: absolute; inset: 0; z-index: 4; pointer-events: none;
+  /* a docked ball hangs half off the edge: clip it instead of growing a
+     horizontal scrollbar */
+  overflow: hidden;
+}
+#app > fjs-global-host * { pointer-events: auto; }
+#app > fjs-global-host .fjs-global-surface { pointer-events: none; }
 /* A pushed (non-tab) page covers the bar, as a pushed route covers the
    TabGroup on Flutter. position goes in a LOW-specificity rule placed before
    the transition block (the transition's absolute must still win); z-index

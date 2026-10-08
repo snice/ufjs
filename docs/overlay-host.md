@@ -165,3 +165,10 @@ app 宿主里的元素 `isConnected` 为 true（body 语义）。
 | `packages/flutter_fjs/test/app_overlay_host_test.dart` | app 宿主不被盖、只画一次、返回拦截 |
 | `packages/fjs-runtime/test/vue_overlay_pseudo.test.ts` | hoist 与模态判定测试 |
 | `packages/flutter_fjs/test/overlay_host_test.dart` | 锚定、转场跟随、返回拦截测试 |
+
+## 附：全局组件层不是 overlay 宿主（specs/211）
+
+`createFjsApp({ globalComponents })` 的根是 `fjs-global-host`（`__global`），由
+`FjsAppOverlayHost` 画在 Navigator 之上、`__appOverlay` 根之下，复用同一套「盒子绘制处命中、
+空白下穿」。区别：它**不计入 `fjsAppOverlayHoldsBack`**（始终可见，不能拦返回），且在页面模态遮罩
+出现时由 JS 侧整体隐藏让位。见 [routing.md](routing.md#全局组件specs211)。

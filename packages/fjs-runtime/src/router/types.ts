@@ -4,6 +4,7 @@
 // aliases it to the right one, so a page never knows which platform it is
 // running on.
 import type { Component } from '@vue/runtime-core';
+import type { GlobalComponentEntry } from '../app/global-components';
 
 export interface RouteMeta {
   /** Title shown by the app shell / navigation bar. */
@@ -141,6 +142,11 @@ export interface RouterOptions {
    * the mini program build, which keeps the native tabBar generated from
    * `meta.tab`. */
   tabBar?: TabBarOptions;
+  /** Global components (specs/211): Vue SFCs mounted once, above every page
+   * (and above a pushed page), shown on all routes unless `include` /
+   * `exclude` narrow it. Consumed by createFjsApp; ignored on the mini
+   * program build and with enableVapor (warned). */
+  globalComponents?: GlobalComponentEntry[];
   /** Where to start. Default '/'. */
   initial?: string;
   /** Load every page's code in idle time once the first page has settled

@@ -10,9 +10,10 @@ import '../router/flutter-vdom';
 // the global tab bar (specs/210) mounts through the same renderer, into the
 // tab bar host root the base view docks (the TabGroup)
 import { createApp as createVueApp } from '../vue/renderer';
-import { createTabBarHost } from '../vue/host-ops';
+import { createGlobalHost, createTabBarHost, modalMaskCount, viewportSize } from '../vue/host-ops';
 import type { Router } from '../router/types';
 import { FjsTabBarSurface, tabBarItems } from './tabbar';
+import { FjsGlobalSurface, normalizeGlobalComponents } from './global-components';
 import { createFjsCanvas } from '../components/canvas';
 // the inner-canvas surface (specs/185): registered by whoever registers the
 // canvas component, not by the element layer
@@ -63,6 +64,9 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
     // constitution V: ignoring an option quietly looks like a bug
     console.warn('[fjs] tabBar is not supported with enableVapor yet — ignored (specs/210)');
   }
+  if (options.enableVapor && options.globalComponents?.length) {
+    console.warn('[fjs] globalComponents is not supported with enableVapor yet — ignored (specs/211)');
+  }
   // enableVapor (specs/166/167): no per-page Vue app. The built-in component
   // set — what onCreateApp registers on each page's app in the vdom path —
   // and the app's own components resolve through one vapor app context;
@@ -106,6 +110,7 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
     onCreateApp: configureApp,
   });
   installTabBar(options, router, configureApp);
+  if (!options.enableVapor) installGlobalComponents(options, router, configureApp);
   return {
     router,
     mount() {
@@ -141,6 +146,31 @@ function installTabBar(
   // the same provides a page app gets: the bar's component may useRouter() /
   // useRoute() (the module fallback would answer too, but pages get the
   // injected pair — keep the bar identical)
+  app.provide(ROUTER_KEY, router);
+  app.provide(ROUTE_KEY, router.currentRoute);
+  configureApp(app);
+  app.mount(root);
+}
+
+/** specs/211: global components — ONE Vue app (the page renderer) in a
+ * dedicated `__global` root that FjsApp paints above the Navigator, so a
+ * pushed page does not cover it. The layer yields to page modals by hiding
+ * while a mask is up: it is above them in the widget tree, but a dialog's
+ * mask must still cover the ball. */
+function installGlobalComponents(
+  options: FjsAppOptions,
+  router: Router,
+  configureApp: (app: App) => void,
+): void {
+  const items = normalizeGlobalComponents(options.globalComponents);
+  if (items.length === 0) return;
+  const root = createGlobalHost();
+  const app = createVueApp(FjsGlobalSurface, {
+    router,
+    items,
+    modalUp: () => modalMaskCount.value > 0,
+    size: () => viewportSize.value,
+  });
   app.provide(ROUTER_KEY, router);
   app.provide(ROUTE_KEY, router.currentRoute);
   configureApp(app);

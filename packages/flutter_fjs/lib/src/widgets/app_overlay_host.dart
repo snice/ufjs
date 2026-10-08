@@ -38,7 +38,13 @@ class FjsAppOverlayHost extends StatelessWidget {
       listenable: engine,
       builder: (context, _) {
         final tree = engine.tree;
+        // global components (specs/211) first, so a teleported app-level
+        // float (a dialog) paints over a floating ball, not under it. The
+        // global root never counts for fjsAppOverlayHoldsBack: it is always
+        // visible and must not hold the back press.
         final ids = [
+          for (final id in tree.rootChildren)
+            if (tree.node(id)?.props['__global'] == true) id,
           for (final id in tree.rootChildren)
             if (tree.node(id)?.props['__appOverlay'] == true) id,
         ];

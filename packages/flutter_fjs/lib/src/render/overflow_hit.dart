@@ -15,7 +15,9 @@
 // normal walk cannot reach a registered box (an ancestor's bounds cut it
 // off), the scope hit-tests that box directly, with its full paint
 // transform. Where the normal walk CAN reach the box, nothing changes, so
-// z-order and everything the page drew over the box behave as before.
+// z-order and everything the page drew over the box behave as before. Among
+// several unreachable boxes the topmost in PAINT order (not attach order)
+// wins.
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
@@ -42,11 +44,22 @@ class RenderFjsOverflowHitScope extends RenderProxyBox {
   bool hitTest(BoxHitTestResult result, {required Offset position}) {
     var hit = hitTestChildren(result, position: position);
     if (hit) result.add(BoxHitTestEntry(this, position));
-    // later registrations were attached later, which is paint order for
-    // siblings: walk them topmost-first and stop at the first box hit
-    for (final target in _targets.reversed) {
-      if (!target.attached || !target.hasSize) continue;
-      if (_reachable(target, position)) continue;
+    // Candidates: boxes the normal walk could not reach. They are offered the
+    // pointer topmost-first, and "topmost" is PAINT order — tree order among
+    // siblings — not attach order. Attach order only matches while nothing
+    // is ever shown or re-inserted later: a mask toggled on after the items
+    // it sits under attaches last, and used to win every hit over them.
+    final candidates = <_RenderOverflowHitTarget>[
+      for (final target in _targets)
+        if (target.attached &&
+            target.hasSize &&
+            !_reachable(target, position))
+          target,
+    ];
+    if (candidates.length > 1) {
+      candidates.sort((a, b) => _paintOrder(b, a));
+    }
+    for (final target in candidates) {
       final hitHere = result.addWithPaintTransform(
         transform: target.getTransformTo(this),
         position: position,
@@ -58,6 +71,41 @@ class RenderFjsOverflowHitScope extends RenderProxyBox {
       }
     }
     return hit;
+  }
+
+  /// Orders two targets by paint order: negative when [a] paints below [b].
+  /// Walks both up to their lowest common ancestor and compares the two
+  /// branches' positions among that ancestor's children (a container's child
+  /// order is its paint order — stackOutOfFlow already sorts by z-index).
+  /// A target nested inside the other paints above it.
+  int _paintOrder(RenderObject a, RenderObject b) {
+    if (identical(a, b)) return 0;
+    List<RenderObject> chain(RenderObject o) {
+      final out = <RenderObject>[];
+      for (RenderObject? n = o; n != null; n = n.parent) {
+        out.add(n);
+        if (identical(n, this)) break;
+      }
+      return out.reversed.toList(); // scope first
+    }
+
+    final ca = chain(a);
+    final cb = chain(b);
+    var i = 0;
+    while (i < ca.length && i < cb.length && identical(ca[i], cb[i])) {
+      i++;
+    }
+    if (i == ca.length) return -1; // a is an ancestor of b: b paints above
+    if (i == cb.length) return 1;
+    if (i == 0) return 0; // unrelated trees: keep registration order
+    final common = ca[i - 1];
+    var indexA = -1, indexB = -1, n = 0;
+    common.visitChildren((child) {
+      if (identical(child, ca[i])) indexA = n;
+      if (identical(child, cb[i])) indexB = n;
+      n++;
+    });
+    return indexA.compareTo(indexB);
   }
 
   /// Whether the normal walk gets down to [target]: every box between it

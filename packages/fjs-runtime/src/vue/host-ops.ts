@@ -9,7 +9,7 @@
 // vapor app (enableVapor) can ship without the engine. renderer.ts re-exports
 // this module unchanged — every existing import keeps working.
 
-import type { RendererOptions } from '@vue/runtime-core';
+import { shallowRef, type RendererOptions } from '@vue/runtime-core';
 import { adoptElement, allocIds, create, forgetHandlers, forgetHandlersOf, forgetElementStyles, insert, remove, setHoverStyle, setText, setProps, setConstProps, setStyle, setElementStyleBridge, createRoot, registerSystemHandler, setConnectedResolver, setOffsetParentResolver, setParentResolver, setAttributeSink, currentTapDispatch, type Element, type EventPayload } from '../ui/element';
 import { transitionClassesOf } from './transition-classes';
 import { lastPointer } from '../ui/geometry';
@@ -43,6 +43,15 @@ export type { HostNode };
 // subscribed via registerSystemHandler, not a template `@xxx`.
 const EVENT_VIEWPORT_CHANGED = 33;
 
+/** The host's logical window size, reactive (specs/211). The global layer is
+ * a box with no in-flow content, which Flutter lays out at height 0 — its
+ * `%` / inset sizes resolve against that 0, so a component could not even
+ * measure its coordinate space, and every child sits "outside its parent"
+ * (hit through the deferred overflow scope, which now orders by paint order).
+ * An explicit px size from here gives the layer a real box. Zero until the
+ * host reports one. */
+export const viewportSize = shallowRef({ width: 0, height: 0 });
+
 registerSystemHandler(EVENT_VIEWPORT_CHANGED, (_id, payload) => {
   let wire: { width?: unknown; height?: unknown };
   try {
@@ -52,6 +61,7 @@ registerSystemHandler(EVENT_VIEWPORT_CHANGED, (_id, payload) => {
   }
   if (typeof wire.width === 'number' && typeof wire.height === 'number') {
     styleEngine.setViewport(wire.width, wire.height);
+    viewportSize.value = { width: wire.width, height: wire.height };
   }
 });
 
@@ -192,6 +202,23 @@ function ensureAppOverlayHost(): HostNode {
 // bar the way it paints above any page content. Nothing here touches the
 // overlay machinery — no hoisting, no back guard, no modal census.
 
+/** The global components host root (specs/211): a parentless root FjsApp
+ * paints above the Navigator (widgets/app_overlay_host.dart), one per app.
+ * Not an `__appOverlay` root: that one holds the system back press while
+ * any child is visible, and a floating ball is always visible. */
+export function createGlobalHost(): HostNode {
+  const root = createRoot('fjs-global-host');
+  childrenOf.set(root.id, []);
+  parentOf.set(root.id, null);
+  // the root is a column that shrinks to its content; with only absolute
+  // children that is height 0 (width stretches), so a component measuring
+  // its coordinate space read an empty box and clamped against a made-up
+  // height. Fill the Positioned.fill slot explicitly.
+  setProps(root, { __global: true, style: { width: '100%', height: '100%' } });
+  devtoolsStructuralVersion.value++;
+  return root;
+}
+
 /** A fresh tab bar host root; one per mounting app (specs/210). Rendered by
  * the base view because a root without `__navKey` falls back to navKey 0,
  * and skipped as page content there — FjsView routes `__tabBar` roots to
@@ -318,7 +345,23 @@ function hoistIfNeeded(el: Element, style: Record<string, unknown>): void {
 // opt-in marker would need every third-party popup wrapped to carry it.
 
 /** Hoisted-or-teleported element ids whose last resolved style is a mask. */
-const modalMasks = new Set<number>();
+/** How many masks are up, reactive: the global components layer (specs/211)
+ * sits ABOVE the Navigator on Flutter, hence above every page modal, and
+ * yields to them by hiding itself while this is non-zero. */
+export const modalMaskCount = shallowRef(0);
+class MaskSet extends Set<number> {
+  override add(id: number): this {
+    super.add(id);
+    modalMaskCount.value = this.size;
+    return this;
+  }
+  override delete(id: number): boolean {
+    const had = super.delete(id);
+    modalMaskCount.value = this.size;
+    return had;
+  }
+}
+const modalMasks = new MaskSet();
 /** Overlay host id → the `modal` value last written to it. */
 const hostModal = new Map<number, boolean>();
 
@@ -782,6 +825,7 @@ if (hasNativeHost) {
     };
     if (typeof wire.width === 'number' && typeof wire.height === 'number') {
       styleEngine.setViewport(wire.width, wire.height);
+      viewportSize.value = { width: wire.width, height: wire.height };
     }
   } catch {
     // older hosts predate the handler — the fallback viewport stands

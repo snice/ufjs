@@ -9,6 +9,7 @@ import { routes } from 'fjs/pages';
 import { plugins } from 'fjs/plugins';
 import Shell from './Shell.vue';
 import TabBar from './components/TabBar.vue';
+import FloatingBall from './components/FloatingBall.vue';
 
 createFjsApp({
   plugins,
@@ -18,6 +19,9 @@ createFjsApp({
   // 全局 tabBar（specs/210）：整个应用一份，只在 tab 页（tab group）显示；
   // mp 端忽略（微信原生 tabBar 照旧）
   tabBar: { component: TabBar },
+  // 全局组件（specs/211）：悬浮球，整个应用一份、盖在所有页面之上（含 push
+  // 的二级页）；游戏页排除，演示 exclude。mp 端忽略
+  globalComponents: [{ component: FloatingBall, exclude: ['/example/game/*'] }],
   setup(app) {
     app.config.errorHandler = (err: unknown, _i: unknown, info: string) => {
       console.log('[vue-error]', info, String(err));

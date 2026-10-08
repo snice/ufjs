@@ -919,6 +919,7 @@ createApp(App).mount(flutterRoot('scroll-view'));
   中间那块的 `flexGrow` 才有东西可分。示例见 `examples/hello-fjs`。
   要 tabBar 跨页常驻、全局唯一（push 二级页也不消失），用 `createFjsApp` 的
   `tabBar` 选项把组件挂到页面树之外——见 [routing.md](routing.md#全局-tab-bar-specs210)。
+  应用级常驻浮层（悬浮球等）用 `globalComponents`，见 [routing.md](routing.md#全局组件specs211)。
 
 ## 页面：`onPageSettled`
 

@@ -59,6 +59,10 @@ class FjsView extends StatefulWidget {
   /// bar's own Vue app, docked by the BASE view below the page area — the
   /// TabGroup (tab pages above, bar below). A root without `__navKey` would
   /// otherwise fall back to navKey 0 and paint as page content.
+  /// The global components root (specs/211): painted by FjsApp above the
+  /// Navigator (widgets/app_overlay_host.dart), never as page content.
+  static bool rootIsGlobal(MirrorNode node) => node.props['__global'] == true;
+
   static bool rootIsTabBar(MirrorNode node) => node.props['__tabBar'] == true;
 
   static bool rootParked(MirrorNode node) {
@@ -147,7 +151,9 @@ class _FjsViewState extends State<FjsView> with WidgetsBindingObserver {
           // the app overlay root (specs/136) is painted by FjsApp above the
           // Navigator, never inside a page — the base page would double-
           // paint it (its navKey is the fallback 0)
-          if (FjsView.rootIsAppOverlay(node)) continue;
+          if (FjsView.rootIsAppOverlay(node) || FjsView.rootIsGlobal(node)) {
+            continue;
+          }
           // the tab bar root (specs/210) floats at the bottom instead: the
           // TabGroup — the page area keeps its full height and the bar is a
           // Positioned layer over it. A pushed route covers the whole

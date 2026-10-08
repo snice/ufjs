@@ -1,4 +1,15 @@
 {
   "//": "icons this app names at runtime instead of in a template — the module's prepare hook cannot scan those",
-  "icons": ["code", "api","experiment", "info", "check"]
+  "icons": [
+    "api",
+    "check",
+    "close",
+    "code",
+    "experiment",
+    "home",
+    "info",
+    "menu",
+    "moon",
+    "undo"
+  ]
 }

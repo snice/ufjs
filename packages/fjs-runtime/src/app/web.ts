@@ -30,6 +30,7 @@ import { installFjsWeb } from '../web/index';
 import { createVaporWebApp } from './web-vapor';
 import { applyPlugins, type FjsPlugin } from './plugin';
 import { FjsTabBarSurface, tabBarItems } from './tabbar';
+import { FjsGlobalSurface, normalizeGlobalComponents } from './global-components';
 import type {
   NavKind,
   Navigation,
@@ -307,6 +308,8 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
       // app never renders children here, so that foreign content survives
       // every page swap — the TabGroup shape, same as the Dart side.
       options.tabBar ? h('fjs-tabbar-host') : null,
+      // specs/211: the global components layer — same trick, its own Vue app
+      options.globalComponents?.length ? h('fjs-global-host') : null,
     ],
   };
 
@@ -460,6 +463,19 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
     barApp.mount(host as never);
   };
 
+  /** specs/211: global components, one Vue app into `fjs-global-host`. */
+  const installGlobalComponents = (): void => {
+    const items = normalizeGlobalComponents(options.globalComponents);
+    const host = document.querySelector('fjs-global-host');
+    if (items.length === 0 || !host) return;
+    const globalApp = createVueApp(FjsGlobalSurface, { router, items });
+    installFjsWeb(globalApp);
+    globalApp.use(vueRouter);
+    applyPlugins(globalApp, options.plugins);
+    options.setup?.(globalApp);
+    globalApp.mount(host as never);
+  };
+
   return {
     router,
     vueApp,
@@ -472,6 +488,7 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
       }
       vueApp.mount(el as never);
       installTabBar();
+      installGlobalComponents();
     },
   };
 }

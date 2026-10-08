@@ -184,6 +184,47 @@ tabbar 不参与页面栈。
 - `enableVapor` 模式暂不支持（vapor 包不含 VDOM 渲染器，surface 进不去），
   传了会 warn 并忽略。
 
+## 全局组件（specs/211）
+
+悬浮球、客服入口、全局播放条这类**应用级常驻 UI**：写进 shell 每页各挂一份，
+状态不跨页；用 `position: fixed` 在 App 端又被 hoist 进页面级 overlay 宿主，随页面走。
+`createFjsApp` 的 `globalComponents` 把一个 Vue SFC 挂成**全应用唯一一份**：
+
+```ts
+createFjsApp({
+  routes,
+  globalComponents: [
+    Toolbox,                                   // 简写：所有 route 显示
+    {
+      component: FloatingBall,
+      include: ['/', '/comp/*'],               // 缺省 = 所有 route
+      exclude: ['/example/game/*'],            // 优先于 include
+    },
+  ],
+});
+```
+
+- **匹配对象是 `route.path`**：字符串精确匹配；`'/a/*'` 前缀通配（含 `/a` 本身）；`RegExp` 测 path。
+- **单例、保状态**：路由不命中时只 `display:none`，**不卸载**——悬浮球的位置和展开态走一圈
+  被排除的页面回来仍在。
+- **层序**：在页面树之上，**push 的二级页也盖不住它**（Flutter 在 Navigator 之上，web 在
+  `fjs-page-host` 之上）；页面模态弹层（vant Popup / Dialog 的遮罩）盖住它——web 靠
+  z-index（全局层 4，模态 1000+），App 端全局层本身在模态之上，所以 JS 侧读
+  `modalMaskCount`（overlay 宿主已有的遮罩判定）在有遮罩时让位隐藏。结果两端一致。
+- **事件穿透**：全局层本身不接事件，只有组件自己的元素响应。web：`fjs-global-host` 与包装层
+  `pointer-events:none`、后代 `auto`，**组件根节点自己要写 `pointer-events:none`**（否则铺满的根会挡住页面）；
+  Flutter：命中只发生在盒子绘制处（同 overlay 宿主），空白处落到页面，组件根不用写。
+  「点空白收起」这类有意拦截，由组件在展开期间自己铺一层遮罩。
+- **尺寸**：全局层没有流内内容，Flutter 把它排成高度 0，`100%` / inset 全塌，组件量不到自己的坐标空间。
+  所以框架在 Flutter 上给每个组件的包装层**显式 px 宽高**（取宿主视口，`viewportSize`）；组件自己的根也建议写
+  px（hello-fjs 的 FloatingBall 用 `fjs.viewport.get` 的值），不要依赖 `100%`。
+- **命中顺序**：高度为 0 的父级会让子元素落入 `FjsOverflowHitScope` 的延迟命中。它曾按**挂载先后**排序，
+  后显示的遮罩会压住先挂载的扇形项；现已改为按**绘制顺序**（树序 / z-index）。
+- **不拦返回**：全局根是 `__global`，不是 `__appOverlay`，不进 `fjsAppOverlayHoldsBack`。
+- 组件内可 `useRouter()` / `useRoute()`；组件坐标系 = 整个 App 区域（包装层 absolute 铺满）。
+- 小程序忽略该选项；`enableVapor` 下 warn 后忽略。
+- 示例：hello-fjs 的 `FloatingBall.vue`（拖拽吸附 + 扇形菜单）。
+
 ## 转场动画
 
 转场是**按这次导航算的**，不是一个全局常量。谁在动谁说了算：push / replace 看
