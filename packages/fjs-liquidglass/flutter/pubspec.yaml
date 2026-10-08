@@ -1,0 +1,20 @@
+name: fjs_liquidglass
+description: "Flutter side of the fjs module liquidglass: the glass shader surface behind <glass-surface />."
+version: 0.0.1
+publish_to: 'none'
+
+environment:
+  sdk: ^3.5.4
+  # liquid_glass_widgets needs Flutter 3.41; flutter_fjs itself still builds
+  # on 3.38, so only an app that links this module takes the higher floor
+  flutter: ">=3.41.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_fjs: ^0.1.4
+  liquid_glass_widgets: ^1.11.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

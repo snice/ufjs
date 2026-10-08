@@ -9,7 +9,13 @@ import { routes } from 'fjs/pages';
 import { plugins } from 'fjs/plugins';
 import Shell from './Shell.vue';
 import TabBar from './components/TabBar.vue';
+import ClassicTabBar from './components/ClassicTabBar.vue';
+import { registerTabBarStyle } from '@ufjs/liquidglass';
 import FloatingBall from './components/FloatingBall.vue';
+
+// tabbar 风格（specs/212）：liquid-glass 由模块自注册，classic 是本应用的
+// 原有外观；「关于」页切换
+registerTabBarStyle('classic', ClassicTabBar);
 
 createFjsApp({
   plugins,

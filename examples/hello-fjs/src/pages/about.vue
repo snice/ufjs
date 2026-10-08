@@ -6,8 +6,14 @@
 // 关于 tab：这个示例本身的说明。
 import Panel from '@/components/Panel.vue';
 import { totalPages } from '@/catalog';
+import { useTabBarStyle, type TabBarStyleName } from '@/tabBarStyle';
 
 const total = totalPages();
+const { style, set } = useTabBarStyle();
+const styleOptions: { name: TabBarStyleName; label: string }[] = [
+  { name: 'liquid-glass', label: 'Liquid Glass' },
+  { name: 'classic', label: 'Classic' },
+];
 </script>
 
 <template>
@@ -18,6 +24,20 @@ const total = totalPages();
         同一份源码跑两个平台：Flutter 上每个路由是一个原生 Navigator 页面（手势返回、转场都是平台自带的），
         浏览器上是 vue-router + DOM 标签适配。
       </text>
+    </Panel>
+
+    <Panel title="Tabbar 风格" desc="底部悬浮 tabbar 的外观，即时生效（specs/212）">
+      <view class="seg">
+        <view
+          v-for="opt in styleOptions"
+          :key="opt.name"
+          class="seg-item"
+          :class="{ on: style === opt.name }"
+          @tap="() => set(opt.name)"
+        >
+          <text class="seg-label" :class="{ on: style === opt.name }">{{ opt.label }}</text>
+        </view>
+      </view>
     </Panel>
 
     <Panel title="怎么跑">
@@ -38,6 +58,29 @@ const total = totalPages();
 </template>
 
 <style scoped>
+.seg {
+  flex-direction: row;
+  background-color: var(--fjs-page);
+  border-radius: 8px;
+  padding: 2px;
+}
+.seg-item {
+  flex-grow: 1;
+  align-items: center;
+  padding: 7px 0;
+  border-radius: 6px;
+}
+.seg-item.on {
+  background-color: var(--fjs-card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+.seg-label {
+  font-size: 13px;
+  color: var(--fjs-muted);
+}
+.seg-label.on {
+  color: var(--fjs-primary);
+}
 .page {
   padding-bottom: 24px;
 }

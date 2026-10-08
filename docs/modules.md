@@ -587,3 +587,27 @@ context，未挂载为 null，只暴露 context 不暴露 State）。没接线�
 - **troubleshooting**：工具包的 analyzer 对 Dart SDK 有下限（当前
   ^3.11），SDK 太旧时工具 `dart pub get` 会响亮失败；`fjs autoimport
   --force` 重算缓存；dump 与真实包内容漂移（改包不换版本）也用它兜底。
+
+## 范例：带第三方 pub 依赖的 widget 模块（`@ufjs/liquidglass`，specs/212）
+
+`packages/fjs-liquidglass` 是 iconmind 之外的第二个完整范例：一个叶子 widget
+（`<glass-surface />`）+ 纯 Vue 的 tabBar 风格组件 + 风格注册表。值得抄的几点：
+
+- **Dart 依赖限在模块自己的 pubspec**：`flutter/pubspec.yaml` 依赖
+  `liquid_glass_widgets`，`flutter_fjs` 核心不动。传递依赖由宿主的 `pub get` 解析，
+  autolink 不需要任何额外配置。
+- **模块可以抬高宿主下限**：该包要求 Flutter ≥ 3.41（模块 pubspec 里写
+  `flutter: ">=3.41.0"`，低版本宿主 `pub get` 会响亮失败）和 **iOS 部署目标 ≥ 15**。
+  后者目前要**手动**满足——宿主 `.fjs/flutter/ios/Podfile` 取消注释并写
+  `platform :ios, '15.0'`，`Runner.xcodeproj` 的 `IPHONEOS_DEPLOYMENT_TARGET` 同步。
+  否则 `pod install` 报 `requires a higher minimum iOS deployment version`。
+  清单字段 `fjs.flutter.minIos` + `fjs host sync` 自动写入是后续 spec（宿主
+  目录被重新生成时手改会丢）。
+- **builder 不负责排版**：`ComponentBuilder` 收到 `(context, node, children,
+  dispatch)`，CSS 的 flex 方向 / gap / align 由渲染器的 view adapter 持有。需要
+  排版的 widget 要么做成叶子（页面绝对定位 + 兄弟节点叠加，glass-surface 的做法），
+  要么在 Dart 里自己重做布局。
+- **测试不依赖 native 引擎**：把 `register` 里的 builder 暴露成
+  `@visibleForTesting` 的 getter，用 `testWidgets` 直接驱动；`FjsEngine()` 需要
+  host dylib，会在没编 native 时失败。
+- **mp**：不声明 `widgets.*.mp` 即在小程序不存在，见 miniprogram.md。

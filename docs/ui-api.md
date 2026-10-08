@@ -184,6 +184,36 @@ height)`。每帧重画的页面按 web 的常规写法先清一次即可。
 命中测试用触点的 **`offsetX` / `offsetY`**（相对本元素左上角），
 不要用 `clientX` / `clientY`（那是页面坐标）。
 
+### glass-surface（模块 `@ufjs/liquidglass`，specs/212）
+
+一块玻璃层（模糊 + 可选折射）。**不是内置标签**，要先装：
+
+```bash
+pnpm add @ufjs/liquidglass
+```
+
+它是**叶子元素**：不排版子节点，用法是 `position: absolute` 铺满容器、内容作为它的
+兄弟节点画在上面（registry builder 拿不到 CSS flex 方向，做成容器会丢 `flex-direction`）：
+
+```vue
+<view class="capsule">  <!-- flex-direction: row; border-radius: 26px -->
+  <glass-surface class="fill" :radius="26" :blur="20" :refraction="0.6" />
+  <view class="item">…</view>
+</view>
+```
+
+| prop | 类型 | 默认 | 含义 |
+|---|---|---|---|
+| `radius` | number | 0 | 玻璃圆角（px），**与同元素 CSS `border-radius` 写同一个数** |
+| `blur` | number | 20 | 背景模糊半径（Flutter 端按 ×0.7 映射到材质的 `frost`，同一个数两端磨砂量一致） |
+| `tint` | string | iOS 27 材质自带（亮 `#F8F8F8` 53% / 暗白 12%） | 玻璃底色 |
+| `refraction` | number 0–1 | 0 | 边缘折射；0 = 纯毛玻璃 |
+| `dark` | boolean | false | 明暗外观 |
+| `pressed` | boolean | false | 按下态（加亮） |
+
+无事件。两端差异与降级见 [css-compat.md](css-compat.md)「玻璃」。tabBar 风格见
+[routing.md](routing.md)。
+
 ### web-view（模块 `@ufjs/webview`）
 
 嵌一张网页。**它不是内置标签**，要先装：

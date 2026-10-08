@@ -4,6 +4,7 @@ packages:
   - 'packages/fjs'
   - 'packages/fjs-runtime'
   - 'packages/fjs-iconmind'
+  - 'packages/fjs-liquidglass'
   - 'packages/fjs-webview'
   - 'packages/fjs-webgl'
   - 'packages/fjs-spine'

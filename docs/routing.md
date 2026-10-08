@@ -174,13 +174,22 @@ tabbar 不参与页面栈。
   `<safe-area edges="bottom">`），最后一行才不会被胶囊盖住。
 - **外观完全归应用的组件**：框架只提供挂载与状态。hello-fjs 的演示是 App Store
   悬浮胶囊——半透明底色，web 端加 `backdrop-filter` 毛玻璃；Flutter 端没有
-  模糊 tag，靠透明度近似（要用真毛玻璃就得像 iconmind 那样写一个带
-  `BackdropFilter` 的模块，另立 spec）。
+  模糊 tag，靠透明度近似。真玻璃见下面「tabBar 风格」。
 - bar 不在任何页面树里：它自己是一个 Vue app——web 挂在 `#app` 里
   `fjs-page-host` 之后的 `fjs-tabbar-host` 上，Flutter 挂在专用根
   `fjs-tab-bar-host` 上、由基页 FjsView 停靠。所以它够不着任何页面根上的
   CSS 变量，hello-fjs 的 TabBar 在自己根节点挂了同一份主题变量（读同一个
   useTheme 单例）。
+- **tabBar 风格（specs/212）**：同一个 tabBar 可以有多种外观并运行时切换。
+  风格 = 一个 Vue 组件，契约是 props `{ tabs, active, dark?, accent? }`、事件
+  `select(path)`、具名插槽 `item`（每一项的内容）；`@ufjs/liquidglass` 提供
+  `registerTabBarStyle(name, component)` / `getTabBarStyle(name)` 注册表，内置
+  `liquid-glass`（`<glass-surface>` 玻璃胶囊 + 选中滑块）。分发在**应用层**：
+  hello-fjs 的 `TabBar.vue` 按「关于」页选的风格名取组件、自己调
+  `router.replace`（风格组件不碰 router，避免模块与应用各持一份单例）；
+  `createFjsApp` 的 `tabBar` 选项与本节契约不变。风格状态只在 Web 用
+  `localStorage` 持久化，App 端重启回默认——仓库没有 App 端键值存储原语，通用
+  storage 模块另立 spec。未知风格名 `warnOnce` 并回退 `liquid-glass`。
 - `enableVapor` 模式暂不支持（vapor 包不含 VDOM 渲染器，surface 进不去），
   传了会 warn 并忽略。
 

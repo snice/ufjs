@@ -170,7 +170,24 @@ width / height——Flutter 的 `TextSpan` 没有盒子，web 侧用 `!important
 | `transition` | ⚠️ | `transform` / `opacity` / `background-color`（实色，无背景 ↔ 有背景按透明渐入渐出）/ `border-color`（统一实线与分边、虚线都渐变）/ `color`（段落自身颜色；嵌套片段自带 color 仍瞬时）/ `width` / `height` / `padding` / `margin` 两端渐变（spec 045/073/078；简写与长手、duration/curve 同一套解析），以及绝对/固定定位盒的 `left` / `top` / `right` / `bottom`（spec 073——vant Progress 的 portion `width` 与 pivot `left` 都靠它；`FjsLength` 是 px+百分比线性对，两端插值等价于 calc() 插值，被 delegate 解析的百分比因此逐帧跟随盒子）。`color` / `border-color` 只插颜色本身，宽度 / 样式 / 分边出现与消失取终态；`padding` / `margin` 是布局属性：逐帧重排，与 web 成本一致，别在大子树上用。**App 端差异**：`transition-delay` 对 color / border-color / background-color / 尺寸 / inset / padding / margin 不生效（transform/opacity 有）；gradient 背景跳变不动画；inset 与 padding/margin 的 transitionend 不派发（width/height 照旧，由尺寸动画派发）；嵌套 text 片段自带 `color` 的过渡瞬时，web 原生渐变。页面转场用 `<Transition>`，见 [routing.md](routing.md) |
 | `<Transition>`（组件） | ⚠️ | vue-shim 里的 fjs 版（BaseTransition + 引擎类操作）：enter/leave 的 `-from/-active/-to` 类照常落地，组件库里 animation 型的 enter/leave 规则（vant 的 `van-fade-enter-active { animation: … }`）由 keyframes 引擎原生播放；transition 型的类切换（vant 弹层滑入滑出、Dialog 缩放）由 App 端按上表 `transition` 的支持范围补间。类移除时机取元素计算样式里 animation 与 transition 的「时长 + 延迟」较长者（本端没有 DOM end 事件）；`transition-*` 长写覆盖在简写之上。`v-show` 在 `<Transition>` 内走钩子（离场动画放完才 `display: none`）。`<TransitionGroup>` 两端都有增删与 FLIP 重排动画（specs/179） |
 | `animation` / `@keyframes` | ⚠️ | 引擎解析、原生执行，无逐帧桥往返；支持范围与差异见下方「动画」小节 |
-| `filter` / `backdrop-filter` | ❌ | |
+| `filter` / `backdrop-filter` | ❌ | 样式引擎不支持。要玻璃/模糊用模块 `@ufjs/liquidglass` 的 `<glass-surface>`（Flutter 着色器、web `backdrop-filter`），见下节「玻璃（liquidglass）」 |
+
+### 玻璃（liquidglass，specs/212）
+
+`<glass-surface>`（模块 `@ufjs/liquidglass`，不是内置标签）两端**取同一组参数**
+（`radius` / `blur` / `tint` / `refraction` / `dark` / `pressed`），实现不同源：
+
+| | Flutter | Web |
+|---|---|---|
+| 材质 | `liquid_glass_widgets` 的 `ios27Light` / `ios27Dark`（`dark` prop 选择）；premium 档画全（暗体、边光、旁轴透镜带），standard 档近似 | 同组体色 / 饱和度（亮 53% 白 + 210%，暗 12% 白 + 140%）的 `backdrop-filter` + 边光描边 |
+| 毛玻璃（`refraction=0`） | `liquid_glass_widgets` 的 standard 档（轻量着色器） | `backdrop-filter: blur() saturate()` |
+| 折射（`refraction>0`） | premium 档（Impeller 全管线）；Skia / web 该包自动降到 standard | Chromium：SVG `feDisplacementMap` 位移图；Safari / Firefox 降为毛玻璃并 `console.warn` 一次 |
+| 像素一致 | 不保证——折射只保证"有无"，blur / tint / radius 一致 | 同左 |
+| 平台 | iOS 模拟器已验证；Android 未验证；**ohos 未验证**（依赖包未声明该平台） | — |
+| 小程序 | 不支持（tabBar 选项与模块 widget 在 mp 构建下被忽略） | — |
+
+注意：`radius` 要与同一元素 CSS 的 `border-radius` **写成同一个数**（玻璃形状与
+CSS 阴影/装饰各画各的）。链接本模块的宿主需 Flutter ≥ 3.41、iOS 部署目标 ≥ 15。
 
 **拖动一定用 `transform: translate(...)`**，不要用 `left/top` 或 `margin`：
 前者只重绘不重排，命中测试跟着一起动。
