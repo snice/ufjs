@@ -939,6 +939,20 @@ spec 088 删掉 quickjs-ng 时留下了对比与退路缺口，补上
 - 见 [ai.md](ai.md)。明确不做：MCP resources/prompts、screencast、ufjs 仓库
   自身开发的 AI 配置（那是 AGENTS.md + `.claude/commands/` 那套）。
 
+## 微信小游戏原样移植范式（已完成 2026-10，specs/214）
+
+- ✅ hello-fjs 新增「交互游戏 / 飞机大战（微信移植）」：微信官方示例小游戏
+  874 行 JS 整体拷入（唯一非原样文件是 tinyemitter 的两行 ESM 包装），
+  `src/plane-war/wx-adapter.ts` 补出 `wx.*` / `GameGlobal` / 裸 `canvas` 全局后
+  在 fjs canvas 上直接跑，App / Web 同一份游戏码。
+- ✅ 适配层要点：canvas 包装（fjs 画布尺寸只读而游戏会赋值）、ctx 代理
+  （图片壳换 `loadCanvasImage` 句柄、原生方法绑 this、set receiver 指回原生
+  对象）、触摸 offsetX→clientX、路径重写进 public/。
+- ✅ **生命周期同微信**：离开页面（返回 / 被覆盖）即销毁——rAF 垫片对游戏帧
+  按表追踪，离开时取消挂起帧并以 gameAlive 闸门挡掉竞态逃逸的重武装；
+  重进（新挂载）`new Main()` 开全新一局（start() 自带全量 reset）。
+- 降级：音频静音、震动 no-op（ufjs 尚无音频能力，待立 spec）。
+
 ## 近期计划
 
 - **App 侧真机对拍挂账**：078/079 的示例页（过渡演示新增面板、百分比间距与

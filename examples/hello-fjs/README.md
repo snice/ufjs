@@ -107,6 +107,17 @@ web 这一端有两条路，两条都从 `src/pages` 走同一张路由表、同
   只能用直接画上屏的矢量图形：不用 Leafer 的 Text / 图片 / 分组透明度 / 交互。
   页面文件名刻意叫 `leafer-match3`：`fjs.mp.exclude` 是子串匹配，
   `match3-leafer` 会被 pixi 页那条 `example/game/match3` 一起排掉。
+- **微信小游戏原样移植**：示例页「交互游戏 / 飞机大战（微信移植）」（specs/214）——
+  微信官方示例小游戏整体拷进 `src/plane-war/minigame/`（唯一非原样文件是
+  `js/libs/tinyemitter.js` 的两行 ESM 包装，UMD 原文件为 `tinyemitter.umd.cjs`
+  字节未动），`src/plane-war/wx-adapter.ts` 补出 `wx.createCanvas /
+  createImage / onTouch* / getWindowInfo` 和 `GameGlobal` 后直接跑。fjs canvas
+  的 width/height 只读而 render.js 会赋值，适配层给的是可写包装；游戏传给
+  `drawImage` 的图片壳经 ctx 代理换成 `loadCanvasImage` 句柄。生命周期同微信：
+  离开页面（返回 / 被覆盖）即销毁——rAF 垫片按表取消游戏的挂起帧，重进就是
+  全新一局。已知降级：音频静音、震动 no-op（ufjs 暂无音频能力）。注意
+  `src/adapters/leafer/platform.ts` 的 wx 判定带 `createOffscreenCanvas` 特征
+  校验——本页的全局 `wx` 不能让 leafer 误判成小程序。
 - **分包**：`pnpm build:pages` 后 `dist/app/bundle.js` 只有 ~2.4 KB，vue + 运行时 +
   外壳都在 `shared.js` 里，每个页面 6–12 KB 按需加载。
 

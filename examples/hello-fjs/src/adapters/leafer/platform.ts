@@ -22,8 +22,6 @@
 import { Leafer, Platform, RectHelper, useCanvas } from '@leafer-ui/miniapp';
 import type { FjsCanvasApi } from 'fjs';
 
-declare const wx: unknown;
-
 /** Swallows every call. A class (not a bare Proxy target) so that Leafer's
  * `canvasPatch(context.__proto__)` finds `roundRect` on the prototype —
  * otherwise it would install roundRect on Object.prototype. */
@@ -45,7 +43,13 @@ function stubCanvas(width: number, height: number): object {
 
 let hasWx = false;
 try {
-  hasWx = typeof wx !== 'undefined' && !!wx;
+  // Feature-gate, not just presence: a ported mini-GAME also defines a
+  // `wx` global (specs/214's plane-war shim), but without the offscreen
+  // canvases the miniapp runtime provides. Treating that shim as "the real
+  // wx" would send Leafer down its miniapp path and break this page.
+  const wxLike = globalThis as { wx?: { createOffscreenCanvas?: unknown } };
+  hasWx = typeof wxLike.wx !== 'undefined' && !!wxLike.wx &&
+    typeof wxLike.wx.createOffscreenCanvas === 'function';
 } catch {
   hasWx = false;
 }
