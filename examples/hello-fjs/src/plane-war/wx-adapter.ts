@@ -228,17 +228,25 @@ function vibrateShort(): void {
   }
 }
 
-/** Pending game frames, keyed by native rAF id. The shim below passes
- * every caller through to the native rAF — but while the game is alive
- * its frames are also tracked in the map, so `disposeGame()` can cancel
- * exactly them and stop re-arming. That flag matters because of a race:
- * a pop that lands mid-frame cancels a callback the scheduler already
- * invoked, and the loop's re-arm would otherwise escape. After dispose
- * the shim simply refuses to schedule (gameAlive=false) — the escaped
- * re-arm dies at the next frame boundary; everyone else keeps a plain
- * pass-through. */
-const gameFrames = new Map<number, (t: number) => void>();
-let gameAlive = false;
+/** Pending game frames, keyed by native rAF id. Only frames that belong to
+ * the game's own loop are tracked: the shim attributes a schedule to the
+ * game when it happens INSIDE a tracked frame's callback (the loop re-arms
+ * itself, so its whole chain is attributed) or during bootGame's capture
+ * window (the loop root). Everything else — Vue's transition nextFrame,
+ * other pages — passes through the native rAF untouched: a global gate
+ * here would kill the framework's own pending frames and freeze the page
+ * leave transition mid-flight. `disposeGame()` flips every tracked entry
+ * dead and cancels it; the loop's re-arm never fires and the game stops.
+ * A cancel that lands after the frame was dequeued is covered by the
+ * entry.live check at fire time. */
+interface GameFrame {
+  live: boolean;
+  id: number;
+  wrapped: (t: number) => void;
+}
+const gameFrames = new Map<number, GameFrame>();
+let captureRoot = false;
+let inGameFrame = 0;
 let nativeCaf: ((id: number) => void) | null = null;
 
 export function installPlaneWarWx(): void {
@@ -254,19 +262,22 @@ export function installPlaneWarWx(): void {
   const caf = g.cancelAnimationFrame as (id: number) => void;
   nativeCaf = caf;
   g.requestAnimationFrame = (cb: (t: number) => void): number => {
-    if (!gameAlive) return raf(cb);
-    const entry = { id: 0 };
-    const wrapped = (t: number): void => {
-      // gameAlive is checked at FIRE time, not schedule time: a pop that
-      // lands after the scheduler dequeued this callback must not run the
-      // loop body — otherwise it re-arms through the !gameAlive
-      // pass-through below and the loop escapes disposal forever.
-      if (!gameAlive) return;
+    const owns = captureRoot || inGameFrame > 0;
+    captureRoot = false;
+    if (!owns) return raf(cb);
+    const entry: GameFrame = { live: true, id: 0, wrapped: () => {} };
+    entry.wrapped = (t: number): void => {
+      if (!entry.live) return;
       gameFrames.delete(entry.id);
-      cb(t);
+      inGameFrame++;
+      try {
+        cb(t);
+      } finally {
+        inGameFrame--;
+      }
     };
-    entry.id = raf(wrapped);
-    gameFrames.set(entry.id, wrapped);
+    entry.id = raf(entry.wrapped);
+    gameFrames.set(entry.id, entry);
     return entry.id;
   };
   g.cancelAnimationFrame = (id: number): void => {
@@ -308,7 +319,7 @@ export function attachPlaneWarCanvas(cv: FjsCanvasApi | undefined): void {
  * the dead instances' touch handlers, and clears the rAF bookkeeping. The
  * next mount boots a brand-new game via `bootGame()`. Idempotent. */
 export function disposeGame(): void {
-  gameAlive = false;
+  for (const entry of gameFrames.values()) entry.live = false;
   if (nativeCaf) for (const id of [...gameFrames.keys()]) nativeCaf(id);
   gameFrames.clear();
   touchHandlers.start.length = 0;
@@ -325,8 +336,11 @@ export function disposeGame(): void {
  * WeChat bootstrap and is not exercised here. */
 export async function bootGame(): Promise<void> {
   installPlaneWarWx();
-  gameAlive = true;
   // @ts-expect-error — 原样拷贝的微信小游戏，纯 JS 无类型
   const { default: Main } = await import('./minigame/js/main.js');
+  // captureRoot opens HERE, immediately before new Main(): start() schedules
+  // the loop synchronously inside the constructor, so the root frame is
+  // captured with no window for anyone else's rAF to slip in tracked.
+  captureRoot = true;
   new Main();
 }

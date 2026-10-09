@@ -77,3 +77,11 @@
       重进后全新一局（frame 496 从头跑、score 0）且画面渲染正常。
       顺带修掉第五个炸弹：ctx 代理若按 attach 缓存，游戏在 main.js 模块体
       捕获的 ctx 会指向旧画布——代理必须是稳定间接层，trap 内解析当前画布。
+- [x] T054 验收反馈修正 #2：rAF 垫片的第一版用全局 gameAlive 闸门，误杀了
+      Vue 过渡的 nextFrame 帧——web 返回时离场过渡永远停在
+      fjs-slide-leave-from，旧页面压在新页面上（只有游戏页触发）。垫片改为
+      血缘追踪：只有游戏帧回调内部再调度（循环自续链）或 bootGame 捕获窗
+      内的根帧才纳入追踪表，其余一律原生直通；dispose 逐 entry 置 dead +
+      cancel，帧回调触发时再查 entry.live 兜住出队竞态。web 实测：返回后
+      过渡完成、canvas 从 DOM 移除、frame 冻结；重进全新一局；leafer 等其它
+      页面过渡回归正常。
