@@ -920,6 +920,25 @@ spec 088 删掉 quickjs-ng 时留下了对比与退路缺口，补上
   已知差异：widget 树里的文字是旧的，`find.text` 类 Flutter 测试需要关开关（`FJS_TEXT_ONLY=off`）。
 - 后续（各自立 spec）：文字节点的其它「形状不变」更新（`class` 变化但样式只改尺寸 / 间距等布局键）；`opacity` 快路径；把被改行的重绘成本也降下来（自绘表面的保留层）。
 
+## AI Skills & MCP（已完成 2026-10，specs/213）
+
+让 AI 编码工具（Claude Code / ZCode / Codex…）在 ufjs **应用项目**里高效工作：
+
+- ✅ **`fjs ai init`**：往项目里写 4 篇技能（`skills/ufjs-*` + `.claude/skills/`：
+  app-dev / ui / debug / build）和 `.mcp.json` / `.agents/mcp.json` 的 `ufjs`
+  server 注册；幂等、只动 `mcpServers.ufjs` 一个键、JSON 损坏报错不覆盖；
+  `fjs create` 自动执行。
+- ✅ **`fjs mcp`**：stdio MCP server（手写 newline-delimited JSON-RPC，不引入
+  SDK——CLI 唯一运行时依赖仍是 `ws`）。14 个工具三组：知识查询（标签 / CSS
+  支持矩阵 / 事件表 / 文档检索）、工作流（scaffold / routes / doctor / build）、
+  运行时（dev_status / get_logs / eval / dump_tree，复用 `fjs log` / `fjs eval`
+  的 tool 通道，`dump_tree` 走 `__fjsDevtools` 数据面）。
+- ✅ **防漂移**：知识数据由 `snapshot.mjs` 构建期内联（tags.json /
+  css/support.ts / EventType / docs 语料），工具答案永远和安装版本的代码一致；
+  与 bundler 内联 tags.json 同一思路。
+- 见 [ai.md](ai.md)。明确不做：MCP resources/prompts、screencast、ufjs 仓库
+  自身开发的 AI 配置（那是 AGENTS.md + `.claude/commands/` 那套）。
+
 ## 近期计划
 
 - **App 侧真机对拍挂账**：078/079 的示例页（过渡演示新增面板、百分比间距与

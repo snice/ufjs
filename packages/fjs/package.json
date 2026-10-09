@@ -47,7 +47,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "esbuild src/cli.ts src/config.ts src/vite.ts --bundle --platform=node --format=esm --outdir=dist --packages=external",
+    "build": "node src/mcp/snapshot.mjs && esbuild src/cli.ts src/config.ts src/vite.ts --bundle --platform=node --format=esm --outdir=dist --packages=external",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",

@@ -28,6 +28,7 @@ npm run build:release # 发布构建（split bytecode → Flutter assets）
 4. [路由](routing.md)
 5. [UI API 参考（标签 / 事件 / 样式）](ui-api.md)
 6. [小程序编译](miniprogram.md)
+7. [AI 接入：Skills & MCP](ai.md)
 
 ---
 
@@ -113,6 +114,7 @@ QuickJS 上实现的是一套**框架无关的命令式 element API**，前端�
 | 接第三方组件库（vant…） | [third-party-components.md](third-party-components.md) + [vant-adaptation.md](vant-adaptation.md) |
 | 页面打开慢（vant / 第三方组件库） | [vant-mount-perf.md](vant-mount-perf.md) |
 | 拆 `[nav] mounted` 临时打点 | [navmount-probe.md](navmount-probe.md) |
+| 让 AI 工具（Claude Code / ZCode…）在这个项目里干活 | [ai.md](ai.md) |
 
 ---
 

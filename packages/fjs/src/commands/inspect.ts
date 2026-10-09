@@ -8,6 +8,7 @@
 //
 //   fjs log            console output from the app, as it happens
 //   fjs eval '1 + 1'   evaluate an expression in the running VM
+import type { RawData, WebSocket } from 'ws';
 import { colorSupported } from '../dev/qrcode.js';
 import {
   connectDevServer as connect,
@@ -21,7 +22,7 @@ import {
  * back needs no second message type — and no new native call. The NUL
  * prefix keeps it out of `fjs log`'s output and out of anything a real
  * console.log would produce. */
-const EVAL_MARK = '\u0000fjs-eval:';
+export const EVAL_MARK = '\u0000fjs-eval:';
 
 export async function logCommand(argv: string[]): Promise<void> {
   const { opts, rest } = parseCommon(argv);
@@ -79,29 +80,45 @@ export async function evalCommand(argv: string[]): Promise<void> {
     );
   }
 
+  try {
+    console.log(await evalViaSocket(socket, expression, timeout));
+  } finally {
+    socket.close();
+  }
+}
+
+/** Sends one eval over an already-handshook tool socket and resolves with
+ * the rendered answer (rejects with the VM error text). Shared with the MCP
+ * server's eval / dump_tree tools (specs/213) — same channel, no second
+ * protocol. The listener removes itself: dump_tree evaluates several times
+ * on one socket, and a leaked per-call listener would grow every round. */
+export function evalViaSocket(
+  socket: WebSocket,
+  expression: string,
+  timeout = 5000,
+): Promise<string> {
   const id = Math.random().toString(36).slice(2, 8);
-  const answer = new Promise<string>((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
+    const done = (fn: (value: string) => void, value: string): void => {
+      clearTimeout(timer);
+      socket.off('message', onMessage);
+      fn(value);
+    };
     const timer = setTimeout(() => {
-      reject(new Error(`no answer in ${timeout}ms — the app may be busy or not listening`));
+      done(reject, `no answer in ${timeout}ms — the app may be busy or not listening`);
     }, timeout);
-    socket.on('message', (raw) => {
+    const onMessage = (raw: RawData): void => {
       const msg = parseJsonMessage(raw.toString());
       if (msg?.fjs !== 'log') return;
       const text = String(msg.text ?? '');
       if (!text.startsWith(`${EVAL_MARK}${id}:`)) return;
-      clearTimeout(timer);
       const body = text.slice(EVAL_MARK.length + id.length + 1);
-      if (body.startsWith('err:')) reject(new Error(body.slice(4)));
-      else resolve(body.slice(3));
-    });
+      if (body.startsWith('err:')) done(reject, body.slice(4));
+      else done(resolve, body.slice(3));
+    };
+    socket.on('message', onMessage);
+    socket.send(JSON.stringify({ fjs: 'eval', id, source: wrap(id, expression) }));
   });
-
-  socket.send(JSON.stringify({ fjs: 'eval', id, source: wrap(id, expression) }));
-  try {
-    console.log(await answer);
-  } finally {
-    socket.close();
-  }
 }
 
 /** The expression runs in the VM as written; only the answer is wrapped.

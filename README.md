@@ -389,6 +389,7 @@ tool/build-apple.sh   # 需要 macOS + Xcode
 | `fjs icon <png>` | 用一张方图重新生成 Android / iOS 应用图标 |
 | `fjs log` | 实时查看应用的 console 输出 |
 | `fjs eval '<expr>'` | 在设备上运行的 VM 里求值 |
+| `fjs ai init` | 安装 AI 技能与 MCP 注册（Claude Code / ZCode 等即插即用，见 [docs/ai.md](docs/ai.md)） |
 | `fjs build --analyze` | 产物体积报告（js / gzip / 字节码 + 包占比） |
 | `fjs dev --pages` | 启动 App 端 dev server |
 | `fjs dev --mp` | watch 源码增量重建 `dist/mp`，配合微信开发者工具热编译 |

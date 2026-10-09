@@ -10,6 +10,8 @@
 //   fjs routes / fjs doctor / fjs devices / fjs clean / fjs host / fjs icon
 //   fjs splash / fjs preview / fjs upgrade / fjs log / fjs eval
 //   fjs lint / fjs types
+//   fjs mcp    MCP server on stdio (register via `fjs ai init`)
+//   fjs ai init  install AI skills + MCP registration into the project
 import { buildCommand } from './bundler/build.js';
 import { error } from './terminal/colors.js';
 import { devCommand } from './dev/server.js';
@@ -32,6 +34,8 @@ import { lintCommand } from './commands/lint.js';
 import { autoimportCommand } from './commands/autoimport.js';
 import { typesCommand } from './commands/types.js';
 import { runCommand } from './commands/run.js';
+import { mcpCommand } from './commands/mcp.js';
+import { aiCommand } from './commands/ai.js';
 
 function usage(): never {
   console.log(`fjs — ufjs toolchain
@@ -192,6 +196,15 @@ commands:
       --vm-port <n>          debug channel the app dials (default: 38903)
       --port <n>             dev server port to talk to (default: 38900)
       --host <addr>          dev server address (default: 127.0.0.1)
+  fjs mcp                    MCP server on stdio: knowledge (tags, CSS
+                             support, docs), workflow (scaffold/routes/
+                             doctor/build) and runtime (logs/eval/tree)
+                             tools for AI coding agents (spec 213)
+  fjs ai init                install the AI pack: skills/ + .claude/skills/
+                             SKILL.md files and the ufjs MCP server entry
+                             in .mcp.json / .agents/mcp.json
+      --dir <path>           project root (default: cwd)
+      --force                rewrite even when already up to date
   fjs clean                  remove generated output
       --out <dir>            build output directory (default: dist)
       --flutter-dir <dir>    Flutter host dir (default: .fjs/flutter)
@@ -304,6 +317,12 @@ async function main() {
       break;
     case 'run':
       await runCommand(argv);
+      break;
+    case 'mcp':
+      await mcpCommand(argv);
+      break;
+    case 'ai':
+      await aiCommand(argv);
       break;
     default:
       usage();

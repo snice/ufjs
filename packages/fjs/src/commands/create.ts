@@ -5,6 +5,7 @@ import { emitKeypressEvents } from 'node:readline';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { colorSupported } from '../dev/qrcode.js';
+import { aiInit } from './ai.js';
 
 interface TemplateFile {
   path: string;
@@ -414,7 +415,27 @@ export async function createCommand(argv: string[] | string): Promise<void> {
   const templateName =
     opts.template ?? (interactive ? await selectTemplate(DEFAULT_TEMPLATE) : DEFAULT_TEMPLATE);
   const template = findTemplate(templateName);
-  scaffold(dir, template, { name });
+  const target = scaffold(dir, template, { name });
+
+  // New projects start AI-ready (specs/213): the pack is written into the
+  // project before anything else runs in it. Best effort — a failure here
+  // must not fail the scaffold, but it must be visible, not swallowed.
+  try {
+    const report = await aiInit({ dir: target, quiet: true });
+    const skills = new Set(
+      [...report.written, ...report.unchanged]
+        .map((file) => file.match(/skills\/([^/]+)\/SKILL\.md/)?.[1] ?? '')
+        .filter(Boolean),
+    );
+    console.log(
+      `ai pack: ${skills.size} skills + MCP registration ${report.written.length ? 'written' : 'up to date'}`,
+    );
+  } catch (e) {
+    console.log(
+      `ai pack: skipped (${e instanceof Error ? e.message : String(e)}) — ` +
+        'run `npx @ufjs/cli ai init` inside the project later',
+    );
+  }
 }
 
 function parseCreateArgs(argv: string[]): CreateOptions {
@@ -431,7 +452,7 @@ function parseCreateArgs(argv: string[]): CreateOptions {
   return opts;
 }
 
-function scaffold(dir: string, template: Template, ctx: TemplateContext): void {
+function scaffold(dir: string, template: Template, ctx: TemplateContext): string {
   const target = path.resolve(dir);
   if (fs.existsSync(target) && fs.readdirSync(target).length > 0) {
     throw new Error(`directory not empty: ${target}`);
@@ -446,6 +467,7 @@ function scaffold(dir: string, template: Template, ctx: TemplateContext): void {
   console.log(`created ${target}`);
   console.log(`template: ${template.label}`);
   console.log(`next: cd ${dir} && ${template.next}`);
+  return target;
 }
 
 function findTemplate(name: string): Template {

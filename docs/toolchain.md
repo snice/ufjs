@@ -680,6 +680,20 @@ $ fjs eval 'nope.deep'
 fjs: nope is not defined
 ```
 
+## AI 接入：`fjs ai init` / `fjs mcp`
+
+```bash
+fjs ai init              # 往项目里写 AI 技能 + MCP 注册（幂等，--force 强制刷新）
+fjs mcp                  # stdio MCP server（一般由 AI 工具自动拉起，不用手跑）
+```
+
+`ai init` 写 `skills/ufjs-*/SKILL.md`（根目录 + `.claude/skills/`）和
+`.mcp.json` / `.agents/mcp.json` 里的 `ufjs` server 条目；只动 `ufjs` 自己的
+键，用户的配置原样保留。MCP 提供 14 个工具：知识查询（标签 / CSS 支持矩阵 /
+文档检索，回答的是当前安装版本的真实支持范围）、工作流（scaffold / routes /
+doctor / build）、运行时（dev_status / get_logs / eval / dump_tree，走
+`fjs log` / `fjs eval` 同一条 tool 通道）。细节见 [ai.md](ai.md)。
+
 ## 断点调试：`fjs debug`
 
 > 这一节是用法。内部实现（引擎原生 CDP、可插拔的 `libfjs_debugger`、中继的
