@@ -13,6 +13,9 @@ import { bootIfEnabled } from './devtools';
 bootIfEnabled();
 
 export { h, create, createRoot, insert, remove, setText, setProps, setStyle, flush } from './ui/element';
+// system-event subscription (fetch/canvas/audio style): also published as
+// the __fjsRegisterSystemHandler global for self-contained module entries
+export { registerSystemHandler, installEventDispatcher } from './ui/element';
 // Hand-rolled clone mounts (specs/188): allocIds reserves a block of ids for
 // a native cloneMany, adoptElement wraps an existing id in an Element handle
 // — the same two host-ops uses to fill clone bookkeeping.
@@ -63,6 +66,9 @@ export { dartModule, registerDartModuleStub, hasDartModuleStub, hasDartObjectSup
 // the augmentation point generated .d.ts files merge into (specs/160)
 export type { FjsObjectModules } from './dart-bridge';
 export { Worker } from './worker';
+// Built-in haptics (specs/215); audio lives in the @ufjs/audio module
+export { vibrateShort, vibrateLong } from './vibrate';
+export type { FjsVibrateType } from './vibrate';
 export { fetch, FjsHeaders as Headers, FjsResponse as Response, FjsAbortController as AbortController } from './net/fetch';
 export type { FjsRequestInit as RequestInit, FjsHeadersInit as HeadersInit, FjsAbortSignal as AbortSignal } from './net/fetch';
 export { UiOp } from './ui/ops';

@@ -36,6 +36,11 @@ dependencies:
   # 4.x needs Flutter >=3.44 — left open so it is picked up on a newer
   # toolchain without forcing one here
   cached_network_image: ">=3.4.1 <5.0.0"
+  # specs/215 (constitution IX): audio playback wanted audioplayers, and a
+  # third-party pub dep stays out of the core — it lives in the
+  # @ufjs/audio module package (packages/fjs-audio/flutter). The core only
+  # takes capabilities the Flutter SDK can carry (haptics, in lib/src/
+  # haptics.dart).
   ffi: ^2.2.0
   # spec 117: not used directly — cached_network_image reaches it through
   # flutter_cache_manager -> path_provider. 2.6.0 re-released the FFI

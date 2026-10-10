@@ -564,4 +564,13 @@ abstract final class FjsEvent {
   // Completion is not an event: JS sets the `refreshing` prop false and the
   // native side collapses.
   static const statusChange = 44;
+  // An audio context (createAudio(), specs/215) finished or failed:
+  // nodeId = the audio handle JS allocated, payload the JSON
+  // {"t":"ended"} or {"t":"error","err":"…"}. The number is allocated in
+  // this table but DISPATCHED BY THE @ufjs/audio module package
+  // (fjs_audio.dart) — audio needs audioplayers, and third-party pub deps
+  // stay out of the core (constitution IX). A system event
+  // (registerSystemHandler): audio is not a node, so it has no template
+  // `@ended` binding and no EventType entry.
+  static const audio = 45;
 }

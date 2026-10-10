@@ -1,0 +1,20 @@
+name: fjs_audio
+description: "Flutter side of the fjs module @ufjs/audio: the host modules behind createAudio()."
+version: 0.1.0
+publish_to: 'none'
+
+environment:
+  sdk: ^3.5.4
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_fjs: ^0.1.4
+  # specs/215: the reason this is a module package and not core — the
+  # Flutter SDK has no API for playing custom audio files (SystemSound is
+  # system alerts only), and hand-writing AVFoundation/ExoPlayer channels is
+  # three platforms of maintenance for what is one de-facto-standard plugin.
+  # It does not build for ohos — there the module degrades loudly
+  # (MissingPluginException -> one debugPrint + an error event to JS).
+  audioplayers: ">=6.4.0 <7.0.0"

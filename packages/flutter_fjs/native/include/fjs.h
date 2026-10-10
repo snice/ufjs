@@ -115,6 +115,16 @@ enum {
     /* a pointer went down anywhere (specs/073); nodeId = the deepest node
        under it, 0 for none; payload {"x":n,"y":n}. System event. */
     FJS_EVENT_GLOBAL_POINTER_DOWN = 43,
+    /* NOTE: 44 (refresh statuschange, specs/206) has no entry here — it
+       lives only in lib/src/ffi.dart and element.ts EventType, because
+       refresh dispatches from Dart straight through fjs_vm_dispatch_event
+       and no C code ever needs the number. */
+    /* an audio context finished or failed (specs/215); nodeId = the audio
+       handle JS allocated; payload {"t":"ended"} or {"t":"error","err":…}.
+       System event. The number is allocated here but dispatched by the
+       @ufjs/audio module package (packages/fjs-audio/flutter) — audio
+       carries a third-party pub dep, which stays out of the core. */
+    FJS_EVENT_AUDIO            = 45,
 };
 
 /* Tagged value tags for the FJSValue C ABI struct. */

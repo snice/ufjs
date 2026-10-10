@@ -64,6 +64,7 @@ element API 或 op 协议那两层** —— 判断标准和接入步骤见
 |------|------|--------|-----------|
 | `packages/fjs` | TS | npm 包 `@ufjs/cli`：create/dev/run/build + Vite 插件 | [toolchain.md](docs/toolchain.md) |
 | `packages/fjs-runtime` | TS | npm 包 `@ufjs/runtime`：element API、op 编码、Vue renderer、CSS 引擎、web 适配层 | [custom-renderer.md](docs/custom-renderer.md) |
+| `packages/fjs-audio` | TS+Dart | npm 包 `@ufjs/audio`：createAudio() 模块（三端 guts + fjs_audio pub 包 + audioplayers） | [media.md](docs/media.md) |
 | `packages/fjs-iconmind` | TS+Dart | npm 包 `@ufjs/iconmind`：**模块扩展的完整范例** | [modules.md](docs/modules.md) |
 | `packages/flutter_fjs` | Dart+C++ | pub 包 `flutter_fjs`：QuickJS-ng、FFI、镜像树、Widget 渲染 | [architecture.md](docs/architecture.md) |
 | `packages/fjsc` | C++ 产物 | 字节码编译器（npm 分发的预编译二进制） | [toolchain.md](docs/toolchain.md) |
@@ -133,7 +134,15 @@ cd packages/flutter_fjs && flutter test        # 需要先编好 native，否则
    （`fjs-runtime/src/components/` + `FLUTTER_COMPONENT_TAGS` 排除，账记在
    `ui/element.ts` 这层）。只有需要原生控件、Flutter 渲染能力或有实测性能理由
    才下 Dart。完整判据与包法见宪法 VII。
-8. **改了 native 要重新生成预编译产物**：`tool/build-android.sh` /
+8. **host API 依赖三方 pub → 不内置**：内核（`fjs-runtime` / `flutter_fjs`）
+   只依赖 SDK 与既有核心依赖；要三方包的能力做成模块包，连 JS 入口、Dart host
+   模块、依赖一起搬（`@ufjs/audio` 先例，specs/215；对照：vibrate 只要 SDK 的
+   HapticFeedback 就留内置）。见宪法 IX。
+9. **模块 JS 入口不 import 内核**：模块包的 entry 自包含（`@ufjs/webview` /
+   `@ufjs/iconmind` / `@ufjs/audio` 同款），需要内核机制就走全局
+   （`__fjsDispatchEvent` / `__fjsRegisterSystemHandler`），否则 mp 构建会把
+   QuickJS 内核拖进小程序分包。
+10. **改了 native 要重新生成预编译产物**：`tool/build-android.sh` /
    `tool/build-apple.sh`，见 [publishing.md](docs/publishing.md)。
 
 ---
@@ -165,19 +174,20 @@ cd packages/flutter_fjs && flutter test        # 需要先编好 native，否则
 9. [小程序编译：Skyline + glass-easel](docs/miniprogram.md)
 10. [overlay 宿主：position: fixed、弹层与返回](docs/overlay-host.md)
 11. [Vue 3 集成](docs/vue3.md)
+12. [音频与震动：createAudio / vibrateShort](docs/media.md)
 
 **第三层 · 扩展**
-12. [模块扩展：npm 包 + Flutter autolink](docs/modules.md)
-13. [路由](docs/routing.md)
-14. [分包与 release assets](docs/code-splitting.md)
+13. [模块扩展：npm 包 + Flutter autolink](docs/modules.md)
+14. [路由](docs/routing.md)
+15. [分包与 release assets](docs/code-splitting.md)
 
 **第四层 · 工程**
-15. [pnpm monorepo 规范](docs/monorepo.md)
-16. [工具链：创建/运行/测试/编译](docs/toolchain.md)
-17. [fjs go 调试客户端](docs/fjs-go.md)
-18. [发布 npm 与 pub.dev](docs/publishing.md)
-19. [性能测试](docs/performance.md)
-20. [Roadmap](docs/roadmap.md)
+16. [pnpm monorepo 规范](docs/monorepo.md)
+17. [工具链：创建/运行/测试/编译](docs/toolchain.md)
+18. [fjs go 调试客户端](docs/fjs-go.md)
+19. [发布 npm 与 pub.dev](docs/publishing.md)
+20. [性能测试](docs/performance.md)
+21. [Roadmap](docs/roadmap.md)
 
 ---
 

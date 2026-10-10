@@ -26,6 +26,19 @@
 //    web Image element must never see a second `.src` assignment, so shell
 //    and handle stay separate objects. Paths are rewritten into
 //    `/plane-war/…` under public/ (same layout as flappy-bird's `/fb/`).
+// 4. audio + vibration (specs/215) forward to the built-in vibrateShort and
+//    the @ufjs/audio module's createAudio (audio needs the audioplayers pub
+//    dependency, so it is a module package, not core). Two real-life gaps
+//    close here rather than in the game: leaving the page must STOP the
+//    Music singleton's still-alive contexts (the game module outlives the
+//    page, and bgm would keep playing), and the web build's first bgm
+//    attempt usually lands before any user gesture — browser autoplay
+//    policy rejects it, so the first touch re-kicks every autoplay context
+//    once.
+import { createAudio } from '@ufjs/audio';
+import type { FjsAudio } from '@ufjs/audio';
+import { vibrateShort as fjsVibrateShort } from 'fjs';
+import type { FjsVibrateType } from 'fjs';
 import { loadCanvasImage } from 'fjs';
 import type { FjsCanvasApi, FjsCanvasContext2D, FjsCanvasImage, FjsTouchEvent } from 'fjs';
 
@@ -192,6 +205,17 @@ export function emitTouch(
   kind: 'start' | 'move' | 'end' | 'cancel',
   event: FjsTouchEvent,
 ): void {
+  // The web build's first bgm attempt lands before any user gesture and the
+  // browser autoplay policy rejects it (the runtime warns once). The first
+  // touch IS a gesture — re-kick every autoplay context still pending. On
+  // the native host play() on a playing context is a no-op, so this is
+  // free there.
+  if (gesturePending.size > 0) {
+    for (const audio of [...gesturePending]) {
+      gesturePending.delete(audio);
+      audio.play();
+    }
+  }
   const shaped = {
     touches: event.touches.map(toTouchPoint),
     changedTouches: event.changedTouches.map(toTouchPoint),
@@ -202,30 +226,114 @@ export function emitTouch(
 
 // ── install / dispose ───────────────────────────────────────────────────
 
-let audioWarned = false;
-let vibrateWarned = false;
+/** Every wx audio context handed out, alive until the game destroys it.
+ * Music's contexts are module singletons that outlive the page — this set
+ * is what lets disposeGame/bootGame stop and re-kick them (see the header,
+ * shape 4). */
+const liveAudio = new Set<FjsAudio>();
+/** autoplay contexts still waiting for the web's first user gesture. */
+const gesturePending = new Set<FjsAudio>();
 
-function createInnerAudioContext(): Record<string, unknown> {
-  if (!audioWarned) {
-    audioWarned = true;
-    console.info('[plane-war] ufjs 还没有音频能力，音效静音（specs/214 降级项）');
-  }
-  return {
-    loop: false,
-    autoplay: false,
-    src: '',
-    currentTime: 0,
-    play(): void {},
-    stop(): void {},
-    destroy(): void {},
+type WxVibrateOptions = { type?: FjsVibrateType };
+
+/** The wx InnerAudioContext surface the game touches (plus the callback
+ * properties the adapter passes through for other vendored games). */
+type WxInnerAudio = FjsAudio & {
+  readonly __wxAudio: true;
+};
+
+function createInnerAudioContext(): WxInnerAudio {
+  const audio = createAudio();
+  liveAudio.add(audio);
+  if (audio.autoplay) gesturePending.add(audio);
+  const wrapper: WxInnerAudio = {
+    __wxAudio: true,
+    get src(): string {
+      return audio.src;
+    },
+    set src(value: string) {
+      audio.src = rewritePath(value);
+    },
+    get loop(): boolean {
+      return audio.loop;
+    },
+    set loop(value: boolean) {
+      audio.loop = value;
+    },
+    get autoplay(): boolean {
+      return audio.autoplay;
+    },
+    set autoplay(value: boolean) {
+      audio.autoplay = value;
+      if (value) gesturePending.add(audio);
+      else gesturePending.delete(audio);
+    },
+    get volume(): number {
+      return audio.volume;
+    },
+    set volume(value: number) {
+      audio.volume = value;
+    },
+    get currentTime(): number {
+      return audio.currentTime;
+    },
+    set currentTime(value: number) {
+      audio.currentTime = value;
+    },
+    get duration(): number {
+      return audio.duration;
+    },
+    play(): void {
+      audio.play();
+      gesturePending.delete(audio);
+    },
+    pause(): void {
+      audio.pause();
+    },
+    stop(): void {
+      audio.stop();
+    },
+    destroy(): void {
+      audio.destroy();
+      liveAudio.delete(audio);
+      gesturePending.delete(audio);
+    },
+    get onPlay(): (() => void) | null {
+      return audio.onPlay;
+    },
+    set onPlay(value: (() => void) | null) {
+      audio.onPlay = value;
+    },
+    get onPause(): (() => void) | null {
+      return audio.onPause;
+    },
+    set onPause(value: (() => void) | null) {
+      audio.onPause = value;
+    },
+    get onStop(): (() => void) | null {
+      return audio.onStop;
+    },
+    set onStop(value: (() => void) | null) {
+      audio.onStop = value;
+    },
+    get onEnded(): (() => void) | null {
+      return audio.onEnded;
+    },
+    set onEnded(value: (() => void) | null) {
+      audio.onEnded = value;
+    },
+    get onError(): ((message: string) => void) | null {
+      return audio.onError;
+    },
+    set onError(value: ((message: string) => void) | null) {
+      audio.onError = value;
+    },
   };
+  return wrapper;
 }
 
-function vibrateShort(): void {
-  if (!vibrateWarned) {
-    vibrateWarned = true;
-    console.info('[plane-war] 震动降级为 no-op（specs/214）');
-  }
+function vibrateShort(options?: WxVibrateOptions): void {
+  fjsVibrateShort(options?.type ?? 'heavy');
 }
 
 /** Pending game frames, keyed by native rAF id. Only frames that belong to
@@ -316,8 +424,10 @@ export function attachPlaneWarCanvas(cv: FjsCanvasApi | undefined): void {
 /** Page leave (back / unmount): the game dies, exactly like leaving a
  * mini-game in WeChat. Cancels the pending loop frame (the loop re-arms
  * itself one frame at a time, so killing the pending one stops it), drops
- * the dead instances' touch handlers, and clears the rAF bookkeeping. The
- * next mount boots a brand-new game via `bootGame()`. Idempotent. */
+ * the dead instances' touch handlers, clears the rAF bookkeeping, and
+ * stops every live audio context — the Music singleton outlives the page,
+ * and without this bgm keeps playing over whatever comes next. The next
+ * mount boots a brand-new game via `bootGame()`. Idempotent. */
 export function disposeGame(): void {
   for (const entry of gameFrames.values()) entry.live = false;
   if (nativeCaf) for (const id of [...gameFrames.keys()]) nativeCaf(id);
@@ -326,6 +436,10 @@ export function disposeGame(): void {
   touchHandlers.move.length = 0;
   touchHandlers.end.length = 0;
   touchHandlers.cancel.length = 0;
+  // stop (not destroy): the contexts are module singletons the next game
+  // reuses — destroying here would silence every re-entry
+  for (const audio of liveAudio) audio.stop();
+  gesturePending.clear();
 }
 
 /** Boot (or re-boot after dispose) the game. main.js default-exports the
@@ -343,4 +457,14 @@ export async function bootGame(): Promise<void> {
   // captured with no window for anyone else's rAF to slip in tracked.
   captureRoot = true;
   new Main();
+  // Music is a module singleton built on the FIRST import — a re-entered
+  // game reuses its contexts, and only bgm's autoplay would have started
+  // it. disposeGame stopped everything on leave, so replay the autoplay
+  // ones here: bgm restarts with the new game, wx-style.
+  for (const audio of liveAudio) {
+    if (audio.autoplay) {
+      audio.currentTime = 0;
+      audio.play();
+    }
+  }
 }

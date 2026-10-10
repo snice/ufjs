@@ -3,6 +3,7 @@
 packages:
   - 'packages/fjs'
   - 'packages/fjs-runtime'
+  - 'packages/fjs-audio'
   - 'packages/fjs-iconmind'
   - 'packages/fjs-liquidglass'
   - 'packages/fjs-webview'

@@ -1,5 +1,5 @@
 <route>
-{"title": "飞机大战（微信移植）", "scroll": false, "tabBar": false, "group": "交互游戏", "desc": "微信小游戏原样移植：wx 适配层 + 零改动游戏代码；音频暂静音"}
+{"title": "飞机大战（微信移植）", "scroll": false, "tabBar": false, "group": "交互游戏", "desc": "微信小游戏原样移植：wx 适配层 + 零改动游戏代码；bgm/音效/震动已接 ufjs 音频能力"}
 </route>
 
 <script setup lang="ts">
@@ -8,9 +8,10 @@
 // WeChat 全局后直接跑。本页只做生命周期：
 //
 // - 挂载：install（wx 全局）→ @resize attach 画布 → bootGame() 开一局新的；
-// - 离开（返回 / 卸载）：disposeGame() 取消游戏的挂起帧——游戏随页面销毁，
-//   正如退出一个小游戏；重进就是全新一局。
-// 已知降级：ufjs 还没有音频能力（音效静音）、震动 no-op。
+// - 离开（返回 / 卸载）：disposeGame() 取消游戏的挂起帧、停掉音频——游戏随
+//   页面销毁，正如退出一个小游戏；重进就是全新一局。
+// 音频与震动走 specs/215 的 createAudio / vibrateShort（wx-adapter 适配层
+// 转发），不再是降级项。
 import { onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue';
 import type { FjsCanvasApi, FjsTouchEvent } from 'fjs';
 import {

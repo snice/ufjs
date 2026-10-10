@@ -80,3 +80,11 @@ CSS 引擎遇到不支持的选择器/属性要 `warnOnce` 并跳过，不能悄
 `docs/css-compat.md`（样式支持矩阵）、`docs/ui-api.md`（标签/事件）、
 `docs/toolchain.md`（命令）、`docs/modules.md`（模块清单字段）、
 `docs/roadmap.md`（完成项打勾）。
+
+## IX. 三方依赖不进内核
+
+内置 host API（`fjs-runtime` + `flutter_fjs`）只准依赖 Flutter SDK 与既有的
+核心依赖；**需要三方 pub/npm 包的能力一律做成模块包**，连它的 JS 入口、Dart
+host 模块和依赖一起搬出去（`@ufjs/audio` 是先例，specs/215：audio 需要
+audioplayers → 整体成包；vibrate 只要 SDK 的 `HapticFeedback` → 留在内置）。
+内核装一个三方包，是替所有 fjs 应用装的——这个成本只有用到该能力的应用才该付。

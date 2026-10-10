@@ -157,6 +157,15 @@ declare var __fjs: FjsNative | undefined;
 /** Installed by the runtime (ui/element.ts), called by the native core. */
 declare var __fjsDispatchEvent: FjsEventDispatcher | undefined;
 
+/** Also installed by the runtime (installEventDispatcher), but for the
+ * other direction: modules with their own event numbers register a handler
+ * here. Module entries stay self-contained — they import nothing from
+ * @ufjs/runtime, so they read this global instead (@ufjs/audio, specs/215).
+ * Undefined until the app's runtime has installed the dispatcher. */
+declare var __fjsRegisterSystemHandler:
+  | ((type: number, handler: (id: number, payload?: string) => void) => void)
+  | undefined;
+
 declare function requestAnimationFrame(
   callback: (time: number) => void,
 ): number;

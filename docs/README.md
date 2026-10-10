@@ -27,8 +27,9 @@ npm run build:release # 发布构建（split bytecode → Flutter assets）
 3. [Vue 3 集成](vue3.md)
 4. [路由](routing.md)
 5. [UI API 参考（标签 / 事件 / 样式）](ui-api.md)
-6. [小程序编译](miniprogram.md)
-7. [AI 接入：Skills & MCP](ai.md)
+6. [音频与震动（@ufjs/audio 模块 / 内置 vibrateShort）](media.md)
+7. [小程序编译](miniprogram.md)
+8. [AI 接入：Skills & MCP](ai.md)
 
 ---
 
@@ -102,6 +103,7 @@ QuickJS 上实现的是一套**框架无关的命令式 element API**，前端�
 | 加一个 CSS 属性 | [css-compat.md 第 6 节](css-compat.md#6-加一条新的-css-支持要改哪些地方) |
 | 加一个内置标签 | [ui-api.md](ui-api.md) + [custom-renderer.md](custom-renderer.md) + [css-compat.md](css-compat.md) |
 | 加一个原生能力（相机、蓝牙…）| [jsi-and-native-modules.md](jsi-and-native-modules.md) + [modules.md](modules.md) |
+| 播放音频 / 震动 | [media.md](media.md) |
 | 接 React / 其他框架 | [custom-renderer.md](custom-renderer.md) |
 | 编译微信小程序 / 排查小程序端差异 | [miniprogram.md](miniprogram.md) |
 | 改 UI op 协议 | [principles.md](principles.md) + [architecture.md](architecture.md)，两侧文件必须同改 |

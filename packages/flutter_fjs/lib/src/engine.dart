@@ -12,6 +12,7 @@ import 'package:flutter/services.dart' show AssetBundle, rootBundle;
 
 import 'canvas/host_module.dart';
 import 'canvas/images.dart';
+import 'haptics.dart' show registerHapticsModule;
 import 'dev_client.dart';
 import 'ffi.dart';
 import 'font_loader.dart';
@@ -82,6 +83,9 @@ class FjsEngine extends ChangeNotifier {
     _setupAnimationFrameModule();
     _setupControlModule();
     _setupCanvasModule();
+    // built-in haptics (specs/215); audio is the @ufjs/audio module —
+    // third-party pub deps stay out of the core (constitution IX)
+    registerHapticsModule(host: host);
     registerGeometryHostModules(
       host: host,
       tree: tree,

@@ -24,6 +24,7 @@
   "dependencies": {
     "@antv/f2": "^5.14.0",
     "@leafer-ui/miniapp": "2.2.10",
+    "@ufjs/audio": "workspace:*",
     "@ufjs/iconmind": "workspace:*",
     "@ufjs/liquidglass": "workspace:*",
     "@ufjs/spine": "workspace:*",
@@ -51,17 +52,33 @@
       "subpackages": [
         {
           "root": "game",
-          "pages": ["example/game/"],
-          "public": ["wm", "fb"]
+          "pages": [
+            "example/game/"
+          ],
+          "public": [
+            "wm",
+            "fb"
+          ]
         },
         {
           "root": "canvas",
-          "pages": ["example/canvas/", "example/animation/"],
-          "public": ["spine"]
+          "pages": [
+            "example/canvas/",
+            "example/animation/"
+          ],
+          "public": [
+            "spine"
+          ]
         }
       ],
       "preloadRule": {
-        "/example": { "network": "all", "packages": ["game", "canvas"] }
+        "/example": {
+          "network": "all",
+          "packages": [
+            "game",
+            "canvas"
+          ]
+        }
       },
       "exclude": [
         "example/canvas/echarts",

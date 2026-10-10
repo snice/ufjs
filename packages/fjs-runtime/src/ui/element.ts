@@ -308,6 +308,13 @@ export function registerSystemHandler(
 
 /** Installs the global event dispatcher the native layer calls. */
 export function installEventDispatcher(): void {
+  // Module entries never import this package (@ufjs/webview and
+  // @ufjs/iconmind set the pattern — importing it would drag the core
+  // runtime into every mp bundle), but a module with its own event number
+  // still needs INTO this registry. So the door goes out as a global, next
+  // to the dispatcher itself; @ufjs/audio (specs/215) is the first user.
+  (globalThis as Record<string, unknown>).__fjsRegisterSystemHandler =
+    registerSystemHandler;
   globalThis.__fjsDispatchEvent =
     (nodeId: number, eventType: number, payload: string | null) => {
       if (eventType === 9) {

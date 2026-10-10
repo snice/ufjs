@@ -1,0 +1,57 @@
+{
+  "name": "@ufjs/audio",
+  "version": "0.1.0",
+  "description": "createAudio() for fjs — one imperative audio context, an audioplayers player on the app, an HTMLAudioElement on the web, real wx.createInnerAudioContext on the mini program",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/snice/ufjs.git",
+    "directory": "packages/fjs-audio"
+  },
+  "homepage": "https://github.com/snice/ufjs#readme",
+  "bugs": "https://github.com/snice/ufjs/issues",
+  "keywords": [
+    "fjs",
+    "flutter",
+    "audio",
+    "sound",
+    "quickjs"
+  ],
+  "type": "module",
+  "types": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.ts",
+    "flutter/lib",
+    "flutter/pubspec.yaml",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@ufjs/runtime": ">=0.1.7"
+  },
+  "devDependencies": {
+    "@ufjs/runtime": "workspace:*",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  },
+  "fjs": {
+    "module": true,
+    "components": false,
+    "flutter": {
+      "package": "fjs_audio",
+      "path": "./flutter",
+      "import": "package:fjs_audio/fjs_audio.dart",
+      "register": "FjsAudio.register(engine)"
+    }
+  }
+}

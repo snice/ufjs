@@ -111,11 +111,15 @@ web 这一端有两条路，两条都从 `src/pages` 走同一张路由表、同
   微信官方示例小游戏整体拷进 `src/plane-war/minigame/`（唯一非原样文件是
   `js/libs/tinyemitter.js` 的两行 ESM 包装，UMD 原文件为 `tinyemitter.umd.cjs`
   字节未动），`src/plane-war/wx-adapter.ts` 补出 `wx.createCanvas /
-  createImage / onTouch* / getWindowInfo` 和 `GameGlobal` 后直接跑。fjs canvas
+  createImage / onTouch* / getWindowInfo / createInnerAudioContext /
+  vibrateShort` 和 `GameGlobal` 后直接跑。fjs canvas
   的 width/height 只读而 render.js 会赋值，适配层给的是可写包装；游戏传给
-  `drawImage` 的图片壳经 ctx 代理换成 `loadCanvasImage` 句柄。生命周期同微信：
+  `drawImage` 的图片壳经 ctx 代理换成 `loadCanvasImage` 句柄。音频与震动：
+  震动走内置 `vibrateShort`，音频走 `@ufjs/audio` 模块的 `createAudio`
+  （specs/215；bgm / 音效 / 震动均响，三个音频在 `public/plane-war/audio/`；
+  离开页面适配层停掉 Music 单例还活着的播放器，重进重启 bgm）。生命周期同微信：
   离开页面（返回 / 被覆盖）即销毁——rAF 垫片按表取消游戏的挂起帧，重进就是
-  全新一局。已知降级：音频静音、震动 no-op（ufjs 暂无音频能力）。注意
+  全新一局。注意
   `src/adapters/leafer/platform.ts` 的 wx 判定带 `createOffscreenCanvas` 特征
   校验——本页的全局 `wx` 不能让 leafer 误判成小程序。
 - **分包**：`pnpm build:pages` 后 `dist/app/bundle.js` 只有 ~2.4 KB，vue + 运行时 +

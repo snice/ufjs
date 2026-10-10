@@ -951,7 +951,30 @@ spec 088 删掉 quickjs-ng 时留下了对比与退路缺口，补上
 - ✅ **生命周期同微信**：离开页面（返回 / 被覆盖）即销毁——rAF 垫片对游戏帧
   按表追踪，离开时取消挂起帧并以 gameAlive 闸门挡掉竞态逃逸的重武装；
   重进（新挂载）`new Main()` 开全新一局（start() 自带全量 reset）。
-- 降级：音频静音、震动 no-op（ufjs 尚无音频能力，待立 spec）。
+- ~~降级：音频静音、震动 no-op~~ → specs/215 已补齐（见下）。
+
+## 音频与震动：内置 + 首个能力模块包（已完成 2026-10，specs/215）
+
+214 挂账的两个降级项落地，并顺手立了一条内核边界规则（宪法 IX：host API 依赖
+三方 pub → 不内置）：
+
+- ✅ **震动内置**：`vibrateShort('light'|'medium'|'heavy') / vibrateLong()`
+  进 `@ufjs/runtime`（`fjs-runtime/src/vibrate.ts`）+ `flutter_fjs`
+  （`lib/src/haptics.dart`，`HapticFeedback`，零三方依赖）。web 走
+  `navigator.vibrate`（iOS Safari 无此 API，warn 一次），mp 桥转发真 wx。
+- ✅ **音频成包 `@ufjs/audio`**（`packages/fjs-audio`）：`createAudio()` 的
+  Flutter 半边需要 audioplayers，按宪法 IX 整体出包——JS 入口（native/web/wx
+  三 guts，不 import 内核，事件注册走 `__fjsRegisterSystemHandler` 全局）、
+  Dart host 模块 `fjs_audio`（reload 失效走 `engine.addListener`，本地路径
+  create 时预载成字节）、pub 依赖（audioplayers）都在包内。装上即 autolink。
+  新事件号 `FJS_EVENT_AUDIO = 45` 中央分配、由模块派发。
+- ✅ **打飞机页补响**：bgm 循环 / 子弹 / 爆炸音效 + 击落震动；三个音频从原
+  项目拷入 `public/plane-war/audio/`；离开页面停声、重进重启 bgm；web 首次
+  触摸补启被 autoplay 策略拦掉的 bgm。
+- 已知差异记在 [media.md](media.md)：Flutter 端 `duration` v1 恒 0、
+  `currentTime` 读缓存值；无 navigator.vibrate 的环境显式降级；audioplayers
+  无 ohos 实现，该端首个使用显式报错不静默。
+- 见 [media.md](media.md)。
 
 ## 近期计划
 

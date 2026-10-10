@@ -40,4 +40,22 @@ export { fetch, AbortController } from './fetch-bridge';
 export { Worker } from './worker';
 export { loadCanvasImage } from './canvas';
 
+// ---- haptics (specs/215) ----------------------------------------------------
+// Built into the runtime on the other two targets; wx is the most complete
+// end, so the bridge forwards to the real thing.
+
+export function vibrateShort(type: 'heavy' | 'medium' | 'light' = 'heavy'): void {
+  wx.vibrateShort({ type });
+}
+
+export function vibrateLong(): void {
+  wx.vibrateLong();
+}
+
+// Audio lives in the @ufjs/audio module (it carries the audioplayers pub
+// dependency, and third-party deps stay out of the core); its entry maps
+// onto wx.createInnerAudioContext itself, so mp pages importing the module
+// keep working with no core involvement.
+
 installFetchPolyfill();
+
