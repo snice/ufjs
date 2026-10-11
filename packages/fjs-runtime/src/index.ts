@@ -52,6 +52,9 @@ export type {
   FjsCanvasTextMetrics,
 } from './canvas/types';
 export { invokeHost, nowMs, gc, engineInfo, setTimeout, setInterval, clearTimeout, clearInterval, toast, setToastHandler, hasNativeHost, setOpSink } from './host';
+// 页面级生命周期（page-lifecycle.ts）：mp 语义的 web / Flutter 等价物，
+// 与 wx vendor 的同名导出对齐——应用统一 `import { onShow, onHide } from 'fjs'`
+export { onShow, onHide, onUnload } from './page-lifecycle';
 // Hand-rolled apps (no Vue) need the same engine wiring host-ops does: pick
 // the native-backed engine when the host has libfjs-style, fall back to the
 // TS one otherwise, and commit the native backend's pending styles before
