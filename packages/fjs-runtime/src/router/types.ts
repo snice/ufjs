@@ -11,6 +11,12 @@ export interface RouteMeta {
   title?: string;
   /** Root-level page reachable from a tab bar (no back button). */
   tab?: number;
+  /** mp native tabBar icon (iconPath): local PNG/JPG, 81×81 recommended,
+   * ≤40KB, no SVG. Ignored on web/App — the framework tabBar component
+   * owns its own visuals there. */
+  icon?: string;
+  /** mp native tabBar icon for the selected state (selectedIconPath). */
+  activeIcon?: string;
   /** `false` hides the global tab bar on this page (a full-screen player or
    * game). Only read when the app passed `tabBar` to createFjsApp; the bar
    * is persistent otherwise — pushed pages keep it (specs/210). */
@@ -132,11 +138,29 @@ export interface TabBarOptions {
   component: Component;
 }
 
+/** `RouterOptions.shell` accepts the component directly or an options
+ * object; `{ component }` is the canonical shape (mirrors TabBarOptions). */
+export type ShellOptions = Component | { component: Component };
+
+/** Normalizes the two accepted `shell` shapes. A Vue component object does
+ * not carry a `component` key, so the `'component' in shell` probe is
+ * unambiguous for real components. */
+export function shellComponentOf(shell: ShellOptions | undefined): Component | undefined {
+  if (!shell) return undefined;
+  return typeof shell === 'object' && 'component' in shell
+    ? (shell as { component: Component }).component
+    : (shell as Component);
+}
+
 export interface RouterOptions {
   routes: RouteRecord[];
   /** Wraps every page: gets a `route` prop and the page in its default
-   * slot. Usually the app shell (navigation bar + tab bar). */
-  shell?: Component;
+   * slot. Usually the app shell (navigation bar + tab bar). Either the
+   * component itself (legacy shorthand) or `{ component }` — the object
+   * form is the canonical shape and the extension point (slots,
+   * per-platform variants) so adding fields is not another breaking
+   * change. */
+  shell?: ShellOptions;
   /** The global tab bar (specs/210). Consumed by createFjsApp, which mounts
    * it above the page trees; the routers themselves ignore it. Ignored on
    * the mini program build, which keeps the native tabBar generated from

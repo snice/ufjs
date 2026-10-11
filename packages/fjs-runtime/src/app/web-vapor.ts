@@ -26,7 +26,7 @@ import '../vapor/web-dom';
 import { installBaseCss } from '../web/base-css';
 import { createHistoryRouter, type CurrentPage, type HistoryRouter, type HistoryRouterOptions } from '../router/web-history';
 import { ROUTE_KEY, ROUTER_KEY } from '../router/web-vapor';
-import type { NavKind, RouteLocation, Router, TransitionOption } from '../router/types';
+import { NavKind, RouteLocation, Router, TransitionOption, type ShellOptions, shellComponentOf } from '../router/types';
 import { resolveTransition } from '../router/transition';
 import { beginPageTransition, markPageSettled } from '../router/settled';
 import { createTransitionHooks } from '../vapor/transition';
@@ -47,8 +47,9 @@ export interface VaporWebAppOptions extends Omit<HistoryRouterOptions, 'shell'> 
   enableVapor?: boolean;
   /** A Vapor component wrapping every page: gets the page's own `route`
    * and renders the page in its default slot. A VDOM shell warns and is
-   * skipped (specs/167 §8). */
-  shell?: unknown;
+   * skipped (specs/167 §8). Component shorthand or `{ component }` —
+   * same as RouterOptions.shell. */
+  shell?: ShellOptions;
   /** Global components vapor pages resolve by name. */
   components?: Record<string, unknown>;
   /** Page transition, as in the VDOM shell (app/web.ts, specs/178): a CSS
@@ -150,7 +151,7 @@ export function createVaporWebApp(options: VaporWebAppOptions): VaporWebApp {
     provides[ROUTE_KEY] = route;
     // the shell reads THIS page's route (it used to read the router's
     // current one): a cached page's nav bar keeps its own title
-    const page = withVaporShell(comp, options.shell, () => route);
+    const page = withVaporShell(comp, shellComponentOf(options.shell), () => route);
     // the host joins the document BEFORE the page mounts: onMounted runs
     // synchronously at mount (specs/167 Q1) and must see attached nodes
     // the VDOM shell's page element: base-css's page transition and

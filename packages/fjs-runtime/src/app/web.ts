@@ -31,12 +31,13 @@ import { createVaporWebApp } from './web-vapor';
 import { applyPlugins, type FjsPlugin } from './plugin';
 import { FjsTabBarSurface, tabBarItems } from './tabbar';
 import { FjsGlobalSurface, normalizeGlobalComponents } from './global-components';
-import type {
+import {
   NavKind,
   Navigation,
   RouteLocation,
   Router,
   TransitionOption,
+  shellComponentOf,
 } from '../router/types';
 
 type ScrollShot = { top: number; left: number }[];
@@ -107,7 +108,7 @@ export function createFjsApp(options: FjsAppOptions): FjsApp {
     return createVaporWebApp(options as never) as unknown as FjsApp;
   }
   const router = createRouter(options);
-  const shell = options.shell as Component | undefined;
+  const shell = shellComponentOf(options.shell);
 
   const keepAlive = options.keepAlive ?? true;
   const transition = options.transition;

@@ -131,6 +131,15 @@ export interface FjsConfig {
      * slash optional) instead of the mini-program page path — the build
      * translates both directions. Packages reference `subpackages` roots. */
     preloadRule?: Record<string, MpPreloadRule>;
+    /** Native tabBar chrome (specs/210 keeps the component tabBar web/App
+     * only; on mp the native bar is the real one). Per-page icons live in
+     * the routes' <route> meta (icon / activeIcon). */
+    tabBar?: {
+      color?: string;
+      selectedColor?: string;
+      backgroundColor?: string;
+      borderStyle?: 'black' | 'white';
+    };
   };
 }
 

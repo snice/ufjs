@@ -44,13 +44,14 @@ import { invokeHostAsync } from '../host-async';
 import { Matcher } from './match';
 import { startPreloadQueue, type PreloadQueue } from './preload-queue';
 import { PAGE_TRANSITION, resolveTransition } from './transition';
-import type {
+import {
   NavKind,
   RouteLocation,
   RouteLocationRaw,
   Router,
   RouterOptions,
   TransitionOption,
+  shellComponentOf,
 } from './types';
 
 const EVENT_NAV_MOUNT = 10;
@@ -536,7 +537,7 @@ class FlutterRouter implements Router {
       if (!entry.settled && entry.settleTimer === null) {
         entry.settleTimer = setTimeout(() => this.markSettled(entry, true), SETTLE_FALLBACK_MS);
       }
-      const wrapped = withVaporShell(page, this.options.shell, () => entry.route);
+      const wrapped = withVaporShell(page, shellComponentOf(this.options.shell), () => entry.route);
       const vaporApp = createVaporApp(wrapped, this.vaporPageContext(entry));
       entry.app = vaporApp;
       vaporApp.mount(root);
@@ -565,7 +566,7 @@ class FlutterRouter implements Router {
       page,
       root,
       route: entry.route,
-      shell: this.options.shell,
+      shell: shellComponentOf(this.options.shell),
       provides: [
         [ROUTER_KEY, this],
         [ROUTE_KEY, entry.route],

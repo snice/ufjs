@@ -21,7 +21,9 @@ createFjsApp({
   plugins,
   routes,
   transition: 'fjs-slide',
-  shell: Shell,
+  // 对象形式是 shell 的规范形状（与 tabBar 一致，留扩展位）；直接传组件
+  // 的旧写法仍然兼容
+  shell: { component: Shell },
   // 全局 tabBar（specs/210）：整个应用一份，只在 tab 页（tab group）显示；
   // mp 端忽略（微信原生 tabBar 照旧）
   tabBar: { component: TabBar },

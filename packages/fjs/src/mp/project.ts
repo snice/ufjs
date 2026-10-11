@@ -56,26 +56,31 @@ export function appJson(
     /** specs/063 — already translated to real page-path keys by
      * translatePreloadRule. Only emitted when non-empty. */
     preloadRule?: Record<string, { network?: 'all' | 'wifi'; packages: string[] }>;
+    /** fjs.mp.tabBar — native tabBar chrome colors (specs/210 keeps the
+     * component tabBar web/App-only; on mp the native bar is the real one). */
+    tabBarStyle?: { color?: string; selectedColor?: string; backgroundColor?: string; borderStyle?: string };
   } = {},
 ): string {
   // native tab bar from the routes' <route> tab meta (hello uni-app style):
-  // text-only items — iconPath is optional and the app ships no icon assets
+  // per-page icons come from meta.icon / meta.activeIcon (local PNG/JPG —
+  // the native bar rejects SVG and network URLs; 81×81 ≤40KB recommended)
   const tabPages = pages
     .filter((p) => typeof p.meta.tab === 'number')
     .sort((a, b) => (a.meta.tab as number) - (b.meta.tab as number));
-  const tabBar =
-    tabPages.length >= 2
-      ? {
-          color: '#999999',
-          selectedColor: '#007aff',
-          backgroundColor: '#ffffff',
-          borderStyle: 'black',
-          list: tabPages.map((p) => ({
-            pagePath: `pages/${p.name}/${p.name}`,
-            text: String(p.meta.title ?? p.name),
-          })),
-        }
-      : undefined;
+  const tabBar = tabPages.length >= 2
+    ? {
+        color: options.tabBarStyle?.color ?? '#999999',
+        selectedColor: options.tabBarStyle?.selectedColor ?? '#007aff',
+        backgroundColor: options.tabBarStyle?.backgroundColor ?? '#ffffff',
+        borderStyle: options.tabBarStyle?.borderStyle ?? 'black',
+        list: tabPages.map((p) => ({
+          pagePath: `pages/${p.name}/${p.name}`,
+          text: String(p.meta.title ?? p.name),
+          ...(typeof p.meta.icon === 'string' && { iconPath: p.meta.icon }),
+          ...(typeof p.meta.activeIcon === 'string' && { selectedIconPath: p.meta.activeIcon }),
+        })),
+      }
+    : undefined;
   return (
     JSON.stringify(
       {

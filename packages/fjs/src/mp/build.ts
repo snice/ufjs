@@ -1109,6 +1109,7 @@ export async function mpBuild(opts: MpOptions): Promise<void> {
         pages: s.pages.map((p) => `pages/${p.name}/${p.name}`),
       })),
       preloadRule,
+      tabBarStyle: mpConfig.tabBar,
     }),
   );
   fs.writeFileSync(path.join(mpDir, 'app.wxss'), APP_WXSS);
