@@ -123,6 +123,8 @@ interface FjsButtonProps extends FjsContainerProps {
   loading?: FjsBooleanish;
   /** 点它就触发最近祖先 <form> 的 submit / reset。 */
   formType?: 'submit' | 'reset';
+  /** 原生开放能力，透传给 wx button（contact 客服 / share / getPhoneNumber 等）。 */
+  openType?: string;
 }
 
 interface FjsInputProps extends FjsBaseProps, FjsTouchEvents {
