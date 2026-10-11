@@ -60,11 +60,27 @@ function recordFor(path: string): MpRouteRecord | undefined {
 function toLocation(raw: RouteLocationRaw): RouteLocation {
   const obj = typeof raw === 'string' ? { path: raw } : raw;
   let path = String(obj.path ?? '');
+  // String form may carry its own query ('/result?ok=1'): mpUrl() maps path
+  // -> mpPage and re-appends the search separately, so a query left inside
+  // `path` corrupts the mapping ('pages/result?…%2Fresult'). vue-router on
+  // web parses the string the same way.
+  const strQuery: Record<string, string> = {};
+  const qIndex = path.indexOf('?');
+  if (qIndex >= 0) {
+    for (const pair of path.slice(qIndex + 1).split('&')) {
+      if (!pair) continue;
+      const eq = pair.indexOf('=');
+      const k = eq < 0 ? pair : pair.slice(0, eq);
+      const v = eq < 0 ? '' : pair.slice(eq + 1);
+      strQuery[decodeURIComponent(k)] = decodeURIComponent(v);
+    }
+    path = path.slice(0, qIndex);
+  }
   if (obj.name && !path) {
     path = routes.find((r) => r.meta.name === obj.name)?.path ?? '';
   }
   if (!path.startsWith('/')) path = '/' + path;
-  const query: Record<string, string> = {};
+  const query: Record<string, string> = { ...strQuery };
   for (const [k, v] of Object.entries(obj.query ?? {})) {
     if (v !== undefined && v !== null) query[k] = String(v);
   }
