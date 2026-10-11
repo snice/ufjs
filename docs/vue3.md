@@ -31,7 +31,7 @@ import Shell from './Shell.vue';
 
 createFjsApp({
   routes,
-  shell: Shell,
+  shell: { component: Shell },
 }).mount();
 ```
 

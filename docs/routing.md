@@ -26,7 +26,7 @@ import Shell from './Shell.vue';
 
 createFjsApp({
   routes,
-  shell: Shell,              // 每个页面都被它包一层
+  shell: { component: Shell }, // 每个页面都被它包一层（对象形式是规范形状，直接传组件的旧写法仍兼容）
   setup(app) { /* 装插件、错误处理 */ },
 }).mount();
 ```
@@ -143,7 +143,7 @@ shell 里的 tabBar 随页面实例化，push 二级页后整个消失，也做�
 ```ts
 createFjsApp({
   routes,
-  shell: Shell,                     // 导航栏照旧留在 shell 里
+  shell: { component: Shell },      // 导航栏照旧留在 shell 里
   tabBar: { component: TabBar },    // 不传则一切照旧（shell 自渲染的 tabBar）
 });
 ```
