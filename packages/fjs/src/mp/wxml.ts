@@ -628,6 +628,12 @@ function genChildren(nodes: TemplateChildNode[], ctx: Ctx, scope: Scope, depth: 
       let j = i + 1;
       while (j < nodes.length) {
         const sib = nodes[j];
+        // comments are legal between chain siblings (Vue keeps them in the
+        // AST); breaking on one orphans every later branch — skip instead
+        if (sib.type === NodeTypes.COMMENT) {
+          j++;
+          continue;
+        }
         const elif = findDir(sib, 'else-if');
         const els = findDir(sib, 'else');
         if (elif) {
