@@ -51,6 +51,37 @@ importers:
         specifier: ^3.3.11
         version: 3.3.11(typescript@5.9.3)
 
+  examples/app-store-clone:
+    dependencies:
+      '@ufjs/liquidglass':
+        specifier: workspace:*
+        version: link:../../packages/fjs-liquidglass
+      vue:
+        specifier: 3.5.43
+        version: 3.5.43(typescript@5.9.3)
+    devDependencies:
+      '@ufjs/cli':
+        specifier: workspace:*
+        version: link:../../packages/fjs
+      '@ufjs/runtime':
+        specifier: workspace:*
+        version: link:../../packages/fjs-runtime
+      '@vitejs/plugin-vue':
+        specifier: ^6.0.3
+        version: 6.0.8(vite@8.2.2(@types/node@26.4.0)(jiti@2.7.0)(sass@1.105.0))(vue@3.5.43(typescript@5.9.3))
+      '@vue/runtime-core':
+        specifier: 3.5.43
+        version: 3.5.43
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^8.2.2
+        version: 8.2.2(@types/node@26.4.0)(esbuild@0.23.1)(jiti@2.7.0)(sass@1.105.0)
+      vue-tsc:
+        specifier: ^3.3.11
+        version: 3.3.11(typescript@5.9.3)
+
   examples/bench:
     dependencies:
       typescript:

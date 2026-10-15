@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "types": [],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "vueCompilerOptions": {
+    // Makes <text>/<image>/<input>/<switch>/... resolve as fjs components
+    // instead of native DOM elements, so the editor reads their props from
+    // fjs-runtime/vue-global.
+    "plugins": ["@ufjs/runtime/volar"],
+    "strictTemplates": true
+  },
+  "include": ["vite.config.ts", "src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue"]
+}

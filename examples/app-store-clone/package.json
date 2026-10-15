@@ -1,0 +1,28 @@
+{
+  "name": "app-store-clone",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "fjs dev",
+    "dev:web": "vite --host 0.0.0.0",
+    "build": "fjs build",
+    "build:web": "vite build",
+    "build:release": "fjs build --release",
+    "run:android": "fjs run android",
+    "run:ios": "fjs run ios",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@ufjs/liquidglass": "workspace:*",
+    "vue": "3.5.43"
+  },
+  "devDependencies": {
+    "@ufjs/cli": "workspace:*",
+    "@ufjs/runtime": "workspace:*",
+    "@vitejs/plugin-vue": "^6.0.3",
+    "@vue/runtime-core": "3.5.43",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2",
+    "vue-tsc": "^3.3.11"
+  }
+}

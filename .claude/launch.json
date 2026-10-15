@@ -85,6 +85,22 @@
         "--strictPort"
       ],
       "port": 5185
+    },
+    {
+      "name": "app-store-clone-web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "examples/app-store-clone",
+        "exec",
+        "vite",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "5195",
+        "--strictPort"
+      ],
+      "port": 5195
     }
   ]
 }
