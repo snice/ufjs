@@ -73,6 +73,7 @@ element API 或 op 协议那两层** —— 判断标准和接入步骤见
 | `examples/hello-js` | TS | 底层 element API 示例 + 不经过 Vue 的主题压测屏 | — |
 | `examples/fjs-go` | Dart | 调试客户端 App，连任意 `fjs dev` | [fjs-go.md](docs/fjs-go.md) |
 | `examples/bench` | Vue | 性能基准 | [performance.md](docs/performance.md) |
+| `examples/app-store-clone` | Vue | iOS App Store 复刻（liquid glass tab 栏、卡片展开、大标题页），同源跑 Flutter 与 Web | [specs/217](specs/217-app-store-clone/spec.md) |
 | `packages/fjs/src/mp` + `packages/fjs-runtime/src/wx` | TS | 小程序编译（`fjs build --mp`）与 wx 运行时薄壳 | [miniprogram.md](docs/miniprogram.md) |
 | `specs/` | md | **spec-kit 产物**，一个需求一个目录 | 本文件第 0 节 |
 
