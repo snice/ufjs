@@ -331,6 +331,10 @@ fjs-page-host[data-nav="pop"] .zoom-enter-from { transform: translateX(-8px); }
 动态段（`src/pages/user/[id].vue` → `/user/:id`）进 `params`，问号后面的进
 `query`。两者都是 `Record<string, string>`——**值永远是字符串**，要数字自己转。
 
+动态段页面在 Flutter 与 Web 上都能用。页面代码按路由**模式**（`/user/:id`）登记，Flutter 路由
+挂载时也按匹配到的模式去找；`/user/7` 与 `/user/8` 是同一份页面代码、同一个分包（specs/220，
+此前 Flutter 端按具体路径查，动态段页面白屏并报 `no page registered`）。
+
 ```vue
 <!-- src/pages/user/[id].vue -->
 <script setup lang="ts">

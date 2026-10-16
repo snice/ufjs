@@ -234,7 +234,7 @@ class FlutterRouter implements Router {
   /** Gets `location`'s page code into the VM without mounting it. `idle`:
    * wait until the host says the app is idle (the automatic queue); a direct
    * preload() is made at the moment a navigation is about to happen and must
-   * not wait. Keyed by location.path, as mount() looks the page up.
+   * not wait. Keyed by the route's pattern, as mount() looks the page up.
    *
    * The page's style snapshot is deliberately NOT imported here: nothing
    * references the imported cache entries until the page mounts, so they sit
@@ -246,7 +246,7 @@ class FlutterRouter implements Router {
   private async preloadPage(location: RouteLocation, idle: boolean): Promise<void> {
     const record = this.matcher.record(location.path);
     if (!record) return;
-    const path = location.path;
+    const path = record.path;
     if (!pageLoaded(path) && hasNativeHost) {
       // A split build's chunk is evaluated by the host. A single bundle's
       // page runs below, in pageComponent(); '' only asks for the idle wait.
@@ -313,7 +313,7 @@ class FlutterRouter implements Router {
       const entry = this.newEntry(0, location, false);
       this.stack = [entry];
       const chunk = this.chunkOf(location);
-      if (chunk && !pageComponent(location.path) && hasNativeHost) {
+      if (chunk && !pageComponent(this.pageKey(location)) && hasNativeHost) {
         // the base page lives in a chunk that is not in the VM yet
         this.pending.set(0, { entry });
         invokeHost('fjs.nav.load', 0, location.fullPath, chunk);
@@ -354,6 +354,17 @@ class FlutterRouter implements Router {
   }
 
   // ---- internals -----------------------------------------------------------
+
+  /** Where the page's code is registered. A page registers under its route's
+   * PATTERN (`/user/:id`, what the generated entry passes to definePage), so the
+   * lookup has to go through the matched record: asking by the concrete path
+   * (`/user/7`) never found a dynamic-segment page on the App — blank screen
+   * and "no page registered" while web, which matches by pattern, worked
+   * (specs/220). One entry per pattern also means `/user/7` and `/user/8` share
+   * the same loaded page code, as they share one chunk. */
+  private pageKey(location: RouteLocation): string {
+    return this.matcher.record(location.path)?.path ?? location.path;
+  }
 
   private chunkOf(location: RouteLocation): string {
     const record = this.matcher.record(location.path);
@@ -512,7 +523,7 @@ class FlutterRouter implements Router {
   }
 
   private mount(entry: PageEntry): void {
-    const page = pageComponent(entry.location.path);
+    const page = pageComponent(this.pageKey(entry.location));
     if (!page) {
       // Dart sends navMount only after the chunk evaluated (a failed load
       // pops the route instead — engine.dart), so reaching this with a

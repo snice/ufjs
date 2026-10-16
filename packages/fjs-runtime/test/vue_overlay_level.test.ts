@@ -4,7 +4,15 @@
 // and decoded just enough to assert tree facts (who is the parent of whom,
 // what got removed) — pseudo style CONTENT is covered in css.test.ts.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { h, ref, Teleport } from '@vue/runtime-core';
+import {
+  createCommentVNode,
+  defineComponent,
+  Fragment,
+  h,
+  ref,
+  Teleport,
+  withDirectives,
+} from '@vue/runtime-core';
 import { vShow } from '../src/vue/vue-shim';
 import { setOpSink } from '../src/host';
 import { createApp, createDetachedRoot, flutterRoot, registerStyles, releaseDetachedRoot } from '../src/vue';
@@ -484,3 +492,146 @@ describe('overlay host levels (specs/136)', () => {
   });
 });
 
+// specs/220: a component whose root is a full-screen `position: fixed` layer,
+// hidden with v-show before the owner drops it with v-if (a story / sheet that
+// closes itself, then is unmounted). The layer — and everything under it —
+// must leave the overlay host; a leftover mask-shaped box there swallows every
+// touch on the page below.
+describe('unmounting a hidden fixed layer (specs/220)', () => {
+  beforeEach(() => setOpSink((bytes) => sink(bytes)));
+  afterEach(() => setOpSink(null));
+
+  const Layer = defineComponent({
+    props: { shown: { type: Boolean, default: true } },
+    setup(props) {
+      return () =>
+        withDirectives(
+          h('view', { class: 'layer' }, [h('view', { class: 'inner' }, '层内')]),
+          [[vShow, props.shown]],
+        );
+    },
+  });
+
+  const css = `.page { flex-grow: 1 }
+       .layer { position: fixed; left: 0; top: 0; right: 0; bottom: 0 }`;
+
+  /** `.inner` carries the text, so its parent is the layer; the layer's parent
+   * is the overlay host it was hoisted into. */
+  const layerAndHost = () => {
+    const layer = ownerOfText('层内');
+    return { layer, host: f.parentOf.get(layer)! };
+  };
+
+  it('removes the layer from the host after v-show false then v-if false', async () => {
+    f = freshFrames();
+    const mounted = ref(true);
+    const shown = ref(true);
+    const { app } = mount(
+      () =>
+        h('view', { class: 'page' }, [mounted.value ? h(Layer, { shown: shown.value }) : null]),
+      css,
+    );
+    await settle();
+    await settle();
+    const { layer, host } = layerAndHost();
+    expect(f.tag.get(host)).toBe('fjs-overlay-host');
+
+    shown.value = false;
+    await settle();
+    await settle();
+    expect(f.removed.has(layer)).toBe(false);
+
+    mounted.value = false;
+    await settle();
+    await settle();
+    expect(f.removed.has(layer), 'the layer is still in the overlay host').toBe(true);
+    app.unmount();
+  });
+
+  it('removes it when it was never hidden first (the plain v-if case)', async () => {
+    f = freshFrames();
+    const mounted = ref(true);
+    const { app } = mount(
+      () => h('view', { class: 'page' }, [mounted.value ? h(Layer) : null]),
+      css,
+    );
+    await settle();
+    await settle();
+    const { layer } = layerAndHost();
+    mounted.value = false;
+    await settle();
+    await settle();
+    expect(f.removed.has(layer)).toBe(true);
+    app.unmount();
+  });
+
+  // The root of a component with a leading template comment (dev builds keep
+  // it) is a Fragment. Vue removes a Fragment by walking nextSibling from its
+  // start anchor to its end anchor and removing each node it meets; a fixed
+  // element in that range had been hoisted out of the parent's child list, so
+  // the walk never met it and the layer stayed in the overlay host forever.
+  describe('inside a Fragment (a root with a leading comment)', () => {
+    const fragmentRoot = (position: 'first' | 'middle' | 'last') =>
+      defineComponent({
+        setup: () => () => {
+          const layer = h('view', { class: 'layer' }, [h('view', { class: 'inner' }, '层内')]);
+          const other = h('view', { class: 'other' }, '同级');
+          const kids =
+            position === 'first'
+              ? [layer, other]
+              : position === 'middle'
+                ? [createCommentVNode('c'), layer, other]
+                : [other, layer];
+          return h(Fragment, null, kids);
+        },
+      });
+
+    for (const position of ['first', 'middle', 'last'] as const) {
+      it(`drops a hoisted layer that is the ${position} node of the fragment`, async () => {
+        f = freshFrames();
+        const Root = fragmentRoot(position);
+        const mounted = ref(true);
+        const { app } = mount(
+          () => h('view', { class: 'page' }, [mounted.value ? h(Root) : null]),
+          css,
+        );
+        await settle();
+        await settle();
+        const { layer, host } = layerAndHost();
+        expect(f.tag.get(host)).toBe('fjs-overlay-host');
+        const other = textIdOf('同级');
+
+        mounted.value = false;
+        await settle();
+        await settle();
+        expect(f.removed.has(other), 'the plain sibling goes').toBe(true);
+        expect(f.removed.has(layer), 'the hoisted layer must go with its fragment').toBe(true);
+        app.unmount();
+      });
+    }
+
+    it('does not drop a fixed element that merely sits next to a v-if anchor', async () => {
+      f = freshFrames();
+      const on = ref(false);
+      const { app } = mount(
+        () =>
+          h('view', { class: 'page' }, [
+            h('view', { class: 'layer' }, [h('view', { class: 'inner' }, '层内')]),
+            on.value ? h('view', { class: 'x' }, 'X') : null,
+          ]),
+        css,
+      );
+      await settle();
+      await settle();
+      const { layer } = layerAndHost();
+      on.value = true; // the v-if comment anchor is replaced by a real node
+      await settle();
+      await settle();
+      on.value = false;
+      await settle();
+      await settle();
+      expect(f.removed.has(layer), 'a sibling coming and going must not take the layer').toBe(false);
+      app.unmount();
+    });
+  });
+});

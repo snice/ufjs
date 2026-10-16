@@ -152,6 +152,19 @@ app 宿主里的元素 `isConnected` 为 true（body 语义）。
 | `<Teleport to="body">` | app 级宿主（同样拦返回） | 真 body，不拦后退 |
 | 状态栏横条（≈ safe-area top） | **点击不达应用**（specs/142 探针实测）：画在 inset 里的交互元素收不到 tap，顶部锚定组件要自己让位（见 §5） | 无此问题（浏览器 chrome 占据顶部） |
 
+### 卸载 fixed 元素：Fragment 里的也会走（specs/220）
+
+fixed 元素物理上在宿主里，不在逻辑父节点的子列表里。Vue 卸载 Fragment 是从起始锚点沿
+`nextSibling` 走到结束锚点、逐个移除遇到的节点——被提升的 fixed 元素以前**走不到**，
+于是根是 Fragment 的组件（模板开头有注释的组件，dev 构建里就是 Fragment；多根组件同理）
+卸载后，它的 fixed 层留在宿主里：全屏的那种就是一块摸不到下面页面的透明遮罩。
+
+现在 `nextSibling` 对提升元素按**逻辑位置**回答（它被提升时坐在谁前面，`insert` 的锚点同理），
+Fragment 的范围遍历会经过它，随 Fragment 一起移除。表现上就是：fixed 元素放在组件根、
+放在多根组件里、放在 `<template v-if>` / `v-for` 里，`v-if` 卸载都正常，不需要
+「常驻挂载 + `v-show`」这类绕法。回归：`test/vue_overlay_level.test.ts`
+的「unmounting a hidden fixed layer」。
+
 ## 7. 相关文件
 
 | 文件 | 作用 |

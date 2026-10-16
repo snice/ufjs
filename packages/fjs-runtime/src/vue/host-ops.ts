@@ -441,6 +441,53 @@ function unhoistIfNeeded(el: Element): void {
   styleEngine.recomputeSubtree(el.id);
 }
 
+// ---- hoisted elements in the LOGICAL sibling chain (specs/220) --------------
+//
+// A hoisted element is physically in the overlay host, so it is missing from
+// its logical parent's child list. Vue never knew: it walks `nextSibling` to
+// visit a range of siblings, and the one place that matters is removing a
+// Fragment — it goes from the start anchor to the end anchor, removing every
+// node it meets. A fixed element inside such a range was never met, so a
+// component whose root is a Fragment (a root with a leading template comment
+// is one in dev builds) leaked its fixed layer into the host when it was
+// unmounted: a mask-shaped box left on the page swallowing every touch.
+//
+// So the sibling chain Vue sees is made logical: a hoisted element is returned
+// where it came from (right before the node it sat before, `hoistedBefore`),
+// and asked for its own next sibling it answers from that same position.
+
+/** Hoisted elements whose logical parent is [parentId] and that sat right
+ * before [beforeId] (null: they were last), in the order they were hoisted. */
+function hoistedBeforeNode(parentId: number, beforeId: number | null): number[] {
+  const out: number[] = [];
+  for (const [id, before] of hoistedBefore) {
+    if (before === beforeId && hoistedFrom.get(id) === parentId) out.push(id);
+  }
+  return out;
+}
+
+/** The node after a hoisted element in its logical parent: the next hoisted
+ * element that sat in the same spot, else the node it sat before. Null when it
+ * was last, or when that node has since gone (nothing sensible to answer). */
+function logicalNextOfHoisted(id: number, logical: number): HostNode | null {
+  const before = hoistedBefore.get(id) ?? null;
+  const same = hoistedBeforeNode(logical, before);
+  const next = same[same.indexOf(id) + 1];
+  if (next !== undefined) return elementsById.get(next) ?? null;
+  if (before == null) return null;
+  return parentOf.get(before) === logical ? (elementsById.get(before) ?? makeHandle(before)) : null;
+}
+
+/** An insert anchor that is a hoisted element is not in the parent's list, so
+ * the position is looked up off what it sat before instead. */
+function physicalAnchor(anchor: HostNode | null, parentId: number): HostNode | null {
+  while (anchor && hoistedFrom.has(anchor.id) && parentOf.get(anchor.id) !== parentId) {
+    const before = hoistedBefore.get(anchor.id) ?? null;
+    anchor = before != null ? (elementsById.get(before) ?? null) : null;
+  }
+  return anchor;
+}
+
 /** Moves an already-hoisted element between the page host and the app host
  * after its `overlay` prop flipped (specs/136). Ownership bookkeeping
  * (hoistedFrom / hoistedBefore) is level-independent and stays untouched. */
@@ -1452,7 +1499,7 @@ export const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
       if (modalMasks.size !== 0 && modalMasks.has(child.id)) syncAllHostModals();
       return;
     }
-    anchor = anchor && unshell(anchor);
+    anchor = physicalAnchor(anchor ? unshell(anchor) : null, parent.id);
     // Vue also calls insert to MOVE a node that is already mounted (a keyed
     // v-for reorder). The native side detaches the child before inserting it
     // at the index this computes, so the index has to be read off the list
@@ -1519,18 +1566,28 @@ export const nodeOps: Omit<RendererOptions<HostNode, HostNode>, 'patchProp'> = {
 
   nextSibling: (node) => {
     node = unshell(node);
+    // a hoisted element answers from its LOGICAL position (specs/220)
+    const logical = hoistedFrom.get(node.id);
+    if (logical != null && parentOf.get(node.id) !== logical) {
+      return logicalNextOfHoisted(node.id, logical);
+    }
     const parentId = parentOf.get(node.id);
     if (parentId == null) return null;
     const list = childrenOf.get(parentId) ?? [];
     const idx = list.indexOf(node.id);
-    if (idx < 0 || idx + 1 >= list.length) return null;
+    if (idx < 0) return null;
+    const next = idx + 1 < list.length ? list[idx + 1] : null;
+    // a hoisted element that sat right before `next` comes before it
+    const stood = hoistedBeforeNode(parentId, next)[0];
+    if (stood !== undefined) return elementsById.get(stood) ?? null;
+    if (next == null) return null;
     // the REAL element, not a fresh wrapper: vue's removeFragment walks
     // siblings until `cur === end`, comparing by IDENTITY against the anchor
     // element it stored at mount. A fresh handle never equals it, the walk
     // runs off the child list, and the next call hands us null — vant's
     // click-to-loading button unmounts a fragment exactly this way and took
     // the whole patch down with it.
-    return elementsById.get(list[idx + 1]) ?? makeHandle(list[idx + 1]);
+    return elementsById.get(next) ?? makeHandle(next);
   },
 
   // Only the document's own boxes: `<Teleport to="body">` — vant's Popover,

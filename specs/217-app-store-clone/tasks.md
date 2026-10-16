@@ -115,3 +115,13 @@ T054 结论：模拟器上 Today（tab 玻璃栏 + 卡片玻璃条 + 滚动）�
 
 - **Flutter 路由：动态段页面解析**：`router/flutter.ts` `mount()` 用 `entry.location.path` 查 `pageComponent`，动态路由 `/user/:id` 查不到（docs/routing.md 写了支持，web 能用）。应按匹配到的路由模式注册/查找。
 - **overlay 宿主：卸载 fixed 子树要真正移除**，并补一条回归（v-if 关掉全屏 fixed 层后触摸 / 返回手势恢复）。
+
+### 修订（specs/220，2026-10-16）
+
+上面「iOS 模拟器验收」里有几条结论后来被修正，原文保留作为当时的记录：
+
+- 第 2 条（卸载 fixed 子树不会从宿主移除）**归因不对**：真正条件是组件根是 Fragment，
+  已在运行时修复（specs/220）；`v-if` 卸载现在正常。`CardExpand` 仍常驻挂载 + `v-show`，理由只剩「重开不用重建」。
+- 第 3 条（对含玻璃子树做 opacity 过渡会弄坏绘制）**未被独立证实**，很可能是泄漏层盖在卡片上的错觉。
+- 第 4 条（动态路由页面在 App 端找不到）已在运行时修复，详情页已改回 `pages/app/[id].vue`。
+- 「建议另开 spec」的两项即 specs/220。
