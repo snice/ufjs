@@ -5,7 +5,7 @@
 <script setup lang="ts">
 // Today tab: story card, sponsored card, "trending" list card. Tapping a story
 // or the list card expands it into a full-screen story (CardExpand).
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { rectOf, type Rect } from '@/hero';
 import { STORIES, type Story } from '@/data/stories';
 import LargeTitle from '@/components/LargeTitle.vue';
@@ -26,6 +26,9 @@ const setCard = (id: string) => (el: unknown) => {
 };
 
 const open = ref<{ story: Story; from: Rect } | null>(null);
+// blur radius (px) the story asks of this page while it is being dragged away
+const behindBlur = ref(0);
+const behindStyle = computed(() => (behindBlur.value > 0.5 ? { filter: `blur(${behindBlur.value}px)` } : undefined));
 
 function expand(story: Story) {
   if (open.value) return;
@@ -35,14 +38,20 @@ function expand(story: Story) {
 
 <template>
   <view class="page">
-    <LargeTitle title="Today" />
-    <view class="cards">
-      <view :ref="setCard(cat.id)">
-        <StoryCard :story="cat" @open="expand(cat)" />
-      </view>
-      <AdCard app-id="spark" />
-      <view :ref="setCard(popular.id)">
-        <ListCard :story="popular" @open="expand(popular)" />
+    <!-- the page content sits in its own box so that the expanded story's drag-
+         to-dismiss can blur it (`filter: blur()`, specs/222) WITHOUT blurring the
+         story itself. CardExpand must stay outside this box: on web a filter makes
+         the element the containing block of its `position: fixed` descendants. -->
+    <view :style="behindStyle">
+      <LargeTitle title="Today" />
+      <view class="cards">
+        <view :ref="setCard(cat.id)">
+          <StoryCard :story="cat" @open="expand(cat)" />
+        </view>
+        <AdCard app-id="spark" />
+        <view :ref="setCard(popular.id)">
+          <ListCard :story="popular" @open="expand(popular)" />
+        </view>
       </view>
     </view>
 
@@ -54,6 +63,7 @@ function expand(story: Story) {
       :request="open?.story.id === s.id ? open : null"
       :measure-card="() => rectOf(cardEls.get(s.id))"
       @closed="open = null"
+      @blur="(px: number) => (behindBlur = px)"
     />
   </view>
 </template>

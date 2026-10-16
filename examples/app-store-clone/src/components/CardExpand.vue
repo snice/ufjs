@@ -14,10 +14,13 @@
 // transition list. It stays 20px during the flight and snaps to 0 once the box
 // covers the screen (the screen edge clips it, so the snap is invisible).
 //
-// Drag to dismiss (specs/218, modelled on a screen recording of the real App
-// Store): with the story scrolled to the top, pulling down moves the WHOLE page
-// (cover + text + close button) with the finger, shrinks it and rounds its
-// corners while the page behind dims. That is why hero, content and the close
+// Drag to dismiss (specs/218, 221; modelled on screen recordings of the real App
+// Store): with the story scrolled to the top, pulling down shrinks the WHOLE page
+// (cover + text + close button) about the screen centre — it does not follow the
+// finger sideways — and rounds its corners, while the page behind is gaussian-
+// blurred (`filter: blur()` on that page, specs/222; this component only reports
+// how much, via `blur`) and dimmed. Shrunk to CLOSE_SCALE it closes by itself,
+// finger still down. That is why hero, content and the close
 // button live inside one `.pose` box: a single transform + radius moves them
 // together. On release past a threshold the pose is converted into the hero's
 // equivalent rect and the existing geometry flight takes over (see finishDrag).
@@ -27,7 +30,7 @@
 // frame makes web skip the transition and makes Flutter's tween start at the
 // final value (the "first build is the end value" trap in HeroFly's header).
 import { onBeforeUnmount, ref, watch } from 'vue';
-import type { FjsTouchEvent } from 'fjs';
+import { nowMs, type FjsTouchEvent } from 'fjs';
 import { CLOSE_MS, FLY_MS, rectOf, type Rect } from '../hero';
 import { appsOf } from '../data/apps';
 import type { Story } from '../data/stories';
@@ -41,7 +44,11 @@ const props = defineProps<{
   /** re-measure the origin card: it is still mounted, so this is reliable */
   measureCard: () => Rect;
 }>();
-const emit = defineEmits<{ closed: [] }>();
+const emit = defineEmits<{
+  closed: [];
+  /** px of gaussian blur the page behind should carry right now (0: none) */
+  blur: [px: number];
+}>();
 
 const EASE = 'cubic-bezier(0.32,0.72,0,1)';
 
@@ -59,22 +66,32 @@ const flying = ref(true);
 const contentOn = ref(false);
 let timers: ReturnType<typeof setTimeout>[] = [];
 
-// Drag-to-dismiss tuning. Values read off the recording: the page was still
-// following the finger at ~0.8x with ~25-30px corners, and let go past a short pull.
+// Drag-to-dismiss tuning, read off the recordings: the page shrank about the
+// centre with ~25-30px corners, the page behind went soft and grey, and at about
+// 0.85x it flew back on its own.
 const PULL_RANGE = 0.4; // pull distance (x viewport height) that reaches full progress
 const MIN_SCALE = 0.7; // 1 - 0.3 at full progress
+const CLOSE_SCALE = 0.85; // shrunk this far the story closes by itself
 const MAX_RADIUS = 28;
-const MAX_DIM = 0.4;
-const CLOSE_DIST = 0.15; // release farther than this (x viewport height) closes
-const CLOSE_SPEED = 0.7; // ...or faster than this (px/ms)
+const MAX_BLUR = 20; // px of gaussian blur on the page behind at full progress
+const MAX_DIM = 0.35; // black tint alpha on it
+const CLOSE_SPEED = 0.7; // released faster than this (px/ms) before the threshold closes
 const START_DOWN = 10; // px of downward travel before a pull is recognised
 const ABORT_UP = 6; // px of upward travel that hands the gesture back to scrolling
 const SPRING = '0.3s cubic-bezier(0.32,0.72,0,1)';
 
 type DragPhase = 'idle' | 'armed' | 'dragging' | 'settling';
 const phase = ref<DragPhase>('idle');
-// the page's pose while it is pulled: translate + scale + corner radius + dim
-const pose = ref({ tx: 0, ty: 0, scale: 1, radius: 0, dim: 0 });
+// the page's pose while it is pulled: scale about the centre + corner radius
+const pose = ref({ scale: 1, radius: 0 });
+// The page behind: how soft and how dark. Dark is a plain black layer under the
+// pose; soft is the parent's `filter: blur()`, reported through `blur`.
+const backdrop = ref({ blur: 0, dim: 0 });
+watch(
+  () => backdrop.value.blur,
+  (px) => emit('blur', px),
+);
+let fade: ReturnType<typeof setInterval> | undefined;
 // true while a release animation (spring back) wants the transform to transition
 const springing = ref(false);
 // true for the one frame in which the hero is swapped in for the pose
@@ -129,13 +146,31 @@ watch(
   },
 );
 
-onBeforeUnmount(() => timers.forEach(clearTimeout));
+onBeforeUnmount(() => {
+  timers.forEach(clearTimeout);
+  if (fade) clearInterval(fade);
+});
 
 function resetPose() {
   phase.value = 'idle';
   springing.value = false;
   instant.value = false;
-  pose.value = { tx: 0, ty: 0, scale: 1, radius: 0, dim: 0 };
+  pose.value = { scale: 1, radius: 0 };
+  if (fade) clearInterval(fade);
+  backdrop.value = { blur: 0, dim: 0 };
+}
+
+/** Takes the blur and dim on the page behind down to nothing over [ms]. Stepped
+ * from JS: `filter` does not interpolate on the App (specs/222). */
+function fadeBackdrop(ms: number) {
+  if (fade) clearInterval(fade);
+  const from = backdrop.value;
+  const t0 = nowMs();
+  fade = setInterval(() => {
+    const k = Math.min(1, (nowMs() - t0) / ms);
+    backdrop.value = { blur: from.blur * (1 - k), dim: from.dim * (1 - k) };
+    if (k >= 1 && fade) clearInterval(fade);
+  }, 40);
 }
 
 /** Fly the hero back onto the card and hide the layer. Shared by the ✕ button and
@@ -143,6 +178,8 @@ function resetPose() {
 function flyBack() {
   box.value = props.measureCard();
   radius.value = 20;
+  // the page behind clears as the card lands
+  if (backdrop.value.blur > 0) fadeBackdrop(CLOSE_MS);
   later(() => {
     shown.value = false;
     resetPose();
@@ -215,16 +252,14 @@ function onTouchMove(e: FjsTouchEvent) {
     return;
   }
 
-  const dx = t.clientX - startX;
+  // locked to the centre: only the pull distance counts, never where the finger is
   const dy = t.clientY - startY;
   const p = clamp01(Math.max(dy, 0) / (viewport.height * PULL_RANGE));
-  pose.value = {
-    tx: dx,
-    ty: dy,
-    scale: 1 - (1 - MIN_SCALE) * p,
-    radius: MAX_RADIUS * p,
-    dim: MAX_DIM * p,
-  };
+  const scale = 1 - (1 - MIN_SCALE) * p;
+  pose.value = { scale, radius: MAX_RADIUS * p };
+  backdrop.value = { blur: MAX_BLUR * p, dim: MAX_DIM * p };
+  // shrunk far enough: go, without waiting for the finger to lift
+  if (scale <= CLOSE_SCALE) finishDrag();
 }
 
 function onTouchEnd(e: FjsTouchEvent) {
@@ -234,15 +269,15 @@ function onTouchEnd(e: FjsTouchEvent) {
   }
   if (phase.value !== 'dragging') return;
   const cancelled = e.type === 'touchcancel';
-  const far = pose.value.ty > viewport.height * CLOSE_DIST;
-  if (!cancelled && (far || speed > CLOSE_SPEED)) finishDrag();
+  if (!cancelled && speed > CLOSE_SPEED) finishDrag();
   else springBack();
 }
 
 function springBack() {
   phase.value = 'settling';
   springing.value = true;
-  pose.value = { tx: 0, ty: 0, scale: 1, radius: pose.value.radius, dim: 0 };
+  pose.value = { scale: 1, radius: pose.value.radius };
+  fadeBackdrop(300);
   // corner radius is not in the App-side transition list, so it is set directly
   // once the transform has landed (the screen edge clips it by then anyway)
   later(() => resetPose(), 320);
@@ -254,23 +289,24 @@ function springBack() {
  * covering exactly the same rect (no transition for that one frame, same corner
  * radius), and let the existing flight carry it to the card. */
 function finishDrag() {
+  if (phase.value === 'settling') return;
   phase.value = 'settling';
   flying.value = true;
   contentOn.value = false;
   later(() => {
-    const { tx, ty, scale, radius: r } = pose.value;
+    const { scale, radius: r } = pose.value;
     const w = viewport.width * scale;
     const h = viewport.height * scale;
     instant.value = true;
     box.value = {
-      left: tx + (viewport.width - w) / 2,
-      top: ty + (viewport.height - h) / 2,
+      left: (viewport.width - w) / 2,
+      top: (viewport.height - h) / 2,
       width: w,
       height: h,
     };
     radius.value = r * scale;
     // the page is gone (content faded), the hero stands in at the same rect
-    pose.value = { tx: 0, ty: 0, scale: 1, radius: 0, dim: pose.value.dim };
+    pose.value = { scale: 1, radius: 0 };
     later(() => {
       instant.value = false;
       flyBack();
@@ -296,22 +332,18 @@ const boxStyle = () => ({
 });
 
 const poseStyle = () => ({
-  transform: `translate(${pose.value.tx}px, ${pose.value.ty}px) scale(${pose.value.scale})`,
+  transform: `scale(${pose.value.scale})`,
   borderRadius: `${pose.value.radius}px`,
   // no transition while the finger is down: the page must track it exactly
   transition: springing.value ? `transform ${SPRING}` : 'none',
 });
 
-const dimStyle = () => ({
-  opacity: pose.value.dim,
-  transition: springing.value ? 'opacity 0.3s' : 'none',
-});
 </script>
 
 <template>
   <!-- full-viewport fixed layer; only used to measure the screen size -->
   <view v-show="shown" ref="root" class="layer">
-    <view class="dim" :style="dimStyle()" />
+    <view class="dim" :style="{ backgroundColor: `rgba(0,0,0,${backdrop.dim})` }" />
     <view class="pose" :style="poseStyle()">
       <view class="hero" :style="boxStyle()" />
       <!-- touch-action: at the top the story declares `pan-up`: an upward swipe stays
@@ -371,8 +403,6 @@ const dimStyle = () => ({
   top: 0;
   right: 0;
   bottom: 0;
-  background-color: #000000;
-  opacity: 0;
 }
 .pose {
   position: absolute;
