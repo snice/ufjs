@@ -751,6 +751,19 @@ describe('touch-action', () => {
     expect(sky).not.toContain('vertical-drag');
   });
 
+  it('pan-up / pan-down warn and are treated as auto (no catch, no handler)', () => {
+    for (const action of ['pan-up', 'pan-down']) {
+      const web = genWxml(`<view style="touch-action: ${action}" @touchmove="onMove" />`, opts('webview')).wxml;
+      expect(web).not.toContain('catchtouchmove');
+      const sky = genWxml(`<view style="touch-action: ${action}" @touchmove="onMove" />`, opts('skyline')).wxml;
+      expect(sky).not.toContain('gesture-handler');
+    }
+    // the file's beforeEach already spies console.warn
+    const warned = (console.warn as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
+    expect(warned.some((w) => w.includes('touch-action: pan-up'))).toBe(true);
+    expect(warned.some((w) => w.includes('touch-action: pan-down'))).toBe(true);
+  });
+
   it('inline style counts, auto does not', () => {
     expect(genWxml('<view style="touch-action: none" />', opts('webview')).wxml).toContain('catchtouchmove');
     expect(genWxml('<view style="touch-action: auto" />', opts('webview')).wxml).not.toContain('catchtouchmove');

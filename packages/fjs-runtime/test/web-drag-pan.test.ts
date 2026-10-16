@@ -7,14 +7,18 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createApp, h, ref } from 'vue';
 import { dragPanBindings } from '../src/web/components/gestures';
 
-async function mountScroller(onChildTouchmove?: (event: Event) => void) {
+async function mountScroller(onChildTouchmove?: (event: Event) => void, touchAction?: string) {
   const host = ref<HTMLElement | null>(null);
   const root = document.createElement('div');
   document.body.appendChild(root);
   createApp({
     setup: () => () =>
       h('div', { ref: host, class: 'scroller', ...dragPanBindings(host) }, [
-        h('div', { class: 'child', onTouchmove: onChildTouchmove }),
+        h('div', {
+          class: 'child',
+          onTouchmove: onChildTouchmove,
+          style: touchAction ? { touchAction } : undefined,
+        }),
       ]),
   }).mount(root);
   const scroller = root.querySelector('.scroller') as HTMLElement;
@@ -73,5 +77,42 @@ describe('dragPanBindings', () => {
     expect(scroller.scrollTop).toBe(100); // taken back
     pointer(child, 'pointermove', 80);
     expect(scroller.scrollTop).toBe(100); // and the rest of the drag ignored
+  });
+
+  // specs/219: a directional touch-action keeps one vertical direction for the
+  // scroller and takes the rest — a plain `none` / `pan-x` still takes it all
+  it('pan-up: an upward mouse drag still pans, a downward one is the node\'s', async () => {
+    const up = await mountScroller(undefined, 'pan-up');
+    pointer(up.child, 'pointerdown', 200);
+    pointer(up.child, 'pointermove', 150); // finger up
+    expect(up.scroller.scrollTop).toBe(150);
+    document.body.innerHTML = '';
+
+    const down = await mountScroller(undefined, 'pan-up');
+    pointer(down.child, 'pointerdown', 200);
+    pointer(down.child, 'pointermove', 260); // finger down: the node's pull
+    expect(down.scroller.scrollTop).toBe(100);
+    pointer(down.child, 'pointermove', 100); // reversing later does not turn it into a pan
+    expect(down.scroller.scrollTop).toBe(100);
+  });
+
+  it('pan-down mirrors pan-up', async () => {
+    const down = await mountScroller(undefined, 'pan-down');
+    pointer(down.child, 'pointerdown', 200);
+    pointer(down.child, 'pointermove', 260);
+    expect(down.scroller.scrollTop).toBe(40);
+    document.body.innerHTML = '';
+
+    const up = await mountScroller(undefined, 'pan-down');
+    pointer(up.child, 'pointerdown', 200);
+    pointer(up.child, 'pointermove', 150);
+    expect(up.scroller.scrollTop).toBe(100);
+  });
+
+  it('none still takes every direction', async () => {
+    const { scroller, child } = await mountScroller(undefined, 'none');
+    pointer(child, 'pointerdown', 200);
+    pointer(child, 'pointermove', 150);
+    expect(scroller.scrollTop).toBe(100);
   });
 });

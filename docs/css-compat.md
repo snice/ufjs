@@ -326,9 +326,11 @@ specs/069）。以前用的是它收到的约束上界，收缩包裹的盒子�
 
 真正的 `direction: ltr | rtl` 原样放行。
 
-另外 `touch-action`（`auto` / `none` / `pan-x` / `pan-y` / `manipulation`）
-两端同名同义：web 上是原生 CSS，Flutter 上让节点进手势竞技场，
-手指移动约 8px（鼠标 1px）就抢下指针，早于滚动容器的 18px 阈值。
+另外 `touch-action`（`auto` / `none` / `pan-x` / `pan-y` / `pan-up` / `pan-down` /
+`manipulation`）两端同名同义：web 上是原生 CSS，Flutter 上让节点进手势竞技场，
+手指移动约 8px（鼠标 1px）就抢下指针，早于滚动容器的 18px 阈值。`pan-up` /
+`pan-down` 只把一个竖向方向留给滚动容器（specs/219，细节见 ui-api.md）；
+Safari 不认这两个值，小程序不支持（编译期告警）。
 
 `cursor` 同样两端同名（web 原生，App 端不改变视觉），并承载一条**可点性
 约定**：按钮上写 `cursor: default` / `none` / `not-allowed` ——组件库标记

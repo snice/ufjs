@@ -51,6 +51,15 @@ enum TouchAction {
 
   /// A parent may still pan vertically; horizontal drags are this node's.
   panY,
+
+  /// A parent keeps UPWARD vertical drags (the finger moving up); everything
+  /// else — downward, horizontal — is this node's. The pull-down-to-dismiss
+  /// shape: the page follows a downward pull while an upward swipe scrolls
+  /// natively, momentum included (specs/219).
+  panUp,
+
+  /// The mirror of [panUp]: a parent keeps downward vertical drags.
+  panDown,
 }
 
 TouchAction parseTouchAction(Object? value) {
@@ -61,6 +70,10 @@ TouchAction parseTouchAction(Object? value) {
       return TouchAction.panX;
     case 'pan-y':
       return TouchAction.panY;
+    case 'pan-up':
+      return TouchAction.panUp;
+    case 'pan-down':
+      return TouchAction.panDown;
     default:
       // 'auto', 'manipulation', anything unknown
       return TouchAction.auto;
@@ -458,6 +471,9 @@ class _TouchActionRecognizer extends OneSequenceGestureRecognizer {
   final Map<int, Offset> _origin = <int, Offset>{};
   final Map<int, double> _slop = <int, double>{};
   final Set<int> _selfResolved = <int>{};
+  // pointers whose claim-or-yield decision is already made: it is made once,
+  // so a finger that reverses after being claimed is not handed back
+  final Set<int> _decided = <int>{};
 
   @override
   void addAllowedPointer(PointerDownEvent event) {
@@ -481,10 +497,27 @@ class _TouchActionRecognizer extends OneSequenceGestureRecognizer {
     final origin = _origin[event.pointer];
     if (origin == null) return;
     if (event is PointerMoveEvent) {
-      if (_claims(
-        event.position - origin,
-        _slop[event.pointer] ?? _kClaimSlop,
-      )) {
+      if (_decided.contains(event.pointer)) return;
+      final delta = event.position - origin;
+      final slop = _slop[event.pointer] ?? _kClaimSlop;
+      // A directional action decides once, at the moment the finger first
+      // travels past the claim slop: either the direction it leaves to the
+      // parent (give the pointer up) or not (claim it). Giving up happens at
+      // 8px, well before the parent scrollable's own 18px, so the scroller
+      // then wins the arena on its own and scrolls with its normal physics.
+      if (_yields(delta, slop)) {
+        // our own decision, so `rejectGesture` must not report it as a loss:
+        // JS would see a touchcancel for a gesture the node itself walked
+        // away from. The Listener is independent of the arena, so the node
+        // still gets this finger's moves and its end.
+        _selfResolved.add(event.pointer);
+        resolvePointer(event.pointer, GestureDisposition.rejected);
+        _forget(event.pointer);
+        stopTrackingPointer(event.pointer);
+        return;
+      }
+      if (_claims(delta, slop)) {
+        _decided.add(event.pointer);
         _selfResolved.add(event.pointer);
         resolvePointer(event.pointer, GestureDisposition.accepted);
       }
@@ -509,6 +542,28 @@ class _TouchActionRecognizer extends OneSequenceGestureRecognizer {
         return delta.dy.abs() > slop && delta.dy.abs() > delta.dx.abs();
       case TouchAction.panY:
         return delta.dx.abs() > slop && delta.dx.abs() > delta.dy.abs();
+      case TouchAction.panUp:
+      case TouchAction.panDown:
+        // everything the parent was not left: it is decided in [_yields]
+        // first, so reaching here past the slop means the node keeps it
+        return delta.distance > slop;
+    }
+  }
+
+  /// Whether a directional action ([TouchAction.panUp] / [TouchAction.panDown])
+  /// hands this drag to the parent: a vertical-dominant drag in the direction
+  /// it leaves over. Screen y grows downward, so "up" is a negative dy.
+  bool _yields(Offset delta, double slop) {
+    if (delta.dy.abs() <= slop || delta.dy.abs() <= delta.dx.abs()) {
+      return false;
+    }
+    switch (action) {
+      case TouchAction.panUp:
+        return delta.dy < 0;
+      case TouchAction.panDown:
+        return delta.dy > 0;
+      default:
+        return false;
     }
   }
 
@@ -529,6 +584,7 @@ class _TouchActionRecognizer extends OneSequenceGestureRecognizer {
   void _forget(int pointer) {
     _origin.remove(pointer);
     _slop.remove(pointer);
+    _decided.remove(pointer);
   }
 
   @override

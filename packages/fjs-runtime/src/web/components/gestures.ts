@@ -74,6 +74,10 @@ export function pressBindings(emit: Emit) {
 export function dragPanBindings(host: Ref<HTMLElement | null>) {
   let from: { x: number; y: number; left: number; top: number } | null = null;
   let panned = false;
+  // `pan-up` / `pan-down` on the node under the pointer: it keeps one vertical
+  // direction for the scroller and takes the rest, so the mouse pan has to look
+  // at which way the drag goes before deciding (specs/219)
+  let leaves: 'pan-up' | 'pan-down' | null = null;
   const swallowClick = (event: Event) => {
     event.stopPropagation();
     event.preventDefault();
@@ -84,7 +88,9 @@ export function dragPanBindings(host: Ref<HTMLElement | null>) {
     // a node that declared `touch-action` owns the gesture — the browser
     // already keeps its own scrolling out of the way for a finger, and this
     // is the mouse half of the same rule
-    if (claimsGesture(event.target, el)) return;
+    const action = claimedAction(event.target, el);
+    if (action && action !== 'pan-up' && action !== 'pan-down') return;
+    leaves = action;
     from = {
       x: event.clientX,
       y: event.clientY,
@@ -100,6 +106,16 @@ export function dragPanBindings(host: Ref<HTMLElement | null>) {
     const dy = event.clientY - from.y;
     // a few pixels of slop first, so a click on a row stays a click
     if (!panned && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+    if (!panned && leaves) {
+      // the node keeps everything but one vertical direction: a drag that is
+      // not vertical-dominant in that direction is the node's, not a pan.
+      // Screen y grows downward, so `pan-up` (finger moving up) is dy < 0.
+      const mine = Math.abs(dy) <= Math.abs(dx) || (leaves === 'pan-up' ? dy > 0 : dy < 0);
+      if (mine) {
+        from = null;
+        return;
+      }
+    }
     if (!panned) {
       panned = true;
       el.setPointerCapture(event.pointerId);
@@ -151,16 +167,23 @@ export function dragPanBindings(host: Ref<HTMLElement | null>) {
   };
 }
 
-/** Whether anything between [target] and the scroller [stop] declared a
- * `touch-action` that takes the gesture away from the scroller. */
-function claimsGesture(target: EventTarget | null, stop: Element): boolean {
+type ClaimedAction = 'none' | 'pan-x' | 'pan-y' | 'pan-up' | 'pan-down';
+
+/** The first `touch-action` between [target] and the scroller [stop] that takes
+ * (some of) the gesture away from the scroller, or null when there is none. */
+function claimedAction(target: EventTarget | null, stop: Element): ClaimedAction | null {
   let node = target instanceof Element ? target : null;
   while (node && node !== stop) {
     const action = getComputedStyle(node).touchAction;
-    if (action && action !== 'auto' && action !== 'manipulation') return true;
+    if (action === 'pan-x' || action === 'pan-y' || action === 'pan-up' || action === 'pan-down') {
+      return action;
+    }
+    // any other declaration but auto / manipulation (none, or a compound value
+    // like `pan-x pan-y`) still takes the whole gesture, as before
+    if (action && action !== 'auto' && action !== 'manipulation') return 'none';
     node = node.parentElement;
   }
-  return false;
+  return null;
 }
 
 /** Container-ish tags all share tap/long-press and attr pass-through. */

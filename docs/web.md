@@ -341,6 +341,10 @@ iOS 上会带系统触感反馈；web 没有触感，这是 picker 系列目前�
   一次 `pointermove` 只带一根手指，而 Flutter 会把一帧内多根手指的移动合成
   一条事件。`preventDefault()` / `stopPropagation()` 在 web 上是真的转发给
   原生事件，Flutter 上是空实现——两端都生效的是 `touch-action`。
+  其中方向性的 `pan-up` / `pan-down`（specs/219）是浏览器原生实现的，**Safari（含
+  iOS）不认**：声明被忽略，等同 `auto`，到顶下拉这类手势会被浏览器接管、收到
+  `pointercancel`；Chrome / Edge / Firefox 正常。桌面鼠标拖动滚动容器的那条手动平移
+  （`gestures.ts` 的 `dragPanBindings`）同样按方向判定。
 - **`<canvas>` 的底子不同**：web 侧是浏览器原生的
   `CanvasRenderingContext2D`，App 侧是 JS 的同名状态机 + Flutter 回放。两个
   后果：① 浏览器的 context 上有的方法（`getImageData`、`filter`、

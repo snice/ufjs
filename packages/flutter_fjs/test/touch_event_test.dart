@@ -547,6 +547,187 @@ void main() {
     await finger.up();
   });
 
+  // ---- directional touch-action: pan-up / pan-down (specs/219) ----------------
+
+  testWidgets('pan-up: an upward drag is the list\'s, with no cancel', (
+    tester,
+  ) async {
+    // the node has to be on screen to be touched: start with it visible
+    final log = <_Event>[];
+    final controller = ScrollController();
+    await tester.pumpWidget(
+      _render(
+        _treeWith(
+          '{"style":{"width":100,"height":100,'
+          '"backgroundColor":"#ffffff","touchAction":"pan-up"},$_listens}',
+        ),
+        log,
+        scrollable: true,
+        controller: controller,
+      ),
+    );
+    final finger = await tester.startGesture(tester.getCenter(nodeBoxes));
+    await finger.moveBy(const Offset(0, -30)); // past the node's 8px, before the list's 18px
+    await tester.pump();
+    await finger.moveBy(const Offset(0, -90));
+    await tester.pump();
+    expect(controller.offset, greaterThan(0), reason: 'the list scrolled');
+    final types = log.map((e) => e.type);
+    expect(types, contains(FjsEvent.touchMove), reason: 'moves keep coming');
+    expect(
+      types,
+      isNot(contains(FjsEvent.touchCancel)),
+      reason: 'the node gave the gesture up itself; that is not a loss',
+    );
+    await finger.up();
+    await tester.pump();
+    expect(log.last.type, FjsEvent.touchEnd);
+  });
+
+  testWidgets('pan-up: a downward drag is the node\'s, the list stays put', (
+    tester,
+  ) async {
+    final log = <_Event>[];
+    final controller = ScrollController();
+    await tester.pumpWidget(
+      _render(
+        _treeWith(
+          '{"style":{"width":100,"height":100,'
+          '"backgroundColor":"#ffffff","touchAction":"pan-up"},$_listens}',
+        ),
+        log,
+        scrollable: true,
+        controller: controller,
+      ),
+    );
+    // give the list room to scroll back up, so a lost claim would show
+    controller.jumpTo(50);
+    await tester.pump();
+    final finger = await tester.startGesture(tester.getCenter(nodeBoxes));
+    await finger.moveBy(const Offset(0, 30));
+    await tester.pump();
+    await finger.moveBy(const Offset(0, 90));
+    await tester.pump();
+    expect(controller.offset, 50, reason: 'the node claimed the pull');
+    final types = log.map((e) => e.type);
+    expect(types, contains(FjsEvent.touchMove));
+    expect(types, isNot(contains(FjsEvent.touchCancel)));
+    await finger.up();
+    await tester.pump();
+  });
+
+  testWidgets('pan-up: the first direction decides, a later reversal does not '
+      'hand a claimed gesture back', (tester) async {
+    final log = <_Event>[];
+    final controller = ScrollController();
+    await tester.pumpWidget(
+      _render(
+        _treeWith(
+          '{"style":{"width":100,"height":100,'
+          '"backgroundColor":"#ffffff","touchAction":"pan-up"},$_listens}',
+        ),
+        log,
+        scrollable: true,
+        controller: controller,
+      ),
+    );
+    controller.jumpTo(50);
+    await tester.pump();
+    final finger = await tester.startGesture(tester.getCenter(nodeBoxes));
+    await finger.moveBy(const Offset(0, 30)); // down: claimed
+    await tester.pump();
+    await finger.moveBy(const Offset(0, -120)); // back up past where it began
+    await tester.pump();
+    expect(controller.offset, 50, reason: 'still the node\'s');
+    expect(log.map((e) => e.type), isNot(contains(FjsEvent.touchCancel)));
+    await finger.up();
+    await tester.pump();
+  });
+
+  testWidgets('pan-up: a horizontal drag is the node\'s too', (tester) async {
+    final log = <_Event>[];
+    final controller = ScrollController();
+    await tester.pumpWidget(
+      _render(
+        _treeWith(
+          '{"style":{"width":100,"height":100,'
+          '"backgroundColor":"#ffffff","touchAction":"pan-up"},$_listens}',
+        ),
+        log,
+        scrollable: true,
+        controller: controller,
+      ),
+    );
+    final finger = await tester.startGesture(tester.getCenter(nodeBoxes));
+    await finger.moveBy(const Offset(40, 0));
+    await tester.pump();
+    await finger.moveBy(const Offset(40, 0));
+    await tester.pump();
+    final types = log.map((e) => e.type);
+    expect(types, contains(FjsEvent.touchMove));
+    expect(types, isNot(contains(FjsEvent.touchCancel)));
+    await finger.up();
+    await tester.pump();
+  });
+
+  testWidgets('pan-down mirrors pan-up: downward is the list\'s', (
+    tester,
+  ) async {
+    final log = <_Event>[];
+    final controller = ScrollController();
+    await tester.pumpWidget(
+      _render(
+        _treeWith(
+          '{"style":{"width":100,"height":100,'
+          '"backgroundColor":"#ffffff","touchAction":"pan-down"},$_listens}',
+        ),
+        log,
+        scrollable: true,
+        controller: controller,
+      ),
+    );
+    controller.jumpTo(50);
+    await tester.pump();
+    final finger = await tester.startGesture(tester.getCenter(nodeBoxes));
+    await finger.moveBy(const Offset(0, 30));
+    await tester.pump();
+    await finger.moveBy(const Offset(0, 20));
+    await tester.pump();
+    expect(controller.offset, lessThan(50), reason: 'the list scrolled back');
+    final types = log.map((e) => e.type);
+    expect(types, contains(FjsEvent.touchMove));
+    expect(types, isNot(contains(FjsEvent.touchCancel)));
+    await finger.up();
+    await tester.pump();
+  });
+
+  testWidgets('pan-down mirrors pan-up: upward is the node\'s', (tester) async {
+    final log = <_Event>[];
+    final controller = ScrollController();
+    await tester.pumpWidget(
+      _render(
+        _treeWith(
+          '{"style":{"width":100,"height":100,'
+          '"backgroundColor":"#ffffff","touchAction":"pan-down"},$_listens}',
+        ),
+        log,
+        scrollable: true,
+        controller: controller,
+      ),
+    );
+    final finger = await tester.startGesture(tester.getCenter(nodeBoxes));
+    await finger.moveBy(const Offset(0, -30));
+    await tester.pump();
+    await finger.moveBy(const Offset(0, -90));
+    await tester.pump();
+    expect(controller.offset, 0, reason: 'the node claimed the push');
+    final types = log.map((e) => e.type);
+    expect(types, contains(FjsEvent.touchMove));
+    expect(types, isNot(contains(FjsEvent.touchCancel)));
+    await finger.up();
+    await tester.pump();
+  });
+
   testWidgets('a node with no touch handlers adds no listener', (tester) async {
     final log = <_Event>[];
     await tester.pumpWidget(_render(_treeWith('{$_box}'), log));

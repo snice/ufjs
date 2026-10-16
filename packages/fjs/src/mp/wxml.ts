@@ -459,8 +459,9 @@ export interface WxmlOptions {
    * visible box (background, border, padding, width). See textFillClass. */
   crossAlignClasses?: Map<string, 'center' | 'end'>;
   boxedClasses?: Set<string>;
-  /** class -> its `touch-action` (none / pan-x / pan-y) — see touchActionOf */
-  touchActionClasses?: Map<string, TouchAction>;
+  /** class -> its `touch-action` (none / pan-x / pan-y, plus the directional
+   * values this target cannot honour) — see touchActionOf */
+  touchActionClasses?: Map<string, DeclaredTouchAction>;
   /** app renderer (app.config wxmp.renderer): skyline gets gesture handlers
    * around touch-action nodes */
   renderer?: 'webview' | 'skyline';
@@ -1136,18 +1137,36 @@ function itemReads(inner: string, itemVar: string): Set<string> | null {
 }
 
 export type TouchAction = 'none' | 'pan-x' | 'pan-y';
+/** What a page may declare. The directional pair exists on web and Flutter
+ * (specs/219) but not here: the drag-gesture-handlers cannot tell a direction. */
+export type DeclaredTouchAction = TouchAction | 'pan-up' | 'pan-down';
 
 /** The `touch-action` a node declares — through its static classes or its
  * static inline style — or null for auto. `manipulation` and friends mean
- * nothing on a mini program and stay null. */
+ * nothing on a mini program and stay null; so do `pan-up` / `pan-down`, but
+ * those warn, because the page then behaves differently from the other two
+ * targets (constitution V: a silent drop is a bug). */
 function touchActionOf(el: ElementNode, ctx: Ctx): TouchAction | null {
-  const inline = /(?:^|;)\s*touch-action\s*:\s*(none|pan-x|pan-y)\b/.exec(staticAttr(el, 'style') ?? '');
-  if (inline) return inline[1] as TouchAction;
-  for (const c of staticClasses(el)) {
-    const action = ctx.touchActionClasses?.get(c);
-    if (action) return action;
+  const inline = /(?:^|;)\s*touch-action\s*:\s*(none|pan-x|pan-y|pan-up|pan-down)\b/.exec(
+    staticAttr(el, 'style') ?? '',
+  );
+  let declared: DeclaredTouchAction | undefined = inline?.[1] as DeclaredTouchAction | undefined;
+  if (!declared) {
+    for (const c of staticClasses(el)) {
+      const action = ctx.touchActionClasses?.get(c);
+      if (action) {
+        declared = action;
+        break;
+      }
+    }
   }
-  return null;
+  if (declared === 'pan-up' || declared === 'pan-down') {
+    warn(
+      `[fjs/mp] ${ctx.filename}: <${el.tag}> declares touch-action: ${declared}, which mini programs cannot express (the drag-gesture-handlers have no direction) — treated as auto`,
+    );
+    return null;
+  }
+  return declared ?? null;
 }
 
 function staticClasses(el: ElementNode): string[] {

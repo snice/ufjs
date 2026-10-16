@@ -808,11 +808,29 @@ function onMove(e: FjsTouchEvent) {
 ```css
 .block { touch-action: none; }   /* 全都归自己：拖拽块必写 */
 .row   { touch-action: pan-y; }  /* 竖向留给外层滚动，横向归自己 */
+.pull  { touch-action: pan-up; } /* 向上的竖向拖动留给外层滚动，向下 / 横向归自己 */
 ```
 
 Web 上这就是原生 CSS；Flutter 上它让节点进手势竞技场，在手指移动约 8px
 （鼠标 1px）时抢下指针——早于滚动容器的 18px 阈值，所以滚动不会启动。
-支持的值：`auto`（默认）、`none`、`pan-x`、`pan-y`、`manipulation`（同 auto）。
+支持的值：`auto`（默认）、`none`、`pan-x`、`pan-y`、`pan-up`、`pan-down`、
+`manipulation`（同 auto）。
+
+**`pan-up` / `pan-down`（方向性，specs/219）**：只把**一个竖向方向**留给外层滚动，其余
+都归节点。「向上」指手指向上移动（内容跟着上滚）。典型用途是「到顶下拉返回」：
+
+```css
+.page { touch-action: pan-up; }  /* 上滑：原生滚动（带惯性）；下拉：归页面，可以跟手 */
+```
+
+- 手指移动超过认领阈值（触摸 8px / 鼠标 1px）时**只判一次**：竖向主导且是留出的方向 →
+  节点自己放弃（外层滚动随后接管，**不派 `touchcancel`**，节点仍收到这根手指后续的
+  `touchmove` / `touchend`）；否则节点认领，外层滚动不会启动。
+- 放弃发生在滚动容器自己的 18px 阈值之前，所以滚动容器随后正常赢得手势、用自己的物理滚动。
+- 配合 `scroll-view` 的 `bounces="false"`：到顶下拉时关掉 iOS 的橡皮筋，否则过屏位移会叠在
+  页面自己跟手的位移上。
+- **Safari（含 iOS）不支持这两个值**，声明被忽略，等同 `auto`（到顶下拉会被浏览器接管并
+  `pointercancel`）；Chrome / Edge / Firefox 支持。小程序也不支持（编译期告警，按 `auto`）。
 
 ### 跟手不掉帧
 
@@ -876,7 +894,7 @@ a 等）、class 匹配到的 CSS 规则、内联 style。CSS 文本里的值用
     // translate / translateX / translateY / translate3d / scale / scaleX /
     // scaleY / rotate(deg|rad|turn|grad) / matrix(a,b,c,d,e,f)，从左到右复合。
     // 只重绘不重排，命中测试跟着动——拖动就用它
-    touchAction: 'none',                // auto | none | pan-x | pan-y
+    touchAction: 'none',                // auto | none | pan-x | pan-y | pan-up | pan-down
     // ---- 视觉效果 ----
     boxShadow: '0 2px 8px rgba(0,0,0,0.2)',   // 字符串或数组
     textShadow: '0 1px 2px #000000',

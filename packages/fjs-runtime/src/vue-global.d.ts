@@ -52,8 +52,9 @@ interface FjsTapEvents {
 }
 
 /** The DOM touch contract, on every tag that can be touched. Declare
- * `touch-action: none` (or pan-x / pan-y) in the node's style to keep an
- * enclosing scroller from taking the gesture over. */
+ * `touch-action: none` (or pan-x / pan-y, or pan-up / pan-down to leave one
+ * vertical direction to the scroller) in the node's style to keep an enclosing
+ * scroller from taking the gesture over. */
 interface FjsTouchEvents {
   onTouchstart?: (event: FjsTouchEvent) => void;
   onTouchmove?: (event: FjsTouchEvent) => void;
