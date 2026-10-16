@@ -3,12 +3,9 @@
 </route>
 
 <script setup lang="ts">
-// App detail, `/detail?id=<app id>`. The id travels in the query and not in a
-// dynamic segment (`/app/:id`): the Flutter router looks pages up by the concrete
-// path, so a `[id]` page never resolves on the App (works on web) — specs/217
-// tasks, T052. The cover bleeds under the status bar and the white panel rides
-// up over its bottom edge, so the page owns its scroll-view (`scroll: false`
-// in the route block) and the back / share buttons float above it.
+// App detail, `/app/:id`. The cover bleeds under the status bar and the white
+// panel rides up over its bottom edge, so the page owns its scroll-view
+// (`scroll: false` in the route block) and the back / share buttons float above it.
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'fjs/router';
 import { appById } from '@/data/apps';
@@ -19,10 +16,10 @@ import GlassCircleButton from '@/components/GlassCircleButton.vue';
 
 const route = useRoute();
 const router = useRouter();
-const app = computed(() => appById(String(route.query.id ?? '')));
+const app = computed(() => appById(String(route.params.id)));
 
 // an unknown id (stale link) goes home instead of rendering an empty page
-if (!appById(String(route.query.id ?? ''))) router.replace('/');
+if (!appById(String(route.params.id))) router.replace('/');
 
 const shots = [0, 1, 2, 3];
 </script>

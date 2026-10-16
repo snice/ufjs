@@ -16,7 +16,7 @@ const router = useRouter();
 
 <template>
   <view class="row">
-    <view class="main" @tap="router.push({ path: '/detail', query: { id: app.id } })">
+    <view class="main" @tap="router.push(`/app/${app.id}`)">
       <AppIcon :gradient="app.gradient" :emoji="app.emoji" :size="60" />
       <view class="text">
         <text class="name" :style="{ maxLines: 2, overflow: 'ellipsis' }">{{ app.name }}</text>

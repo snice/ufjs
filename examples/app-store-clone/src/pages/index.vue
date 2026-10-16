@@ -18,10 +18,8 @@ const cat = STORIES[0]!;
 const popular = STORIES[1]!;
 
 // Card elements by story id: re-measured on close, so the card stays mounted.
-// It is NOT hidden while the overlay is up (no opacity toggle): the hero box is
-// opaque and starts exactly on the card, so it covers it, and toggling opacity on
-// a subtree that contains a glass (BackdropFilter) layer corrupts its painting on
-// the App — the card came back with only its gradient (specs/217 tasks, T052).
+// It is not hidden while the overlay is up: the hero box is opaque and starts
+// exactly on the card, so it covers it.
 const cardEls = new Map<string, unknown>();
 const setCard = (id: string) => (el: unknown) => {
   if (el) cardEls.set(id, el);
@@ -48,7 +46,7 @@ function expand(story: Story) {
       </view>
     </view>
 
-    <!-- one per story, always mounted (see CardExpand for why not v-if) -->
+    <!-- one per story, always mounted (see CardExpand) -->
     <CardExpand
       v-for="s in STORIES"
       :key="s.id"
