@@ -37,7 +37,7 @@ import '../widgets/dispatch.dart';
 import '../widgets/text.dart' show FjsTextEnvScope;
 import 'animation.dart' show keyframeNode;
 import 'decoration.dart'
-    show FjsSizeTransitionEnd, decorateNode, transitionNode;
+    show FjsSizeTransitionEnd, decorateNode, filterNode, transitionNode;
 import 'gesture.dart';
 import 'overflow_hit.dart';
 import 'touch.dart' show needsTouchNode;
@@ -254,7 +254,10 @@ class _FjsNodeView extends StatefulWidget {
           : style;
       final transitioned = transitionNode(
         s,
-        _buildStyledNode(context, node, s, pressed: pressed, isRoot: isRoot),
+        filterNode(
+          s,
+          _buildStyledNode(context, node, s, pressed: pressed, isRoot: isRoot),
+        ),
         key: 'fjs-transition-${tree.generation}-${node.id}',
         // A press/hover state may bring a transform or an opacity the base
         // style lacks (vant's `.van-haptics-feedback:active { opacity: .6 }`).

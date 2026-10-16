@@ -1037,6 +1037,9 @@ class FjsStyle {
     return _transitions = parseTransitions(style);
   }
 
+  /// `filter`: only `blur()` is drawn (specs/222); see [FjsFilter].
+  FjsFilter? get filter => parseFilter(_v('filter'));
+
   /// `touch-action`: which gestures this node takes away from whatever
   /// would otherwise handle them (a scrollable, usually). Parsed in
   /// touch.dart, which owns the arena side of it.

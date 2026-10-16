@@ -291,3 +291,5 @@ base-css）。两个 skyline 硬约束决定了它的形态：
 | `packages/fjs/src/mp/build.ts` | `--mp` 编排（编译闭包、.ts 发射、模块组件） |
 | `packages/fjs-runtime/src/wx/` | vue shim、instance（setData diff）、events、router、fetch、worker |
 | `packages/fjs/src/project/workers.ts` | `src/workers` 扫描、打包、wx worker 适配（三端构建共用） |
+
+- **`filter: blur()`**（specs/222）：webview 渲染器里是浏览器原生，行为同 web；skyline 渲染器未验证。

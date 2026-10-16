@@ -896,6 +896,7 @@ a 等）、class 匹配到的 CSS 规则、内联 style。CSS 文本里的值用
     // 只重绘不重排，命中测试跟着动——拖动就用它
     touchAction: 'none',                // auto | none | pan-x | pan-y | pan-up | pan-down
     // ---- 视觉效果 ----
+    filter: 'blur(8px)',                // 只画 blur()；其余函数 App 端忽略（web 生效），不插值
     boxShadow: '0 2px 8px rgba(0,0,0,0.2)',   // 字符串或数组
     textShadow: '0 1px 2px #000000',
     background: 'linear-gradient(180deg, #4facfe 0%, #00f2fe 100%)',

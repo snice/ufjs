@@ -2,6 +2,7 @@
 // background/border/shadow, clipping and margin — in the order CSS
 // applies them.
 import 'dart:async' show Timer;
+import 'dart:ui' as ui show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -843,6 +844,36 @@ EdgeInsets resolveEdgeLengths(
     side(lengths.top, absolute?.top, fallback?.top),
     side(lengths.right, absolute?.right, fallback?.right),
     side(lengths.bottom, absolute?.bottom, fallback?.bottom),
+  );
+}
+
+/// Applies CSS `filter: blur()` (specs/222): the node and everything under it
+/// is blurred as one image, layout and hit-testing untouched. Sits INSIDE
+/// [transitionNode]'s transform, as CSS orders them (filter, then transform).
+///
+/// `TileMode.decal`: the blur must not drag the box's edge colour inward the
+/// way `clamp` would — a browser fades to transparent at the edge too.
+///
+/// Other filter functions are not drawn on this side; say so once rather than
+/// quietly rendering a flat node (constitution V). No wrapper at all when the
+/// value declares no blur, so the common node pays nothing.
+Widget filterNode(FjsStyle style, Widget content) {
+  final filter = style.filter;
+  if (filter == null) return content;
+  for (final name in filter.ignored) {
+    fjsWarnOnce(
+      'filter-$name',
+      'filter: $name() is not drawn here (only blur() is); it still applies on web',
+    );
+  }
+  if (filter.blur <= 0) return content;
+  return ImageFiltered(
+    imageFilter: ui.ImageFilter.blur(
+      sigmaX: filter.blur,
+      sigmaY: filter.blur,
+      tileMode: TileMode.decal,
+    ),
+    child: content,
   );
 }
 

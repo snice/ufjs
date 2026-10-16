@@ -1464,3 +1464,44 @@ Alignment _backgroundAlignment(String value) {
   // one keyword centres the other axis, as CSS does
   return Alignment(x ?? 0, y ?? 0);
 }
+
+// ---- filter (specs/222) -----------------------------------------------------
+
+/// What this renderer does with a CSS `filter`: only `blur()` renders. The
+/// other filter functions are named in [ignored] so the caller can say so once
+/// (constitution V); they still work on web.
+class FjsFilter {
+  const FjsFilter(this.blur, this.ignored);
+
+  /// Gaussian standard deviation in px (CSS `blur(r)`: r IS the deviation).
+  final double blur;
+
+  /// Function names present in the value that this side does not draw.
+  final List<String> ignored;
+}
+
+final _filterFunction = RegExp(r'([a-zA-Z-]+)\(([^)]*)\)');
+
+FjsFilter? _parseFilterUncached(Object value) {
+  final text = value.toString().trim();
+  if (text.isEmpty || text == 'none') return null;
+  var blur = 0.0;
+  final ignored = <String>[];
+  for (final m in _filterFunction.allMatches(text)) {
+    final name = m.group(1)!.toLowerCase();
+    if (name == 'blur') {
+      // a bare number is px, as for every other length in a style object
+      blur = parseLength(m.group(2)!.trim()) ?? 0;
+    } else {
+      ignored.add(name);
+    }
+  }
+  if (blur <= 0 && ignored.isEmpty) return null;
+  return FjsFilter(blur < 0 ? 0 : blur, ignored);
+}
+
+final _parseFilterMemo = _memo<FjsFilter?>(_parseFilterUncached);
+
+/// `filter` as this renderer reads it; null when it declares nothing at all.
+FjsFilter? parseFilter(Object? value) =>
+    value == null ? null : _parseFilterMemo(value);

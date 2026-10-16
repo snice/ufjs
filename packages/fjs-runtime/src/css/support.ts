@@ -34,9 +34,14 @@ export type LintLevel = 'drop' | 'warn';
 export const DROPPED_PROPERTIES: Record<string, string> = {
   'word-break': 'not supported; truncate with max-lines + overflow: ellipsis',
   'text-overflow': 'not supported; truncate with max-lines + overflow: ellipsis',
-  filter: 'not supported',
-  'backdrop-filter': 'not supported',
+  'backdrop-filter': 'not supported; for a frosted layer use <glass-surface> from @ufjs/liquidglass',
 };
+
+/** The one `filter` function the App draws (specs/222): `filter: blur(r)`.
+ * Every other function (brightness, contrast, drop-shadow, …) is named and
+ * ignored on the App while web applies it — a warn, not a drop, because the
+ * declaration is otherwise honored. */
+export const FILTER_FUNCTIONS_ON_APP = new Set(['blur']);
 
 /** `display` values the engine rejects (the rule still applies, this one
  * declaration is skipped). */

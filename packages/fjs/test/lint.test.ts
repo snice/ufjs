@@ -43,7 +43,6 @@ input::placeholder { color: red; }
 .card[type=big] { color: red; }
 .t { word-break: break-all; }
 .t { text-overflow: ellipsis; }
-.t { filter: blur(1px); }
 .t { backdrop-filter: blur(1px); }
 .t { display: grid; }
 .t { margin-left: 10vw; }
@@ -67,7 +66,6 @@ input::placeholder { color: red; }
     expect(msgs.join('\n')).toContain('[type=big]');
     expect(hasDecl('word-break')).toBe(true);
     expect(hasDecl('text-overflow')).toBe(true);
-    expect(hasDecl('filter')).toBe(true);
     expect(hasDecl('backdrop-filter')).toBe(true);
     expect(msgs.join('\n')).toContain('display: grid');
     expect(msgs.join('\n')).toContain('vw unit');
@@ -102,13 +100,13 @@ input::placeholder { color: red; }
     write(
       'src/pages/attr.vue',
       `<template>
-  <view style="filter: blur(1px); color: red" />
+  <view style="backdrop-filter: blur(1px); color: red" />
 </template>
 `,
     );
     const { findings } = lintTargets(root, []);
     expect(findings).toHaveLength(1);
-    expect(findings[0]!.code).toBe('filter: blur(1px)');
+    expect(findings[0]!.code).toBe('backdrop-filter: blur(1px)');
     expect(findings[0]!.line).toBe(2);
   });
 
@@ -189,6 +187,36 @@ describe('warns', () => {
     expect(findings).toHaveLength(1);
     expect(findings[0]!.level).toBe('warn');
     expect(findings[0]!.code).toBe('color: red');
+  });
+});
+
+describe('filter (specs/222)', () => {
+  it('blur() is drawn on the App: no finding', () => {
+    write(
+      'src/pages/blur.vue',
+      `<template><view class="b" style="filter: blur(4px)">x</view></template>
+<style>
+.b { filter: blur(2px); }
+.c { filter: none; }
+</style>`,
+    );
+    const { findings } = lintTargets(root, []);
+    expect(findings).toHaveLength(0);
+  });
+
+  it('other functions warn (web draws them, the App does not)', () => {
+    write(
+      'src/pages/filters.vue',
+      `<template><view class="b">x</view></template>
+<style>
+.b { filter: brightness(.5) blur(2px); }
+</style>`,
+    );
+    const { findings } = lintTargets(root, []);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.level).toBe('warn');
+    // only the unsupported function is named as ignored (blur() is the one that renders)
+    expect(findings[0]!.message).toMatch(/^brightness\(\) is not drawn/);
   });
 });
 

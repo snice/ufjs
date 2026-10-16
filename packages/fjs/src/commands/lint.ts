@@ -20,6 +20,7 @@ import { colorByLevel } from '../terminal/colors.js';
 import {
   DROPPED_AT_RULES,
   DROPPED_PROPERTIES,
+  FILTER_FUNCTIONS_ON_APP,
   FONT_FACE_UNSUPPORTED,
   KEYFRAMES_ANIMATABLE_ON_APP,
   SUPPORTED_ATTR_SELECTORS,
@@ -499,6 +500,15 @@ function lintDeclaration(prop: string, value: string, at: At, report: Reporter):
   const dropped = DROPPED_PROPERTIES[key];
   if (dropped) {
     report(at, 'drop', `${prop}: ${value}`, dropped);
+    return;
+  }
+  if (key === 'filter' && !value.toLowerCase().includes('var(')) {
+    const ignored = [...value.matchAll(/([a-zA-Z-]+)\(/g)]
+      .map((m) => m[1]!.toLowerCase())
+      .filter((fn) => !FILTER_FUNCTIONS_ON_APP.has(fn));
+    if (ignored.length) {
+      report(at, 'warn', `${prop}: ${value}`, `${ignored.join(', ')}() is not drawn on the App (web applies it) — only blur() renders there`);
+    }
     return;
   }
   if (key === 'display' && UNSUPPORTED_DISPLAY_VALUES.has(value.toLowerCase())) {
